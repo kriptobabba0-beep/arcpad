@@ -1,4 +1,4 @@
-.PHONY: install build test fmt fmt-check fork-test dev clean
+.PHONY: install build test fmt fmt-check lint fork-test dev clean
 
 install:
 	corepack enable pnpm || pnpm --version
@@ -15,9 +15,14 @@ test:
 
 fmt:
 	forge fmt --root contracts
+	pnpm run fmt
 
 fmt-check:
 	forge fmt --check --root contracts
+	pnpm run fmt:check
+
+lint:
+	pnpm run lint
 
 # Arc'a ozgu davranis yalnizca gercek RPC'de gozlemlenebilir; anvil bunu
 # yeniden uretemez. `arc_testnet`, contracts/foundry.toml [rpc_endpoints]
