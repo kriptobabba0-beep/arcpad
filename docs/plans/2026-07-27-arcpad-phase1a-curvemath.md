@@ -62,8 +62,10 @@ Bu görev planın kalbidir. Testler önce yazılır ve **pump.fun'ın canlı zin
 
 - [ ] **Step 1: Çalışma dalını oluştur**
 
+**`phase-0-scaffold`'dan dallanılır, `main`'den değil.** Faz 0'ın Foundry iskeleti, V4 bağımlılıkları ve CI kapıları o dalda ve PR'ı hâlâ açık; `main` yalnızca plan commit'ini taşıyor.
+
 ```bash
-git checkout main
+git checkout phase-0-scaffold
 git checkout -b phase-1a-curvemath
 ```
 
