@@ -223,7 +223,20 @@ D = 7,931e14 × 2,799e14 / 1,073e15 = 2,069e14  → rezerve arzın kendisi
 
 85 SOL bir parametre değildir; bu üç sayıdan çıkan bir sonuçtur.
 
-**Yuvarlama.** `D` aşağı yuvarlanır; havuza ideal miktarın en fazla 1 wei altında token gider, oluşan toz `LaunchLocker`'da kalıcı kilitlenir.
+**Yuvarlama yönleri pump.fun'ın SDK kaynağından birebir alınmıştır** (`@pump-fun/pump-sdk@1.36.0`, `src/bondingCurve.ts` ve `src/fees.ts`). Dördü de protokol lehinedir ve tahmin değil, kopyadır:
+
+```
+alım, tam token çıkışı:   cost = amount·Vq / (Vt − amount) + 1        ← +1 ekle (yukarı)
+ücret:                    ceilDiv(amount · bps, 10_000)                ← tavana (yukarı)
+satış, tam token girişi:  out  = amount·Vq / (Vt + amount)             ← taban (aşağı)
+alım, tam quote girişi:   in   = (amount − 1)·10_000 / (bps + 10_000)  ← −1, sonra taban
+```
+
+Alıcı lehine tek bir yuvarlama, saldırganın 1 wei'lik milyonlarca işlemle curve'ü kuruş kuruş boşaltmasına izin verir. Bu, `test/invariant` altında "gidiş-dönüş bir işlem curve'ün bakiyesini asla azaltamaz" invariant'ıyla kilitlenir.
+
+**Rezervler her zaman ücret öncesi curve tutarı kadar hareket eder.** Alımda ücret curve maliyetinin *üstüne* eklenir, satışta curve çıktısından *düşülür*; her iki durumda da rezervlere giren/çıkan miktar ücret oranından etkilenmez. Kademeli ücretin mümkün olmasının sebebi budur.
+
+**`D` aşağı yuvarlanır**; havuza ideal miktarın en fazla 1 wei altında token gider, oluşan toz `LaunchLocker`'da kalıcı kilitlenir.
 
 **Yuvarlama yönü.** Her `mulDiv` çağrısının yuvarlama yönü açıkça seçilir ve **her zaman curve lehinedir**. Alıcı lehine yuvarlama, saldırganın 1 wei'lik milyonlarca işlemle curve'ü kuruş kuruş boşaltmasına izin verir. Bu, `test/invariant` altında "gidiş-dönüş bir işlem curve'ün bakiyesini asla azaltamaz" invariant'ıyla kilitlenir.
 
@@ -239,20 +252,22 @@ Birincil (konfigürasyondan gelen) parametreler yalnızca üçtür: `V`, `T`, `S
 |---|---|---|
 | Sanal token rezervi `T` | 1.073.000.000 × 10¹⁸ | aynı |
 | Satış arzı `S` | 793.100.000 × 10¹⁸ | aynı |
-| Sanal USDC rezervi `V` | 6 × 10¹⁸ (6 USDC) | 6.000 × 10¹⁸ |
+| Sanal USDC rezervi `V` | 4,292 × 10¹⁸ | **4.292 × 10¹⁸** |
 | → Havuz tohumu `D` | 206.900.000 (arzın %20,69'u) | aynı |
 | → Toplam arz `N = S + D` | 1.000.000.000 | aynı |
-| → Graduation `R = V·S/(T−S)` | **≈ 17,00 USDC** | **≈ 17.001 USDC** |
+| → Graduation `R = V·S/(T−S)` | **≈ 12,16 USDC** | **≈ 12.161 USDC** |
 | → Fiyat katı `(T/(T−S))²` | 14,7× | aynı |
-| → Açılış FDV | ≈ 5,59 USDC | ≈ 5.592 USDC |
-| → Graduation FDV | ≈ 82 USDC | ≈ 82.178 USDC |
+| → Açılış FDV | 4,00 USDC | **4.000 USDC** |
+| → Graduation FDV | ≈ 58,78 USDC | **≈ 58.784 USDC** |
 | Launch ücreti | 0,10 USDC | 5 USDC |
 | İşlem ücreti | kademeli — §5.5 | aynı |
 | Geliştirici ilk alım tavanı | satış arzının %5'i | aynı |
 
-İki profil arasında **yalnızca `V` değişir**, tam 1000× oranında; ölçeği belirleyen tek sayı sanal quote rezervidir. pump.fun'ın yaptığı da budur — SOL'lu ve USDC'li coinler aynı token oranlarını, farklı `initial_virtual_*_reserves` değerlerini kullanır.
+İki profil arasında **yalnızca `V` değişir**, tam 1000× oranında; ölçeği belirleyen tek sayı sanal quote rezervidir. pump.fun'ın yaptığı da budur — SOL'lu ve USDC'li coinler aynı token rezervlerini, farklı `initial_virtual_*_reserves` değerlerini kullanır.
 
-Üretim `V`'si, graduation FDV'sini (~82.000 USDC) pump.fun'ınkiyle çakışacak şekilde seçilmiştir; §5.5'teki ücret kademeleri bu sayede birebir kullanılabilir.
+**Üretim `V`'si tahmin değil, pump.fun'ın canlı `Global` hesabından okunmuştur.** `initial_virtual_quote_reserves = 4_292_000_000` (6 decimal USDC ⇒ 4.292 USDC). Bu sayının seçimi kasıtlı: açılış FDV'sini tam **4.000 USDC**'ye oturtuyor (`4292 / 1,073 = 4000`), graduation FDV'si de **58.784 USDC** çıkıyor — ki bu, §5.5'teki `stable_fee_tiers` tablosunun ilk havuz eşiği olan **59.000 USDC**'nin hemen altındadır. Yani bir token mezun olduğu anda creator lehine kademeye geçer.
+
+`whitelisted_quote_mints` alanında bugün tek bir giriş var: USDC. pump.fun'ın SOL dışı tek quote varlığı da bizimkiyle aynı.
 
 **Testnet rakamlarının küçüklüğü zorunludur, kozmetik değildir.** Circle faucet'i istek başına 10 USDC verir. 17.001 USDC'lik bir eşikle hiçbir token mezun edilemez, yani graduation, hook, locker ve havuz kodunun hiçbiri test edilemez. 17 USDC'lik eşik iki faucet talebiyle karşılanır.
 
@@ -289,21 +304,29 @@ havuzda:       marketCap = quoteReserve × N / baseReserve
 
 Kademe seçimi: `marketCap` ilk kademenin eşiğinin altındaysa ilk kademe; değilse kademeler tersten taranır ve eşiği aşılan ilk kademe alınır.
 
-| Market cap (USDC) | Durum | Creator | Protokol | LP | Toplam |
-|---|---|---|---|---|---|
-| — | **Bonding curve** | %0,300 | %0,95 | %0 | **%1,25** |
-| 0–85k | havuz | %0,300 | %0,93 | %0,02 | %1,25 |
-| 85k–300k | havuz | %0,950 | %0,05 | %0,20 | %1,20 |
-| 300k–500k | havuz | %0,900 | %0,05 | %0,20 | %1,15 |
-| 500k–700k | havuz | %0,850 | %0,05 | %0,20 | %1,10 |
-| 700k–900k | havuz | %0,800 | %0,05 | %0,20 | %1,05 |
-| 900k–2M | havuz | %0,750 | %0,05 | %0,20 | %1,00 |
-| 2M–3M | havuz | %0,700 | %0,05 | %0,20 | %0,95 |
-| 3M–10M | havuz | %0,650 → %0,350 | %0,05 | %0,20 | %0,90 → %0,60 |
-| 10M–20M | havuz | %0,300 → %0,075 | %0,05 | %0,20 | %0,55 → %0,33 |
-| 20M+ | havuz | %0,050 | %0,05 | %0,20 | **%0,30** |
+**Kademe tablosu, pump.fun'ın canlı `FeeConfig` hesabından çözülerek alınmıştır** (`5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx`, Solana mainnet, 2026-07-27) — görselden değil.
 
-Ara kademeler milyon başına birer basamaktır; tam liste `pump-public-docs/docs/fees.png` içindedir. **Kontrat yazılırken kademe dizisi pump.fun'ın SDK'sindeki `feeTiers` ile karşılaştırılmalıdır** — bu tablo bir görselden aktarılmıştır, dokümanın metninde sayısal hali yoktur.
+Kritik ayrım: `FeeConfig` **iki tablo** taşır. `fee_tiers` SOL-quote'lu coinler için, **`stable_fee_tiers`** stablecoin-quote'lular için. Yüzdeler aynı, eşikler farklı. USDC ile eşleşen bir launchpad olduğumuz için **doğru referans `stable_fee_tiers`'dır** ve eşikleri quote token'ın taban biriminde (USDC için 6 decimal), yuvarlak dolar rakamlarıdır:
+
+| Eşik (USDC market cap) | LP | Protokol | Creator | Toplam |
+|---|---|---|---|---|
+| 0 — **bonding curve** | %0,02 | %0,93 | %0,30 | **%1,25** |
+| 59.000 | %0,20 | %0,05 | %0,95 | %1,20 |
+| 300.000 | %0,20 | %0,05 | %0,90 | %1,15 |
+| 500.000 | %0,20 | %0,05 | %0,85 | %1,10 |
+| 700.000 | %0,20 | %0,05 | %0,80 | %1,05 |
+| 900.000 | %0,20 | %0,05 | %0,75 | %1,00 |
+| 2M | %0,20 | %0,05 | %0,70 | %0,95 |
+| 3M → 10M (1M adımlarla) | %0,20 | %0,05 | %0,65 → %0,30 | %0,90 → %0,55 |
+| 11M → 20M (1M adımlarla) | %0,20 | %0,05 | %0,28 → %0,05 | %0,53 → %0,30 |
+| 20M+ | %0,20 | %0,05 | %0,05 | **%0,30** |
+
+25 kademe vardır; ara basamaklar milyon başına birer adımdır. **59.000 eşiği rastgele değildir:** pump.fun'ın USDC curve'ü ~58.784 USDC FDV'de mezun olur, yani token mezun olur olmaz creator lehine kademeye geçer. §5.3'teki `V` seçimimiz bu ilişkiyi koruyor.
+
+**Ücret hesabındaki iki ince nokta** (pump.fun SDK kaynağından):
+
+- Kademe seçimi için kullanılan market cap, mint'in **gerçek arzıyla değil sabit `1e15` (bizde `1e27` wei) arz sabitiyle** hesaplanır. Tüm launch'lar aynı arza sahip olduğu için bu, market cap'i saf bir fiyat fonksiyonuna indirger.
+- Ücret her zaman **tavana yuvarlanır**: `ceilDiv(amount × bps, 10_000)`.
 
 Bu tablonun üç özelliği tasarım açısından belirleyici:
 
