@@ -1905,7 +1905,7 @@ make test
 ARC_RPC_URL=https://rpc.testnet.arc.network make fork-test
 ```
 
-Beklenen: dördü de hatasız. `make test` çıktısında **5 Solidity testi** ve **25 TypeScript testi** (shared 12, indexer 5, keeper 5, web 3) görünmeli.
+Beklenen: dördü de hatasız. `make test` çıktısında **5 Solidity testi** ve **27 TypeScript testi** (shared 14, indexer 5, keeper 5, web 3) görünmeli.
 
 - [ ] **Step 8: Commit ve dalı birleştir**
 
@@ -1928,7 +1928,7 @@ git merge --no-ff phase-0-scaffold -m "Merge phase 0: toolchain scaffolding"
 
 Aşağıdakilerin hepsi doğruysa Faz 0 bitmiştir:
 
-- [ ] `make test` yeşil: 5 Solidity testi + 25 TypeScript testi
+- [ ] `make test` yeşil: 5 Solidity testi + 27 TypeScript testi
 - [ ] `ARC_RPC_URL=... make fork-test` yeşil: Arc testnet'e karşı 4 test
 - [ ] `make build` hatasız: kontratlar derleniyor, `web` build alıyor
 - [ ] `make fmt-check` hatasız
