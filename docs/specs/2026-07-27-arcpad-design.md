@@ -192,9 +192,11 @@ Sanal rezervli sabit çarpım (`x·y = k`) — pump.fun ve pons v2 ile aynı ail
 **İşlemler:**
 
 ```
-buy(dx):   tokensOut = tokenReserve − k / (usdcReserve + dx)
-sell(dy):  usdcOut   = usdcReserve  − k / (tokenReserve + dy)
+buy(dx):   tokensOut = dx · tokenReserve / (usdcReserve + dx)
+sell(dy):  usdcOut   = dy · usdcReserve  / (tokenReserve + dy)
 ```
+
+> **Bu formların yazılışı önemlidir, sadeliği için değil.** `tokenReserve − k/(usdcReserve + dx)` yazımı cebirsel olarak denktir ama tamsayı bölmesiyle **kullanıcı lehine** yuvarlar — yani aşağıda uyarılan drain şeklinin tam kendisi. Ölçüldü: 20.000 rastgele `(V, T, dx)` üçlüsünün 20.000'inde `k`-çıkarmalı form alıcıya daha fazla token, satıcıya daha fazla quote verir. Somut örnek: `V=100, T=200, dy=1` → `k`-formu 1 öder, doğru form 0 öder. **Uygulamada yalnızca yukarıdaki çarpım formu kullanılır.**
 
 **Parametrelendirme pump.fun ile aynıdır:** üç sayı doğrudan konfigürasyondan gelir — sanal quote rezervi `V`, sanal token rezervi `T`, ve curve'de satılacak gerçek arz `S`. Geri kalan her şey türetilir.
 
@@ -298,14 +300,7 @@ Son alım kısmi doldurulabilir: satış arzından kalan miktar talep edilenden 
 - Ücret **her zaman pairing asset'te** (native USDC) alınır, asla launch tokenında.
 - Alımda ücret `msg.value`'dan curve matematiğinden **önce** kesilir; satışta curve çıktısından **sonra** kesilir. Curve rezervlerine yalnızca ücret sonrası tutar girer — §5.2'deki havuz tohumu formülünün ücretten bağımsız olmasının sebebi budur.
 
-**Ücret sabit değil, market cap'e göre kademelidir.** pump.fun'ın Eylül 2025'te düz %1'den geçtiği model budur; doğrudan benimsiyoruz. Her işlemde market cap hesaplanır ve oran o anki kademeden okunur:
-
-```
-curve içinde:  marketCap = usdcReserve × N / tokenReserve
-havuzda:       marketCap = quoteReserve × N / baseReserve
-```
-
-Kademe seçimi: `marketCap` ilk kademenin eşiğinin altındaysa ilk kademe; değilse kademeler tersten taranır ve eşiği aşılan ilk kademe alınır.
+Ücret yapısı **iki ayrı rejimden** oluşur ve bunları karıştırmamak kritiktir. Aşağıda önce ayrım, sonra her rejim tek tek anlatılıyor.
 
 **Ücret yapısı iki farklı rejimden oluşur ve bunları karıştırmamak kritiktir.** pump.fun'ın `fee_config` PDA'sının seed'i `["fee_config", program_id]` — yani **program başına bir tane**. Solana mainnet'te iki hesap var ve ikisi farklı şeyi tarif ediyor (2026-07-27'de çözüldü):
 
@@ -322,7 +317,15 @@ Curve üzerindeki her alım ve satımda sabit oran: **%0,95 protokol + %0,30 cre
 
 ### Rejim 2 — graduation sonrası havuz: kademeli
 
-Havuzda oran market cap'e göre değişir. `FeeConfig` **iki tablo** taşır: `fee_tiers` SOL-quote'lu coinler için, **`stable_fee_tiers`** stablecoin-quote'lular için. Yüzdeler aynı, eşikler farklı. USDC ile eşleştiğimiz için **doğru referans `stable_fee_tiers`'dır**; eşikleri quote token'ın taban biriminde (USDC için 6 decimal), yuvarlak dolar rakamlarıdır:
+Havuzda oran market cap'e göre değişir; her swap'te market cap hesaplanır ve oran o anki kademeden okunur:
+
+```
+marketCap = quoteReserve × N / baseReserve
+```
+
+Kademe seçimi: `marketCap` ilk kademenin eşiğinin altındaysa ilk kademe; değilse kademeler tersten taranır ve eşiği aşılan ilk kademe alınır. `N` mint'in gerçek arzı değil sabit arz sabitidir (§5.5 sonundaki nota bakınız).
+
+`FeeConfig` **iki tablo** taşır: `fee_tiers` SOL-quote'lu coinler için, **`stable_fee_tiers`** stablecoin-quote'lular için. Yüzdeler aynı, eşikler farklı. USDC ile eşleştiğimiz için **doğru referans `stable_fee_tiers`'dır**; eşikleri quote token'ın taban biriminde (USDC için 6 decimal), yuvarlak dolar rakamlarıdır:
 
 | Eşik (USDC market cap) | LP | Protokol | Creator | Toplam |
 |---|---|---|---|---|
@@ -371,7 +374,9 @@ Graduation eşiğimiz (üretimde ~82.000 USDC) tablonun ilk havuz kademesinin s�
 Satış arzı tükendiğinde, tamamlayan işlemin içinde:
 
 1. Curve kapanır, `sold == S` doğrulanır.
-2. Toplanan `R` USDC'den protokol ve creator ücretleri escrow'a ayrılır; kalan `R_net` havuza gider.
+2. Curve'de biriken `R` USDC'nin **tamamı** havuza gider. Ayrıca bir ücret kesilmez: ücretler zaten her işlem anında alınıp `FeeEscrow`'a yazılmıştır ve rezervlere hiç girmemiştir (§5.2, §5.5). Bu, §5.2'deki `D = R / P_final` süreklilik koşulunun tuttuğu tek senaryodur — `R`'den burada bir kesinti yapılsaydı havuz curve'ün kapanış fiyatının altında açardı.
+
+   > pump.fun'ın buradaki `pool_migration_fee`'si (15.000.001 lamports) Solana'nın hesap kirası içindir. Arc'ta böyle bir maliyet yoktur, dolayısıyla karşılığı da yoktur.
 3. `D` token zaten `LaunchLocker`'da beklemektedir (constructor'da oraya basılmıştı); havuz tohumu olarak kullanılır.
 4. V4 havuzu `initialize` edilir; `sqrtPriceX96 = sqrt(P_final)`.
 5. `LaunchLocker`, `PoolManager.unlock` geri çağrısı içinde tam aralık (`MIN_TICK`–`MAX_TICK`) likidite ekler.
