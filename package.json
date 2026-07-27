@@ -1,0 +1,15 @@
+{
+  "name": "arcpad",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "build": "pnpm -r --if-present build"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/node": "26.1.1"
+  },
+  "packageManager": "pnpm@11.17.0"
+}
