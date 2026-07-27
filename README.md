@@ -19,6 +19,16 @@ para birimi olan USDC'dir.
 | `docs/specs/` | Tasarım dokümanları |
 | `docs/plans/` | Faz faz uygulama planları |
 
+## Önkoşullar
+
+| Araç | Neden | Kurulum |
+|---|---|---|
+| `git` | Submodule'ler dahil depoyu klonlamak için | [git-scm.com](https://git-scm.com/downloads) |
+| `make` | Tüm komutlar `Makefile` üzerinden çalışır. **Windows'ta stok kurulumda yok** — winget ile kurulmalı: `winget install ezwinports.make` | [ezwinports.make](https://github.com/skeeto/w64devkit) veya paket yöneticiniz |
+| Foundry `v1.6.0-rc1` | `forge`/`cast`/`anvil` — kontrat build/test zinciri. Sürüm CI ile aynı pinlenmiş sürümde olmalı (bkz. `CONTRIBUTING.md`) | `foundryup -v v1.6.0-rc1` (önce [foundryup](https://getfoundry.sh)) |
+| Node `24` | pnpm workspace'i çalıştırır | [nodejs.org](https://nodejs.org) |
+| pnpm `11.17.0` | TypeScript paket yöneticisi. Ayrı kurulum gerekmez — Node 24 ile gelen corepack `make install` içinde etkinleştirilir; corepack `EPERM` ile başarısız olursa elle kurun: `npm install -g pnpm@11.17.0` (detay: `CONTRIBUTING.md`) | corepack (varsayılan) |
+
 ## Başlangıç
 
 ```bash
@@ -39,8 +49,12 @@ Test USDC'si: https://faucet.circle.com
 
 | Komut | Ne yapar |
 |---|---|
+| `make install` | pnpm'i etkinleştirir, bağımlılıkları kurar, submodule'leri günceller |
 | `make build` | Kontratları ve TypeScript paketlerini derler |
 | `make test` | Birim testleri (fork testleri hariç) |
 | `make fork-test` | Arc testnet fork'una karşı davranış testleri |
-| `make fmt` | Solidity formatlar |
+| `make fmt` | Solidity ve TypeScript'i formatlar |
+| `make fmt-check` | Formatı değiştirmeden doğrular — **CI'ın çalıştırdığı komut budur** |
+| `make lint` | TypeScript'i ESLint ile denetler (`en-US` locale kuralı dahil) |
 | `make dev` | Web arayüzünü geliştirme modunda başlatır |
+| `make clean` | Build çıktılarını ve `node_modules`'ü siler |

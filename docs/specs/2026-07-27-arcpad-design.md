@@ -122,11 +122,11 @@ Dört bağımsız çalışan parça, aralarında net sınırlar:
 d:\pumpfunforarc\
 ├── contracts/        Foundry (solc 0.8.26, evm=cancun, via_ir=true)
 │   ├── src/ test/ script/
-│   └── lib/          v4-core, v4-periphery, forge-std, openzeppelin (git submodule)
+│   └── lib/          v4-core, v4-periphery, forge-std, uniswap-hooks (git submodule) — openzeppelin ayrı submodule değil, v4-core/lib üzerinden çözülür
 ├── indexer/          TypeScript + viem + Postgres
-├── web/              Next.js 14 App Router + wagmi/viem + Tailwind
+├── web/              Next.js 16 App Router + React 19 + wagmi 3/viem + Tailwind 4
 ├── keeper/           TypeScript limit-order executor + graduation fallback
-├── packages/shared/  ABI + tip tanımları — tek kaynak
+├── packages/shared/  Arc zincir tanımı + USDC çift-görünüm yardımcıları — tek kaynak (ABI'ler Faz 1'de gelecek)
 ├── docs/specs/       Tasarım dokümanları
 ├── docs/plans/       Faz faz uygulama planları
 ├── Makefile

@@ -3,6 +3,12 @@ packages:
   - indexer
   - keeper
   - web
+# Tedarik zinciri kapisi: bir paket ancak yayinlandiktan 1440 dakika (24 saat)
+# sonra kurulabilir. Bu, pnpm 11'in yerlesik varsayilanidir; burada acikca
+# yazilmasinin nedeni bir okuyucunun bu kurali gormesini saglamak ve gelecekte
+# bir pnpm major surumu varsayilani degistirirse bu kararin sessizce
+# buharlasmamasidir.
+minimumReleaseAge: 1440
 allowBuilds:
   # esbuild's install script places its platform binary; vitest and tsx depend
   # on it for TypeScript compilation. Without this, tests and tsx cannot run.
