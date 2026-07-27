@@ -7,3 +7,9 @@ allowBuilds:
   # esbuild's install script places its platform binary; vitest and tsx depend
   # on it for TypeScript compilation. Without this, tests and tsx cannot run.
   esbuild: true
+  # sharp is an optional dependency of next, used only for image processing.
+  # Phase 0 renders no images and never calls next/image, so its install script
+  # -- which downloads and links prebuilt native libvips binaries -- buys us
+  # nothing today. Recording `false` resolves pnpm's pending state without
+  # granting the script. Revisit when token artwork lands (Phase 4).
+  sharp: false

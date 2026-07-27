@@ -1,0 +1,19 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-bg: #0b0b0b;
+  --color-surface: #141414;
+  --color-border: rgb(255 255 255 / 8%);
+  --color-text: #fafafa;
+  --color-muted: #8a8a8a;
+  --color-accent: #c6f24e;
+  --color-primary: #7e8f2e;
+
+  --radius-card: 20px;
+  --radius-input: 14px;
+}
+
+body {
+  background-color: var(--color-bg);
+  color: var(--color-text);
+}
