@@ -27,6 +27,33 @@ Global pnpm kurulu değilse elle kurun: `npm install -g pnpm@11.17.0`.
 `solc 0.8.26`, `evm_version = "cancun"`, `via_ir = true`. Üçü de Uniswap V4'ün
 gereğidir ve v4-core'un kendi yapılandırmasıyla aynıdır. Değiştirme.
 
+**Foundry sürümü:** `v1.6.0-rc1` (`forge --version` çıktısındaki
+`Commit SHA: b272ce3366987406406e9eb1b82596653a3ad628`). CI bu sürüme
+`.github/workflows/contracts.yml` içinde `foundry-toolchain@v1`'in `version:`
+girdisiyle pinlidir — pinlenmezse CI en güncel Foundry'yi çeker ve
+`forge fmt` çıktısı sürüme duyarlı olduğu için kod değişmeden formatting
+kapısı kırılabilir.
+
+## Submodule takibi
+
+`forge-std` (`v1.16.2`) ve `uniswap-hooks` (`v1.2.1`) en son kararlı sürüm
+tag'ine pinlidir. `v4-core` ve `v4-periphery` ise **branch tip**'te (main)
+kalır, geçici değil kalıcı bir karardır:
+
+- **`v4-periphery`**: depoda hiç release tag'i yok (`git ls-remote --tags`
+  boş döner). Pinlenecek bir sürüm yok.
+- **`v4-core`**: tüm tarihinde tek tag var, `v4.0.0` (Ocak 2025). Bu tag
+  `uniswap-hooks@v1.2.1` ile derlenmiyor —
+  `Source "@uniswap/v4-core/src/types/PoolOperation.sol" not found` hatası
+  veriyor; bu dosya yalnızca `v4.0.0`'dan sonraki main commit'lerinde
+  eklenmiş. `v4-periphery` zaten main tip'te kalmak zorunda olduğu için
+  `v4-core`'u tek (ve eski) tag'ine pinlemek onu `v4-periphery` ve
+  `uniswap-hooks` ile uyumsuz bırakırdı; bu yüzden `v4-core` da main tip'te
+  kalıyor.
+
+Bu iki bağımlılık post-audit, unreleased kod taşıyor. Faz 2 başlamadan önce
+yeniden değerlendirilmeli: Uniswap yeni bir tag keserse o tag'e geçilmeli.
+
 ## Test katmanları
 
 | Katman | Komut | Nerede koşar |

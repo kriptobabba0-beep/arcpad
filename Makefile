@@ -20,9 +20,14 @@ fmt-check:
 	forge fmt --check --root contracts
 
 # Arc'a ozgu davranis yalnizca gercek RPC'de gozlemlenebilir; anvil bunu
-# yeniden uretemez.
+# yeniden uretemez. `arc_testnet`, contracts/foundry.toml [rpc_endpoints]
+# icindeki takma addir ($ARC_RPC_URL'e cozulur). make bu degiskeni YUKLEMEZ
+# (make .env'i okumaz) -- ama forge, calisma dizini olarak make'in kendi
+# CWD'sini (bu Makefile'in bulundugu depo koku) kullanir ve ARC_RPC_URL'i
+# oradaki .env dosyasindan dogrudan kendisi okur. Bu yuzden takma ad, make'in
+# ortamina hic ihtiyac duymadan calisir; `cp .env.example .env` yeterlidir.
 fork-test:
-	forge test --root contracts --match-path 'test/fork/*' --fork-url $(ARC_RPC_URL) -vv
+	forge test --root contracts --match-path 'test/fork/*' --fork-url arc_testnet -vv
 
 dev:
 	pnpm --filter @arcpad/web dev
