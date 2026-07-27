@@ -163,7 +163,8 @@ d:\pumpfunforarc\
 
 | Kontrat | Sorumluluk |
 |---|---|
-| `LaunchFactory` | Giriş noktası. Launch ücretini alır, `LaunchToken` + `BondingCurve` klonunu üretir, geliştirici ilk alımını atomik yapar, graduation'ı orkestre eder. Launch konfigürasyonunu ve kaydını tutar. |
+| `LaunchFactory` | Giriş noktası. `LaunchToken` + `BondingCurve` klonunu üretir, o anki `FeeSchedule` adresini launch'a yazar, geliştirici ilk alımını atomik yapar, graduation'ı orkestre eder. Launch kaydını tutar. Oluşturma ücretsizdir. |
+| `FeeSchedule` | Market cap kademelerini taşıyan **immutable** kontrat. Bir kez deploy edilir, hiç değişmez; `LaunchFactory` adresini her launch'a yazar, böylece bir launch'ın ücretleri yayınlandıktan sonra değiştirilemez. Tabloyu güncellemek yeni bir deployment demektir ve yalnızca sonraki launch'ları etkiler. |
 | `LaunchToken` | Sabit arzlı ERC-20, 18 decimal. `name`, `symbol`, `metadataURI`, `curve`, `pool` alanları token üzerinde — zincirden okunabilir, backend'e bağımlı değil. **Tüm arz constructor'da basılır: `S` curve'e, `D` doğrudan `LaunchLocker`'a.** Sonradan mint fonksiyonu yoktur. |
 | `BondingCurve` | **Launch başına bir EIP-1167 klonu.** Satış arzını tutar. `buy()` (payable), `sell()`, `quoteBuy()`, `quoteSell()`. |
 | `ArcpadHook` | Uniswap V4 singleton hook. Havuzun kendi ücreti sıfırdır; ücreti hook alır ve `FeeEscrow`'a yazar. |
@@ -259,9 +260,11 @@ Birincil (konfigürasyondan gelen) parametreler yalnızca üçtür: `V`, `T`, `S
 | → Fiyat katı `(T/(T−S))²` | 14,7× | aynı |
 | → Açılış FDV | 4,00 USDC | **4.000 USDC** |
 | → Graduation FDV | ≈ 58,78 USDC | **≈ 58.784 USDC** |
-| Launch ücreti | 0,10 USDC | 5 USDC |
+| Launch ücreti | **yok** | **yok** |
 | İşlem ücreti | kademeli — §5.5 | aynı |
 | Geliştirici ilk alım tavanı | satış arzının %5'i | aynı |
+
+**Token oluşturmak ücretsizdir.** pump.fun'ın modeli budur — `create_v2`'nin argümanlarında hiç ücret alanı yoktur ve protokol yalnızca işlem ücretlerinden kazanır. Ponsfamily 0,0005 ETH alıyor, ama düşük sürtünme daha çok launch, daha çok launch daha çok işlem hacmi demek; gelir oradan gelir. Arc'ta gas zaten ~$0,01 olduğu için spam engeli olarak da ayrı bir ücrete ihtiyaç yok.
 
 İki profil arasında **yalnızca `V` değişir**, tam 1000× oranında; ölçeği belirleyen tek sayı sanal quote rezervidir. pump.fun'ın yaptığı da budur — SOL'lu ve USDC'li coinler aynı token rezervlerini, farklı `initial_virtual_*_reserves` değerlerini kullanır.
 
@@ -322,6 +325,12 @@ Kritik ayrım: `FeeConfig` **iki tablo** taşır. `fee_tiers` SOL-quote'lu coinl
 | 20M+ | %0,20 | %0,05 | %0,05 | **%0,30** |
 
 25 kademe vardır; ara basamaklar milyon başına birer adımdır. **59.000 eşiği rastgele değildir:** pump.fun'ın USDC curve'ü ~58.784 USDC FDV'de mezun olur, yani token mezun olur olmaz creator lehine kademeye geçer. §5.3'teki `V` seçimimiz bu ilişkiyi koruyor.
+
+**Kademe tablosu launch anında dondurulur ve bir daha değişmez.** Burada pump.fun'dan bilinçli olarak ayrılıyoruz: onların `FeeConfig`'i `admin` alanı olan global bir hesap, yani yönetici tabloyu güncellediğinde **zaten yayınlanmış** launch'ların ücreti de değişir. Bizde değişmez — creator ve alıcılar tam olarak neye girdiklerini bilir.
+
+Uygulaması bir kilit mekanizmasıyla değil, **değişmezlikle** yapılır: kademe tablosu `FeeSchedule` adlı immutable bir kontrat olarak bir kez deploy edilir, `LaunchFactory` o anki `FeeSchedule` adresini her yeni launch'ın içine yazar. Launch başına maliyet tek bir adres (20 bayt); garanti ise kontrat bytecode'unun değiştirilemezliğinden gelir. Tabloyu güncellemek yeni bir `FeeSchedule` deploy etmek demektir ve **yalnızca sonraki launch'ları** etkiler.
+
+Bunun bedeli: hatalı bir tabloyla yayınlanan launch'lar düzeltilemez. Kabul ediyoruz — düzeltilebilir bir ücret, güvenilmesi gereken bir yetki noktası demektir ve bu ürünün en temel vaadiyle çelişir.
 
 **Ücret hesabındaki iki ince nokta** (pump.fun SDK kaynağından):
 
@@ -387,7 +396,7 @@ Aşağıdakiler ponsfamily dokümanlarında hiç geçmiyor; pump.fun'ın resmî 
 | **Mayhem modu** | Coin başına bayrak, ayrı ücret alıcı kümesi | **Kapsam dışı.** Resmî dokümanlar ne yaptığını açıklamıyor; anlamadığımız bir mekanizmayı kopyalamıyoruz. |
 | **Ayrı buyback ücret alıcısı** | Her işlemde `feeRecipient` + `buybackFeeRecipient` | **Benimsendi**; `BuybackVault` bu rolü üstleniyor. |
 | **Çoklu ücret alıcısı (8 adet)** | Solana'da hesap yazma çakışmasını dağıtmak için | **Reddedildi.** EVM'de böyle bir çakışma yok; tek escrow kontratı yeterli. |
-| **Kısmi doldurma** | Yok — `amount` `real_token_reserves`'ü aşamaz, işlem revert eder | **Sapıyoruz.** arcpad son alımı kısmi doldurup fazlayı iade eder. Kullanıcının "tam mezun et" niyetinin, kaç token kaldığını bilmemesi yüzünden revert etmesi kötü bir deneyim. |
+| **Kısmi doldurma** | `buy`'da yok ama ayrı bir instruction var: `buy_exact_quote_in_v2(spendable_quote_in, min_tokens_out)` — "şu kadara kadar harca", kalan kadarını verir, slipaj `min_tokens_out` ile korunur | **Benimsendi, iki giriş noktası olarak.** İlk taslak `buy`'ı gevşetip kısmi doldurma yapacaktı; kaynağa bakınca daha temiz olanı görüldü: `buy(tokensOut, maxQuoteIn)` kalandan fazlası istenirse revert eder, `buyExactQuoteIn(quoteIn, minTokensOut)` kalanı doldurup fazlayı iade eder. Arayüzdeki miktar girişi birincisini, "X USDC ile al" kısayolları ikincisini kullanır. |
 | **Metadata sınırları** | isim ≤32, sembol ≤13, uri ≤200 | **Benimsendi** (ponsfamily'nin 10 karakterlik ticker sınırı yerine 13). |
 
 ---
