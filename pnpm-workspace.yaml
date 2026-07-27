@@ -3,5 +3,3 @@ packages:
   - indexer
   - keeper
   - web
-minimumReleaseAgeExclude:
-  - viem@2.55.10

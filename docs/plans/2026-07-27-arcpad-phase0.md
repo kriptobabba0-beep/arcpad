@@ -6,7 +6,7 @@
 
 **Architecture:** Tek git deposu, dört bağımsız çalışan parça: `contracts/` (Foundry), `indexer/`, `keeper/`, `web/` (pnpm workspace) ve ortak `packages/shared/`. Foundry alt dizinde yaşar; bağımlılıklar `forge install` ile değil doğrudan `git submodule add` ile eklenir ve tüm forge komutları `--root contracts` ile çalıştırılır.
 
-**Tech Stack:** Solidity 0.8.26 · Foundry 1.6 · Uniswap v4-core + v4-periphery + OpenZeppelin uniswap-hooks · Node 24 · pnpm 11 (corepack) · TypeScript 5.9.3 · viem 2.55.10 · wagmi 3.7.4 · Next.js 16.2.12 · React 19.2.8 · Tailwind CSS 4.3.3 · Vitest 4.1.10
+**Tech Stack:** Solidity 0.8.26 · Foundry 1.6 · Uniswap v4-core + v4-periphery + OpenZeppelin uniswap-hooks · Node 24 · pnpm 11 (corepack) · TypeScript 5.9.3 · viem 2.55.8 · wagmi 3.7.4 · Next.js 16.2.12 · React 19.2.8 · Tailwind CSS 4.3.3 · Vitest 4.1.10
 
 ## Global Constraints
 
@@ -20,7 +20,7 @@ Bu bölüm her görevin gereksinimlerine örtük olarak dahildir.
 - **Marka kod adı `arcpad`**, tek kaynak `web/lib/brand.ts`.
 - **`forge install` KULLANILMAZ.** Depo kökü git deposu olduğu için `forge install` bağımlılıkları yanlış yere koyar ve `prefix not found` ile kırılır. Bağımlılıklar `git submodule add --depth 1 <url> contracts/lib/<ad>` ile depo kökünden eklenir; tüm forge komutları `--root contracts` alır.
 - **Paket içi import'lar uzantısızdır** (`./chain`, `../src/usdc`). `moduleResolution: "bundler"` bunu açıkça destekler ve hem Vite hem Next aynı şekilde çözer.
-- **Paket sürümleri tam sabittir** (aralık değil): `typescript@5.9.3`, `viem@2.55.10`, `wagmi@3.7.4`, `@tanstack/react-query@5.101.4`, `next@16.2.12`, `react@19.2.8`, `react-dom@19.2.8`, `tailwindcss@4.3.3`, `@tailwindcss/postcss@4.3.3`, `vitest@4.1.10`, `pg@8.22.0`, `tsx@4.23.1`, `dotenv@17.4.2`, `@types/node@26.1.1`, `@types/pg@8.20.0`, `@types/react@19.2.17`, `@types/react-dom@19.2.3`.
+- **Paket sürümleri tam sabittir** (aralık değil): `typescript@5.9.3`, `viem@2.55.8`, `wagmi@3.7.4`, `@tanstack/react-query@5.101.4`, `next@16.2.12`, `react@19.2.8`, `react-dom@19.2.8`, `tailwindcss@4.3.3`, `@tailwindcss/postcss@4.3.3`, `vitest@4.1.10`, `pg@8.22.0`, `tsx@4.23.1`, `dotenv@17.4.2`, `@types/node@26.1.1`, `@types/pg@8.20.0`, `@types/react@19.2.17`, `@types/react-dom@19.2.3`.
 - Her görev kendi commit'iyle biter. Çalışma dalı: `phase-0-scaffold`.
 
 ---
@@ -635,7 +635,7 @@ packages:
     "test": "vitest run"
   },
   "dependencies": {
-    "viem": "2.55.10"
+    "viem": "2.55.8"
   },
   "devDependencies": {
     "typescript": "5.9.3",
@@ -932,7 +932,7 @@ read two ways."
     "@arcpad/shared": "workspace:*",
     "dotenv": "17.4.2",
     "pg": "8.22.0",
-    "viem": "2.55.10"
+    "viem": "2.55.8"
   },
   "devDependencies": {
     "@types/pg": "8.20.0",
@@ -1150,7 +1150,7 @@ writes later, not by rollback logic."
   "dependencies": {
     "@arcpad/shared": "workspace:*",
     "dotenv": "17.4.2",
-    "viem": "2.55.10"
+    "viem": "2.55.8"
   },
   "devDependencies": {
     "tsx": "4.23.1",
@@ -1377,7 +1377,7 @@ than one that does nothing, so KEEPER_DRY_RUN must be explicitly set to
     "next": "16.2.12",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "viem": "2.55.10",
+    "viem": "2.55.8",
     "wagmi": "3.7.4"
   },
   "devDependencies": {

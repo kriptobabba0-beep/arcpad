@@ -25,6 +25,13 @@ describe('USDC iki gorunum arasinda donusum', () => {
     expect(nativeToErc20(0n)).toBe(0n)
     expect(erc20ToNative(0n)).toBe(0n)
   })
+
+  it('negatif native degeri reddeder', () => {
+    // Arc'ta bir bakiye asla negatif olamaz. BigInt bolme sifira dogru
+    // keser (asagiya degil), yani negatif girdide sessizce yanlis
+    // yuvarlamak yerine acikca hata firlatilmalidir.
+    expect(() => nativeToErc20(-1n)).toThrow(RangeError)
+  })
 })
 
 describe('formatUsdc', () => {
@@ -40,5 +47,14 @@ describe('formatUsdc', () => {
   it('istendiginde daha fazla ondalik basamak gosterir', () => {
     // 1.5e12 native = 0.0000015 USDC; 7 basamak istenmezse yuvarlanir.
     expect(formatUsdc(1_500_000_000_000n, { maxFractionDigits: 7 })).toBe('0.0000015')
+  })
+
+  it('kesir kismi ~15 anlamli basamaktan sonra hassasiyet kaybedebilir (dokumante sinir)', () => {
+    // native = 1 USDC + en kucuk native birim (1e-18 USDC). Kesir Number'a
+    // cevrilirken IEEE-754 double hassasiyeti (~15-17 anlamli basamak)
+    // asilir: 1'e eklenen 1e-18 buyuklugu double toplaminda kaybolur ve
+    // deger tam 1 olarak yuvarlanir. formatUsdc goruntuleme icindir; zincir
+    // uzeri muhasebe bu fonksiyona dayanmamalidir.
+    expect(formatUsdc(1_000_000_000_000_000_001n, { maxFractionDigits: 18 })).toBe('1.00')
   })
 })
