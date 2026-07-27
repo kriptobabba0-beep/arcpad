@@ -10,7 +10,7 @@
 
 Circle'ın Arc L1'i (chainId 5042002) üzerinde, [ponsfamily.com](https://www.ponsfamily.com/)'un birebir işlevsel karşılığı olan bir token launchpad'i. Kullanıcı sabit arzlı bir token başlatır; tüm arz bir bonding curve'de satışa çıkar; curve tükendiğinde launch, likiditesi kalıcı olarak kilitlenmiş bir Uniswap V4 havuzuna *graduate* olur.
 
-Ponsfamily'nin **v2** tasarımı referans alınmıştır (bonding curve + V4 hook), v1'in (launch anında doğrudan V3 havuzu) değil. Karşı bacak ETH/WETH değil, Arc'ın native para birimi olan **USDC**'dir.
+**Birincil kaynak pump.fun'ın resmî dokümantasyonudur** (`github.com/pump-fun/pump-public-docs`). Ponsfamily'nin kendisi pump.fun'ı taklit ettiği için dokümanları ikinci elden bir anlatımdır; bu spec protokol mekaniğini pump.fun'dan, ürün/arayüz şeklini ponsfamily'den alır. Akış her ikisinde de aynıdır: bonding curve → graduation → kalıcı kilitli AMM havuzu. Karşı bacak SOL veya ETH değil, Arc'ın native para birimi olan **USDC**'dir — pump.fun da SOL dışı quote asset desteğini eklemiş durumda, yani bu bir sapma değil aynı yönde bir adımdır.
 
 Hedef: Arc testnet'te gerçekten çalışan bir ürün. Arc mainnet açıldığında taşınabilir olmalı.
 
@@ -100,17 +100,28 @@ Mainnet'te kanonik `PoolManager` kullanılması, §2'de kapsam dışı bırakıl
 
 Ponsfamily de benzer bir modeli kullanıyor: dokümanındaki V3 Factory adresi (`0x1f7d7550…`) Uniswap'ın kanonik adresi (`0x1F98431c…`) değil.
 
-### 3.5 Referans: ponsfamily parametreleri
+### 3.5 Referans kaynaklar
 
-| Parametre | pons v1 (canlı) |
+**Birincil kaynak pump.fun'dır.** Ponsfamily'nin kendisi pump.fun'ın bir taklidi, yani dokümanları ikinci elden bir anlatım. Protokol mekaniği için `github.com/pump-fun/pump-public-docs` esas alınır; ponsfamily yalnızca **ürün/arayüz şekli** için referanstır — ekran görüntülerinin yakaladığı şey de budur.
+
+pump.fun'ın canlı `Global` hesabından okunan sabitler (2026-07-27):
+
+| Parametre | pump.fun (canlı) |
 |---|---|
-| Arz | 1.000.000.000, 18 decimal |
-| Havuz ücreti | %1 |
-| Launch ücreti | 0,0005 ETH |
-| Eşleşme | WETH |
-| Graduation | havuzda 4,2 ETH |
-| Ücret bölüşümü | %70 creator / %30 protokol |
-| Protokol payı | %80 buyback+burn, %20 operasyon |
+| `initial_virtual_token_reserves` | 1.073.000.000.000.000 |
+| `initial_virtual_sol_reserves` | 30.000.000.000 (30 SOL) |
+| `initial_real_token_reserves` | 793.100.000.000.000 |
+| `token_total_supply` | 1.000.000.000.000.000 (6 decimal ⇒ 1 milyar token) |
+| Havuz tohumu | 206.900.000 token (%20,69) |
+| Graduation | **85,005 SOL — türetilmiş, parametre değil** |
+| Fiyat katı | 14,7× |
+| İşlem ücreti | market cap'e göre kademeli, %1,25 → %0,30 |
+| Migration ücreti | 15.000.001 lamports (tavan 15.000.000) |
+| PumpSwap statik ücreti | 20 bps LP + 5 bps protokol |
+
+Karşılaştırma için ponsfamily v1 (canlı): 1 milyar arz, %1 havuz ücreti, 0,0005 ETH launch ücreti, WETH eşleşmesi, havuzda 4,2 ETH graduation, %70/%30 sabit bölüşüm. Ponsfamily v1'de bonding curve **yoktur** — token doğrudan V3 havuzuna düşer; bu spec'in izlediği model pump.fun'ın curve → AMM akışıdır.
+
+**pump.fun'ın ponsfamily dokümanlarında hiç geçmeyen özellikleri** — hepsi §5.8'de değerlendirilmiştir: SOL dışı quote asset desteği (USDC dahil), creator başına tek vault, izinsiz ücret süpürme, 10 paydaşa kadar creator fee sharing, işlem hacmine göre cashback, mayhem modu, ayrı buyback fee alıcısı.
 
 ---
 
@@ -184,26 +195,35 @@ buy(dx):   tokensOut = tokenReserve − k / (usdcReserve + dx)
 sell(dy):  usdcOut   = usdcReserve  − k / (tokenReserve + dy)
 ```
 
-**Parametre türetmesi.** `S` satış arzı, `m` açılıştan graduation'a fiyat katı, `φ` toplam ücret oranı olmak üzere:
+**Parametrelendirme pump.fun ile aynıdır:** üç sayı doğrudan konfigürasyondan gelir — sanal quote rezervi `V`, sanal token rezervi `T`, ve curve'de satılacak gerçek arz `S`. Geri kalan her şey türetilir.
 
 | Türetilen | Formül |
 |---|---|
-| Sanal token rezervi | `T = S · √m / (√m − 1)` |
-| Graduation'da toplanan | `R = V · (√m − 1)` |
 | Açılış fiyatı | `P₀ = V / T` |
-| Graduation fiyatı | `P_final = P₀ · m` |
-| **Havuz tohumu arzı** | **`D = S · (1 − φ) / √m`** |
+| Graduation'da toplanan | `R = V · S / (T − S)` |
+| Graduation fiyatı | `P_final = (V + R) / (T − S)` |
+| **Havuz tohumu arzı** | **`D = S · (T − S) / T`** |
+| Toplam arz | `N = S + D = S · (2T − S) / T` |
 
-`D` serbest bir sayı değildir, **zorunludur**. Curve'ün kapanış fiyatı ile havuzun açılış fiyatı eşitlenmezse graduation anında anlık bir arbitraj boşluğu doğar ve ilk swap fiyatı uçurur. Ponsfamily v2'nin *"aynı ayarlarla her launch aynı büyüklükte, aynı fiyatta havuza mezun olur"* ifadesinin matematiği budur.
+`D` serbest bir sayı değildir, **zorunludur**. Curve'ün kapanış fiyatı ile havuzun açılış fiyatı eşitlenmezse graduation anında anlık bir arbitraj boşluğu doğar ve ilk swap fiyatı uçurur. Yukarıdaki formül, `D = R / P_final` koşulunun sadeleştirilmiş halidir.
 
-Toplam arz `N = S + D` sabitlendiğinde, ters çözüm:
+**Bu formülde ücret oranı yoktur, ve bu kasıtlıdır.** Ücret curve matematiğinin *dışında* alınır: kullanıcı `quoteIn` öder, ücret düşülür, rezervlere yalnızca `quoteIn − f` girer. Dolayısıyla sell-out anında curve'de biriken `R` ücret oranından bağımsızdır. §5.5'teki kademeli ücret modelini mümkün kılan şey budur — oran işlem başına değişse bile havuz tohumu sabit kalır.
+
+> **Düzeltme.** Bu spec'in ilk sürümü `D = S(1−φ)/√m` yazıyor ve ücreti formülün içine koyuyordu. pump.fun'ın canlı sabitleriyle sınandığında yanlış olduğu görüldü. Karekök de gerekmediği için "`sqrtM`'i tamsayı seç" kısıtı tamamen düşmüştür.
+
+**Doğrulama — pump.fun'ın kendi sabitleri bu formülleri sağlar:**
 
 ```
-D = N · (1 − φ) / (√m + 1 − φ)          [aşağı yuvarlanır]
-S = N − D
+V = 30e9 lamports,  T = 1,073e15,  S = 7,931e14
+
+R = 30e9 × 7,931e14 / 2,799e14 = 85,005e9      → meşhur 85 SOL eşiği
+D = 7,931e14 × 2,799e14 / 1,073e15 = 2,069e14  → rezerve arzın kendisi
+(T/(T−S))² = 14,7×                              → fiyat katı
 ```
 
-**Tamsayı kesinliği.** Konfigürasyon `m` yerine doğrudan **`sqrtM`** (yani `√m`) alır. Böylece hiçbir yerde karekök hesaplanmaz ve `D`, `T`, `R` tamsayı aritmetiğiyle kesin çıkar. `D` aşağı yuvarlandığı için havuza türetilen ideal miktarın en fazla 1 wei altında token gider; oluşan mikroskobik fark `LaunchLocker`'da kalıcı kilitlenir.
+85 SOL bir parametre değildir; bu üç sayıdan çıkan bir sonuçtur.
+
+**Yuvarlama.** `D` aşağı yuvarlanır; havuza ideal miktarın en fazla 1 wei altında token gider, oluşan toz `LaunchLocker`'da kalıcı kilitlenir.
 
 **Yuvarlama yönü.** Her `mulDiv` çağrısının yuvarlama yönü açıkça seçilir ve **her zaman curve lehinedir**. Alıcı lehine yuvarlama, saldırganın 1 wei'lik milyonlarca işlemle curve'ü kuruş kuruş boşaltmasına izin verir. Bu, `test/invariant` altında "gidiş-dönüş bir işlem curve'ün bakiyesini asla azaltamaz" invariant'ıyla kilitlenir.
 
@@ -211,24 +231,32 @@ S = N − D
 
 ### 5.3 Parametreler
 
-Birincil (konfigürasyondan gelen) parametreler: `N`, `sqrtM`, `V`, `φ`. Geri kalan her şey türetilir.
+Birincil (konfigürasyondan gelen) parametreler yalnızca üçtür: `V`, `T`, `S`. Geri kalan her şey §5.2'deki formüllerle türetilir.
+
+**Arz oranları pump.fun'dan birebir alınmıştır.** Milyonlarca launch üzerinde çalışmış sayılar; tahmin etmek yerine kanıtlanmışı kullanıyoruz.
 
 | Parametre | Testnet | Üretim |
 |---|---|---|
-| Toplam arz `N` | 1.000.000.000 × 10¹⁸ | aynı |
-| `sqrtM` (⇒ `m`) | 10 (⇒ 100×) | 10 (⇒ 100×) |
-| Sanal USDC rezervi `V` | 2 × 10¹⁸ (2 USDC) | 1.350 × 10¹⁸ |
-| Ücret `φ` | 100 bps (%1) | 100 bps (%1) |
-| → Satış arzı `S` | ≈ 909.918.107,37 | aynı |
-| → Havuz tohumu `D` | ≈ 90.081.892,63 | aynı |
-| → Graduation `R` | **18 USDC** | **12.150 USDC** |
-| → Açılış FDV | ≈ 2 USDC | ≈ 1.335 USDC |
-| → Graduation FDV | ≈ 198 USDC | ≈ 133.500 USDC |
+| Sanal token rezervi `T` | 1.073.000.000 × 10¹⁸ | aynı |
+| Satış arzı `S` | 793.100.000 × 10¹⁸ | aynı |
+| Sanal USDC rezervi `V` | 6 × 10¹⁸ (6 USDC) | 6.000 × 10¹⁸ |
+| → Havuz tohumu `D` | 206.900.000 (arzın %20,69'u) | aynı |
+| → Toplam arz `N = S + D` | 1.000.000.000 | aynı |
+| → Graduation `R = V·S/(T−S)` | **≈ 17,00 USDC** | **≈ 17.001 USDC** |
+| → Fiyat katı `(T/(T−S))²` | 14,7× | aynı |
+| → Açılış FDV | ≈ 5,59 USDC | ≈ 5.592 USDC |
+| → Graduation FDV | ≈ 82 USDC | ≈ 82.178 USDC |
 | Launch ücreti | 0,10 USDC | 5 USDC |
-| Ücret bölüşümü | %70 creator / %30 protokol | aynı |
+| İşlem ücreti | kademeli — §5.5 | aynı |
 | Geliştirici ilk alım tavanı | satış arzının %5'i | aynı |
 
-**Testnet rakamlarının küçüklüğü zorunludur, kozmetik değildir.** Circle faucet'i istek başına 10 USDC verir. 12.150 USDC'lik bir eşikle hiçbir token mezun edilemez, yani graduation, hook, locker ve havuz kodunun hiçbiri test edilemez. 18 USDC'lik eşik iki faucet talebiyle karşılanır.
+İki profil arasında **yalnızca `V` değişir**, tam 1000× oranında; ölçeği belirleyen tek sayı sanal quote rezervidir. pump.fun'ın yaptığı da budur — SOL'lu ve USDC'li coinler aynı token oranlarını, farklı `initial_virtual_*_reserves` değerlerini kullanır.
+
+Üretim `V`'si, graduation FDV'sini (~82.000 USDC) pump.fun'ınkiyle çakışacak şekilde seçilmiştir; §5.5'teki ücret kademeleri bu sayede birebir kullanılabilir.
+
+**Testnet rakamlarının küçüklüğü zorunludur, kozmetik değildir.** Circle faucet'i istek başına 10 USDC verir. 17.001 USDC'lik bir eşikle hiçbir token mezun edilemez, yani graduation, hook, locker ve havuz kodunun hiçbiri test edilemez. 17 USDC'lik eşik iki faucet talebiyle karşılanır.
+
+**Neden 100× değil de 14,7×?** Spec'in ilk sürümü fiyat katını 100× seçiyordu, bu da havuz tohumunu arzın yalnızca %9'una düşürüyordu. Yüksek kat daha çarpıcı bir curve grafiği verir ama graduation sonrası **sığ bir havuz** bırakır: aynı büyüklükteki emir çok daha fazla slipaj yaratır. pump.fun'ın %20,69'u, curve heyecanı ile mezuniyet sonrası piyasa sağlığı arasında canlı veriyle ayarlanmış bir dengedir.
 
 Parametreler deploy anında immutable olarak verilir; testnet ve üretim profilleri `script/` altında ayrı dosyalardır.
 
@@ -250,20 +278,42 @@ Son alım kısmi doldurulabilir: satış arzından kalan miktar talep edilenden 
 ### 5.5 Ücretler
 
 - Ücret **her zaman pairing asset'te** (native USDC) alınır, asla launch tokenında.
-- Oran launch'ta belirlenir ve **immutable**'dır; graduation öncesi ve sonrası aynıdır.
-- Alımda ücret `msg.value`'dan curve matematiğinden **önce** kesilir; satışta curve çıktısından **sonra** kesilir. Her iki durumda da kullanıcı ücreti USDC olarak öder.
+- Alımda ücret `msg.value`'dan curve matematiğinden **önce** kesilir; satışta curve çıktısından **sonra** kesilir. Curve rezervlerine yalnızca ücret sonrası tutar girer — §5.2'deki havuz tohumu formülünün ücretten bağımsız olmasının sebebi budur.
 
-**Bölüşüm modeli** (tek ve kesin tanım):
+**Ücret sabit değil, market cap'e göre kademelidir.** pump.fun'ın Eylül 2025'te düz %1'den geçtiği model budur; doğrudan benimsiyoruz. Her işlemde market cap hesaplanır ve oran o anki kademeden okunur:
 
 ```
-φ = %1 toplam işlem ücreti
-├─ %30 protokol payı
-│   ├─ %80 → BuybackVault (token geri alımı, beş yıla yayılan serbest bırakma)
-│   └─ %20 → protokol operasyon cüzdanı
-└─ %70 creator payı → FeeEscrow
+curve içinde:  marketCap = usdcReserve × N / tokenReserve
+havuzda:       marketCap = quoteReserve × N / baseReserve
 ```
 
-Creator, kendi payının bir dilimini `BuybackVault`'a yönlendiren bir anahtarı isteğe bağlı olarak açabilir. Varsayılan **kapalıdır**; creator anahtarı açabilir ama tek başına geri kapatamaz (protokol devre dışı bırakabilir).
+Kademe seçimi: `marketCap` ilk kademenin eşiğinin altındaysa ilk kademe; değilse kademeler tersten taranır ve eşiği aşılan ilk kademe alınır.
+
+| Market cap (USDC) | Durum | Creator | Protokol | LP | Toplam |
+|---|---|---|---|---|---|
+| — | **Bonding curve** | %0,300 | %0,95 | %0 | **%1,25** |
+| 0–85k | havuz | %0,300 | %0,93 | %0,02 | %1,25 |
+| 85k–300k | havuz | %0,950 | %0,05 | %0,20 | %1,20 |
+| 300k–500k | havuz | %0,900 | %0,05 | %0,20 | %1,15 |
+| 500k–700k | havuz | %0,850 | %0,05 | %0,20 | %1,10 |
+| 700k–900k | havuz | %0,800 | %0,05 | %0,20 | %1,05 |
+| 900k–2M | havuz | %0,750 | %0,05 | %0,20 | %1,00 |
+| 2M–3M | havuz | %0,700 | %0,05 | %0,20 | %0,95 |
+| 3M–10M | havuz | %0,650 → %0,350 | %0,05 | %0,20 | %0,90 → %0,60 |
+| 10M–20M | havuz | %0,300 → %0,075 | %0,05 | %0,20 | %0,55 → %0,33 |
+| 20M+ | havuz | %0,050 | %0,05 | %0,20 | **%0,30** |
+
+Ara kademeler milyon başına birer basamaktır; tam liste `pump-public-docs/docs/fees.png` içindedir. **Kontrat yazılırken kademe dizisi pump.fun'ın SDK'sindeki `feeTiers` ile karşılaştırılmalıdır** — bu tablo bir görselden aktarılmıştır, dokümanın metninde sayısal hali yoktur.
+
+Bu tablonun üç özelliği tasarım açısından belirleyici:
+
+1. **Toplam ücret token büyüdükçe düşer** (%1,25 → %0,30). Spekülatif faz pahalı, likit faz ucuz — çoğu ücret şemasının tersi.
+2. **Protokol curve'de %0,95, havuzda %0,05 alır.** Protokol gelirinin neredeyse tamamı graduation öncesinde kazanılır.
+3. **Küçülen pay creator'ınkidir.** Graduation'ın hemen ardından %0,95 ile zirve yapar, %0,05'e iner.
+
+Graduation eşiğimiz (üretimde ~82.000 USDC) tablonun ilk havuz kademesinin sınırıyla kasıtlı olarak çakışır: bir token mezun olduğu anda creator payı %0,30'dan %0,95'e sıçrar. Creator'ı curve'ü tamamlamaya iten teşvik budur.
+
+`BuybackVault` protokol payından beslenir; creator kendi payının bir dilimini oraya yönlendiren anahtarı isteğe bağlı açabilir. Varsayılan **kapalıdır**; creator açabilir ama tek başına geri kapatamaz (protokol devre dışı bırakabilir).
 - Ücretler `FeeEscrow`'da birikir ve **çekilir, gönderilmez**. Bir alıcının native kabul etmemesi başkalarının ücretini kilitleyemez — Arc'ta sözleşmelere native gönderimin başarılı olacağı garanti olmadığı için bu bir tercih değil, zorunluluktur.
 - Graduation sonrası hook, ücreti token cinsinden tahsil edebilir; dağıtımdan önce pairing asset'e çevrilir.
 
@@ -298,6 +348,24 @@ Creator projeyi terk ederse ücret akışı iki yolla devredilebilir:
 
 - **Gönüllü:** creator alıcıyı doğrudan yeni cüzdana taşır.
 - **Protokol önerili:** protokol yeni bir alıcı önerir, **3 gün** kamuya açık bekleme süresi işler, sonra uygulanır. Bu pencerede holder'lar çıkabilir veya örgütlenebilir.
+
+### 5.8 pump.fun'dan öğrenilen ek özellikler — karar
+
+Aşağıdakiler ponsfamily dokümanlarında hiç geçmiyor; pump.fun'ın resmî dokümanlarından öğrenildi. Her biri için karar:
+
+| Özellik | pump.fun'daki hali | arcpad kararı |
+|---|---|---|
+| **Kademeli ücret** | Market cap'e göre %1,25 → %0,30 | **Benimsendi** (§5.5). Düz %70/%30'un yerini aldı. |
+| **Arz oranları** | 793,1M satış / 206,9M havuz | **Benimsendi** (§5.3). 909,9M/90,1M tahminimizin yerini aldı. |
+| **Creator başına tek vault** | `["creator-vault", creator]` — bir creator'ın tüm coinlerinin ücreti tek yerde | **Benimsendi.** `FeeEscrow` zaten `(alıcı, varlık)` anahtarlı; coin başına ayrı kova gerekmiyor ve claim maliyetini düşürüyor. |
+| **İzinsiz ücret süpürme** | `collect_creator_fee_v2` permissionless; fon her hâlükârda creator'a gider | **Benimsendi.** Claim'i herkes tetikleyebilir, alıcı değişmez. Creator'ın gas'i yoksa bile ücreti kilitli kalmaz. |
+| **Creator fee sharing** | ≤10 paydaş, `share_bps` toplamı 10.000, **bir kez** set edilir sonra admin iptal | **Faz 5'e alındı.** Ekip launch'ları için gerçek bir ihtiyaç ve §5.7'deki topluluk devri mekanizmasıyla aynı yere oturuyor. Tek seferlik olması kritik: aksi halde creator paydaşları sonradan tasfiye edebilir. |
+| **Cashback** | Creator ücretini, işlem hacmine oranla trader'lara geri verir | **Kapsam dışı (Faz 7 sonrası).** Kullanıcı başına hacim biriktirici gerektiriyor — kontrat ve indexer tarafında ayrı bir alt sistem. Ürün olarak güçlü ama Faz 0-7'yi taşımaz. |
+| **Mayhem modu** | Coin başına bayrak, ayrı ücret alıcı kümesi | **Kapsam dışı.** Resmî dokümanlar ne yaptığını açıklamıyor; anlamadığımız bir mekanizmayı kopyalamıyoruz. |
+| **Ayrı buyback ücret alıcısı** | Her işlemde `feeRecipient` + `buybackFeeRecipient` | **Benimsendi**; `BuybackVault` bu rolü üstleniyor. |
+| **Çoklu ücret alıcısı (8 adet)** | Solana'da hesap yazma çakışmasını dağıtmak için | **Reddedildi.** EVM'de böyle bir çakışma yok; tek escrow kontratı yeterli. |
+| **Kısmi doldurma** | Yok — `amount` `real_token_reserves`'ü aşamaz, işlem revert eder | **Sapıyoruz.** arcpad son alımı kısmi doldurup fazlayı iade eder. Kullanıcının "tam mezun et" niyetinin, kaç token kaldığını bilmemesi yüzünden revert etmesi kötü bir deneyim. |
+| **Metadata sınırları** | isim ≤32, sembol ≤13, uri ≤200 | **Benimsendi** (ponsfamily'nin 10 karakterlik ticker sınırı yerine 13). |
 
 ---
 
