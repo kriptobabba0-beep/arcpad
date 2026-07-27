@@ -43,6 +43,28 @@ importers:
         specifier: 4.1.10
         version: 4.1.10(@types/node@26.1.1)(vite@8.1.5(@types/node@26.1.1)(esbuild@0.28.1)(tsx@4.23.1))
 
+  keeper:
+    dependencies:
+      '@arcpad/shared':
+        specifier: workspace:*
+        version: link:../packages/shared
+      dotenv:
+        specifier: 17.4.2
+        version: 17.4.2
+      viem:
+        specifier: 2.55.8
+        version: 2.55.8(typescript@5.9.3)
+    devDependencies:
+      tsx:
+        specifier: 4.23.1
+        version: 4.23.1
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.1.10
+        version: 4.1.10(@types/node@26.1.1)(vite@8.1.5(@types/node@26.1.1)(esbuild@0.28.1)(tsx@4.23.1))
+
   packages/shared:
     dependencies:
       viem:
