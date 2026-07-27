@@ -3,7 +3,23 @@ name: static-analysis
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".gitignore"
   pull_request:
+    # GitHub Actions YAML anchor/alias desteklemez; liste bilerek tekrarlanir.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".gitignore"
+
+# Ayni dal icin yeni bir kosu basladiginda eskisini iptal et. Ard arda iki
+# push yapildiginda birincinin kosusu sonuna kadar calisip Actions dakikasi
+# yakiyordu.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   slither:
