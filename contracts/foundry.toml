@@ -1,0 +1,54 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+script = "script"
+
+# Uniswap V4 bu üçlüyü zorunlu kılar. v4-core'un kendi foundry.toml'u da
+# tam olarak bunları kullanır; sapma "stack too deep" veya eksik TSTORE
+# opcode'u olarak geri döner.
+solc = "0.8.26"
+evm_version = "cancun"
+via_ir = true
+
+optimizer = true
+optimizer_runs = 800
+bytecode_hash = "none"
+
+# Bağımlılıkların kendi remappings.txt dosyalarını bağlamsal olarak okur.
+auto_detect_remappings = true
+
+[profile.default.fuzz]
+runs = 256
+
+[profile.default.invariant]
+runs = 256
+depth = 64
+fail_on_revert = false
+
+# CI profili: yerelden daha sert fuzz'lar. Foundry profilleri skaler build
+# anahtarini miras ALMAZ, bu yuzden hepsi burada tekrarlanir.
+[profile.ci]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+script = "script"
+
+solc = "0.8.26"
+evm_version = "cancun"
+via_ir = true
+
+optimizer = true
+optimizer_runs = 800
+bytecode_hash = "none"
+auto_detect_remappings = true
+
+[profile.ci.fuzz]
+runs = 5000
+
+[profile.ci.invariant]
+runs = 1000
+depth = 128
+fail_on_revert = false
