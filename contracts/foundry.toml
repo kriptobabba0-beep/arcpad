@@ -52,3 +52,8 @@ runs = 5000
 runs = 1000
 depth = 128
 fail_on_revert = false
+
+# Arc testnet (chainId 5042002). URL .env'den okunur, asla buraya yazilmaz.
+# Arc mainnet henuz mevcut degildir.
+[rpc_endpoints]
+arc_testnet = "${ARC_RPC_URL}"
