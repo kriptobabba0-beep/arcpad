@@ -65,6 +65,30 @@ yeniden değerlendirilmeli: Uniswap yeni bir tag keserse o tag'e geçilmeli.
 logları ve blocklist yalnızca gerçek RPC'de görünür. Arc'a özgü her iddia bir
 fork testiyle desteklenmelidir.
 
+## Statik analiz
+
+`make slither`, `contracts/` içinden `slither . --config-file slither.config.json
+--fail-medium` çalıştırır — CI'daki `.github/workflows/slither.yml` da
+birebir aynı komutu çağırır, yerelde geçen bir çalıştırma CI'da da geçer.
+(Not: `slither-analyzer`'ın güncel CLI'ında eşik bayrağı `--fail-on <seviye>`
+değil `--fail-medium`/`--fail-high`/... biçimindedir; varsayılan
+`--fail-pedantic`'tir ve bayrak verilmezse LOW/INFO bulgular bile kapıyı
+kırar.)
+Slither, Foundry projesini `contracts/` içinden algılayıp `remappings.txt`'yi
+kendisi okur; kapı yalnızca `contracts/src/**` altındaki birinci taraf koda
+bakar (`contracts/slither.config.json`'daki `filter_paths`, `lib/`, `test/`
+ve `script/`'i eler).
+
+HIGH veya MEDIUM önem düzeyindeki bir bulgu, `docs/audit/slither-triage.json`
+içindeki `accepted` listesinde yazılı bir gerekçeyle yer almıyorsa kapıyı
+kırar. Bir girişin kabul edilmesi için "Slither yanılıyor" yeterli değildir —
+bulgunun bu koda neden uygulanmadığını bir gözden geçireni ikna edecek şekilde
+açıklamak gerekir. Gerçek bir bulgu ise (koda dokunmadan giderilemiyorsa) kod
+düzeltilir, susturulmaz.
+
+LOW ve INFORMATIONAL bulgular her çalıştırmada raporlanır ama kapıyı kırmaz;
+susturulmazlar, sadece engellemezler.
+
 ## Commit
 
 Her görev kendi commit'iyle biter. Commit mesajları neden'i anlatır, ne'yi değil.

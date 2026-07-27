@@ -1,4 +1,4 @@
-.PHONY: install build test fmt fmt-check lint fork-test dev clean
+.PHONY: install build test fmt fmt-check lint fork-test slither dev clean
 
 install:
 	corepack enable pnpm || pnpm --version
@@ -33,6 +33,9 @@ lint:
 # ortamina hic ihtiyac duymadan calisir; `cp .env.example .env` yeterlidir.
 fork-test:
 	forge test --root contracts --match-path 'test/fork/*' --fork-url arc_testnet -vv
+
+slither:
+	cd contracts && slither . --config-file slither.config.json --fail-medium
 
 dev:
 	pnpm --filter @arcpad/web dev
