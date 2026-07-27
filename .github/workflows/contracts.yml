@@ -1,0 +1,42 @@
+name: contracts
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  forge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Formatting
+        run: forge fmt --check --root contracts
+
+      - name: Build
+        run: forge build --root contracts --sizes
+
+      - name: Test
+        run: forge test --root contracts --no-match-path 'test/fork/*' -vv
+        env:
+          FOUNDRY_PROFILE: ci
+
+  fork:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+
+      # Fork testleri harici bir RPC'ye baglidir; kesintisi PR'lari
+      # bloklamamali, ama Arc davranisindaki bir degisikligi erken gormeliyiz.
+      - name: Arc fork test
+        run: forge test --root contracts --match-path 'test/fork/*' --fork-url https://rpc.testnet.arc.network -vv

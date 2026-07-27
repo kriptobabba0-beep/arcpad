@@ -127,7 +127,8 @@ d:\pumpfunforarc\
 ├── web/              Next.js 14 App Router + wagmi/viem + Tailwind
 ├── keeper/           TypeScript limit-order executor + graduation fallback
 ├── packages/shared/  ABI + tip tanımları — tek kaynak
-├── docs/specs/       Bu doküman ve uygulama planları
+├── docs/specs/       Tasarım dokümanları
+├── docs/plans/       Faz faz uygulama planları
 ├── Makefile
 └── .github/workflows/
 ```
