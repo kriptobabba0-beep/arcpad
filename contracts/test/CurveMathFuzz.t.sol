@@ -54,8 +54,14 @@ contract CurveMathFuzzTest is Test {
     /// @dev gross=1 veya 2 icin netQuoteIn asagi yuvarlamadan sifir doner
     ///      (ZeroAmount ile reddedilir); 125 bps'te net'in kesin >0 olmasi
     ///      icin gross>=3 gerekir: (gross-1)*10000/10125 >= 1 <=> gross >= 3.
+    /// @dev Ust sinir `2 * 12_161_433_369` (USDC graduation raise'inin tam
+    ///      tutarinin iki kati): [3, type(uint128).max] ile ust sinir V'ye
+    ///      (4.292e9) kiyasla o kadar buyuktu ki 200.000/200.000 uniform
+    ///      cekilis `tokensOut == T - 1`'e (guard sinirina) carpiyordu --
+    ///      gercek bir launch'in hic gormeyecegi bir bolgeyi fuzzluyordu.
+    ///      Bir launch'in gorebilecegi TUM aralik, bolluca pay ile, budur.
     function testFuzz_buyTokensOutThenSellNeverProfits(uint256 grossQuoteIn) public pure {
-        grossQuoteIn = bound(grossQuoteIn, 3, type(uint128).max);
+        grossQuoteIn = bound(grossQuoteIn, 3, 2 * 12_161_433_369);
 
         uint256 net = CurveMath.netQuoteIn(grossQuoteIn, CURVE_FEE_BPS);
         uint256 tokensOut = CurveMath.quoteBuyTokensOut(net, V, T);
@@ -105,5 +111,20 @@ contract CurveMathFuzzTest is Test {
     function testFuzz_poolSeedSupplyIsAlwaysSmallerThanSaleSupply(uint256 saleSupply) public pure {
         saleSupply = bound(saleSupply, 1, T - 1);
         assertLt(CurveMath.poolSeedSupply(saleSupply, T), saleSupply);
+    }
+
+    /// netQuoteIn'in INCLUSIVE ayrisimi ile feeOn'un EXCLUSIVE sozlesmesi
+    /// arasindaki koprü: `net`'in EXCLUSIVE ucretini geri eklesen bile
+    /// `gross`'a asla ULASAMAZSIN (kesin kucuk kalir). Bu, Faz 1b'deki
+    /// stateful bir cagiranin `net` uzerinden EXCLUSIVE bir ucret
+    /// hesaplayip fark kadar iade yaparken alta tasmadan (underflow)
+    /// calisabilmesi icin gereken garantidir -- INCLUSIVE/EXCLUSIVE
+    /// koprusunu bir yoruma degil, calistirilabilir bir ozellige baglar.
+    function testFuzz_netQuoteInPlusFeeOnOfNetNeverReachesGross(uint256 gross, uint256 bps) public pure {
+        gross = bound(gross, 1, type(uint128).max);
+        bps = bound(bps, 0, CurveMath.BPS_DENOMINATOR);
+
+        uint256 net = CurveMath.netQuoteIn(gross, bps);
+        assertLt(net + CurveMath.feeOn(net, bps), gross);
     }
 }

@@ -22,12 +22,12 @@ contract CurveMathTest is Test {
 
     /// pump.fun'in meshur 85 SOL esigi bir parametre degil, bu formulun sonucu.
     function test_graduationRaiseReproducesPumpFunSolThreshold() public pure {
-        assertEq(CurveMath.graduationRaise(V_SOL, S, T), 85_005_359_056);
+        assertEq(CurveMath.graduationRaise(S, V_SOL, T), 85_005_359_056);
     }
 
     /// USDC-quote'lu curve icin ayni formul 12.161 USDC verir.
     function test_graduationRaiseReproducesPumpFunUsdcThreshold() public pure {
-        assertEq(CurveMath.graduationRaise(V_USDC, S, T), 12_161_433_369);
+        assertEq(CurveMath.graduationRaise(S, V_USDC, T), 12_161_433_369);
     }
 
     /// Havuz tohumu arzi: sureklilik kosulunun sadelestirilmis hali.
@@ -224,7 +224,7 @@ contract CurveMathTest is Test {
     /// forge-config: default.allow_internal_expect_revert = true
     function test_graduationRaiseRevertsWhenSaleSupplyMeetsTokenReserve() public {
         vm.expectRevert(CurveMath.InsufficientTokenReserve.selector);
-        CurveMath.graduationRaise(V_USDC, T, T);
+        CurveMath.graduationRaise(T, V_USDC, T);
     }
 
     /// forge-config: default.allow_internal_expect_revert = true

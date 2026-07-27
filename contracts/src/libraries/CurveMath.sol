@@ -90,8 +90,15 @@ library CurveMath {
     ///         net miktar; ucret `grossQuoteIn`'in ICINE gomulu (INCLUSIVE
     ///         sozlesme -- `grossQuoteIn` zaten ucreti icerir).
     /// @dev Bolmeden ONCE 1 cikarir, sonra tabana yuvarlar.
-    ///      `totalFeeBps > BPS_DENOMINATOR` (%100'u asan ucret) `InvalidBps()`
-    ///      ile reddedilir.
+    ///      `totalFeeBps > BPS_DENOMINATOR` `InvalidBps()` ile reddedilir --
+    ///      ANCAK bu sinir "%100'u asan bir ucret"i reddetmez. INCLUSIVE
+    ///      sozlesmede fiili ucret orani `totalFeeBps / (totalFeeBps +
+    ///      BPS_DENOMINATOR)`'dir; sinirin tam UZERINDE (totalFeeBps ==
+    ///      BPS_DENOMINATOR) bile fiili ucret sadece %50'dir ve gecerli
+    ///      girdi araliginda ucret hicbir zaman %100'e ulasamaz (bkz.
+    ///      test_netQuoteInAllowsBpsEqualToDenominator: gross = 1_000_000
+    ///      icin net = 499_999). Sinir yalnizca `totalFeeBps`'i `feeOn`'un
+    ///      kullandigi EXCLUSIVE bps olcegiyle tutarli tutmak icindir.
     ///
     ///      Ima edilen ucret `grossQuoteIn - netQuoteIn(grossQuoteIn, totalFeeBps)`
     ///      olarak tanimlanir ve bu, `feeOn`'un EXCLUSIVE sozlesmeyle uretecegi
@@ -118,7 +125,7 @@ library CurveMath {
     /// @notice Satis arzi tukendiginde curve'de birikmis olacak quote miktari.
     /// @dev R = V·S/(T−S). Ucret oranindan BAGIMSIZDIR, cunku ucret curve'un
     ///      disinda alinir ve rezervlere hic girmez.
-    function graduationRaise(uint256 quoteReserve, uint256 saleSupply, uint256 tokenReserve)
+    function graduationRaise(uint256 saleSupply, uint256 quoteReserve, uint256 tokenReserve)
         internal
         pure
         returns (uint256)
