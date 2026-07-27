@@ -19,6 +19,7 @@ node_modules/
 web/.next/
 web/out/
 web/.vercel/
+web/next-env.d.ts
 
 # Test / coverage
 coverage/
@@ -35,3 +36,6 @@ postgres-data/
 Thumbs.db
 .idea/
 .vscode/
+
+# SDD workspace (scratch)
+.superpowers/
