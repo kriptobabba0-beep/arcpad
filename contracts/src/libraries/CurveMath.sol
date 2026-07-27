@@ -23,12 +23,18 @@ library CurveMath {
     ///         ucret HARIC.
     /// @dev floor(...) + 1. Bu, mulDivRoundingUp ile ayni DEGILDIR: tam bolunen
     ///      durumda bir birim fazla alir. pump.fun boyle yapar, biz de.
+    ///      `quoteReserve == 0` OLAMAZ: aksi halde `mulDiv(tokensOut, 0, ...) + 1`
+    ///      her zaman `1` doner -- yani `tokenReserve - 1`'e kadar herhangi bir
+    ///      miktar tek birimlik bir bedelle alinabilir. `quoteBuyTokensOut` ve
+    ///      `quoteSellProceeds`'teki sifir-rezerv korumalariyla aynen tutarli
+    ///      olacak sekilde `ZeroReserve()` ile reddedilir.
     function quoteBuyCost(uint256 tokensOut, uint256 quoteReserve, uint256 tokenReserve)
         internal
         pure
         returns (uint256)
     {
         if (tokensOut == 0) revert ZeroAmount();
+        if (quoteReserve == 0) revert ZeroReserve();
         if (tokensOut >= tokenReserve) revert InsufficientTokenReserve();
         return FullMath.mulDiv(tokensOut, quoteReserve, tokenReserve - tokensOut) + 1;
     }

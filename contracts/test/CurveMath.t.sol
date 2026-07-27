@@ -182,6 +182,12 @@ contract CurveMathTest is Test {
     // ---------------------------------------------------------------
 
     /// forge-config: default.allow_internal_expect_revert = true
+    function test_buyCostRevertsOnZeroQuoteReserve() public {
+        vm.expectRevert(CurveMath.ZeroReserve.selector);
+        CurveMath.quoteBuyCost(1_000_000_000_000, 0, T);
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
     function test_buyTokensOutRevertsOnZeroQuoteReserve() public {
         vm.expectRevert(CurveMath.ZeroReserve.selector);
         CurveMath.quoteBuyTokensOut(1_000_000, 0, T);
@@ -241,5 +247,19 @@ contract CurveMathTest is Test {
     function test_netQuoteInRevertsWhenBpsExceedsDenominator() public {
         vm.expectRevert(CurveMath.InvalidBps.selector);
         CurveMath.netQuoteIn(1_000_000, 10_001);
+    }
+
+    /// bps sinirinin GECEN tarafi (10_001) reddedilir, ama bu tek basina
+    /// sinirin bir-fazla-dar (>= yerine >) olmadigini KANITLAMAZ. Sinirin
+    /// tam UZERINDEKI (== BPS_DENOMINATOR, %100 ucret) deger BASARIYLA
+    /// gecmelidir -- bu testler o taraf.
+    function test_feeOnAllowsBpsEqualToDenominator() public pure {
+        // %100 ucret: tum miktar ucret olarak doner.
+        assertEq(CurveMath.feeOn(1_000_000, 10_000), 1_000_000);
+    }
+
+    function test_netQuoteInAllowsBpsEqualToDenominator() public pure {
+        // (1_000_000 - 1) * 10_000 / (10_000 + 10_000) = 499_999
+        assertEq(CurveMath.netQuoteIn(1_000_000, 10_000), 499_999);
     }
 }
