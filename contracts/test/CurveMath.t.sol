@@ -84,6 +84,36 @@ contract CurveMathTest is Test {
     }
 
     // ---------------------------------------------------------------
+    // Ucret sozlesmeleri -- feeOn (EXCLUSIVE) ve netQuoteIn (INCLUSIVE)
+    // birbirinin tersi DEGILDIR; bu iliski varsayilmak yerine sabitlenir.
+    // ---------------------------------------------------------------
+
+    /// feeOn `amount`'in USTUNE ucret ekler (EXCLUSIVE); netQuoteIn ise
+    /// ucretin `grossQuoteIn`'in ICINE gomulu oldugunu varsayar (INCLUSIVE).
+    /// Ikisi ayni bps ile cagrilsa bile FARKLI sayilar uretir -- zincirlenip
+    /// birbirinin tersi gibi kullanilmamalidir.
+    function test_netQuoteInAndFeeOnUseIncompatibleFeeConventions() public pure {
+        uint256 gross = 1_000_000;
+
+        uint256 net = CurveMath.netQuoteIn(gross, CURVE_FEE_BPS);
+        uint256 impliedFee = gross - net;
+
+        // Tanim geregi: INCLUSIVE ayristirmada net + impliedFee daima gross'a esittir.
+        assertEq(net, 987_653);
+        assertEq(impliedFee, 12_347);
+        assertEq(net + impliedFee, gross);
+
+        // feeOn (EXCLUSIVE) net miktar uzerinden FARKLI bir ucret uretir --
+        // impliedFee (INCLUSIVE) ile karistirilmamalidir.
+        assertEq(CurveMath.feeOn(net, CURVE_FEE_BPS), 12_346);
+        assertTrue(CurveMath.feeOn(net, CURVE_FEE_BPS) != impliedFee);
+
+        // gross - feeOn(gross) da impliedFee'ye esit DEGILDIR.
+        assertEq(CurveMath.feeOn(gross, CURVE_FEE_BPS), 12_500);
+        assertTrue(gross - CurveMath.feeOn(gross, CURVE_FEE_BPS) != impliedFee);
+    }
+
+    // ---------------------------------------------------------------
     // Somut curve ornekleri (USDC profili, yeni curve)
     // ---------------------------------------------------------------
 
@@ -127,5 +157,89 @@ contract CurveMathTest is Test {
     function test_netQuoteInRevertsOnZero() public {
         vm.expectRevert(CurveMath.ZeroAmount.selector);
         CurveMath.netQuoteIn(0, CURVE_FEE_BPS);
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function test_buyCostRevertsOnZeroTokensOut() public {
+        vm.expectRevert(CurveMath.ZeroAmount.selector);
+        CurveMath.quoteBuyCost(0, V_USDC, T);
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function test_buyTokensOutRevertsOnZeroNetQuoteIn() public {
+        vm.expectRevert(CurveMath.ZeroAmount.selector);
+        CurveMath.quoteBuyTokensOut(0, V_USDC, T);
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function test_sellProceedsRevertsOnZeroTokensIn() public {
+        vm.expectRevert(CurveMath.ZeroAmount.selector);
+        CurveMath.quoteSellProceeds(0, V_USDC, T);
+    }
+
+    // ---------------------------------------------------------------
+    // Hata durumlari -- sifir rezerv (drain onleme)
+    // ---------------------------------------------------------------
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function test_buyTokensOutRevertsOnZeroQuoteReserve() public {
+        vm.expectRevert(CurveMath.ZeroReserve.selector);
+        CurveMath.quoteBuyTokensOut(1_000_000, 0, T);
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function test_buyTokensOutRevertsOnZeroTokenReserve() public {
+        vm.expectRevert(CurveMath.ZeroReserve.selector);
+        CurveMath.quoteBuyTokensOut(1_000_000, V_USDC, 0);
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function test_sellProceedsRevertsOnZeroQuoteReserve() public {
+        vm.expectRevert(CurveMath.ZeroReserve.selector);
+        CurveMath.quoteSellProceeds(1_000_000_000_000, 0, T);
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function test_sellProceedsRevertsOnZeroTokenReserve() public {
+        vm.expectRevert(CurveMath.ZeroReserve.selector);
+        CurveMath.quoteSellProceeds(1_000_000_000_000, V_USDC, 0);
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function test_marketCapRevertsOnZeroTokenReserve() public {
+        vm.expectRevert(CurveMath.ZeroReserve.selector);
+        CurveMath.marketCap(V_USDC, 0, N);
+    }
+
+    // ---------------------------------------------------------------
+    // Hata durumlari -- yetersiz satis arzi (graduationRaise / poolSeedSupply)
+    // ---------------------------------------------------------------
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function test_graduationRaiseRevertsWhenSaleSupplyMeetsTokenReserve() public {
+        vm.expectRevert(CurveMath.InsufficientTokenReserve.selector);
+        CurveMath.graduationRaise(V_USDC, T, T);
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function test_poolSeedSupplyRevertsWhenSaleSupplyMeetsTokenReserve() public {
+        vm.expectRevert(CurveMath.InsufficientTokenReserve.selector);
+        CurveMath.poolSeedSupply(T, T);
+    }
+
+    // ---------------------------------------------------------------
+    // Hata durumlari -- sinirsiz bps kabul edilmez
+    // ---------------------------------------------------------------
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function test_feeOnRevertsWhenBpsExceedsDenominator() public {
+        vm.expectRevert(CurveMath.InvalidBps.selector);
+        CurveMath.feeOn(1_000_000, 10_001);
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function test_netQuoteInRevertsWhenBpsExceedsDenominator() public {
+        vm.expectRevert(CurveMath.InvalidBps.selector);
+        CurveMath.netQuoteIn(1_000_000, 10_001);
     }
 }
