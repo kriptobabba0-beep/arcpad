@@ -65,6 +65,62 @@ yeniden değerlendirilmeli: Uniswap yeni bir tag keserse o tag'e geçilmeli.
 logları ve blocklist yalnızca gerçek RPC'de görünür. Arc'a özgü her iddia bir
 fork testiyle desteklenmelidir.
 
+## Statik analiz
+
+**Kurulum:** Slither kurulu değilse `pip install slither-analyzer` ile
+kurulur. Kurulumdan sonra `slither` komutu **PATH'e otomatik düşmeyebilir** —
+pip'in script'leri koyduğu dizin (bu makinede
+`C:\Users\iTopya\AppData\Local\Programs\Python\Python311\Scripts`) shell
+PATH'inde değilse `slither: command not found` alınır; tam olarak bu
+depoda yaşandı. Çözüm o dizini oturum için PATH'e eklemektir (örn.
+`export PATH="$PATH:/c/Users/iTopya/AppData/Local/Programs/Python/Python311/Scripts"`
+Git Bash'te). CI bundan etkilenmez: taze bir `ubuntu-latest` runner'ında
+`pip install slither-analyzer` sonrası `slither` PATH'e normal şekilde düşer.
+
+`make slither`, `contracts/` içinden `slither . --config-file slither.config.json
+--fail-medium` çalıştırır — CI'daki `.github/workflows/slither.yml` da
+birebir aynı komutu çağırır, yerelde geçen bir çalıştırma CI'da da geçer.
+(Not: `slither-analyzer`'ın güncel CLI'ında eşik bayrağı `--fail-on <seviye>`
+değil `--fail-medium`/`--fail-high`/... biçimindedir; varsayılan
+`--fail-pedantic`'tir ve bayrak verilmezse LOW/INFO bulgular bile kapıyı
+kırar.)
+Slither, Foundry projesini `contracts/` içinden algılayıp `remappings.txt`'yi
+kendisi okur; kapı yalnızca `contracts/src/**` altındaki birinci taraf koda
+bakar (`contracts/slither.config.json`'daki `filter_paths`, `lib/`, `test/`
+ve `script/`'i eler).
+
+**Tuzak — `filter_paths` MUTLAK yola karşı eşleşir:** `filter_paths`
+(`lib/|test/|script/`) çapasız bir regex/alt-dize eşleşmesidir ve
+crytic-compile'ın kaydettiği yol üzerinde çalışır — bu yol bazen mutlak
+yoldur. Bugün bu depoda sorun çıkarmıyor çünkü `D:\pumpfunforarc\contracts\...`
+içinde `lib/`, `test/` veya `script/` alt dizesi geçmiyor. Ama depo bu alt
+dizelerden birini içeren bir dizine checkout edilirse — bir CI workspace'i,
+bir fork dizini, `test` geçen bir branch adıyla adlandırılmış checkout
+dizini — kapı **hatasız ve sessizce** az-analiz eder: tüm proje filtrelenir,
+`0 result(s) found` basılır ve bu, gerçekten temiz bir çalıştırmadan
+**ayırt edilemez** görünür. Bu tam olarak bir gözden geçirenin başına geldi:
+scratch dizini `slither-dirty-test` adlıydı, `test/` alt dizesi mutlak yolu
+eşleştirdi ve tüm proje sessizce filtrelendi. Şüpheli derecede az bulgu
+görülürse ilk kontrol edilecek şey checkout yolunun bu alt dizelerden birini
+içerip içermediğidir.
+
+Ayrıca CI'daki `pip install slither-analyzer` **sürüme pinlenmemiştir**:
+gelecekteki bir sürüm detektör davranışını veya CLI bayraklarını
+değiştirebilir — nitekim bu göreve tam olarak bu oldu (brief'teki
+`--fail-on medium` bayrağı hiçbir yayınlanmış sürümde mevcut değildi; gerçek
+bayrak `--fail-medium`). Slither bir gün beklenmedik şekilde farklı
+davranırsa önce kurulu sürümü kontrol edin.
+
+HIGH veya MEDIUM önem düzeyindeki bir bulgu, `docs/audit/slither-triage.json`
+içindeki `accepted` listesinde yazılı bir gerekçeyle yer almıyorsa kapıyı
+kırar. Bir girişin kabul edilmesi için "Slither yanılıyor" yeterli değildir —
+bulgunun bu koda neden uygulanmadığını bir gözden geçireni ikna edecek şekilde
+açıklamak gerekir. Gerçek bir bulgu ise (koda dokunmadan giderilemiyorsa) kod
+düzeltilir, susturulmaz.
+
+LOW ve INFORMATIONAL bulgular her çalıştırmada raporlanır ama kapıyı kırmaz;
+susturulmazlar, sadece engellemezler.
+
 ## Commit
 
 Her görev kendi commit'iyle biter. Commit mesajları neden'i anlatır, ne'yi değil.

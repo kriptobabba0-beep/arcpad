@@ -1,0 +1,48 @@
+name: static-analysis
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".gitignore"
+  pull_request:
+    # GitHub Actions YAML anchor/alias desteklemez; liste bilerek tekrarlanir.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".gitignore"
+
+# Ayni dal icin yeni bir kosu basladiginda eskisini iptal et. Ard arda iki
+# push yapildiginda birincinin kosusu sonuna kadar calisip Actions dakikasi
+# yakiyordu.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  slither:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.6.0-rc1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Slither
+        run: pip install slither-analyzer
+
+      # Ucuncu taraf bir action yerine dogrudan slither cagrilir: action'in
+      # surumunu tahmin etmek gerekmez ve yerelde `make slither` ile CI'da
+      # calisan komut birebir aynidir.
+      - name: Slither
+        working-directory: contracts
+        run: slither . --config-file slither.config.json --fail-medium
