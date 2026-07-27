@@ -307,13 +307,26 @@ havuzda:       marketCap = quoteReserve × N / baseReserve
 
 Kademe seçimi: `marketCap` ilk kademenin eşiğinin altındaysa ilk kademe; değilse kademeler tersten taranır ve eşiği aşılan ilk kademe alınır.
 
-**Kademe tablosu, pump.fun'ın canlı `FeeConfig` hesabından çözülerek alınmıştır** (`5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx`, Solana mainnet, 2026-07-27) — görselden değil.
+**Ücret yapısı iki farklı rejimden oluşur ve bunları karıştırmamak kritiktir.** pump.fun'ın `fee_config` PDA'sının seed'i `["fee_config", program_id]` — yani **program başına bir tane**. Solana mainnet'te iki hesap var ve ikisi farklı şeyi tarif ediyor (2026-07-27'de çözüldü):
 
-Kritik ayrım: `FeeConfig` **iki tablo** taşır. `fee_tiers` SOL-quote'lu coinler için, **`stable_fee_tiers`** stablecoin-quote'lular için. Yüzdeler aynı, eşikler farklı. USDC ile eşleşen bir launchpad olduğumuz için **doğru referans `stable_fee_tiers`'dır** ve eşikleri quote token'ın taban biriminde (USDC için 6 decimal), yuvarlak dolar rakamlarıdır:
+| Hesap | Kademe sayısı | LP | Protokol | Creator | Ne olduğu |
+|---|---|---|---|---|---|
+| `8Wf5TiAheLUqBrKXeYg2JtAFFMWtKdG2BSFgqUcPVwTt` | 1 (eşik 0) | %0 | %0,95 | %0,30 | **bonding curve** |
+| `5PHirr8joyTMp9JMm6nW7hNDVyEYdkzDqazxPD7RaTjx` | 25 | %0,20 | %0,05 | %0,95 → %0,05 | **AMM havuzu** |
+
+Curve'de LP payı sıfırdır — çünkü curve'de likidite sağlayıcı yoktur. `fees.png`'nin ilk iki satırı da tam bunu ayırıyor: "Bonding curve → LP %0", "0–85k havuz → LP %0,02".
+
+### Rejim 1 — bonding curve: düz %1,25
+
+Curve üzerindeki her alım ve satımda sabit oran: **%0,95 protokol + %0,30 creator = %1,25**. Market cap'e bakılmaz, kademe taraması yapılmaz. Faz 1'in ihtiyacı yalnızca budur.
+
+### Rejim 2 — graduation sonrası havuz: kademeli
+
+Havuzda oran market cap'e göre değişir. `FeeConfig` **iki tablo** taşır: `fee_tiers` SOL-quote'lu coinler için, **`stable_fee_tiers`** stablecoin-quote'lular için. Yüzdeler aynı, eşikler farklı. USDC ile eşleştiğimiz için **doğru referans `stable_fee_tiers`'dır**; eşikleri quote token'ın taban biriminde (USDC için 6 decimal), yuvarlak dolar rakamlarıdır:
 
 | Eşik (USDC market cap) | LP | Protokol | Creator | Toplam |
 |---|---|---|---|---|
-| 0 — **bonding curve** | %0,02 | %0,93 | %0,30 | **%1,25** |
+| 0 | %0,02 | %0,93 | %0,30 | **%1,25** |
 | 59.000 | %0,20 | %0,05 | %0,95 | %1,20 |
 | 300.000 | %0,20 | %0,05 | %0,90 | %1,15 |
 | 500.000 | %0,20 | %0,05 | %0,85 | %1,10 |
@@ -327,6 +340,8 @@ Kritik ayrım: `FeeConfig` **iki tablo** taşır. `fee_tiers` SOL-quote'lu coinl
 25 kademe vardır; ara basamaklar milyon başına birer adımdır. **59.000 eşiği rastgele değildir:** pump.fun'ın USDC curve'ü ~58.784 USDC FDV'de mezun olur, yani token mezun olur olmaz creator lehine kademeye geçer. §5.3'teki `V` seçimimiz bu ilişkiyi koruyor.
 
 **Kademe tablosu launch anında dondurulur ve bir daha değişmez.** Burada pump.fun'dan bilinçli olarak ayrılıyoruz: onların `FeeConfig`'i `admin` alanı olan global bir hesap, yani yönetici tabloyu güncellediğinde **zaten yayınlanmış** launch'ların ücreti de değişir. Bizde değişmez — creator ve alıcılar tam olarak neye girdiklerini bilir.
+
+Bu yalnızca Rejim 2'yi (havuz kademeleri) ilgilendirir; curve'ün düz oranı zaten launch'ın immutable parametresidir.
 
 Uygulaması bir kilit mekanizmasıyla değil, **değişmezlikle** yapılır: kademe tablosu `FeeSchedule` adlı immutable bir kontrat olarak bir kez deploy edilir, `LaunchFactory` o anki `FeeSchedule` adresini her yeni launch'ın içine yazar. Launch başına maliyet tek bir adres (20 bayt); garanti ise kontrat bytecode'unun değiştirilemezliğinden gelir. Tabloyu güncellemek yeni bir `FeeSchedule` deploy etmek demektir ve **yalnızca sonraki launch'ları** etkiler.
 
