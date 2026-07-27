@@ -1,0 +1,37 @@
+# Secrets
+.env
+.env.*
+!.env.example
+keystore/
+
+# Foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/*/dry-run/
+contracts/.gas-snapshot
+
+# Node
+node_modules/
+.pnpm-store/
+*.tsbuildinfo
+
+# Next.js
+web/.next/
+web/out/
+web/.vercel/
+
+# Test / coverage
+coverage/
+lcov.info
+test-results/
+playwright-report/
+
+# Local data
+*.log
+postgres-data/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
