@@ -462,7 +462,20 @@ Bir sahteci istediği `creator()`, `curve()` ve `metadataURI()` değerlerini idd
   - `predictAddresses(address creator_, string name, string symbol, string uri, uint256 nonce) → (address token, address curve)` — görünüm, off-chain önizleme için.
   - `launchCount() → uint256`
   - Olay: `Launched(address indexed token, address indexed curve, address indexed creator, string name, string symbol, string uri, bytes32 salt)`
-  - Hatalar: `EmptyName()`, `EmptySymbol()`
+  - Hatalar: `EmptyName()`, `EmptySymbol()`, `DegenerateProfile()`
+
+### Task 2'den devreden iki yükümlülük
+
+Bunlar Task 2'nin incelemesinde ölçülerek bulundu ve Task 3 olmadan kapanmıyor.
+
+**1. Factory yalnızca kendi bastığı token'ları bind etmek zorundadır.** `BondingCurve.bind`'in bakiye koruması (`balanceOf(this) >= S + D`) bir **yapılandırma kontrolüdür, mülkiyet kanıtı değil**. `bind` yalnızca "curve'ü geri işaret eden" bir token ister; ERC20 davranışını doğrulamaz. Sahip olmadığı bir bakiyeyi bildiren bir token bu korumayı geçer — ölçüldü. Korumanın bütün gücü bu yükümlülüğün tutulmasına bağlıdır, ve `launch()` token'ı kendisi deploy ettiği için bu doğal olarak sağlanır — ama **bind edilebilecek başka hiçbir yol açılmamalıdır**.
+
+**2. Profil üçlüsünün sağlığı factory'de kontrol edilmelidir, curve'de değil.** Curve'ün constructor'ı `V > 0`, `T > 0`, `S > 0`, `S < T`'yi koruyor; `bind` de `S + D ≤ N`'i. Geriye tek tek parametrelere konamayacak iki dejenerelik kalıyor:
+
+- **`poolSeedSupply == 0`.** `S = 1` hem constructor'dan hem `bind`'den geçiyor ve ilk 1 wei'lik alım curve'ü tamamlayıp havuz tohumu **sıfır** olan bir `Completed` yayıyor. `T − S == 1` aynı şeklin ikinci hâli. Curve'ün hiçbir invariant'ı bozulmuyor, o yüzden orada koruma yok — ama Faz 2'ye sıfır tohumlu bir graduation devredilir.
+- **Açılış piyasa değerinde alt sınır yok.** `V = 1` üretim `T, S` ile bind ediliyor ve tüm satış arzı **3 wei** curve tarafı + 2 wei ücrete satılıyor. `V`'ye taban koymak işe yaramaz: ekonomiyi `V/T` belirler ve `T` de bir argümandır, dolayısıyla taban `T`'yi büyüterek aşılır.
+
+İkisinin de savunulabilir kontrolü **üçlü üzerinedir ve factory'ye aittir**: `poolSeedSupply(S, T) > 0` ve açılış piyasa değeri `V·N/T` için bir alt sınır. Factory zaten profili kendi immutable'larında tutuyor, yani kontrol deploy başına bir kez çalışır ve her curve'e bedava yayılır. `DegenerateProfile()` bunun içindir.
 
 - [ ] **Adım 1: Başarısız testleri yaz**
 

@@ -269,7 +269,30 @@ contract BondingCurve {
 
         token = token_;
 
+        // Asagidaki iki cagri da `view`'dir (`ICurveBoundToken.curve()` ve
+        // `IERC20.balanceOf`), dolayisiyla solc STATICCALL uretir. YENIDEN
+        // GIRISI KAPATAN SEY BUDUR, `AlreadyBound` degil: bu kontrata geri
+        // giren her yol depolamaya yazar ve STATICCALL altinda revert eder --
+        // olculdu. `view` BURADA TASIYICIDIR. `ICurveBoundToken`'a ileride
+        // mutasyona ugratan bir el sikisma eklenirse, dusman bir token
+        // bakiyesi HENUZ DOGRULANMAMIS bir curve'e karsi islem yapabilir:
+        // bu noktada `token` yazilmis, rezervler canli ve asagidaki bakiye
+        // korumasi daha calismamistir. `AlreadyBound` bunu durdurmaz, cunku
+        // yalnizca `bind`'i korur.
         if (ICurveBoundToken(token_).curve() != address(this)) revert TokenDoesNotPointBack();
+
+        // `S + D`'nin tek seferde kapattigi iki iliski: `S <= N` ve
+        // `D = S(T-S)/T <= N - S`. Ikincisi olmadan graduation yapisal olarak
+        // fonlanamaz -- `S = 900_000_000e18` birinciyi saglar, ikincisini
+        // bozar. Tasma imkansizdir: her `S < T` icin `S + D <= T`, cunku
+        // `S(2T-S)/T <= T` ile `(T-S)^2 >= 0` denktir.
+        //
+        // BU BIR YAPILANDIRMA KONTROLUDUR, MULKIYET KANITI DEGIL. `bind`
+        // yalnizca "curve'u geri isaret eden" bir token ister; ERC20
+        // davranisini dogrulamaz. Sahip olmadigi bir bakiyeyi bildiren bir
+        // token bu korumayi gecer -- olculdu. DOLAYISIYLA FACTORY YALNIZCA
+        // KENDI BASTIGI TOKEN'LARI BIND ETMEK ZORUNDADIR; korumanin butun
+        // gucu bu yukumlulugun tutulmasina baglidir.
         if (IERC20(token_).balanceOf(address(this)) < INITIAL_REAL_TOKEN_RESERVES + poolSeedSupply) {
             revert TokenBalanceBelowSaleAndSeed();
         }
