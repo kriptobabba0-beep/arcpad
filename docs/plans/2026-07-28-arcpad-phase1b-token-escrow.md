@@ -693,6 +693,8 @@ Faz 1a'nın en değerli dersi buydu: geçen bir invariant, kısıtlayan bir inva
 
 Her mutasyon için **hangi invariant'ın hangi koşuda kırıldığını** raporuna yaz. Bir mutasyon hiçbir invariant'ı kırmıyorsa, o invariant kümesinde bir boşluk var demektir — **bunu raporla, gizleme**.
 
+> **Ölçüm sonrası düzeltme (2026-07-28).** Yukarıdaki tablo bir *tahmindir* ve ilk satırı ölçümle çürütüldü — burada bir kayıt olarak duruyor, doğru cevap olarak değil. Bu plandaki handler'ın üç sabit alıcısı kodsuz adreslerdir, dolayısıyla reentrancy penceresini kullanabilecek hiçbir aktör yoktur: ilk mutasyon iki farklı tohumla 256.000 çağrıda **dört invariant'ı da yeşil bıraktı**. Handler'a sınırlı, tek seferlik reentrant bir aktör eklendikten sonra mutasyonu yakalayanlar `everyClaimPaidTheRightAmountAndClearedTheDebt` ve `ledgerMatchesGhostAccounting` oldu — **ödeme gücü invariant'ı değil**. Dersin kendisi tam olarak budur: bir invariant'ın neyi yakalayacağını tahmin etmek, yakaladığını ölçmenin yerine geçmez.
+
 - [ ] **Step 5: CI profilinde koştur**
 
 ```bash
@@ -722,12 +724,13 @@ could not fail under any change to the code they were meant to guard."
 - [ ] `forge test --root contracts --no-match-path 'test/fork/*'` yeşil, hem `default` hem `ci` profilinde
 - [ ] `make slither` yeni HIGH/MEDIUM bulgu bırakmıyor; eklenen her triage girdisinin yazılı gerekçesi var
 - [ ] `make fmt-check` ve `make lint` temiz
-- [ ] Her invariant için, onu kıran en az bir mutasyon raporda kayıtlı
+- [ ] Her invariant için, onu kıran en az bir mutasyon raporda kayıtlı — **4'te 3 karşılanıyor, 4'üncüsü kasıtlı olarak karşılanamıyor.** `invariant_escrowCanAlwaysPayWhatItOwes` (`balance >= totalOwed`) için böyle bir mutasyon yoktur ve olamaz: kardeş invariant `invariant_escrowHoldsExactlyWhatItOwes` aynı durumu `balance == totalOwed` ile iddia eder, birincisini ihlal eden her durum ikincisini de ihlal eder ve daha sıkı olan eşitlik her zaman önce kırılır. Task 3'ün mutasyon turunda 15 escrow mutantının 0'ında bu invariant tek başına tetiklenmedi. **Invariant silinmiyor** — Arc'ta native USDC'nin ERC-20 görünümü (spec §3.2) üzerinden `deposit()` dışından bakiyeye değer ulaşabilir; bu durumda `balance == totalOwed` deployment hedefinde YANLIŞ olur ama `balance >= totalOwed` (ödeme gücü) hâlâ tutar. Handler'ın kapalı dünyasında totoloji olması, kontratın Arc'taki gerçek garantisi olmasını değiştirmez.
 - [ ] `contracts/src/` tam olarak şunları içeriyor: `libraries/CurveMath.sol`, `LaunchToken.sol`, `FeeEscrow.sol`
 
 ## Faz 1c'ye devreden
 
-`BondingCurve` ve `LaunchFactory`, deploy script'i ve Arc testnet entegrasyonu. Faz 1c'nin planı, bu fazın yüzeyleri kesinleştikten sonra yazılır ve şu iki açık kararı taşır:
+`BondingCurve` ve `LaunchFactory`, deploy script'i ve Arc testnet entegrasyonu. Faz 1c'nin planı, bu fazın yüzeyleri kesinleştikten sonra yazılır ve şu üç açık kararı taşır:
 
 - **Kısmi doldurmada iade taşması.** Son alım kısmi dolduğunda `netQuoteIn` (ücret-dahil) ile `quoteBuyCost` (ücret-hariç) konvansiyonları arasında geçiş yapılır ve iade `gross − cost − feeOn(cost)` olur. Bu ancak `cost ≤ net` ise taşmaz. Üretim parametrelerinde tutuyor ama evrensel değil — küçük rezervlerde bozuluyor. Faz 1c bunu bir parametre özelliğine güvenmek yerine açık bir `require` ile korumalı.
 - **`CurveMath.marketCap`'in Faz 1'de çağıranı yok.** Kademeli ücret graduation sonrası havuza aittir (spec §5.5, Rejim 2); curve düz %1,25 alır. `BondingCurve.buy()` içine kademe taraması **yazılmamalıdır**.
+- **Ücret bölüşümü toplamdan değil parçalardan hesaplanmalı.** Depodaki tek ücret literali `CURVE_FEE_BPS = 125` (`test/CurveMath.t.sol`) — bu **birleşik** orandır, protokol ve creator paylarının toplamı. `buyExactQuoteIn` yolunda cazip kısayol, `netQuoteIn`'in ima ettiği toplam ücreti tek seferde çıkarıp ikiye bölmektir; bu tam olarak spec'in (§5.5) yasakladığı "toplamdan bölme" şeklidir. Ölçüldü: `feeOn(x, 95) + feeOn(x, 30) > feeOn(x, 125)`, `x ∈ [1, 40000]` tam sayı aralığının **20.220**'sinde (yaklaşık yarısında) — her iki parça da yukarı yuvarlandığı için. Faz 1c `PROTOCOL_FEE_BPS = 95` ve `CREATOR_FEE_BPS = 30`'u ayrı ayrı tanımlamalı, `125`'i ileri yönde (ücret hesaplarken) hiç açığa çıkarmamalı, her iki payı da aynı net anapara üzerinden ayrı ayrı hesaplamalı, ve escrow'a dokunmadan önce `proceeds > 0` korumalıdır: satış yolunda `quoteSellProceeds` tabana yuvarladığı için sıfıra taşabilir, ve `FeeEscrow.deposit` sıfır bir pay üzerinde `ZeroAmount()` ile revert eder — bu da korumasız bırakılırsa tüm işlemi geri alır.
