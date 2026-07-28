@@ -9,8 +9,15 @@ contract LaunchTokenTest is Test {
     address internal constant CURVE = address(0xCC0E);
     uint256 internal constant SUPPLY = 1_000_000_000e18;
 
+    /// Task 3'te eklendi. Bu dosya provenance'i OLCMEZ -- olcen taraf
+    /// `LaunchFactory.t.sol`'dur; burada yalnizca alanin tasindigi ve hicbir
+    /// seyi degistirmedigi sabitlenir. Deger bilerek "keccak gibi durmayan"
+    /// bir sabittir: `launchSalt`'in gecerliligi diye bir sey YOKTUR, kanoniklik
+    /// salt'tan degil ADRES ESITLIGINDEN gelir.
+    bytes32 internal constant SALT = bytes32(uint256(0xA11CE5A17));
+
     function _deploy() internal returns (LaunchToken) {
-        return new LaunchToken("Arc Test Coin", "ATC", "ipfs://cid", CREATOR, CURVE);
+        return new LaunchToken("Arc Test Coin", "ATC", "ipfs://cid", CREATOR, CURVE, SALT);
     }
 
     /// Arz bir constructor argumani DEGIL sabittir: spec 5.3'e gore her
@@ -49,6 +56,34 @@ contract LaunchTokenTest is Test {
         assertEq(t.metadataURI(), "ipfs://cid");
         assertEq(t.creator(), CREATOR);
         assertEq(t.curve(), CURVE);
+        assertEq(t.launchSalt(), SALT);
+    }
+
+    /// `launchSalt` sifir OLABILIR ve bu bilinclidir. Bir `ZeroSalt` korumasi
+    /// hicbir sahteciyi durdurmaz -- sahteci keccak gibi duran bir sayi
+    /// uydurabilir -- ama dogrulamanin gucunun salt'in "gecerliligi"nden
+    /// geldigi yanilsamasini yaratirdi. Guc ADRES ESITLIGINDEDIR.
+    function test_aZeroLaunchSaltIsAccepted() public {
+        LaunchToken t = new LaunchToken("n", "s", "u", CREATOR, CURVE, bytes32(0));
+        assertEq(t.launchSalt(), bytes32(0));
+        assertEq(t.balanceOf(CURVE), SUPPLY);
+    }
+
+    /// Salt SONRADAN yazilamaz: `immutable`, ve makul hicbir setter yok.
+    /// Yazilabilseydi bir token, kanonik bir adrese denk gelene kadar salt
+    /// deneyebilirdi.
+    function test_launchSaltCannotBeRewritten() public {
+        LaunchToken t = _deploy();
+        bytes[3] memory payloads = [
+            abi.encodeWithSignature("setLaunchSalt(bytes32)", bytes32(uint256(1))),
+            abi.encodeWithSignature("setSalt(bytes32)", bytes32(uint256(1))),
+            abi.encodeWithSignature("launchSalt(bytes32)", bytes32(uint256(1)))
+        ];
+        for (uint256 i = 0; i < payloads.length; i++) {
+            (bool ok,) = address(t).call(payloads[i]);
+            ok; // onemli olan cagrinin basarisi degil, alanin degismemesi.
+            assertEq(t.launchSalt(), SALT, "launchSalt was rewritten");
+        }
     }
 
     function test_decimalsAreEighteen() public {
@@ -99,24 +134,24 @@ contract LaunchTokenTest is Test {
 
     function test_nameAtLimitIsAccepted() public {
         string memory n = "12345678901234567890123456789012"; // 32
-        LaunchToken t = new LaunchToken(n, "ATC", "u", CREATOR, CURVE);
+        LaunchToken t = new LaunchToken(n, "ATC", "u", CREATOR, CURVE, SALT);
         assertEq(t.name(), n);
     }
 
     function test_revertsWhenNameExceedsLimit() public {
         vm.expectRevert(LaunchToken.NameTooLong.selector);
-        new LaunchToken("123456789012345678901234567890123", "ATC", "u", CREATOR, CURVE); // 33
+        new LaunchToken("123456789012345678901234567890123", "ATC", "u", CREATOR, CURVE, SALT); // 33
     }
 
     function test_symbolAtLimitIsAccepted() public {
         string memory s = "1234567890123"; // 13
-        LaunchToken t = new LaunchToken("n", s, "u", CREATOR, CURVE);
+        LaunchToken t = new LaunchToken("n", s, "u", CREATOR, CURVE, SALT);
         assertEq(t.symbol(), s);
     }
 
     function test_revertsWhenSymbolExceedsLimit() public {
         vm.expectRevert(LaunchToken.SymbolTooLong.selector);
-        new LaunchToken("n", "12345678901234", "u", CREATOR, CURVE); // 14
+        new LaunchToken("n", "12345678901234", "u", CREATOR, CURVE, SALT); // 14
     }
 
     /// URI sinirini ALTTAN da pinler. Dosyadaki en uzun URI 10 bayt oldugu
@@ -125,14 +160,14 @@ contract LaunchTokenTest is Test {
     /// de suiti yesil birakti. Tam 200 baytlik bir URI ucunu birden oldurur.
     function test_uriAtLimitIsAccepted() public {
         string memory uri = new string(200);
-        LaunchToken t = new LaunchToken("n", "s", uri, CREATOR, CURVE);
+        LaunchToken t = new LaunchToken("n", "s", uri, CREATOR, CURVE, SALT);
         assertEq(bytes(t.metadataURI()).length, 200);
     }
 
     function test_revertsWhenUriExceedsLimit() public {
         string memory long = new string(201);
         vm.expectRevert(LaunchToken.UriTooLong.selector);
-        new LaunchToken("n", "s", long, CREATOR, CURVE);
+        new LaunchToken("n", "s", long, CREATOR, CURVE, SALT);
     }
 
     /// Bos metadata KABUL EDILIR ve bu bilincli bir karardir: ne pump.fun ne
@@ -141,7 +176,7 @@ contract LaunchTokenTest is Test {
     /// (ornegin `if (bytes(name_).length == 0) revert NameTooLong();`) burada
     /// gorunur.
     function test_emptyMetadataIsAccepted() public {
-        LaunchToken t = new LaunchToken("", "", "", CREATOR, CURVE);
+        LaunchToken t = new LaunchToken("", "", "", CREATOR, CURVE, SALT);
         assertEq(bytes(t.name()).length, 0);
         assertEq(bytes(t.symbol()).length, 0);
         assertEq(bytes(t.metadataURI()).length, 0);
@@ -152,12 +187,12 @@ contract LaunchTokenTest is Test {
 
     function test_revertsOnZeroCreator() public {
         vm.expectRevert(LaunchToken.ZeroCreator.selector);
-        new LaunchToken("n", "s", "u", address(0), CURVE);
+        new LaunchToken("n", "s", "u", address(0), CURVE, SALT);
     }
 
     function test_revertsOnZeroCurve() public {
         vm.expectRevert(LaunchToken.ZeroCurve.selector);
-        new LaunchToken("n", "s", "u", CREATOR, address(0));
+        new LaunchToken("n", "s", "u", CREATOR, address(0), SALT);
     }
 
     // --- transfer davranisi standart olmali ---

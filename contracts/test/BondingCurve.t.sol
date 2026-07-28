@@ -161,9 +161,14 @@ contract BondingCurveTest is Test {
     /// sonra bind. Bu dosyada factory rolunu test kontratinin kendisi oynar ve
     /// URETIM profilini gecirir -- factory de profili kendi immutable'larinda
     /// boyle tutacak.
+    ///
+    /// `launchSalt` bu dosyada her yerde `bytes32(0)`'dir ve bu bilerek
+    /// boyledir: curve o alani HIC OKUMAZ. Salt yalnizca
+    /// `LaunchFactory.isCanonical`'in turetmesine girer, ve bu dosyanin
+    /// olctugu hicbir sey provenance degildir.
     function _launch(address creator_, FeeEscrow escrow_) internal returns (BondingCurve c, LaunchToken t) {
         c = _newCurve(creator_, address(escrow_));
-        t = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(c));
+        t = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(c), bytes32(0));
         c.bind(address(t));
     }
 
@@ -178,7 +183,7 @@ contract BondingCurveTest is Test {
     /// Uretim disi bir profille tam bir launch (curve + token + bind).
     function _launchWithProfile(uint256 t_, uint256 v_, uint256 s_) internal returns (BondingCurve c, LaunchToken t) {
         c = _curveWithProfile(t_, v_, s_);
-        t = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(c));
+        t = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(c), bytes32(0));
         c.bind(address(t));
     }
 
@@ -232,7 +237,7 @@ contract BondingCurveTest is Test {
 
     function test_bindRevertsWhenCalledByAnyoneButTheFactory() public {
         BondingCurve fresh = _newCurve(CREATOR, address(escrow));
-        LaunchToken t = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(fresh));
+        LaunchToken t = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(fresh), bytes32(0));
 
         vm.prank(ALICE);
         vm.expectRevert(BondingCurve.NotFactory.selector);
@@ -244,7 +249,7 @@ contract BondingCurveTest is Test {
     }
 
     function test_bindRevertsOnTheSecondCall() public {
-        LaunchToken other = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(curve));
+        LaunchToken other = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(curve), bytes32(0));
         vm.expectRevert(BondingCurve.AlreadyBound.selector);
         curve.bind(address(other));
         assertEq(curve.token(), address(token));
@@ -261,7 +266,7 @@ contract BondingCurveTest is Test {
     /// hicbir transferi karsilayamaz.
     function test_bindRevertsWhenTheTokenDoesNotPointBack() public {
         BondingCurve fresh = _newCurve(CREATOR, address(escrow));
-        LaunchToken elsewhere = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(curve));
+        LaunchToken elsewhere = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(curve), bytes32(0));
 
         vm.expectRevert(BondingCurve.TokenDoesNotPointBack.selector);
         fresh.bind(address(elsewhere));
@@ -321,7 +326,7 @@ contract BondingCurveTest is Test {
         assertEq(edge.INITIAL_REAL_TOKEN_RESERVES(), T - 1);
 
         // ...ve ona bir token BAGLANAMAZ: S = 1,073e27 > N = 1e27.
-        LaunchToken t = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(edge));
+        LaunchToken t = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(edge), bytes32(0));
         vm.expectRevert(BondingCurve.TokenBalanceBelowSaleAndSeed.selector);
         edge.bind(address(t));
     }
@@ -344,21 +349,21 @@ contract BondingCurveTest is Test {
     function test_bindRejectsAProfileTheTokenSupplyCannotFund() public {
         // Graduation'i fonlayamayan profil: S <= N ama S + D > N.
         BondingCurve unfundable = _curveWithProfile(T, V, 900_000_000e18);
-        LaunchToken t1 = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(unfundable));
+        LaunchToken t1 = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(unfundable), bytes32(0));
         vm.expectRevert(BondingCurve.TokenBalanceBelowSaleAndSeed.selector);
         unfundable.bind(address(t1));
 
         // Sinirin TAM uzeri gecer.
         uint256 sMax = 793_126_814_431_964_561_597_182_417;
         BondingCurve atLimit = _curveWithProfile(T, V, sMax);
-        LaunchToken t2 = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(atLimit));
+        LaunchToken t2 = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(atLimit), bytes32(0));
         atLimit.bind(address(t2));
         assertEq(atLimit.token(), address(t2));
         assertEq(atLimit.INITIAL_REAL_TOKEN_RESERVES() + atLimit.poolSeedSupply(), 1_000_000_000e18);
 
         // Bir fazlasi gecmez.
         BondingCurve overLimit = _curveWithProfile(T, V, sMax + 1);
-        LaunchToken t3 = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(overLimit));
+        LaunchToken t3 = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(overLimit), bytes32(0));
         vm.expectRevert(BondingCurve.TokenBalanceBelowSaleAndSeed.selector);
         overLimit.bind(address(t3));
     }

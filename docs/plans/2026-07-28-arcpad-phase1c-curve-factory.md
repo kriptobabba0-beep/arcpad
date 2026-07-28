@@ -462,7 +462,7 @@ Bir sahteci istediği `creator()`, `curve()` ve `metadataURI()` değerlerini idd
   - `predictAddresses(address creator_, string name, string symbol, string uri, uint256 nonce) → (address token, address curve)` — görünüm, off-chain önizleme için.
   - `launchCount() → uint256`
   - Olay: `Launched(address indexed token, address indexed curve, address indexed creator, string name, string symbol, string uri, bytes32 salt)`
-  - Hatalar: `EmptyName()`, `EmptySymbol()`, `DegenerateProfile()`
+  - Hatalar: `EmptyName()`, `EmptySymbol()`, `DegenerateProfile()`, `GraduationRaiseTooSmall()`, `ZeroEscrowAddress()`, `ZeroTreasuryAddress()`
 
 ### Task 2'den devreden iki yükümlülük
 
@@ -533,9 +533,45 @@ Beklenen: `Source "../src/LaunchFactory.sol" not found`.
 
 ```solidity
 contract LaunchFactory {
+    // Piyasa degeri tabani = testnet profilinin acilis degeri (4 USDC).
+    uint256 public constant MIN_OPENING_MARKET_CAP = 4e18;
+    // Raise tabani = testnet profilinin kendi graduation raise'i (~12,1614 USDC).
+    uint256 public constant MIN_GRADUATION_RAISE = 12_161_433_369_060_378_706;
+
     address public immutable escrow;
     address public immutable protocolTreasury;
+    // PROFIL FACTORY'DE DURUR ve her curve'e aynen gecirilir.
+    uint256 public immutable VIRTUAL_TOKEN_RESERVES;   // T
+    uint256 public immutable VIRTUAL_QUOTE_RESERVES;   // V
+    uint256 public immutable SALE_SUPPLY;              // S
     uint256 public launchCount;
+
+    constructor(
+        address escrow_,
+        address protocolTreasury_,
+        uint256 virtualTokenReserves_,   // DIKKAT: T once, V sonra --
+        uint256 virtualQuoteReserves_,   // BondingCurve'un constructor sirasi budur
+        uint256 saleSupply_
+    ) {
+        if (escrow_ == address(0)) revert ZeroEscrowAddress();
+        if (protocolTreasury_ == address(0)) revert ZeroTreasuryAddress();
+
+        // Profil sagligi: deploy basina bir kez, her curve'e bedava yayilir.
+        // Sira baglayicidir -- piyasa degeri RAISE'DEN ONCE gelir, yoksa
+        // raise korumasi piyasa degeri sinir testini maskeler.
+        if (saleSupply_ >= virtualTokenReserves_) revert DegenerateProfile();
+        if (CurveMath.poolSeedSupply(saleSupply_, virtualTokenReserves_) == 0) revert DegenerateProfile();
+        if (CurveMath.marketCap(virtualQuoteReserves_, virtualTokenReserves_, LAUNCH_TOKEN_TOTAL_SUPPLY)
+                < MIN_OPENING_MARKET_CAP) revert DegenerateProfile();
+        if (CurveMath.graduationRaise(saleSupply_, virtualQuoteReserves_, virtualTokenReserves_)
+                < MIN_GRADUATION_RAISE) revert GraduationRaiseTooSmall();
+
+        escrow = escrow_;
+        protocolTreasury = protocolTreasury_;
+        VIRTUAL_TOKEN_RESERVES = virtualTokenReserves_;
+        VIRTUAL_QUOTE_RESERVES = virtualQuoteReserves_;
+        SALE_SUPPLY = saleSupply_;
+    }
 
     function launch(string calldata name_, string calldata symbol_, string calldata uri_)
         external
@@ -548,13 +584,19 @@ contract LaunchFactory {
 
         // Once curve: constructor argumanlari token'i ICERMEZ, bu yuzden
         // adresi token'a bagli degildir ve dongusellik dogmaz.
-        curve = address(new BondingCurve{salt: salt}(msg.sender, escrow, protocolTreasury));
+        curve = address(
+            new BondingCurve{salt: salt}(
+                msg.sender, escrow, protocolTreasury,
+                VIRTUAL_TOKEN_RESERVES, VIRTUAL_QUOTE_RESERVES, SALE_SUPPLY
+            )
+        );
 
         // Sonra token: ayni salt, ve arz dogrudan curve'e basilir.
         token = address(new LaunchToken{salt: salt}(name_, symbol_, uri_, msg.sender, curve, salt));
 
-        BondingCurve(curve).bind(token);
+        // Olay bind'DEN ONCE: BondingCurve'un kati CEI sirasiyla ayni disiplin.
         emit Launched(token, curve, msg.sender, name_, symbol_, uri_, salt);
+        BondingCurve(curve).bind(token);
     }
 
     /// @notice Bir token'in bu factory tarafindan uretilip uretilmedigi.

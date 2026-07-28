@@ -3,6 +3,20 @@ pragma solidity ^0.8.26;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
+// `LaunchToken.TOTAL_SUPPLY`'in DOSYA DUZEYINDEKI kaynagi.
+//
+// Solidity bir kontratin `constant` uyesine `LaunchToken.TOTAL_SUPPLY` diye
+// disaridan erisime izin VERMEZ (Error 9582). `LaunchFactory`'nin acilis
+// piyasa degeri kontrolu `N`'e DERLEME ZAMANINDA ihtiyac duyuyor; sayiyi
+// orada tekrar yazmak sessizce ayrisabilen ikinci bir kaynak yaratirdi -- ve
+// asagidaki NatSpec tam olarak o olcek ayrismasinin nicin hicbir yerde revert
+// etmedigini anlatiyor. Tek kaynak burasidir; kontratin `public constant`'i
+// onu aynen yansitir, yani ABI getter'i degismez.
+//
+// (Dosya duzeyindeki degiskenler NatSpec etiketi KABUL ETMEZ -- `@notice`
+// burada Error 6546 verir; bu yuzden duz yorum.)
+uint256 constant LAUNCH_TOKEN_TOTAL_SUPPLY = 1_000_000_000e18;
+
 /// @title LaunchToken
 /// @notice arcpad uzerinde baslatilan sabit arzli token.
 /// @dev Tum arz constructor'da TEK SEFERDE bonding curve adresine basilir.
@@ -29,7 +43,7 @@ contract LaunchToken is ERC20 {
     ///      market cap 1e12 kat kucuk cikar, her launch sonsuza kadar fee
     ///      tier 0'a sabitlenir ve graduation esigi anlamsizlasir. Serbest bir
     ///      constructor argumani bu hatayi mumkun kilar; sabit kilmaz.
-    uint256 public constant TOTAL_SUPPLY = 1_000_000_000e18;
+    uint256 public constant TOTAL_SUPPLY = LAUNCH_TOKEN_TOTAL_SUPPLY;
 
     error NameTooLong();
     error SymbolTooLong();
@@ -52,12 +66,39 @@ contract LaunchToken is ERC20 {
     /// @notice Logo ve aciklamayi tasiyan metadata isaretcisi (IPFS).
     string public metadataURI;
 
+    /// @notice Bu token'i ureten launch'in CREATE2 salt'i.
+    /// @dev DOGRULAMANIN TASIYICI ALANI. `LaunchFactory.isCanonical`, token'in
+    ///      KENDI adresini yalnizca token'in acikladigi verilerden yeniden
+    ///      turetir:
+    ///
+    ///        beklenen = CREATE2(factory, launchSalt,
+    ///                           keccak(creationCode ++ abi.encode(
+    ///                             name, symbol, metadataURI, creator, curve,
+    ///                             launchSalt)))
+    ///
+    ///      Factory'den tureyen bir adrese YALNIZCA factory deploy
+    ///      edebildiginden, esitlik provenance'in kendisidir. Salt burada
+    ///      durmak zorundadir: aksi halde dogrulayicinin elinde turetmeyi
+    ///      tamamlayacak veri olmaz ve eslesme yeniden "saklanan bir
+    ///      isaretci"ye duser -- ki bu, herkesin gercek bir launch'in
+    ///      creator'ini, curve'unu ve URI'sini iddia eden bir token basmasina
+    ///      izin veren tam olarak o durumdur.
+    ///
+    ///      SIFIR OLABILIR ve bu bilinclidir: bu kontrat factory'siz de
+    ///      deploy edilebilir (testler ve sahtecilik senaryolari boyle kurar),
+    ///      ve sifir bir salt kanonikligi zaten saglamaz. Buraya bir
+    ///      `ZeroSalt` korumasi koymak sahteciyi hic durdurmaz -- o da
+    ///      keccak-benzeri bir sayi uydurabilir -- ama dogrulamanin gucunun
+    ///      salt'in "gecerliligi"nden geldigi yanilsamasini yaratirdi.
+    bytes32 public immutable launchSalt;
+
     constructor(
         string memory name_,
         string memory symbol_,
         string memory metadataURI_,
         address creator_,
-        address curve_
+        address curve_,
+        bytes32 launchSalt_
     ) ERC20(name_, symbol_) {
         if (bytes(name_).length > MAX_NAME_LENGTH) revert NameTooLong();
         if (bytes(symbol_).length > MAX_SYMBOL_LENGTH) revert SymbolTooLong();
@@ -68,6 +109,7 @@ contract LaunchToken is ERC20 {
         creator = creator_;
         curve = curve_;
         metadataURI = metadataURI_;
+        launchSalt = launchSalt_;
 
         _mint(curve_, TOTAL_SUPPLY);
     }
