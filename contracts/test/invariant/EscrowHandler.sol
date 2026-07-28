@@ -31,6 +31,20 @@ contract EscrowHandler is StdUtils {
     ///      birlikte hareket ettigi icin diger invariant'lar bunu goremez.
     uint256 public claimLeftResidualDebt;
 
+    /// @dev KULLANILABILIRLIK sayaci. Yukaridaki iki sayac GUVENLIK
+    ///      ozelliklerini olcer; bu, kontratin isini YAPTIGINI olcer.
+    ///      Gerekcesi olculdu: `deposit`'e bir toz filtresi eklemek
+    ///      (`msg.value == 0` yerine `msg.value < 2`) dort invariant'i da
+    ///      yesil biraktu, ustelik fuzzer bozuk yolu FIILEN calistirdigi halde
+    ///      (`depositTo ... Reverts 164`). Mekanizma geneldir ve bu paketin
+    ///      disinda da gecerlidir: `fail_on_revert = false` revert eden
+    ///      handler cagrisini yutar, revert ayni anda `ghostDeposited += amount`
+    ///      satirini da geri alir, boylece kontrat durumu ile ghost durumu
+    ///      TAM OLARAK islem basarisiz oldugu ICIN tutarli kalir. Hicbir sey
+    ///      yapmayan bir kontrat her guvenlik invariant'ini saglar. Bu yuzden
+    ///      revert `try/catch` ile burada YAKALANIR ve sayilir; yutulmaz.
+    uint256 public depositRevertedUnexpectedly;
+
     constructor(FeeEscrow escrow_) {
         escrow = escrow_;
         recipients[0] = address(0xA11CE);
@@ -40,13 +54,20 @@ contract EscrowHandler is StdUtils {
 
     receive() external payable {}
 
+    /// @dev `amount` [1, 10 ether] araligina baglanir, alici sifir degildir ve
+    ///      bakiye yeterlidir -- yani BU CAGRI ICIN deposit'in revert etmesi
+    ///      icin gecerli hicbir sebep yoktur. Revert ederse bu bir
+    ///      kullanilabilirlik kusurudur ve sayilir.
     function depositTo(uint256 who, uint256 amount) external {
         address r = recipients[_bound(who, 0, 2)];
         amount = _bound(amount, 1, 10 ether);
         if (address(this).balance < amount) return;
 
-        escrow.deposit{value: amount}(r);
-        ghostDeposited += amount;
+        try escrow.deposit{value: amount}(r) {
+            ghostDeposited += amount;
+        } catch {
+            depositRevertedUnexpectedly++;
+        }
     }
 
     function claimFor(uint256 who) external {
@@ -86,8 +107,11 @@ contract EscrowHandler is StdUtils {
         amount = _bound(amount, 1, 10 ether);
         if (address(this).balance < amount) return;
 
-        escrow.deposit{value: amount}(address(reentrantActor));
-        ghostDeposited += amount;
+        try escrow.deposit{value: amount}(address(reentrantActor)) {
+            ghostDeposited += amount;
+        } catch {
+            depositRevertedUnexpectedly++;
+        }
     }
 
     /// @dev Ayni ghost sayaclarini (ghostClaimed, claimPaidWrongAmount,

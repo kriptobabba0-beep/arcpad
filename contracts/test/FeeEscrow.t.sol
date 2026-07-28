@@ -180,9 +180,18 @@ contract FeeEscrowTest is Test {
     }
 
     /// Escrow'un receive()/fallback() fonksiyonu yoktur: deposit()'i atlayip
-    /// dogrudan native gonderim yapmak basarisiz olmali. Bu, address(escrow)
-    /// bakiyesinin daima totalOwed ile eslesmesini (odeme gucu invariant'i)
-    /// deposit() disinda hicbir yolun bozamayacagini garanti eder.
+    /// DUZ NATIVE gonderim yapmak basarisiz olmali.
+    ///
+    /// DIKKAT -- bu testin kanitladigi sey sinirlidir. Bakiyenin deposit()
+    /// disinda ARTAMAYACAGINI kanitlamaz, cunku Arc'ta bu YANLIS: native
+    /// varlik ile 0x3600...00 adresindeki ERC-20 gorunum ayni bakiyenin iki
+    /// gorunumudur. Canli Arc testnet'te (blok 54019678) FeeEscrow'un
+    /// derlenmis runtime bytecode'u bir hedefe yerlestirilip olculdu:
+    /// `USDC.transfer(target, 1_000_000)` `true` dondu ve hedefin native
+    /// bakiyesi 1e18 wei oldu -- `receive()` hic calismadan. Dolayisiyla
+    /// dagitim hedefinde gecerli olan `totalOwed <= balance`'tir, esitlik
+    /// degil (bkz. FeeEscrow kisiti 1). Burada olculen yalnizca EVM'in duz
+    /// `call{value:}` yolunun kapali oldugudur.
     function test_plainNativeTransferWithoutDepositReverts() public {
         (bool ok,) = address(escrow).call{value: 1}("");
         assertFalse(ok);
@@ -192,17 +201,95 @@ contract FeeEscrowTest is Test {
     /// CEI'nin somut kaniti: claim() owed[recipient]'i external call'dan ONCE
     /// sifirlar. Bir alici kendi claim'i icinde tekrar kendini claim etmeye
     /// calisirsa NothingToClaim ile karsilasir -- reentrancy guard olmadan.
+    ///
+    /// IKINCI ALICININ 1000 WEI'SI TESTIN KENDISIDIR, dekor degil. Onceki
+    /// hali escrow'da SADECE saldirganin kendi 40 wei'sini tutuyordu; o
+    /// kurulumda `recipient.call`'i defter guncellemesinden ONCE yapan
+    /// mutasyon altinda ic claim bos bakiyede transfer hatasina dusuyor ve
+    /// disaridaki claim masum gorunerek tamamlaniyordu -- yani test kendi
+    /// belgeledigi sebeple BASARISIZ OLAMIYORDU (olculdu: 15 passed,
+    /// 0 failed). Escrow'da baskasinin parasi varken ayni saldirgan, tek
+    /// baytini degistirmeden, her seyi bosaltir.
     function test_reentrantClaimOnSameRecipientFailsBecauseDebtIsZeroedBeforeTransfer() public {
         ReentrantSelfClaimer attacker = new ReentrantSelfClaimer(escrow);
         escrow.deposit{value: 40}(address(attacker));
+        escrow.deposit{value: 1000}(CREATOR);
 
         escrow.claim(address(attacker));
 
         assertTrue(attacker.reentered());
-        assertFalse(attacker.reentrantCallSucceeded());
+        // Once para, sonra bayrak: ihlalde en bilgilendirici mesaj budur
+        // (mutasyon altinda "1040 != 40" -- olculdu).
         assertEq(address(attacker).balance, 40);
+        assertFalse(attacker.reentrantCallSucceeded());
         assertEq(escrow.owed(address(attacker)), 0);
-        assertEq(escrow.totalOwed(), 0);
+
+        // Baskasinin parasina dokunulmadi ve escrow onu hala odeyebilir.
+        assertEq(escrow.owed(CREATOR), 1000);
+        assertEq(escrow.totalOwed(), 1000);
+        assertGe(address(escrow).balance, escrow.owed(CREATOR));
+    }
+
+    /// 1 wei yatirilabilir olmali: alt sinir YOKTUR. Ucret modelinde kucuk bir
+    /// islemde 1 wei'lik pay ulasilabilir bir degerdir ve revert eden bir
+    /// deposit butun islemi revert ettirir. Dosyadaki diger her deposit >= 5
+    /// wei oldugu icin bu sinir hicbir yerde altindan pinlenmiyordu: bir
+    /// "toz filtresi" (`msg.value < 2`) 15/15 unit ve 4/4 invariant'i yesil
+    /// birakiyordu.
+    function test_oneWeiDepositIsCreditable() public {
+        escrow.deposit{value: 1}(PROTOCOL);
+        assertEq(escrow.owed(PROTOCOL), 1);
+        assertEq(escrow.totalOwed(), 1);
+        assertEq(address(escrow).balance, 1);
+
+        uint256 before = PROTOCOL.balance;
+        escrow.claim(PROTOCOL);
+        assertEq(PROTOCOL.balance - before, 1);
+    }
+
+    /// YUZEY TESTI: claim() disinda deger hareket ettiren HICBIR giris noktasi
+    /// olmamali.
+    ///
+    /// Bunun ayri bir test olmasinin sebebi olculdu: FeeEscrow'a
+    /// `sweep(address)` eklemek 15/15 unit ve 4/4 invariant'i yesil birakti.
+    /// Invariant'lar bunu YAPISAL OLARAK goremez -- `targetContract` handler'dir
+    /// ve handler yalnizca deposit/claim sarar, dolayisiyla fuzz'lanan hicbir
+    /// dizi handler'in cagirmadigi bir fonksiyona ulasamaz. "Sikisan fonlari
+    /// kurtaralim" eklemeleri (sweep/rescue/withdraw/emergencyWithdraw) tam da
+    /// bu yuzden yalnizca boyle bir yuzey taramasiyla yakalanabilir.
+    ///
+    /// Hedef NATIVE KABUL EDEN BIR EOA'dir. Test kontratinin kendisi hedef
+    /// olarak kullanilamaz: forge-std'nin `Test`'inde `receive()` yoktur, o
+    /// yuzden sweep zaten basarisiz olur ve test YANLIS SEBEPLE gecerdi --
+    /// bu incelemenin kaldirmak icin var oldugu hatanin ta kendisi.
+    function test_noValueMovingEntrypointBeyondClaimExists() public {
+        escrow.deposit{value: 100}(CREATOR);
+
+        address thief = address(0xBEE7); // kodsuz EOA: native'i kosulsuz kabul eder
+        uint256 thiefBefore = thief.balance;
+
+        bytes[6] memory payloads = [
+            abi.encodeWithSignature("sweep(address)", thief),
+            abi.encodeWithSignature("sweep()"),
+            abi.encodeWithSignature("rescue(address)", thief),
+            abi.encodeWithSignature("rescue(address,uint256)", thief, uint256(100)),
+            abi.encodeWithSignature("withdraw()"),
+            abi.encodeWithSignature("emergencyWithdraw(address)", thief)
+        ];
+
+        for (uint256 i = 0; i < payloads.length; i++) {
+            (bool ok,) = address(escrow).call(payloads[i]);
+            ok; // sonuc onemli degil: onemli olan paranin yerinde durmasi.
+            assertEq(address(escrow).balance, 100, "an entrypoint moved escrow funds");
+            assertEq(thief.balance, thiefBefore, "an entrypoint paid an arbitrary address");
+            assertEq(escrow.owed(CREATOR), 100, "an entrypoint stranded a debt");
+            assertEq(escrow.totalOwed(), 100);
+        }
+
+        // Tek mesru cikis yolu hala calisiyor.
+        escrow.claim(CREATOR);
+        assertEq(CREATOR.balance, 100);
+        assertEq(address(escrow).balance, 0);
     }
 
     /// Farkli bir alicinin claim'ini reentrant olarak tetiklemek mesrudur ve

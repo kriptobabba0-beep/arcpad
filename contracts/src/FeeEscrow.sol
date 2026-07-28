@@ -10,6 +10,50 @@ pragma solidity ^0.8.26;
 ///      herkesin ucretini kilitlerdi.
 /// @dev Bu fazda tek varlik native USDC'dir. Ozel pairing asset destegi
 ///      kapsam disidir (spec 2).
+///
+/// @dev ENTEGRASYON KISITLARI -- dordu de dagitilmis kontratin gercek
+///      ozellikleridir ve baska hicbir yerde yazili degildir.
+///
+/// @dev (1) BAKIYE deposit() DISINDAN DA ARTABILIR VE O PARA GERI ALINAMAZ.
+///      `receive()`/`fallback()` yoktur, yani duz bir native gonderim
+///      basarisiz olur -- bu test edilmistir. ANCAK Arc'ta native varlik ile
+///      0x3600000000000000000000000000000000000000 adresindeki ERC-20 gorunum
+///      AYNI bakiyenin iki gorunumudur, iki ayri varlik degil. Canli Arc
+///      testnet'te (blok 54019678) FeeEscrow'un derlenmis runtime bytecode'u
+///      bir hedefe yerlestirilip olculdu: `USDC.transfer(target, 1_000_000)`
+///      `true` dondu ve hedefin native bakiyesi 1e18 wei oldu; `receive()`
+///      hic calismadi. Yani `balance == totalOwed` dagitim hedefinde KESIN
+///      DEGILDIR; gecerli olan `totalOwed <= balance`'tir. Guvenli yon
+///      korunur (escrow asla borcunu odeyemez hale gelmez) ama bu adrese
+///      dogrudan gonderilen USDC talep edilemez; arayuz burayi "ucretlerin
+///      biriktigi adres" diye gostermemelidir.
+///
+/// @dev (2) ALICILAR receive() ICINDE YALNIZCA TAHAKKUK ETMELIDIR.
+///      `claim` izinsizdir: bir alicinin `receive()`'inin NE ZAMAN calisacagina
+///      ucuncu bir taraf karar verir ve claim hep-ya-hic oldugu icin NE KADARLA
+///      calisacagini da o secer. Ornegin ileride alinan ucretle piyasadan alim
+///      yapan bir BuybackVault, saldirganin tokeni alip `claim(vault)` ile
+///      alimi sisirilmis fiyattan tetikleyip ustune satmasina izin verir --
+///      tek bir Arc isleminde, zamani ve buyuklugu saldirganin secimiyle.
+///      Bu FeeEscrow icinde, spec'in bilerek sectigi izinsizlik ozelliginden
+///      vazgecmeden duzeltilemez; dolayisiyla alici tarafinda bir kisittir.
+///
+/// @dev (3) CAGIRAN SIFIR PAYLARI ATLAMALIDIR. `deposit`, `msg.value == 0`
+///      icin `ZeroAmount()` ile revert eder. Ucret modelinde sifir pay
+///      MESRUDUR -- curve uzerinde LP payi %0'dir ve buyback payi varsayilan
+///      olarak kapalidir -- ayrica satis yolunda `quoteSellProceeds` 0'a
+///      yuvarlanabilir ve o zaman iki ucret parcasi da 0 olur. Yapilandirilmis
+///      her payi kosulsuz yatiran bir cagiran HER islemi revert ettirir.
+///      Revert bilerek korunmustur; sifiri atlamak cagiranin yukumlulugudur.
+///
+/// @dev (4) BLOKLANMIS BIR ALICININ BAKIYESI KALICI OLARAK DONAR. Arc
+///      bloklama listesini calisma zamaninda uygular, yani gas odenmis olsa
+///      bile native transfer revert edebilir. Bu kontratta owner, yeniden
+///      atama ve kurtarma yolu YOKTUR; bu eksiklik urunun vaadidir, gozden
+///      kacma degildir. Dolayisiyla kabul edilmis bir risktir. Operasyonel
+///      karsilik Faz 1c'dedir: protokol ucret ALICI ADRESI dondurulebilir
+///      olmalidir, boylece protokol payi yeni bir adrese yonlendirilebilir
+///      (bloklanan adreste birikmis bakiye yine de kurtarilamaz).
 contract FeeEscrow {
     error ZeroRecipient();
     error ZeroAmount();
@@ -29,6 +73,8 @@ contract FeeEscrow {
     /// @notice `recipient` adina ucret yatirir.
     /// @dev Protokol ve creator paylari AYRI AYRI yatirilir; escrow bir
     ///      bolusturme yapmaz. Ucret parcalardan toplanir (spec 5.5).
+    /// @dev Sifir pay ile CAGIRMAYIN: revert eder (kisit 3). 1 wei gecerli ve
+    ///      alacaga yazilabilir bir tutardir; alt sinir yoktur.
     function deposit(address recipient) external payable {
         if (recipient == address(0)) revert ZeroRecipient();
         if (msg.value == 0) revert ZeroAmount();
