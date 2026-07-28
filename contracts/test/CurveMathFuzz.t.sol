@@ -45,15 +45,27 @@ contract CurveMathFuzzTest is Test {
         assertLt(proceeds, cost, "round trip created value");
     }
 
-    /// Tam quote girisiyle alim (netQuoteIn -> quoteBuyTokensOut), sonra hemen
+    /// Tam quote girisiyle alim (correctedNetQuoteIn -> quoteBuyTokensOut),
+    /// sonra hemen
     /// satis: ayni garanti, exact-tokens-out'un simetrigi olan exact-quote-in
     /// yolu icin. Gercek bir launch'ta kullanicinin fiilen kullandigi yol
     /// budur -- ne kadar harcamak istedigini soyler, karsiliginda token alir.
     /// @dev t = floor(nT/(V+n)) <= nT/(V+n) (gercel) oldugundan
     ///      t(V+n) <= nT, yani floor(t(V+n)/T) <= n her zaman dogrudur.
-    /// @dev gross=1 veya 2 icin netQuoteIn asagi yuvarlamadan sifir doner
-    ///      (ZeroAmount ile reddedilir); 125 bps'te net'in kesin >0 olmasi
-    ///      icin gross>=3 gerekir: (gross-1)*10000/10125 >= 1 <=> gross >= 3.
+    /// @dev Alt sinir 3 -> 4. Zincir algoritmasinda `quoteBuyTokensOut`
+    ///      `net - 1`'i besledigi icin duzeltilmis net'in >= 2 olmasi gerekir.
+    ///      Elle turetilmis (95 + 30 bps):
+    ///        gross=1: net=floor(10_000/10_125)=0, ucret 0, duzeltme yok
+    ///                 -> 0, quoteBuyTokensOut NetTooSmall
+    ///        gross=2: net=1, ucret 1+1=2, toplam 3>2, tasma 1 >= net 1
+    ///                 -> correctedNetQuoteIn'in KENDISI NetTooSmall
+    ///        gross=3: net=2, ucret 1+1=2, toplam 4>3, tasma 1 -> net 1,
+    ///                 quoteBuyTokensOut NetTooSmall
+    ///        gross=4: net=3, ucret 1+1=2, toplam 5>4, tasma 1 -> net 2  OK
+    ///      4'ten sonra guvenli kalir: net = floor(gross*1e4/10_125) gross'ta
+    ///      azalmayan bir fonksiyondur ve tasma ISPATEN en fazla 1'dir
+    ///      (bkz. CurveMath.correctedNetQuoteIn NatSpec'i), yani gross >= 4
+    ///      icin duzeltilmis net >= 3 - 1 = 2.
     /// @dev Ust sinir `2 * 12_161_433_369` (USDC graduation raise'inin tam
     ///      tutarinin iki kati): [3, type(uint128).max] ile ust sinir V'ye
     ///      (4.292e9) kiyasla o kadar buyuktu ki 200.000/200.000 uniform
@@ -61,9 +73,9 @@ contract CurveMathFuzzTest is Test {
     ///      gercek bir launch'in hic gormeyecegi bir bolgeyi fuzzluyordu.
     ///      Bir launch'in gorebilecegi TUM aralik, bolluca pay ile, budur.
     function testFuzz_buyTokensOutThenSellNeverProfits(uint256 grossQuoteIn) public pure {
-        grossQuoteIn = bound(grossQuoteIn, 3, 2 * 12_161_433_369);
+        grossQuoteIn = bound(grossQuoteIn, 4, 2 * 12_161_433_369);
 
-        uint256 net = CurveMath.netQuoteIn(grossQuoteIn, CURVE_FEE_BPS);
+        (uint256 net,,) = CurveMath.correctedNetQuoteIn(grossQuoteIn, 95, 30);
         uint256 tokensOut = CurveMath.quoteBuyTokensOut(net, V, T);
 
         uint256 newQuote = V + net;
@@ -101,10 +113,13 @@ contract CurveMathFuzzTest is Test {
         if (amount == 0) assertEq(f, 0);
     }
 
-    /// Ucret dusuldukten sonra kalan, brut tutari asamaz.
-    function testFuzz_netQuoteInNeverExceedsGross(uint256 gross) public pure {
+    /// Ucret dusuldukten sonra kalan, brut tutari asamaz. Bu ozellik girdiden
+    /// 1 cikarma kuralindan BAGIMSIZ olarak dogrudur ve oyle kalmalidir:
+    /// 125 bps'te net = floor(gross*10_000/10_125) <= gross*10_000/10_125
+    /// < gross, yani `-1` olmadan da KESIN kucuktur (gross = 1 icin net = 0).
+    function testFuzz_netBeforeCorrectionNeverExceedsGross(uint256 gross) public pure {
         gross = bound(gross, 1, type(uint128).max);
-        assertLt(CurveMath.netQuoteIn(gross, CURVE_FEE_BPS), gross);
+        assertLt(CurveMath.netQuoteInBeforeCorrection(gross, CURVE_FEE_BPS), gross);
     }
 
     /// Sureklilik: havuz tohumu her zaman satis arzindan kucuk olmali.
@@ -113,18 +128,49 @@ contract CurveMathFuzzTest is Test {
         assertLt(CurveMath.poolSeedSupply(saleSupply, T), saleSupply);
     }
 
-    /// netQuoteIn'in INCLUSIVE ayrisimi ile feeOn'un EXCLUSIVE sozlesmesi
-    /// arasindaki koprü: `net`'in EXCLUSIVE ucretini geri eklesen bile
-    /// `gross`'a asla ULASAMAZSIN (kesin kucuk kalir). Bu, Faz 1b'deki
-    /// stateful bir cagiranin `net` uzerinden EXCLUSIVE bir ucret
-    /// hesaplayip fark kadar iade yaparken alta tasmadan (underflow)
-    /// calisabilmesi icin gereken garantidir -- INCLUSIVE/EXCLUSIVE
-    /// koprusunu bir yoruma degil, calistirilabilir bir ozellige baglar.
-    function testFuzz_netQuoteInPlusFeeOnOfNetNeverReachesGross(uint256 gross, uint256 bps) public pure {
-        gross = bound(gross, 1, type(uint128).max);
-        bps = bound(bps, 0, CurveMath.BPS_DENOMINATOR);
+    /// 3. adimdan SONRA gecerli olan ozellik: duzeltilmis net ile fonksiyonun
+    /// DONDURDUGU iki ucret parcasinin toplami butceyi ASLA asmaz -- ama esit
+    /// OLABILIR. Eski surum "never reaches" diyordu; o, DUZELTMESIZ
+    /// konvansiyonun ozelligiydi ve 3. adim eklendikten sonra yanlistir.
+    ///
+    /// Ucretler donen degerlerden alinir, `net` uzerinden YENIDEN
+    /// HESAPLANMAZ: zincir onlari duzeltme ONCESI net uzerinden hesaplar ve
+    /// yeniden hesaplama daha kucuk (yanlis) bir ucret bulur. Bir cagiranin
+    /// fiilen tahsil edecegi sayilar bunlardir, dolayisiyla butce ozelligi de
+    /// bunlar uzerinden kurulmalidir.
+    function testFuzz_correctedNetPlusFeesNeverExceedsGross(uint256 gross) public pure {
+        gross = bound(gross, 1_000, 1e30);
+        (uint256 net, uint256 protocolFee, uint256 creatorFee) = CurveMath.correctedNetQuoteIn(gross, 95, 30);
+        assertLe(net + protocolFee + creatorFee, gross);
+    }
 
-        uint256 net = CurveMath.netQuoteIn(gross, bps);
-        assertLt(net + CurveMath.feeOn(net, bps), gross);
+    /// Butceye ne kadar yaklasildigi da sinirlidir: acik en fazla 1 birimdir.
+    /// Esitlik EVRENSEL DEGILDIR (duzeltme tetiklenmediginde 1 eksik
+    /// kalabilir), bu yuzden burada esitlik degil, ACIGIN SINIRI sabitlenir.
+    /// Olculdu: (95, 30) bps'te gross in [1, 1e6] araliginin %99,95'inde acik
+    /// 0, 494'unde 1; hicbir yerde 2 veya daha fazla degil.
+    /// @dev `sum <= gross` burada kasten TEKRAR ediliyor. Onsuz, toplamin
+    ///      butceyi astigi bir mutasyonda `gross - sum` alta tasar ve test
+    ///      okunakli bir assertion yerine ciplak bir `panic 0x11` ile duser.
+    ///      Ayni sonucu verir ama neden dustugunu soylemez.
+    function testFuzz_theGapToGrossIsAtMostOne(uint256 gross) public pure {
+        gross = bound(gross, 1_000, 1e30);
+        (uint256 net, uint256 protocolFee, uint256 creatorFee) = CurveMath.correctedNetQuoteIn(gross, 95, 30);
+
+        uint256 sum = net + protocolFee + creatorFee;
+        assertLe(sum, gross, "toplam butceyi asti");
+        assertLe(gross - sum, 1, "butceye acik 1 birimden fazla");
+    }
+
+    /// Zincir SDK tahmin edicisinden ASLA daha comert degildir. Kullanici lehine
+    /// yuvarlayan bir formulun geri sizmasini yakalayan bekci budur; 200.000
+    /// ornekte SDK 102.318'inde fazla vaat etti, tersi hic olmadi.
+    function testFuzz_chainNeverGivesMoreTokensThanTheSdkEstimator(uint256 gross) public pure {
+        gross = bound(gross, 1_000, 1e24);
+        uint256 sdkNet = ((gross - 1) * 10_000) / (CURVE_FEE_BPS + 10_000);
+        uint256 sdkTokens = (sdkNet * T) / (V + sdkNet);
+        (uint256 chainNet,,) = CurveMath.correctedNetQuoteIn(gross, 95, 30);
+        uint256 chainTokens = CurveMath.quoteBuyTokensOut(chainNet, V, T);
+        assertLe(chainTokens, sdkTokens);
     }
 }

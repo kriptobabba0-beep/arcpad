@@ -100,6 +100,11 @@ contract CurveHandler is StdUtils {
     uint256 public buyExactQuoteInSkipped;
 
     uint256 internal constant FEE_BPS = 125;
+    /// Zincirin exact-quote-in yolu ucreti IKI BAGIMSIZ parcadan toplar; tek
+    /// bir birlesik oran kullanmaz (bkz. CurveMath.correctedNetQuoteIn).
+    /// 95 + 30 == FEE_BPS, yani exact-tokens-out yoluyla ayni ucret rejimi.
+    uint256 internal constant PROTOCOL_FEE_BPS = 95;
+    uint256 internal constant CREATOR_FEE_BPS = 30;
 
     constructor(uint256 initialQuote, uint256 initialToken, uint256 saleSupply) {
         initialQuoteReserve = initialQuote;
@@ -179,32 +184,38 @@ contract CurveHandler is StdUtils {
     ///         karsiliginda ne kadar token aldigini gorur). `buyExactTokens`
     ///         `quoteBuyCost`+`feeOn` (EXCLUSIVE ucret: kullanici cost'un
     ///         USTUNE ucret oder) yolunu kapsarken, bu fonksiyon
-    ///         `netQuoteIn`+`quoteBuyTokensOut` (INCLUSIVE ucret: ucret
-    ///         `grossQuoteIn`'in ICINE gomulu) yolunu kapsar -- CurveMath.t.sol
-    ///         test_netQuoteInAndFeeOnUseIncompatibleFeeConventions'in
+    ///         `correctedNetQuoteIn`+`quoteBuyTokensOut` (INCLUSIVE ucret:
+    ///         ucret `grossQuoteIn`'in ICINE gomulu) yolunu kapsar --
+    ///         CurveMath.t.sol test_splitCeilsChargeMoreThanTheCombinedRate'in
     ///         gosterdigi gibi bu iki sozlesme birbirinin tersi degildir ve
     ///         zincirlenemez. Bu yuzden bu fonksiyonun akislari
     ///         totalQuoteIn/totalBuyFees ledger'ina KARISTIRILMAZ; tek amaci
     ///         quoteReserve/tokenReserve durumunu ilerletip
     ///         `invariant_constantProductNeverDecreases`'in exact-in yolunu
     ///         da kapsamasini saglamaktir.
-    /// @dev Guvenlik kaniti (q=quoteReserve, r=tokenReserve, n=net,
-    ///      t=quoteBuyTokensOut(n,q,r)): t <= nr/(q+n) (gercel) oldugundan
-    ///      (q+n)(r-t) >= (q+n)r - n r = qr. Yani sabit carpim burada da
-    ///      asla kucalmaz.
+    /// @dev Guvenlik kaniti (q=quoteReserve, r=tokenReserve, n=duzeltilmis net,
+    ///      t=quoteBuyTokensOut(n,q,r)): 4. adim curve terimini n-1 ile
+    ///      besledigi icin t <= (n-1)r/(q+n-1) <= nr/(q+n) (gercel), dolayisiyla
+    ///      (q+n)(r-t) >= (q+n)r - n r = qr. Yani sabit carpim burada da asla
+    ///      kucalmaz -- `-1` bu kaniti sadece GUCLENDIRIR.
+    /// @dev Alt sinir 1 -> 4. `correctedNetQuoteIn` gross=2'de, ardindan gelen
+    ///      `quoteBuyTokensOut` ise duzeltilmis net <= 1 iken (gross 1 ve 3)
+    ///      `NetTooSmall` ile REVERT eder. Bu dosyanin bas yorumunun anlattigi
+    ///      uzere `fail_on_revert = false` boyle bir revert'i sessizce
+    ///      iskartaya cikarirdi -- yani sayaclara da yansimadan kaybolurdu.
+    ///      Bu yuzden bunlar bir `if` ile degil, aralikla diskarda birakilir;
+    ///      gross >= 4 icin duzeltilmis net ISPATEN >= 2'dir (bkz.
+    ///      CurveMathFuzz.t.sol testFuzz_buyTokensOutThenSellNeverProfits'in
+    ///      elle turetilmis siniri).
     function buyExactQuoteIn(uint256 grossQuoteIn) external {
         buyExactQuoteInAttempts++;
         if (saleSupplyRemaining == 0) {
             buyExactQuoteInSkipped++;
             return;
         }
-        grossQuoteIn = _bound(grossQuoteIn, 1, type(uint128).max);
+        grossQuoteIn = _bound(grossQuoteIn, 4, type(uint128).max);
 
-        uint256 net = CurveMath.netQuoteIn(grossQuoteIn, FEE_BPS);
-        if (net == 0) {
-            buyExactQuoteInSkipped++;
-            return;
-        }
+        (uint256 net,,) = CurveMath.correctedNetQuoteIn(grossQuoteIn, PROTOCOL_FEE_BPS, CREATOR_FEE_BPS);
 
         uint256 tokensOut = CurveMath.quoteBuyTokensOut(net, quoteReserve, tokenReserve);
         // saleSupplyRemaining sinirini asan bir alim reddedilir -- CurveMath
