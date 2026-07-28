@@ -18,14 +18,32 @@ contract LaunchToken is ERC20 {
     uint256 private constant MAX_SYMBOL_LENGTH = 13;
     uint256 private constant MAX_URI_LENGTH = 200;
 
+    /// @notice Her launch'in arzi AYNIDIR ve burada sabitlenir (spec 5.3).
+    /// @dev Parametre DEGIL sabit olmasinin sebebi calisma zamaninda
+    ///      yakalanamayan bir eslesmedir: `CurveMath.marketCap` piyasa degerini
+    ///      mint'in gercek arzindan degil, kendisine verilen `supplyConstant`
+    ///      parametresinden hesaplar (spec bunu bilerek boyle ister). Iki deger
+    ///      ayni olcekte olmazsa hicbir sey revert etmez; sistem yanlis ama
+    ///      kendi icinde tutarli calisir. Ornek: curve 6 basamakli Solana
+    ///      sabitiyle (1e15) kalibre edilir, factory dogru sekilde 1e27 basar,
+    ///      market cap 1e12 kat kucuk cikar, her launch sonsuza kadar fee
+    ///      tier 0'a sabitlenir ve graduation esigi anlamsizlasir. Serbest bir
+    ///      constructor argumani bu hatayi mumkun kilar; sabit kilmaz.
+    uint256 public constant TOTAL_SUPPLY = 1_000_000_000e18;
+
     error NameTooLong();
     error SymbolTooLong();
     error UriTooLong();
     error ZeroCreator();
     error ZeroCurve();
-    error ZeroSupply();
 
-    /// @notice Ucretleri alacak creator. Launch'ta sabitlenir.
+    /// @notice Kayittaki creator. Ucreti fiilen alacak cuzdan BU DEGILDIR:
+    ///         degistirilebilir fee-recipient cuzdani curve/registry uzerinde
+    ///         durur ve creator onu launch'tan sonra degistirebilir; ayrica
+    ///         3 gunluk protokol onerili bir devir yolu vardir (spec 5.7),
+    ///         Faz 5'te de ucret paylasimi gelir (spec 5.8). Buradaki
+    ///         `immutable` yalnizca "kim baslatti" kaydidir; ucret akisini
+    ///         buraya baglamak akisi kalici olarak devredilemez yapardi.
     address public immutable creator;
 
     /// @notice Arzin tamaminin basildigi bonding curve.
@@ -39,20 +57,18 @@ contract LaunchToken is ERC20 {
         string memory symbol_,
         string memory metadataURI_,
         address creator_,
-        address curve_,
-        uint256 totalSupply_
+        address curve_
     ) ERC20(name_, symbol_) {
         if (bytes(name_).length > MAX_NAME_LENGTH) revert NameTooLong();
         if (bytes(symbol_).length > MAX_SYMBOL_LENGTH) revert SymbolTooLong();
         if (bytes(metadataURI_).length > MAX_URI_LENGTH) revert UriTooLong();
         if (creator_ == address(0)) revert ZeroCreator();
         if (curve_ == address(0)) revert ZeroCurve();
-        if (totalSupply_ == 0) revert ZeroSupply();
 
         creator = creator_;
         curve = curve_;
         metadataURI = metadataURI_;
 
-        _mint(curve_, totalSupply_);
+        _mint(curve_, TOTAL_SUPPLY);
     }
 }
