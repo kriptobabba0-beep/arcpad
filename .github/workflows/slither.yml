@@ -41,8 +41,15 @@ jobs:
         run: pip install slither-analyzer
 
       # Ucuncu taraf bir action yerine dogrudan slither cagrilir: action'in
-      # surumunu tahmin etmek gerekmez ve yerelde `make slither` ile CI'da
-      # calisan komut birebir aynidir.
+      # surumunu tahmin etmek gerekmez.
+      #
+      # Argumanlar `make slither` ile aynidir ama CAGRI SEKLI her zaman ayni
+      # degildir: pip'in konsol betigi her ortamda PATH'e dusmez (Windows'ta
+      # dusmedigi olculdu), bu yuzden Makefile ayristirma aninda `slither` ile
+      # `python -m slither` arasinda secim yapar. Burada ubuntu-latest +
+      # setup-python kullanildigi icin ciplak `slither` PATH'tedir ve Makefile
+      # da ayni kolu secerdi. `make slither`'a gecirilirse ikisi gercekten
+      # birebir olur; bugun oyle degil.
       - name: Slither
         working-directory: contracts
         run: slither . --config-file slither.config.json --fail-medium
