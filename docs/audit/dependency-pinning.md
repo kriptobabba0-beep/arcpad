@@ -150,10 +150,9 @@ If Phase 2 ends up not importing it, delete it then, together with the
 
 ## uniswap-hooks — v1.2.1 (`acbd604c`)
 
-Already at a real reviewed release; nothing to change. This was not visible
-before Phase 1c because the local clone was shallow and lacked the tag, so
-`git submodule status` reported the misleading `v1.2.0-rc.0-21-gacbd604`. After
-`git fetch --unshallow --tags`:
+Already at a real reviewed release; nothing to change. `git submodule status`
+hides this — it reports `v1.2.0-rc.0-21-gacbd604`, which reads as a 21-commit
+drift past a release candidate. It is not; the commit is exactly `v1.2.1`:
 
 ```
 $ git -C contracts/lib/uniswap-hooks describe --tags
@@ -162,9 +161,25 @@ $ git -C contracts/lib/uniswap-hooks rev-parse v1.2.1
 acbd604c409a827f7f98c9517236da860c4fca1a
 ```
 
-Shallowness is a property of a local checkout, not of the pin: `.gitmodules`
-carries no `shallow = true`, so `make install` on a fresh clone fetches full
-history and the tag resolves without help.
+Same cause as the OpenZeppelin case above, and it is worth stating twice because
+it bit this analysis twice: `v1.2.1` is a lightweight tag while `v1.2.0-rc.0` is
+annotated, and `git submodule status` uses plain `git describe`, which only walks
+annotated tags.
+
+```
+$ git -C contracts/lib/uniswap-hooks cat-file -t v1.2.1
+commit
+$ git -C contracts/lib/uniswap-hooks cat-file -t v1.2.0-rc.0
+tag
+```
+
+This is **not** a shallow-clone artifact — the misleading string persists on a
+full 670-commit clone with all tags fetched. Always use `git describe --tags`
+when auditing these pins; `git submodule status` will understate two of them.
+
+Separately, on clone depth: shallowness is a property of a local checkout, not
+of the pin. `.gitmodules` carries no `shallow = true`, so `make install` on a
+fresh clone fetches full history.
 
 ## Knowingly accepted, not fixed
 
