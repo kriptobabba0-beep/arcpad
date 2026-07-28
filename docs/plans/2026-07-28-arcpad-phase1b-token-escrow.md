@@ -33,6 +33,8 @@ Bunlar tekrar öğrenilmesin diye yazılıyor:
 
 ### Task 1: `LaunchToken`
 
+> **Bu görevin arayüzü uygulandıktan sonra değişti (2026-07-28).** Aşağıdaki kod, plan yazıldığı andaki hâliyle korunmuştur — tarihsel kayıttır, güncel arayüz değildir. Faz 1b'nin dal geneli incelemesi, toplam arzın serbest bir constructor parametresi olmasının çalışma zamanında yakalanması **imkânsız** bir kuplaj yarattığını gösterdi: `CurveMath.marketCap`'in `supplyConstant`'ı ile eşleşmezse hiçbir şey revert etmez, sistem kendi içinde tutarlı ama 1e12 kat yanlış çalışır. Kullanıcı kararıyla `totalSupply_` parametresi tamamen kaldırıldı; yerini `uint256 public constant TOTAL_SUPPLY = 1_000_000_000e18;` aldı ve `ZeroSupply()` hatası ile `test_revertsOnZeroSupply` testi onunla birlikte silindi. Constructor artık **beş** argüman alır. Aşağıdaki altı argümanlı imza, `error ZeroSupply()`, `if (totalSupply_ == 0)` kontrolü, `_mint(curve_, totalSupply_)` satırı ve tüm `new LaunchToken(..., SUPPLY)` çağrıları bu nedenle geçersizdir. Gerçek arayüz için `contracts/src/LaunchToken.sol`'e bakın.
+
 **Files:**
 - Create: `contracts/src/LaunchToken.sol`
 - Create: `contracts/test/LaunchToken.t.sol`

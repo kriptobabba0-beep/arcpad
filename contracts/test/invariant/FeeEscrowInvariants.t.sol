@@ -24,8 +24,16 @@ contract FeeEscrowInvariantsTest is Test {
     /// bir `transfer` `receive()` calistirmadan bakiyeyi artirir (canli
     /// testnet'te olculdu; bkz. FeeEscrow kisiti 1). Yani asagidaki daha guclu
     /// esitlik zincirde YANLIS olabilir, bu ise olamaz.
-    /// Kirilma yolu: claim'de defteri guncellemeden once transfer yapmak,
-    /// veya deposit'te totalOwed'i owed'dan farkli artirmak.
+    /// Kirilma yolu: `deposit`'te `totalOwed`'i `owed`'dan FAZLA artirmak
+    /// (`totalOwed += msg.value * 2` bunu dusurur; `/ 2` dusurmez -- o yon
+    /// bakiyeyi borcun ustunde birakir ve bu iddia yalnizca alt siniri korur).
+    /// @dev Bu invariant'in TEK BASINA dustugu bir mutasyon YOKTUR ve olamaz:
+    ///      asagidaki `assertEq` ayni iki niceligi karsilastirdigindan, `>=`
+    ///      ihlal eden her durum once esitligi ihlal eder. Olculdu -- 15
+    ///      escrow mutasyonunun 0'inda tek basina dustu. Ozellikle "claim'de
+    ///      defteri guncellemeden once transfer yapmak" bunu KIRMAZ; onu
+    ///      yakalayanlar `everyClaimPaid...` ve `ledgerMatchesGhost...`. Silmiyoruz,
+    ///      cunku zincirdeki gercek garanti budur; bkz. asagidaki `assertEq`.
     function invariant_escrowCanAlwaysPayWhatItOwes() public view {
         assertGe(address(escrow).balance, escrow.totalOwed());
     }

@@ -373,7 +373,7 @@ Bu tablonun üç özelliği tasarım açısından belirleyici:
 
 1. **Toplam ücret token büyüdükçe düşer** (%1,25 → %0,30). Spekülatif faz pahalı, likit faz ucuz — çoğu ücret şemasının tersi.
 2. **Protokol curve'de %0,95, havuzda %0,05 alır.** Protokol gelirinin neredeyse tamamı graduation öncesinde kazanılır.
-3. **Küçülen pay creator'ınkidir.** Graduation'ın hemen ardından %0,95 ile zirve yapar, %0,05'e iner.
+3. **Küçülen pay creator'ınkidir.** 59.000 USDC eşiği aşıldıktan hemen sonra %0,95 ile zirve yapar, oradan %0,05'e iner. Zirveyi getiren graduation'ın kendisi değil, onu izleyen ilk eşik geçişidir — aşağıdaki paragrafa bakınız.
 
 Graduation'ımız — raise `R` üretimde **≈12.161 USDC**, FDV ise **≈58.783 USDC** (ikisi farklı büyüklüktür, karıştırılmamalı) — tablonun ilk havuz kademesinin eşiği olan 59.000 USDC'nin kasıtlı olarak hemen altına düşer. Token mezun olduğu anda creator payı henüz %0,30'dan %0,95'e sıçramaz; eşiği geçecek küçük ek harekete kadar aynı oranda kalır. Creator'ı curve'ü tamamlamaya iten teşvik budur — mezuniyetin kendisi değil, mezuniyetin hemen ardından gelen o küçük ve ulaşılabilir sıçrama.
 
