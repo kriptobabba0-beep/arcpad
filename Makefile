@@ -34,8 +34,16 @@ lint:
 fork-test:
 	forge test --root contracts --match-path 'test/fork/*' --fork-url arc_testnet -vv
 
+# `pip install slither-analyzer` konsol betigini her ortamda PATH'e koymaz --
+# Windows'ta koymadigi olculdu ve `make slither` ciplak `slither` ile exit 127
+# veriyordu. `python -m slither` her iki durumda da calisir. Secimi ayristirma
+# aninda yapiyoruz; `slither || python -m slither` seklinde bir yedekleme YANLIS
+# olurdu, cunku gercek bir HIGH/MEDIUM bulgusunun sifir-disi cikis kodunu
+# "ikili yok" durumundan ayirt edemez ve taramayi bosuna iki kez calistirirdi.
+SLITHER := $(shell command -v slither >/dev/null 2>&1 && echo slither || echo python -m slither)
+
 slither:
-	cd contracts && slither . --config-file slither.config.json --fail-medium
+	cd contracts && $(SLITHER) . --config-file slither.config.json --fail-medium
 
 dev:
 	pnpm --filter @arcpad/web dev
