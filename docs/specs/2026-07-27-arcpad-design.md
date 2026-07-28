@@ -165,7 +165,7 @@ d:\pumpfunforarc\
 |---|---|
 | `LaunchFactory` | Giriş noktası. `LaunchToken` + `BondingCurve` klonunu üretir, o anki `FeeSchedule` adresini launch'a yazar, geliştirici ilk alımını atomik yapar, graduation'ı orkestre eder. Launch kaydını tutar. Oluşturma ücretsizdir. |
 | `FeeSchedule` | Market cap kademelerini taşıyan **immutable** kontrat. Bir kez deploy edilir, hiç değişmez; `LaunchFactory` adresini her launch'a yazar, böylece bir launch'ın ücretleri yayınlandıktan sonra değiştirilemez. Tabloyu güncellemek yeni bir deployment demektir ve yalnızca sonraki launch'ları etkiler. |
-| `LaunchToken` | Sabit arzlı ERC-20, 18 decimal. `name`, `symbol`, `metadataURI`, `curve`, `pool` alanları token üzerinde — zincirden okunabilir, backend'e bağımlı değil. **Tüm arz constructor'da basılır: `S` curve'e, `D` doğrudan `LaunchLocker`'a.** Sonradan mint fonksiyonu yoktur. |
+| `LaunchToken` | Sabit arzlı ERC-20, 18 decimal. `name`, `symbol`, `metadataURI`, `curve` alanları token üzerinde — zincirden okunabilir, backend'e bağımlı değil. **Tüm arz constructor'da tek seferde `BondingCurve`'e basılır.** Curve, satılabilir kısmı (`S`) kendi sayacıyla sınırlar; rezerve kalan (`D`) aynı bakiyede durur ve graduation'da havuza aktarılır. Sonradan mint fonksiyonu yoktur. |
 | `BondingCurve` | **Launch başına bir EIP-1167 klonu.** Satış arzını tutar. `buy()` (payable), `sell()`, `quoteBuy()`, `quoteSell()`. |
 | `ArcpadHook` | Uniswap V4 singleton hook. Havuzun kendi ücreti sıfırdır; ücreti hook alır ve `FeeEscrow`'a yazar. |
 | `FeeEscrow` | Pull-based bakiyeler. Hiçbir ücret push edilmez. |
@@ -314,6 +314,16 @@ Curve'de LP payı sıfırdır — çünkü curve'de likidite sağlayıcı yoktur
 ### Rejim 1 — bonding curve: düz %1,25
 
 Curve üzerindeki her alım ve satımda sabit oran: **%0,95 protokol + %0,30 creator = %1,25**. Market cap'e bakılmaz, kademe taraması yapılmaz. Faz 1'in ihtiyacı yalnızca budur.
+
+**Ücret parçalardan toplanır, toplamdan bölünmez.** pump.fun'ın yaptığı budur:
+
+```
+ucret = feeOn(tutar, protokolBps) + feeOn(tutar, creatorBps)
+```
+
+`feeOn(tutar, 125)` hesaplanıp sonra ikiye bölünmez. Fark önemli: her iki parça da tavana yuvarlandığı için parçaların toplamı, tek seferde hesaplanan toplamı aşabilir — ölçüldü, 40.000 miktarın 20.301'inde (yaklaşık yarısında) 1 wei fazla. "Önce toplam, sonra böl" yaklaşımında bu fark escrow'un her işlemde 1 wei eksik kalması demektir; parçalardan toplandığında ise kullanıcıdan alınan tutar zaten parçaların toplamının kendisidir ve uyuşmazlık kavramsal olarak var olamaz.
+
+Tek istisna ters yöndedir: `netQuoteIn` gibi ücret-dahil bir tutarı tersine çevirirken tek bir oran gerekir; orada `protokolBps + creatorBps` toplamı kullanılır. Bu asimetri kasıtlıdır — ileri yönde iki bağımsız tahsilat, geri yönde tek bir birleşik oran.
 
 ### Rejim 2 — graduation sonrası havuz: kademeli
 
