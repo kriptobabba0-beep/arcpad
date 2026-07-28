@@ -100,6 +100,36 @@ contract ReentrantSeller {
     }
 }
 
+/// Native kabul etmeyen SATICI. Alim sirasinda kabul eder (tokenleri
+/// edinebilsin diye), satis sirasinda reddeder. `RejectingBuyer`'in satis
+/// tarafindaki ikizidir; o ikiz yokken `PayoutFailed` korumasini silen
+/// mutant 37/37 ile hayatta kaliyordu.
+contract RejectingSeller {
+    BondingCurve public immutable curve;
+    LaunchToken public immutable token;
+    bool public accept;
+
+    constructor(BondingCurve curve_, LaunchToken token_) {
+        curve = curve_;
+        token = token_;
+    }
+
+    function buy(uint256 tokensOut, uint256 value) external {
+        accept = true;
+        curve.buyExactTokensOut{value: value}(tokensOut, type(uint256).max);
+        accept = false;
+        token.approve(address(curve), type(uint256).max);
+    }
+
+    function sell(uint256 tokensIn) external {
+        curve.sellExactTokensIn(tokensIn, 0);
+    }
+
+    receive() external payable {
+        require(accept, "no native");
+    }
+}
+
 /// @dev Sabitlenmis her beklenen deger ZINCIR ALGORITMASINDAN ELLE
 ///      turetilmistir; hicbiri `CurveMath` cagrilarak uretilmemistir. Testin
 ///      kutuphaneyi kendisiyle karsilastirmasi bu projenin defalarca
@@ -128,11 +158,17 @@ contract BondingCurveTest is Test {
     }
 
     /// Task 3'un factory'sinin yapacagi seyin aynisi: once curve, sonra token,
-    /// sonra bind. Bu dosyada factory rolunu test kontratinin kendisi oynar.
+    /// sonra bind. Bu dosyada factory rolunu test kontratinin kendisi oynar ve
+    /// URETIM profilini gecirir -- factory de profili kendi immutable'larinda
+    /// boyle tutacak.
     function _launch(address creator_, FeeEscrow escrow_) internal returns (BondingCurve c, LaunchToken t) {
-        c = new BondingCurve(creator_, address(escrow_), TREASURY);
+        c = _newCurve(creator_, address(escrow_));
         t = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(c));
         c.bind(address(t));
+    }
+
+    function _newCurve(address creator_, address escrow_) internal returns (BondingCurve) {
+        return new BondingCurve(creator_, escrow_, TREASURY, T, V, S);
     }
 
     // ---------------------------------------------------------------
@@ -184,7 +220,7 @@ contract BondingCurveTest is Test {
     // ---------------------------------------------------------------
 
     function test_bindRevertsWhenCalledByAnyoneButTheFactory() public {
-        BondingCurve fresh = new BondingCurve(CREATOR, address(escrow), TREASURY);
+        BondingCurve fresh = _newCurve(CREATOR, address(escrow));
         LaunchToken t = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(fresh));
 
         vm.prank(ALICE);
@@ -204,7 +240,7 @@ contract BondingCurveTest is Test {
     }
 
     function test_bindRevertsOnZeroToken() public {
-        BondingCurve fresh = new BondingCurve(CREATOR, address(escrow), TREASURY);
+        BondingCurve fresh = _newCurve(CREATOR, address(escrow));
         vm.expectRevert(BondingCurve.ZeroToken.selector);
         fresh.bind(address(0));
     }
@@ -213,7 +249,7 @@ contract BondingCurveTest is Test {
     /// Aksi halde curve, arzi baska bir curve'de duran bir token'a baglanir ve
     /// hicbir transferi karsilayamaz.
     function test_bindRevertsWhenTheTokenDoesNotPointBack() public {
-        BondingCurve fresh = new BondingCurve(CREATOR, address(escrow), TREASURY);
+        BondingCurve fresh = _newCurve(CREATOR, address(escrow));
         LaunchToken elsewhere = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(curve));
 
         vm.expectRevert(BondingCurve.TokenDoesNotPointBack.selector);
@@ -222,7 +258,7 @@ contract BondingCurveTest is Test {
 
     /// bind edilmemis bir curve'de TICARET PENCERESI YOKTUR. Ucunu de kapat.
     function test_everyTradingEntrypointRevertsBeforeBind() public {
-        BondingCurve unbound = new BondingCurve(CREATOR, address(escrow), TREASURY);
+        BondingCurve unbound = _newCurve(CREATOR, address(escrow));
         vm.deal(BUYER, 100e18);
 
         vm.prank(BUYER);
@@ -240,10 +276,64 @@ contract BondingCurveTest is Test {
 
     function test_constructorRejectsZeroEscrowAndZeroTreasury() public {
         vm.expectRevert(BondingCurve.ZeroEscrow.selector);
-        new BondingCurve(CREATOR, address(0), TREASURY);
+        new BondingCurve(CREATOR, address(0), TREASURY, T, V, S);
 
         vm.expectRevert(BondingCurve.ZeroTreasury.selector);
-        new BondingCurve(CREATOR, address(escrow), address(0));
+        new BondingCurve(CREATOR, address(escrow), address(0), T, V, S);
+    }
+
+    /// Profil artik factory'den geldigi icin YANLIS BIR DEPLOY ARGUMANI
+    /// sessiz olamaz. Uc sifir ve tasiyici esitsizlik `S < T` ayri ayri
+    /// reddedilir.
+    function test_constructorRejectsADegenerateProfile() public {
+        vm.expectRevert(BondingCurve.ZeroVirtualTokenReserves.selector);
+        new BondingCurve(CREATOR, address(escrow), TREASURY, 0, V, S);
+
+        vm.expectRevert(BondingCurve.ZeroVirtualQuoteReserves.selector);
+        new BondingCurve(CREATOR, address(escrow), TREASURY, T, 0, S);
+
+        vm.expectRevert(BondingCurve.ZeroSaleSupply.selector);
+        new BondingCurve(CREATOR, address(escrow), TREASURY, T, V, 0);
+
+        // S == T reddedilir; sinirin GECEN tarafi (S = T - 1) kabul edilir.
+        vm.expectRevert(BondingCurve.SaleSupplyNotBelowTokenReserves.selector);
+        new BondingCurve(CREATOR, address(escrow), TREASURY, T, V, T);
+
+        vm.expectRevert(BondingCurve.SaleSupplyNotBelowTokenReserves.selector);
+        new BondingCurve(CREATOR, address(escrow), TREASURY, T, V, T + 1);
+
+        BondingCurve edge = new BondingCurve(CREATOR, address(escrow), TREASURY, T, V, T - 1);
+        assertEq(edge.INITIAL_REAL_TOKEN_RESERVES(), T - 1);
+    }
+
+    /// Profil TESTNET ile URETIM arasinda yalnizca `V`'de ayrisir ve arcpad
+    /// artik ikisini de deploy edebilir -- ama TEST EDILEN uretim profilidir
+    /// ve bu test onu sabitler. Sabitlenen sey echo DEGIL, TURETILMIS
+    /// degerlerdir: `poolSeedSupply` uc parametrenin hepsinden hesaplanir,
+    /// yani yanlis bir uclu buradan sessizce gecemez.
+    function test_theProductionProfileIsTheOneUnderTest() public {
+        assertEq(curve.INITIAL_VIRTUAL_TOKEN_RESERVES(), 1_073_000_000e18);
+        assertEq(curve.INITIAL_VIRTUAL_QUOTE_RESERVES(), 4_292e18);
+        assertEq(curve.INITIAL_REAL_TOKEN_RESERVES(), 793_100_000e18);
+        assertEq(curve.poolSeedSupply(), 206_886_011_183_597_390_493_942_218);
+
+        // Ve testnet profili (V'nin 1/1000'i) ayni kod tabaniyla deploy
+        // edilebilir: yalnizca argumanlar degisir, `poolSeedSupply` ise
+        // V'den bagimsiz oldugu icin AYNI kalir.
+        BondingCurve testnet = new BondingCurve(CREATOR, address(escrow), TREASURY, T, 4_292e15, S);
+        assertEq(testnet.INITIAL_VIRTUAL_QUOTE_RESERVES(), 4_292e15);
+        assertEq(testnet.poolSeedSupply(), 206_886_011_183_597_390_493_942_218);
+
+        // CANLI rezervler de argumandan gelmelidir, sabitten DEGIL. Yalnizca
+        // immutable'lari kontrol etmek yetmiyordu: canli rezervleri
+        // sabit kodlanmis uretim degerleriyle tohumlayan mutant hayatta
+        // kaliyordu (olculdu: 42/42 yesil) -- yani testnet profiliyle deploy
+        // edilen bir curve URETIM fiyatlarindan islem gorurdu, ki item 3'un
+        // varlik sebebi tam olarak bunu onlemektir.
+        assertEq(testnet.virtualQuoteReserves(), 4_292e15, "live reserves ignored the deploy argument");
+        assertEq(testnet.virtualTokenReserves(), T);
+        assertEq(testnet.realTokenReserves(), S);
+        assertEq(curve.virtualQuoteReserves(), 4_292e18);
     }
 
     // ---------------------------------------------------------------
@@ -261,8 +351,7 @@ contract BondingCurveTest is Test {
         uint256 cost = 4_003_731_343_283_582_090;
         uint256 protocolFee = 38_035_447_761_194_030;
         uint256 creatorFee = 12_011_194_029_850_747;
-        uint256 total = cost + protocolFee + creatorFee;
-        assertEq(total, 4_053_777_985_074_626_867);
+        uint256 total = cost + protocolFee + creatorFee; // = 4_053_777_985_074_626_867
 
         uint256 before = BUYER.balance;
         vm.prank(BUYER);
@@ -296,14 +385,20 @@ contract BondingCurveTest is Test {
     }
 
     /// Sifir miktar AYRI bir hatadir ve rezerv kontrolunden ONCE gelir.
-    /// DIKKAT -- bu testin kanitladigi sey sinirlidir: `CurveMath.ZeroAmount()`
-    /// ile `BondingCurve.ZeroAmount()` AYNI selector'u tasir, bu yuzden
-    /// koruma tamamen kaldirilsa bile revert verisi degismez. Testin fiilen
-    /// sabitledigi sey, sifirin `NotEnoughTokensToBuy` ile KARISMAMASIDIR.
-    /// Ayrintili gerekce icin task-2-report.md'deki mutasyon matrisine bakin.
+    ///
+    /// Onceki hali `ZeroAmount()` bekliyordu ve HICBIR SEY kanitlamiyordu:
+    /// `CurveMath.ZeroAmount()` ayni selector'u (0x1f2a2005) tasidigi icin
+    /// korumayi silmek revert verisini degistirmiyor, cagri
+    /// `quoteBuyCost`'un ayni isimli kontroluna dusuyordu. Curve'e ozel
+    /// `ZeroTokensOut()` ile koruma artik OLDURULEBILIR ve bu test onu
+    /// oldurendir.
+    ///
+    /// Sirayla ilgili kisim ayri bir mesele: `tokensOut == 0` iken
+    /// `0 > realTokenReserves` her zaman yanlistir, yani iki kontrolu takas
+    /// etmek ESDEGER bir mutasyondur ve hicbir test onu ayirt edemez.
     function test_buyExactTokensOutRevertsOnZeroAmountBeforeCheckingReserves() public {
         vm.prank(BUYER);
-        vm.expectRevert(BondingCurve.ZeroAmount.selector);
+        vm.expectRevert(BondingCurve.ZeroTokensOut.selector);
         curve.buyExactTokensOut{value: 1e18}(0, type(uint256).max);
     }
 
@@ -383,7 +478,8 @@ contract BondingCurveTest is Test {
 
         assertEq(token.balanceOf(BUYER), chainTokens);
         assertLt(token.balanceOf(BUYER), sdkTokens);
-        assertEq(sdkTokens - chainTokens, 249_885);
+        // Fark ZINCIRIN cikitisindan olculur, iki yerel literalden degil.
+        assertEq(sdkTokens - token.balanceOf(BUYER), 249_885);
 
         assertEq(curve.realQuoteReserves(), net);
         assertEq(curve.virtualQuoteReserves(), V + net);
@@ -409,8 +505,7 @@ contract BondingCurveTest is Test {
         uint256 cost = 12_161_433_369_060_378_706_681;
         uint256 protocolFee = 115_533_617_006_073_597_714;
         uint256 creatorFee = 36_484_300_107_181_136_121;
-        uint256 spent = cost + protocolFee + creatorFee;
-        assertEq(spent, 12_313_451_286_173_633_440_516);
+        uint256 spent = cost + protocolFee + creatorFee; // = 12_313_451_286_173_633_440_516
 
         vm.deal(BUYER, 100_000e18);
         uint256 before = BUYER.balance;
@@ -489,7 +584,7 @@ contract BondingCurveTest is Test {
     /// karari; pump.fun'da dogrulanmis bir davranis DEGILDIR.
     function test_buyExactQuoteInRevertsRatherThanSellingZeroTokens() public {
         vm.prank(BUYER);
-        vm.expectRevert(BondingCurve.ZeroAmount.selector);
+        vm.expectRevert(BondingCurve.ZeroQuoteIn.selector);
         curve.buyExactQuoteIn{value: 0}(0);
 
         // gross = 2: duzeltmesiz net = 1, ucretler 1 + 1 = 2, tasma 1 -> net 0.
@@ -540,27 +635,69 @@ contract BondingCurveTest is Test {
     /// bu eleniyor -- aksi halde saticiya sifir odenir ya da cikarma altan
     /// tasar.
     ///
-    /// Elle turetilmis (taze curve): proceeds = floor(a * V / (T + a))
-    ///   a =   250_000 -> 0   ucretler 0 + 0 = 0  -> reddedilir
+    /// DIKKAT -- turetme testin ICINDE BULUNDUGU duruma gore yapilmistir,
+    /// taze curve'e gore DEGIL. Satici once 1_000_000e18 alir, dolayisiyla
+    ///   Vq = 4_296_003_731_343_283_582_090, Vt = 1_072_000_000e18
+    /// ve proceeds = floor(a * Vq / (Vt + a)):
+    ///   a =   250_000 -> 1   ucretler 1 + 1 = 2  -> reddedilir
     ///   a =   250_001 -> 1   ucretler 1 + 1 = 2  -> reddedilir
     ///   a =   500_001 -> 2   ucretler 1 + 1 = 2  -> reddedilir
-    ///   a =   750_001 -> 3   ucretler 1 + 1 = 2  -> net 1, GECER
+    ///   a =   748_602 -> 2   ucretler 1 + 1 = 2  -> reddedilir  (SON red)
+    ///   a =   748_603 -> 3   ucretler 1 + 1 = 2  -> net 1, GECER (ILK kabul)
+    /// (Ilk surumun yorumu TAZE curve icin turetilmisti ve `a = 250_000 -> 0`,
+    /// sinir `750_001` diyordu; ikisi de bu durumda yanlisti.)
+    ///
+    /// KABUL EDEN TARAF DA SABITLENIYOR. Yalnizca reddi test etmek, korumayi
+    /// asiri sikilastiran mutasyonlari (`proceeds <= 3 * ucretler` gibi)
+    /// hayatta birakir -- olculdu.
     function test_sellRevertsWhenProceedsWouldBeZero() public {
         vm.prank(BUYER);
         curve.buyExactTokensOut{value: 10e18}(1_000_000e18, type(uint256).max);
         vm.prank(BUYER);
         token.approve(address(curve), type(uint256).max);
 
-        uint256[3] memory dust = [uint256(250_000), 250_001, 500_001];
+        uint256[4] memory dust = [uint256(250_000), 250_001, 500_001, 748_602];
         for (uint256 i = 0; i < dust.length; ++i) {
             vm.prank(BUYER);
-            vm.expectRevert(BondingCurve.ZeroAmount.selector);
+            vm.expectRevert(BondingCurve.ProceedsTooSmall.selector);
             curve.sellExactTokensIn(dust[i], 0);
         }
 
         vm.prank(BUYER);
-        vm.expectRevert(BondingCurve.ZeroAmount.selector);
+        vm.expectRevert(BondingCurve.ZeroTokensIn.selector);
         curve.sellExactTokensIn(0, 0);
+
+        // Sinirin bir uzeri KABUL EDILIR ve saticiya tam 1 wei oder.
+        uint256 before = BUYER.balance;
+        vm.prank(BUYER);
+        curve.sellExactTokensIn(748_603, 0);
+        assertEq(BUYER.balance - before, 1, "the smallest viable sell was rejected or mispaid");
+        assertEq(escrow.totalOwed(), 38_035_447_761_194_030 + 12_011_194_029_850_747 + 2);
+    }
+
+    /// Satis odemesinin BASARISIZLIGI da yutulmaz. `RefundFailed`'in satis
+    /// tarafindaki ikizi; ikizi olmadan `PayoutFailed` korumasini silen
+    /// mutant hayatta kaliyordu (olculdu: 37/37 yesil). Yutulsaydi satici
+    /// tokenlerini verir, iki ucret parcasi escrow'a gider, defter borclanir
+    /// ve `netOut` curve'de mahsur kalirdi -- `balance > realQuoteReserves`
+    /// kalici olarak bozulurdu.
+    function test_sellRevertsWhenThePayoutCannotBeDelivered() public {
+        RejectingSeller s = new RejectingSeller(curve, token);
+        vm.deal(address(s), 100e18);
+        s.buy(1_000_000e18, 10e18);
+
+        uint256 balBefore = address(curve).balance;
+        uint256 owedBefore = escrow.totalOwed();
+
+        vm.expectRevert(BondingCurve.PayoutFailed.selector);
+        s.sell(500_000e18);
+
+        // Islemin tamami geri alindi: para, defter ve tokenler yerinde.
+        assertEq(address(curve).balance, balBefore);
+        assertEq(address(curve).balance, curve.realQuoteReserves());
+        assertEq(escrow.totalOwed(), owedBefore);
+        assertEq(token.balanceOf(address(s)), 1_000_000e18);
+        assertEq(curve.realTokenReserves(), S - 1_000_000e18);
     }
 
     function test_sellRevertsWhenProceedsBelowMinQuoteOut() public {
@@ -623,9 +760,71 @@ contract BondingCurveTest is Test {
         assertEq(escrow2.owed(address(0)), 0);
         assertEq(escrow2.totalOwed(), protocolFee);
 
-        // Ve islem tam olarak creator payi kadar ucuzdur.
-        assertEq(before - BUYER.balance, cost + protocolFee);
-        assertEq(cost + protocolFee + 12_011_194_029_850_747, 4_053_777_985_074_626_867);
+        // Ve islem tam olarak creator payi kadar ucuzdur. Bu, iki YEREL
+        // literalin toplamiyla degil, creator'LU curve'e yapilan ayni alimin
+        // gercek ucretiyle olculur -- yoksa iddia hicbir mutasyon altinda
+        // dusemezdi.
+        uint256 spentWithoutCreator = before - BUYER.balance;
+        assertEq(spentWithoutCreator, cost + protocolFee);
+
+        uint256 beforeWithCreator = BUYER.balance;
+        vm.prank(BUYER);
+        curve.buyExactTokensOut{value: 10e18}(1_000_000e18, type(uint256).max);
+        uint256 spentWithCreator = beforeWithCreator - BUYER.balance;
+
+        assertEq(spentWithCreator - spentWithoutCreator, 12_011_194_029_850_747, "the delta is not exactly 30 bps");
+        assertEq(escrow.owed(TREASURY), escrow2.owed(TREASURY), "the protocol share moved with the creator share");
+    }
+
+    /// UCUNCU CANLI YOL. Ayni ozellik `buyExactTokensOut` ve
+    /// `sellExactTokensIn` uzerinde testliydi, `buyExactQuoteIn` uzerinde
+    /// DEGILDI -- ve o yolda dusmesi digerlerinden daha kotu: `creatorBps`
+    /// ternary'si dustugunde `correctedNetQuoteIn` sifir olmayan bir creator
+    /// payi dondurur, `deposit{value: creatorFee}(address(0))` cagrilir ve
+    /// `FeeEscrow` `ZeroRecipient()` ile revert eder, yani sifir-creator'lu
+    /// bir curve'de HER exact-quote-in alimi sonsuza kadar kirilir.
+    ///
+    /// Elle turetilmis, creator sifir oldugu icin toplam bps = 95 (30 DEGIL):
+    ///   net = floor(1e18 * 10_000 / 10_095)  = 990_589_400_693_412_580
+    ///   protocolFee = ceil(net * 95 / 10_000) =   9_410_599_306_587_420
+    ///   creatorFee  = ceil(net *  0 / 10_000) =                       0
+    ///   990_589_400_693_412_580 + 9_410_599_306_587_420 = 1e18 = gross
+    ///   -> tasma yok, duzeltme yok, iade yok
+    function test_creatorFeeIsSkippedOnTheExactQuoteInPathToo() public {
+        FeeEscrow escrow2 = new FeeEscrow();
+        (BondingCurve c2, LaunchToken t2) = _launch(address(0), escrow2);
+
+        uint256 before = BUYER.balance;
+        vm.prank(BUYER);
+        c2.buyExactQuoteIn{value: 1e18}(0);
+
+        assertGt(t2.balanceOf(BUYER), 0);
+        assertEq(escrow2.owed(address(0)), 0);
+        assertEq(escrow2.totalOwed(), escrow2.owed(TREASURY), "creator share was folded into the protocol share");
+        assertEq(c2.realQuoteReserves(), 990_589_400_693_412_580);
+        assertEq(escrow2.owed(TREASURY), 9_410_599_306_587_420);
+        assertEq(before - BUYER.balance, 1e18);
+    }
+
+    /// Ayni yolun KISILAN dali. Kisma exact-out sozlesmesine dusuyor, yani
+    /// creator atlanmasinin orada da gecerli olmasi gerekir.
+    ///   cost = floor(S * V / (T - S)) + 1  = 12_161_433_369_060_378_706_681
+    ///   protocolFee = ceil(cost * 95 / 1e4) =   115_533_617_006_073_597_714
+    ///   creatorFee                          =                             0
+    function test_creatorFeeIsSkippedOnAClampedExactQuoteInToo() public {
+        FeeEscrow escrow2 = new FeeEscrow();
+        (BondingCurve c2, LaunchToken t2) = _launch(address(0), escrow2);
+
+        vm.deal(BUYER, 100_000e18);
+        vm.prank(BUYER);
+        c2.buyExactQuoteIn{value: 100_000e18}(0);
+
+        assertEq(t2.balanceOf(BUYER), S);
+        assertTrue(c2.complete());
+        assertEq(escrow2.owed(address(0)), 0);
+        assertEq(escrow2.totalOwed(), escrow2.owed(TREASURY));
+        assertEq(c2.realQuoteReserves(), 12_161_433_369_060_378_706_681);
+        assertEq(escrow2.owed(TREASURY), 115_533_617_006_073_597_714);
     }
 
     function test_creatorFeeIsSkippedOnTheSellPathToo() public {

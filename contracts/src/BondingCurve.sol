@@ -3,16 +3,15 @@ pragma solidity ^0.8.26;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {CurveMath} from "./libraries/CurveMath.sol";
-
-/// @notice `FeeEscrow`'un bu kontratin kullandigi tek fonksiyonu.
-/// @dev Sifir tutarda `ZeroAmount()` ile revert eder; sifir paylar
-///      CAGIRANIN yukumlulugu olarak atlanir (FeeEscrow kisiti 3).
-interface IFeeEscrow {
-    function deposit(address recipient) external payable;
-}
+import {IFeeEscrow} from "./interfaces/IFeeEscrow.sol";
 
 /// @notice `LaunchToken`'in geri-isaret alani. Tam ERC-20 yuzeyine gerek
 ///         olmadigi icin ayri ve dar tutulur.
+/// @dev `IFeeEscrow`'un aksine bu YEREL kalir ve `LaunchToken` onu uygulamaz:
+///      buradaki bag calisma zamaninda `bind` icinde zaten dogrulanir ve
+///      basarisizligi bir launch'i durdurur (fail-closed, factory testinde
+///      gorunur). Escrow'daki bagin derleme zamanina cekilmesinin sebebi
+///      onun ticaret sirasinda ve her islemde kullanilmasiydi.
 interface ICurveBoundToken {
     function curve() external view returns (address);
 }
@@ -62,24 +61,37 @@ contract BondingCurve {
     ///         KATLANMAZ -- islem sadece 30 bps daha ucuz olur.
     uint256 public constant CREATOR_FEE_BPS = 30;
 
-    /// @notice Sanal token rezervi `T`. pump.fun'in canli degerinin (6 decimal
-    ///         Solana olceginde 1_073_000_000_000_000) 18 decimal karsiligi.
-    uint256 public constant INITIAL_VIRTUAL_TOKEN_RESERVES = 1_073_000_000e18;
+    // ---------------------------------------------------------------
+    // Immutable'lar
+    // ---------------------------------------------------------------
 
-    /// @notice Sanal quote rezervi `V`. pump.fun'in canli `Global` hesabindaki
-    ///         `initial_virtual_quote_reserves = 4_292_000_000` (6 decimal
-    ///         USDC) degerinin 18 decimal native gorunumu. Acilis FDV'sini tam
-    ///         4.000 USDC'ye oturtur (4292 / 1,073 = 4000).
-    uint256 public constant INITIAL_VIRTUAL_QUOTE_RESERVES = 4_292e18;
+    /// @notice Sanal token rezervi `T`.
+    /// @dev SABIT DEGIL, factory'den gelir. Spec 5.3 iki profil tanimlar ve
+    ///      ikisi yalnizca `V`'de ayrisir: testnet 4,292 USDC, uretim 4.292
+    ///      USDC (tam 1000x). Sabit yazilsaydi arcpad testnet profilini hic
+    ///      deploy edemezdi -- ve testnet'in kucuk esigi kozmetik degil
+    ///      ZORUNLUDUR: Circle faucet'i istek basina 10 USDC verir, uretim
+    ///      esigi olan 12.161 USDC ile hicbir token mezun edilemez, yani
+    ///      graduation/hook/havuz kodunun hicbiri test edilemezdi.
+    ///
+    ///      Profili FACTORY kendi immutable'larinda tutar ve deploy ettigi her
+    ///      curve'e gecirir: tek kod tabani, build catallanmasi yok, testnet
+    ///      ile uretim yalnizca factory'nin deploy argumanlarinda ayrisir.
+    ///      Task 3'un CREATE2 kurgusunu bozmaz -- parametreler factory basina
+    ///      sabittir ve `isCanonical` adresi TOKEN'dan yeniden turetir.
+    uint256 public immutable INITIAL_VIRTUAL_TOKEN_RESERVES;
+
+    /// @notice Sanal quote rezervi `V`. Uretim degeri pump.fun'in canli
+    ///         `Global` hesabindaki `initial_virtual_quote_reserves =
+    ///         4_292_000_000` (6 decimal USDC) degerinin 18 decimal native
+    ///         gorunumudur ve acilis FDV'sini tam 4.000 USDC'ye oturtur
+    ///         (4292 / 1,073 = 4000).
+    uint256 public immutable INITIAL_VIRTUAL_QUOTE_RESERVES;
 
     /// @notice Satis arzi `S`; ilk `realTokenReserves`. Curve TUM arzi custody
     ///         eder ama yalnizca bunu satar; `N - S` artigi graduation'da
     ///         havuza gider.
-    uint256 public constant INITIAL_REAL_TOKEN_RESERVES = 793_100_000e18;
-
-    // ---------------------------------------------------------------
-    // Immutable'lar
-    // ---------------------------------------------------------------
+    uint256 public immutable INITIAL_REAL_TOKEN_RESERVES;
 
     /// @notice `bind`'i cagirabilecek tek adres: bu curve'u deploy eden.
     address public immutable factory;
@@ -143,7 +155,22 @@ contract BondingCurve {
     // Hatalar
     // ---------------------------------------------------------------
 
-    error ZeroAmount();
+    /// @dev SIFIR MIKTAR HATALARI GIRIS NOKTASI BASINA AYRIDIR ve hicbiri
+    ///      `CurveMath`'inkilerle AYNI ADI TASIMAZ. Tek bir `ZeroAmount()`
+    ///      kullanan onceki hali `CurveMath.ZeroAmount()` ile ayni selector'u
+    ///      (0x1f2a2005) tasiyordu; korumayi tamamen silmek bile revert
+    ///      verisini degistirmiyordu, cunku cagri `quoteBuyCost` /
+    ///      `netQuoteInBeforeCorrection` / `quoteSellProceeds` icindeki ayni
+    ///      isimli kontrole dusuyordu. Uc korumanin ucu de mutasyonla
+    ///      OLDURULEMEZ durumdaydi (olculdu: 37/37 yesil). Ayri isimler bunu
+    ///      duzeltir ve cagirana hangi KATMANIN reddettigini de soyler.
+    error ZeroTokensOut();
+    error ZeroQuoteIn();
+    error ZeroTokensIn();
+    /// @dev Satis geliri iki ucret parcasini karsilamiyor; satici sifir
+    ///      alirdi. `ZeroTokensIn()`'den AYRIDIR: girdi gecerliydi, sonuc
+    ///      degil.
+    error ProceedsTooSmall();
     error CurveComplete();
     error NotEnoughTokensToBuy();
     error SlippageExceeded();
@@ -153,24 +180,52 @@ contract BondingCurve {
     error ZeroToken();
     error ZeroEscrow();
     error ZeroTreasury();
+    error ZeroVirtualTokenReserves();
+    error ZeroVirtualQuoteReserves();
+    error ZeroSaleSupply();
+    error SaleSupplyNotBelowTokenReserves();
     error TokenDoesNotPointBack();
     error NotFactory();
     error AlreadyBound();
     error NotBound();
 
-    constructor(address creator_, address escrow_, address protocolTreasury_) {
+    constructor(
+        address creator_,
+        address escrow_,
+        address protocolTreasury_,
+        uint256 virtualTokenReserves_,
+        uint256 virtualQuoteReserves_,
+        uint256 saleSupply_
+    ) {
         if (escrow_ == address(0)) revert ZeroEscrow();
         if (protocolTreasury_ == address(0)) revert ZeroTreasury();
+        if (virtualTokenReserves_ == 0) revert ZeroVirtualTokenReserves();
+        if (virtualQuoteReserves_ == 0) revert ZeroVirtualQuoteReserves();
+        if (saleSupply_ == 0) revert ZeroSaleSupply();
+        // `S < T` bu kontratin TASIYICI esitsizligidir, kozmetik bir kontrol
+        // degil. Ondan cikan `realTokenReserves < virtualTokenReserves`
+        // her zaman dogru olur (fark sabit `T - S`), ve `quoteBuyCost`'un
+        // `tokensOut < tokenReserve` on kosulu -- kismanin rezervin TAMAMINI
+        // satin aldigi durum dahil -- hicbir zaman ihlal edilemez. Ayrica
+        // `poolSeedSupply` ve `graduationRaise` `S >= T`'de tanimsizdir.
+        // Kontrol acikca burada durur, cunku aksi halde revert
+        // `CurveMath.InsufficientTokenReserve()` olurdu ve hatanin hangi
+        // katmandan geldigi kaybolurdu.
+        if (saleSupply_ >= virtualTokenReserves_) revert SaleSupplyNotBelowTokenReserves();
 
         factory = msg.sender;
         creator = creator_;
         escrow = escrow_;
         protocolTreasury = protocolTreasury_;
-        poolSeedSupply = CurveMath.poolSeedSupply(INITIAL_REAL_TOKEN_RESERVES, INITIAL_VIRTUAL_TOKEN_RESERVES);
 
-        virtualTokenReserves = INITIAL_VIRTUAL_TOKEN_RESERVES;
-        virtualQuoteReserves = INITIAL_VIRTUAL_QUOTE_RESERVES;
-        realTokenReserves = INITIAL_REAL_TOKEN_RESERVES;
+        INITIAL_VIRTUAL_TOKEN_RESERVES = virtualTokenReserves_;
+        INITIAL_VIRTUAL_QUOTE_RESERVES = virtualQuoteReserves_;
+        INITIAL_REAL_TOKEN_RESERVES = saleSupply_;
+        poolSeedSupply = CurveMath.poolSeedSupply(saleSupply_, virtualTokenReserves_);
+
+        virtualTokenReserves = virtualTokenReserves_;
+        virtualQuoteReserves = virtualQuoteReserves_;
+        realTokenReserves = saleSupply_;
     }
 
     /// @notice Token adresini bir kez yazar.
@@ -203,7 +258,7 @@ contract BondingCurve {
         address token_ = token;
         if (token_ == address(0)) revert NotBound();
         if (complete) revert CurveComplete();
-        if (tokensOut == 0) revert ZeroAmount();
+        if (tokensOut == 0) revert ZeroTokensOut();
         if (tokensOut > realTokenReserves) revert NotEnoughTokensToBuy();
 
         uint256 cost = CurveMath.quoteBuyCost(tokensOut, virtualQuoteReserves, virtualTokenReserves);
@@ -233,8 +288,16 @@ contract BondingCurve {
         address token_ = token;
         if (token_ == address(0)) revert NotBound();
         if (complete) revert CurveComplete();
-        if (msg.value == 0) revert ZeroAmount();
+        if (msg.value == 0) revert ZeroQuoteIn();
 
+        // Creator sifirsa creator bps'i de SIFIRDIR ve bu ternary'nin
+        // dusmesi butun giris noktasini kalici olarak kirar:
+        // `correctedNetQuoteIn` sifir olmayan bir creator payi dondurur,
+        // `_settleBuy` onu `deposit{value: creatorFee}(address(0))` ile
+        // yatirmaya calisir ve `FeeEscrow` `ZeroRecipient()` ile revert eder.
+        // Yani sifir-creator'lu bir curve'de HER `buyExactQuoteIn` sonsuza
+        // kadar revert ederdi. Diger iki yolda ayni ozellik testliydi, bu
+        // yolda DEGILDI (olculdu: mutasyon 37/37 yesil birakiyordu).
         uint256 creatorBps = creator == address(0) ? 0 : CREATOR_FEE_BPS;
 
         // Zincirin exact-quote-in algoritmasi (1-3. adim). UCRET PARCALARI
@@ -290,7 +353,7 @@ contract BondingCurve {
         address token_ = token;
         if (token_ == address(0)) revert NotBound();
         if (complete) revert CurveComplete();
-        if (tokensIn == 0) revert ZeroAmount();
+        if (tokensIn == 0) revert ZeroTokensIn();
 
         uint256 proceeds = CurveMath.quoteSellProceeds(tokensIn, virtualQuoteReserves, virtualTokenReserves);
         uint256 protocolFee = CurveMath.feeOn(proceeds, PROTOCOL_FEE_BPS);
@@ -302,7 +365,7 @@ contract BondingCurve {
         // dokunmadan ONCE eleniyor: aksi halde ya satici sifir alir ya da
         // cikarma altan tasar. `FeeEscrow.deposit` sifir tutarda revert
         // ettigi icin bu ayni zamanda escrow kisiti 3'un geregidir.
-        if (proceeds <= protocolFee + creatorFee) revert ZeroAmount();
+        if (proceeds <= protocolFee + creatorFee) revert ProceedsTooSmall();
         uint256 netOut = proceeds - protocolFee - creatorFee;
         if (netOut < minQuoteOut) revert SlippageExceeded();
 
@@ -327,6 +390,13 @@ contract BondingCurve {
         );
 
         // --- 4. DIS CAGRILAR ---
+        // MUTASYONLA OLDURULEMEZ VE BU BEKLENIYOR: `LaunchToken` OZ'un
+        // ERC20'sidir ve basarisizlikta REVERT eder, asla `false` DONMEZ --
+        // yani `!ok` dali bu token ile ulasilamaz ve korumayi silmek
+        // esdeger bir mutanttir. Yine de duruyor: `bind` yalnizca
+        // "curve'u geri isaret eden" bir token ister, ERC20 davranisini
+        // dogrulamaz, ve dondugunde sessizce basarisiz olan bir token
+        // korumasiz halde arzi bedava dagitirdi.
         if (!IERC20(token_).transferFrom(msg.sender, address(this), tokensIn)) revert TokenTransferFailed();
         IFeeEscrow(escrow).deposit{value: protocolFee}(protocolTreasury);
         if (creatorFee != 0) IFeeEscrow(escrow).deposit{value: creatorFee}(creator);
@@ -374,6 +444,8 @@ contract BondingCurve {
         if (justCompleted) emit Completed(token_, realQuoteReserves, poolSeedSupply);
 
         // --- 4. DIS CAGRILAR ---
+        // Satis yolundakiyle ayni gerekce: OZ ERC20 `false` dondurmedigi icin
+        // bu koruma esdeger bir mutanttir (oldurulemez) ama bilerek duruyor.
         if (!IERC20(token_).transfer(msg.sender, tokensOut)) revert TokenTransferFailed();
 
         // `protocolFee` sifir OLAMAZ (`quoteBuyCost` en az 1 doner ve `feeOn`
