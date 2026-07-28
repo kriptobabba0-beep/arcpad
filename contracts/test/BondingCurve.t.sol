@@ -171,6 +171,17 @@ contract BondingCurveTest is Test {
         return new BondingCurve(creator_, escrow_, TREASURY, T, V, S);
     }
 
+    function _curveWithProfile(uint256 t_, uint256 v_, uint256 s_) internal returns (BondingCurve) {
+        return new BondingCurve(CREATOR, address(escrow), TREASURY, t_, v_, s_);
+    }
+
+    /// Uretim disi bir profille tam bir launch (curve + token + bind).
+    function _launchWithProfile(uint256 t_, uint256 v_, uint256 s_) internal returns (BondingCurve c, LaunchToken t) {
+        c = _curveWithProfile(t_, v_, s_);
+        t = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(c));
+        c.bind(address(t));
+    }
+
     // ---------------------------------------------------------------
     // Kurulum
     // ---------------------------------------------------------------
@@ -295,7 +306,11 @@ contract BondingCurveTest is Test {
         vm.expectRevert(BondingCurve.ZeroSaleSupply.selector);
         new BondingCurve(CREATOR, address(escrow), TREASURY, T, V, 0);
 
-        // S == T reddedilir; sinirin GECEN tarafi (S = T - 1) kabul edilir.
+        // S == T reddedilir; sinirin GECEN tarafi (S = T - 1) constructor'dan
+        // gecer. Bu bir ONAY DEGILDIR: constructor yalnizca ARITMETIK olarak
+        // iyi tanimli olani sinirlar, cunku o anda token -- ve dolayisiyla
+        // arz -- henuz bilinmez. `S = T - 1` fiilen kullanilamaz ve bunu
+        // `bind` reddeder; asagidaki test o katmani kapatir.
         vm.expectRevert(BondingCurve.SaleSupplyNotBelowTokenReserves.selector);
         new BondingCurve(CREATOR, address(escrow), TREASURY, T, V, T);
 
@@ -304,6 +319,48 @@ contract BondingCurveTest is Test {
 
         BondingCurve edge = new BondingCurve(CREATOR, address(escrow), TREASURY, T, V, T - 1);
         assertEq(edge.INITIAL_REAL_TOKEN_RESERVES(), T - 1);
+
+        // ...ve ona bir token BAGLANAMAZ: S = 1,073e27 > N = 1e27.
+        LaunchToken t = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(edge));
+        vm.expectRevert(BondingCurve.TokenBalanceBelowSaleAndSeed.selector);
+        edge.bind(address(t));
+    }
+
+    /// `S <= N` ve `D <= N - S` iliskilerini `bind` kurar, cunku constructor
+    /// token'i -- dolayisiyla `N`'i -- bilmez. Ikisi tek kontratta toplanir:
+    /// bakiye >= S + D.
+    ///
+    /// Elle turetilmis (uretim T ile):
+    ///   D(S)      = S(T-S)/T
+    ///   S = 793_100_000e18 -> D = 206_886_011_183_597_390_493_942_218
+    ///                         S + D = 999_986_011_183_597_390_493_942_218 <= 1e27  (pay 13_988,8 token)
+    ///   En buyuk fonlanabilir S    = 793_126_814_431_964_561_597_182_417
+    ///                         S + D = 1e27 TAM
+    ///   Bir fazlasi                = 793_126_814_431_964_561_597_182_418 -> S + D = 1e27 + 1  RED
+    ///   S = 900_000_000e18 -> D = 145_107_176_141_658_900_279_589_934 ama geriye
+    ///                         yalnizca 1e26 kalir -> RED. (Bu deger `S <= N`i
+    ///                         SAGLAR; yalnizca tohum parcasini iceren bir
+    ///                         kontrol onu kacirirdi.)
+    function test_bindRejectsAProfileTheTokenSupplyCannotFund() public {
+        // Graduation'i fonlayamayan profil: S <= N ama S + D > N.
+        BondingCurve unfundable = _curveWithProfile(T, V, 900_000_000e18);
+        LaunchToken t1 = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(unfundable));
+        vm.expectRevert(BondingCurve.TokenBalanceBelowSaleAndSeed.selector);
+        unfundable.bind(address(t1));
+
+        // Sinirin TAM uzeri gecer.
+        uint256 sMax = 793_126_814_431_964_561_597_182_417;
+        BondingCurve atLimit = _curveWithProfile(T, V, sMax);
+        LaunchToken t2 = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(atLimit));
+        atLimit.bind(address(t2));
+        assertEq(atLimit.token(), address(t2));
+        assertEq(atLimit.INITIAL_REAL_TOKEN_RESERVES() + atLimit.poolSeedSupply(), 1_000_000_000e18);
+
+        // Bir fazlasi gecmez.
+        BondingCurve overLimit = _curveWithProfile(T, V, sMax + 1);
+        LaunchToken t3 = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(overLimit));
+        vm.expectRevert(BondingCurve.TokenBalanceBelowSaleAndSeed.selector);
+        overLimit.bind(address(t3));
     }
 
     /// Profil TESTNET ile URETIM arasinda yalnizca `V`'de ayrisir ve arcpad
@@ -324,16 +381,32 @@ contract BondingCurveTest is Test {
         assertEq(testnet.INITIAL_VIRTUAL_QUOTE_RESERVES(), 4_292e15);
         assertEq(testnet.poolSeedSupply(), 206_886_011_183_597_390_493_942_218);
 
-        // CANLI rezervler de argumandan gelmelidir, sabitten DEGIL. Yalnizca
-        // immutable'lari kontrol etmek yetmiyordu: canli rezervleri
-        // sabit kodlanmis uretim degerleriyle tohumlayan mutant hayatta
-        // kaliyordu (olculdu: 42/42 yesil) -- yani testnet profiliyle deploy
-        // edilen bir curve URETIM fiyatlarindan islem gorurdu, ki item 3'un
-        // varlik sebebi tam olarak bunu onlemektir.
+        // CANLI rezervler de argumandan gelmelidir, sabitten DEGIL.
         assertEq(testnet.virtualQuoteReserves(), 4_292e15, "live reserves ignored the deploy argument");
-        assertEq(testnet.virtualTokenReserves(), T);
-        assertEq(testnet.realTokenReserves(), S);
-        assertEq(curve.virtualQuoteReserves(), 4_292e18);
+
+        // ...ama testnet profili yalnizca `V`'de ayrisiyor, dolayisiyla
+        // yukaridaki `T` ve `S` iddialarini burada kurmak BOSTUR: argumani
+        // kullansa da kullanmasa da gecerler. Ucunu de birden degistiren
+        // ayri bir profil gerekir; aksi halde canli `realTokenReserves`'i
+        // uretim literalinden tohumlayan ya da `poolSeedSupply`'i uretim
+        // literallerinden hesaplayan mutantlar hayatta kalir (olculdu:
+        // ikisi de 42/42 yesil).
+        //
+        // Elle turetilmis: D2 = S2 (T2 - S2) / T2
+        //   = 500_000_000e18 * 1_500_000_000e18 / 2_000_000_000e18
+        //   = 375_000_000e18
+        uint256 t2 = 2_000_000_000e18;
+        uint256 v2 = 1_000e18;
+        uint256 s2 = 500_000_000e18;
+        BondingCurve other = _curveWithProfile(t2, v2, s2);
+
+        assertEq(other.INITIAL_VIRTUAL_TOKEN_RESERVES(), t2);
+        assertEq(other.INITIAL_VIRTUAL_QUOTE_RESERVES(), v2);
+        assertEq(other.INITIAL_REAL_TOKEN_RESERVES(), s2);
+        assertEq(other.virtualTokenReserves(), t2, "live token reserve ignored the deploy argument");
+        assertEq(other.virtualQuoteReserves(), v2);
+        assertEq(other.realTokenReserves(), s2, "live sale supply ignored the deploy argument");
+        assertEq(other.poolSeedSupply(), 375_000_000e18, "poolSeedSupply ignored the deploy arguments");
     }
 
     // ---------------------------------------------------------------
@@ -520,6 +593,68 @@ contract BondingCurveTest is Test {
         assertTrue(curve.complete());
         assertEq(escrow.owed(TREASURY), protocolFee);
         assertEq(escrow.owed(CREATOR), creatorFee);
+    }
+
+    /// KISILAN dolum da `minTokensOut`u onurlandirmak ZORUNDADIR -- ve bu,
+    /// sinirin en cok onem tasidigi daldir, cunku dolumu SESSIZCE kucultup
+    /// yine de tahsilat yapan tek yol odur. Slippage kontrolu kismadan ONCE
+    /// yapilirsa kullanici istedigi asgariden azini alir; o mutant paketi
+    /// 42/42 yesil birakiyordu, cunku `minTokensOut` diger UC dalda
+    /// sabitlenmisti (exact-out, kisilmamis quote-in, satis) ve dorduncusunde
+    /// degildi.
+    function test_buyExactQuoteInHonoursMinTokensOutOnTheClampedFill() public {
+        vm.deal(BUYER, 200_000e18);
+
+        // Kisilmamis dolum 1_028_313_111_279_674_811_551_798_181 token olurdu;
+        // kisilmis dolum tam olarak S'tir. S + 1 istemek REDDEDILMELIDIR.
+        vm.prank(BUYER);
+        vm.expectRevert(BondingCurve.SlippageExceeded.selector);
+        curve.buyExactQuoteIn{value: 100_000e18}(S + 1);
+
+        // Kisilmis dolumun kendisi kabul edilir.
+        vm.prank(BUYER);
+        curve.buyExactQuoteIn{value: 100_000e18}(S);
+        assertEq(token.balanceOf(BUYER), S);
+        assertTrue(curve.complete());
+    }
+
+    /// KISMA SINIRI `>` OLMALIDIR, `>=` DEGIL. Kisma yalnizca dolum rezervi
+    /// ASTIGINDA devreye girmelidir; tam esitlikte exact-quote-in sozlesmesi
+    /// gecerlidir ve butcenin tamami curve'e yazilir.
+    ///
+    /// Sinir URETIM PROFILINDE pratikte yurunemez: orada bir wei'lik `net`
+    /// degisimi cikti tokenini 17_012 birim kaydirir, yani
+    /// `tokensOut == realTokenReserves` tam esitligi ~1,7e-14 olasilikla
+    /// olusur. Profil artik factory'den geldigi icin sinir SENTETIK bir
+    /// profille yurunuyor; asagidaki ucluyle bir wei'lik `net` degisimi
+    /// ciktiyi 1 birimden az kaydirir ve 401 ayri `net` degeri ayni
+    /// `tokensOut`a duser.
+    ///
+    /// Elle turetilmis (T = 1000, V = 100_000, S = 500):
+    ///   tokens(net) = floor((net-1) * 1000 / (100_000 + net - 1)) == 500
+    ///     <=> net - 1 in [100_000, 100_400]  ->  net in [100_001, 100_401]
+    ///   net* = 100_401 (araligin en ustu) -> tokens = 500 = S TAM
+    ///   gross = 101_657 -> net = 100_401, pf = 954, cf = 302, toplam = gross
+    ///   quoteBuyCost(500, 100_000, 1000) = floor(500*100_000/500) + 1 = 100_001
+    /// Yani `>=` kismayi tetikleseydi curve'e 100_001 yazilirdi -- 400 wei
+    /// EKSIK -- ve kullaniciya 404 wei iade edilirdi.
+    function test_buyExactQuoteInDoesNotClampWhenTheFillExactlyMeetsTheReserve() public {
+        (BondingCurve c2, LaunchToken t2) = _launchWithProfile(1000, 100_000, 500);
+
+        uint256 before = BUYER.balance;
+        vm.prank(BUYER);
+        c2.buyExactQuoteIn{value: 101_657}(0);
+
+        assertEq(t2.balanceOf(BUYER), 500);
+        assertEq(c2.realTokenReserves(), 0);
+        assertTrue(c2.complete());
+
+        // Tam esitlikte kisma DEVREYE GIRMEZ: butcenin tamami harcanir.
+        assertEq(before - BUYER.balance, 101_657, "the clamp fired at equality");
+        assertEq(c2.realQuoteReserves(), 100_401, "the clamp fired at equality");
+        assertEq(address(c2).balance, 100_401);
+        assertEq(escrow.owed(TREASURY), 954);
+        assertEq(escrow.owed(CREATOR), 302);
     }
 
     function test_buyExactQuoteInRevertsWhenTokensBelowMinTokensOut() public {

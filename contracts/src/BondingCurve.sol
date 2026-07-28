@@ -184,6 +184,10 @@ contract BondingCurve {
     error ZeroVirtualQuoteReserves();
     error ZeroSaleSupply();
     error SaleSupplyNotBelowTokenReserves();
+    /// @dev Bagli token'in curve'de tuttugu bakiye, curve'un satmayi
+    ///      planladigi (`S`) ve graduation'da havuza tohumlamayi planladigi
+    ///      (`D`) miktarlarin TOPLAMINI karsilamiyor.
+    error TokenBalanceBelowSaleAndSeed();
     error TokenDoesNotPointBack();
     error NotFactory();
     error AlreadyBound();
@@ -232,13 +236,43 @@ contract BondingCurve {
     /// @dev Tek yonlu bir isaretci YETMEZ: token'in da bu curve'u isaret
     ///      ettigi dogrulanir. Aksi halde curve, arzi baska bir adreste duran
     ///      bir token'a baglanir ve hicbir alimi karsilayamaz.
+    ///
+    /// @dev PROFIL ILE ARZ ARASINDAKI BAG BURADA KURULUR ve baska yerde
+    ///      kurulamaz. Constructor `S`'i yalnizca `S < T` ile sinirlar, cunku
+    ///      o anda token -- dolayisiyla arz `N` -- HENUZ BILINMEZ. Profil
+    ///      factory'den geldiginden beri argumanlar iki iliskiyi ihlal
+    ///      edebilir ve ikisi de bu tek kontrolde toplanir:
+    ///
+    ///        (1) `S <= N`. Aksi halde curve mint'in tamamini satar ve
+    ///            sonraki her alim ERC-20'nin icinde revert eder; `complete`
+    ///            HICBIR ZAMAN cevrilemez ve biriken quote cikisi olmayan bir
+    ///            curve'de kalir.
+    ///        (2) `D <= N - S`. Aksi halde graduation YAPISAL OLARAK
+    ///            fonlanamaz: satistan artan token, havuzu curve'un kapanis
+    ///            fiyatindan acmaya yetmez. Ornek: `S = 900_000_000e18`
+    ///            uretim `T`'siyle `D ~ 1,451e26` verir ama geriye yalnizca
+    ///            `1e26` kalir.
+    ///
+    ///      Ikisi birden `bakiye >= S + D` demektir. `N` yerine fiili bakiye
+    ///      okunur cunku curve'un ilgilendigi sey odur; `bind`den once curve
+    ///      token hareket ettiremez (her ticaret giris noktasi `NotBound` ile
+    ///      doner), yani okunan deger mint'in tamamidir.
+    ///
+    /// @dev Defter dis cagrilardan ONCE yazilir; kontratin geri kalaniyla ayni
+    ///      CEI disiplini. Kotu niyetli bir token'in `curve()` ya da
+    ///      `balanceOf` govdesinden geri girmesi `AlreadyBound`a carpar, ve
+    ///      dogrulama duserse islemin tamami zaten geri alinir.
     function bind(address token_) external {
         if (msg.sender != factory) revert NotFactory();
         if (token != address(0)) revert AlreadyBound();
         if (token_ == address(0)) revert ZeroToken();
-        if (ICurveBoundToken(token_).curve() != address(this)) revert TokenDoesNotPointBack();
 
         token = token_;
+
+        if (ICurveBoundToken(token_).curve() != address(this)) revert TokenDoesNotPointBack();
+        if (IERC20(token_).balanceOf(address(this)) < INITIAL_REAL_TOKEN_RESERVES + poolSeedSupply) {
+            revert TokenBalanceBelowSaleAndSeed();
+        }
     }
 
     // ---------------------------------------------------------------
