@@ -59,4 +59,4 @@ jobs:
       # Fork testleri harici bir RPC'ye baglidir; kesintisi PR'lari
       # bloklamamali, ama Arc davranisindaki bir degisikligi erken gormeliyiz.
       - name: Arc fork test
-        run: forge test --root contracts --match-path 'test/fork/*' --fork-url https://rpc.testnet.arc.network -vv
+        run: forge test --root contracts --match-path 'test/fork/*' --fork-url https://rpc.testnet.arc.io -vv
