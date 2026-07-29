@@ -19,6 +19,12 @@ bytecode_hash = "none"
 # Bağımlılıkların kendi remappings.txt dosyalarını bağlamsal olarak okur.
 auto_detect_remappings = true
 
+# SALT OKUMA, YALNIZCA `out/`. Task 4'un ABI yuzey testi derleme ciktisindaki
+# artifact'i (`out/<C>.sol/<C>.json`) okur ve dis fonksiyon kumesini beklenen
+# kumeyle IKI YONLU karsilastirir. `vm.readFile` bu izin olmadan revert eder.
+# Yazma izni BILEREK verilmemistir: testin yapmasi gereken tek sey okumaktir.
+fs_permissions = [{ access = "read", path = "./out" }]
+
 [profile.default.fuzz]
 runs = 256
 
@@ -44,6 +50,11 @@ optimizer = true
 optimizer_runs = 800
 bytecode_hash = "none"
 auto_detect_remappings = true
+
+# Profiller skaler/dizi build anahtarlarini miras ALMAZ; default'takiyle
+# kelimesi kelimesine ayni izin burada tekrarlanir. Ayrisirsa yuzey testi CI
+# profilinde sessizce revert eder.
+fs_permissions = [{ access = "read", path = "./out" }]
 
 [profile.ci.fuzz]
 runs = 5000
