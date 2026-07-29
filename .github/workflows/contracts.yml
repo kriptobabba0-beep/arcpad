@@ -44,9 +44,15 @@ jobs:
         env:
           FOUNDRY_PROFILE: ci
 
+  # `continue-on-error: true` KALDIRILDI. Bu is Arc'a dokunan TEK kontroldur ve o
+  # bayrakla birlikte gecse de gecmese de yesil gorunuyordu -- yani kapi olarak
+  # degeri sifirdi. Arc'in kendi dokumani anvil'in Arc'in precompile'larini,
+  # EIP-7708 Transfer olaylarini ve blocklist zorlamasini yeniden uretemedigini
+  # soyluyor, dolayisiyla canli RPC'ye karsi kosan bu is bizim tek gercek Arc
+  # dogrulamamizdir. Sessizce yesil gormek, sahip olmamak kadar kotudur.
   fork:
     runs-on: ubuntu-latest
-    continue-on-error: true
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -56,7 +62,20 @@ jobs:
         with:
           version: v1.6.0-rc1
 
-      # Fork testleri harici bir RPC'ye baglidir; kesintisi PR'lari
-      # bloklamamali, ama Arc davranisindaki bir degisikligi erken gormeliyiz.
+      # Fork testleri harici bir RPC'ye baglidir, o yuzden gecici bir kesinti
+      # PR'lari bloklamasin diye BIR KEZ yeniden deniyoruz. Boylece gercek bir
+      # test basarisizligi CI'yi kirmizi yapar, aninda bir ag hatasi yapmaz.
+      # Ikisi de basarisiz olursa is GERCEKTEN basarisiz olur -- eskiden
+      # `continue-on-error` bunu da yutuyordu.
       - name: Arc fork test
-        run: forge test --root contracts --match-path 'test/fork/*' --fork-url https://rpc.testnet.arc.io -vv
+        run: |
+          set -o pipefail
+          run_fork() {
+            forge test --root contracts --match-path 'test/fork/*' \
+              --fork-url https://rpc.testnet.arc.io -vv
+          }
+          run_fork || {
+            echo "::warning::first fork attempt failed; retrying once in case the RPC blipped"
+            sleep 20
+            run_fork
+          }
