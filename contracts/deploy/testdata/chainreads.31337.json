@@ -1,0 +1,12 @@
+{
+  "_comment": "SENTETIK ZINCIR OKUMALARI. Prova zincirinde canli bir dugum yoktur; canli kosuda bunlarin yerini eth_call'lar alir. `commit` de burada PINLENIR: canli `git rev-parse HEAD` kullanilsaydi fixture her commit'te degisir ve bayt-bayt yeniden uretim iddiasi anlamsizlasirdi.",
+  "escrow": "0xEEd4431eAD3E27F16D97f677A9C4c1a963DF8dC6",
+  "governor": "0x0000000000000000000000000000000000000601",
+  "protocolTreasury": "0x0000000000000000000000000000000000007EA5",
+  "graduationTarget": "0x0000000000000000000000000000000000000000",
+  "virtualTokenReserves": "1073000000000000000000000000",
+  "virtualQuoteReserves": "4292000000000000000",
+  "saleSupply": "793100000000000000000000000",
+  "totalSupply": "1000000000000000000000000000",
+  "commit": "2447ba967c4708680b176bc448fca0a85f4656fb"
+}
