@@ -1,0 +1,87 @@
+name: graduation-drill
+
+# HAFTALIK TATBIKAT. "Angaryaya hic ateslenmemis bir monitor, bozuk oldugunu
+# kimsenin bilmedigi bir monitordur." Ayrintilar ve manuel kosum:
+# docs/runbooks/graduation-window.md, bolum 8.
+#
+# IKI AYRI ZAMANLAMA, cunku iki faz arasinda UC GUN vardir:
+#   observe -- Pazartesi 09:15 UTC, Safe oneriyi yaptiktan hemen sonra
+#   expiry  -- Persembe 09:15 UTC, ayni onerinin suresi dolduktan sonra
+#
+# ONERI ADIMI (adim 1) BURADA DEGILDIR ve olmamalidir: governor bir Safe'tir ve
+# bir CI isine governor yetkisi vermek, tatbikatin tespit etmek icin var oldugu
+# seyi yaratirdi. Safe islemini rota'daki imzaci gonderir; CI yalnizca GOZLER.
+
+on:
+  schedule:
+    # Pazartesi 09:15 UTC -- rota devrinden 15 dakika sonra, boylece duseni
+    # o hafta nobette olan gorur.
+    - cron: "15 9 * * 1"
+    # Persembe 09:15 UTC -- Pazartesi'nin onerisi eta + 3 gun'u gecmis olur.
+    - cron: "15 9 * * 4"
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: "observe | expiry"
+        required: true
+        default: observe
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  drill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # DEPLOY EDILMEMIS BIR ZINCIRDE TATBIKAT ANLAMSIZDIR ve sessizce gecmek
+      # YASAKTIR: `exit 1` ile duser. Yesil gorunen ama hicbir sey dogrulamayan
+      # bir is, bu depoda zaten bir kez `continue-on-error` olarak yasandi ve
+      # kaldirildi (bkz. contracts.yml'deki fork isi).
+      - name: Require a deployed factory
+        env:
+          ARC_FACTORY_ADDRESS: ${{ vars.ARC_FACTORY_ADDRESS }}
+        run: |
+          if [ -z "$ARC_FACTORY_ADDRESS" ]; then
+            echo "::error::ARC_FACTORY_ADDRESS is unset. The drill cannot run before the deploy;"
+            echo "::error::set the repository variable when Task 6 lands. Failing rather than passing vacuously."
+            exit 1
+          fi
+
+      - name: Resolve phase
+        id: phase
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ inputs.phase }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "15 9 * * 1" ]; then
+            echo "value=observe" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=expiry" >> "$GITHUB_OUTPUT"
+          fi
+
+      # `observe` alarm lavabosunu OKUR, SIMULE ETMEZ. Keeper'in kendi
+      # ciktisini yazdigi dosya ne ise KEEPER_ALERT_LOG odur; CI'da bu, keeper
+      # host'undan cekilmis satirlardir.
+      - name: Drill
+        env:
+          ARC_RPC_URL: ${{ secrets.ARC_RPC_URL }}
+          ARC_FACTORY_ADDRESS: ${{ vars.ARC_FACTORY_ADDRESS }}
+          ARC_START_BLOCK: ${{ vars.ARC_START_BLOCK }}
+          KEEPER_CHAIN_KEY: ${{ vars.KEEPER_CHAIN_KEY }}
+          KEEPER_ALERT_LOG: ${{ vars.KEEPER_ALERT_LOG }}
+          KEEPER_DRILL_TARGET: "0x000000000000000000000000000000000000dEaD"
+          KEEPER_DRILL_CALLER: ${{ vars.KEEPER_DRILL_CALLER }}
+        run: pnpm --filter @arcpad/keeper drill ${{ steps.phase.outputs.value }}

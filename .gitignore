@@ -35,6 +35,10 @@ playwright-report/
 # Local data
 *.log
 postgres-data/
+# Keeper'in Launched tarama imleci ve alarm lavabosu. Ikisi de calisma zamani
+# durumudur: imlec makineye ozgu bir blok numarasi tasir, lavabo ise commit
+# edilmesi anlamsiz bir olay akisidir.
+keeper/.cursor
 
 # OS / editor
 .DS_Store

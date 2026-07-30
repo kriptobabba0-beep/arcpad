@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "tsx src/index.ts",
+    "drill": "tsx src/drill.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
