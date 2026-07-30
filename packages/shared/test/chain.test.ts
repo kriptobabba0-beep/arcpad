@@ -13,7 +13,7 @@ describe('arcTestnet zincir tanimi', () => {
   })
 
   it('resmi RPC ve explorer adreslerini tasir', () => {
-    expect(arcTestnet.rpcUrls.default.http[0]).toBe('https://rpc.testnet.arc.network')
+    expect(arcTestnet.rpcUrls.default.http[0]).toBe('https://rpc.testnet.arc.io')
     expect(arcTestnet.blockExplorers?.default.url).toBe('https://testnet.arcscan.app')
   })
 
