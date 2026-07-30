@@ -1,0 +1,14 @@
+{
+  "arc-testnet": {
+    "governor": "0x0000000000000000000000000000000000000000",
+    "treasury": "0x0000000000000000000000000000000000000000",
+    "owners": [],
+    "allowedGraduationTargets": []
+  },
+  "local-rehearsal": {
+    "governor": "0x0000000000000000000000000000000000000601",
+    "treasury": "0x0000000000000000000000000000000000007EA5",
+    "owners": [],
+    "allowedGraduationTargets": []
+  }
+}
