@@ -36,6 +36,17 @@ library CurveMath {
     ///         ucret HARIC.
     /// @dev floor(...) + 1. Bu, mulDivRoundingUp ile ayni DEGILDIR: tam bolunen
     ///      durumda bir birim fazla alir. pump.fun boyle yapar, biz de.
+    /// @dev BU `+1` GRADUATION FIYAT SUREKLILIGI ICIN TASIYICIDIR -- yalnizca
+    ///      "pump.fun boyle yapiyor" gerekcesiyle durmuyor. Graduation'da havuz
+    ///      `R = realQuoteReserves` ve `D = poolSeedSupply` ile tohumlanir ve
+    ///      spec §10 invariant 6, acilis fiyatinin curve'un kapanis fiyati
+    ///      `P_final`'a esit olmasini ister. OLCULDU: `R/D` ile `P_final`
+    ///      arasindaki farkin YONU bu `+1`'e baglidir. Buradaki `+1`
+    ///      `mulDivRoundingUp`'a "sadelestirilirse" fark ISARET DEGISTIRIR ve
+    ///      havuz `P_final`'in ALTINDA acilir -- yani protokolun aleyhine.
+    ///      Bagis testleri bunu GORMEZ, cunku donen degerler yine tam
+    ///      `(D, R)`'dir; degisen sey oranin kendisidir. Bu satiri
+    ///      degistirmeden once §10 invariant 6'yi yeniden turet.
     ///      `quoteReserve == 0` OLAMAZ: aksi halde `mulDiv(tokensOut, 0, ...) + 1`
     ///      her zaman `1` doner -- yani `tokenReserve - 1`'e kadar herhangi bir
     ///      miktar tek birimlik bir bedelle alinabilir. `quoteBuyTokensOut` ve
