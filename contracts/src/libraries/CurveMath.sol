@@ -36,17 +36,27 @@ library CurveMath {
     ///         ucret HARIC.
     /// @dev floor(...) + 1. Bu, mulDivRoundingUp ile ayni DEGILDIR: tam bolunen
     ///      durumda bir birim fazla alir. pump.fun boyle yapar, biz de.
-    /// @dev BU `+1` GRADUATION FIYAT SUREKLILIGI ICIN TASIYICIDIR -- yalnizca
+    /// @dev BU `+1` GRADUATION FIYATININ YONU ICIN TASIYICIDIR -- yalnizca
     ///      "pump.fun boyle yapiyor" gerekcesiyle durmuyor. Graduation'da havuz
-    ///      `R = realQuoteReserves` ve `D = poolSeedSupply` ile tohumlanir ve
-    ///      spec §10 invariant 6, acilis fiyatinin curve'un kapanis fiyati
-    ///      `P_final`'a esit olmasini ister. OLCULDU: `R/D` ile `P_final`
-    ///      arasindaki farkin YONU bu `+1`'e baglidir. Buradaki `+1`
-    ///      `mulDivRoundingUp`'a "sadelestirilirse" fark ISARET DEGISTIRIR ve
-    ///      havuz `P_final`'in ALTINDA acilir -- yani protokolun aleyhine.
-    ///      Bagis testleri bunu GORMEZ, cunku donen degerler yine tam
-    ///      `(D, R)`'dir; degisen sey oranin kendisidir. Bu satiri
-    ///      degistirmeden once §10 invariant 6'yi yeniden turet.
+    ///      `R = realQuoteReserves` ve `D = poolSeedSupply` ile tohumlanir;
+    ///      spec §10 invariant 6 acilis fiyatinin curve'un kapanis fiyati
+    ///      `P_final`'i asmasini (altina dusmemesini) ister.
+    ///      TEOREM: `poolSeedSupply` tabana yuvarladigi icin `D < S(T-S)/T`, ve
+    ///      buradaki `+1` her alimda birikerek `R_actual`'i tam `V*S/(T-S)`
+    ///      degerinin UZERINDE tutar. Ikisi birlikte `R/D > P_final` verir --
+    ///      yani havuz DAIMA `P_final`'in uzerinde acilir, profil degisse bile.
+    ///      Olculdu: her iki kutsanmis profilde ulasilabilir en kucuk
+    ///      `R_actual = R_theory + 1`.
+    ///      Bu `+1` `mulDivRoundingUp`'a "sadelestirilirse" teoremin ikinci
+    ///      yarisi duser ve isaret ters cevrilebilir hale gelir. Bagis testleri
+    ///      bunu GORMEZ, cunku donen degerler yine tam `(D, R)`'dir; degisen sey
+    ///      oranin kendisidir. Bu satiri degistirmeden once §10 invariant 6'yi
+    ///      yeniden turet.
+    ///      (Ilk surum bu notu "fark isaret degistirir ve havuz P_final'in
+    ///      ALTINDA acilir" diye yaziyordu. Faz 1c nihai incelemesi olctu: o
+    ///      durum ULASILAMAZ, cunku carpim invariant'i `R_actual`'i tam degerin
+    ///      altina dusuremez. Sonuc ayni -- satir tasiyici -- ama sebep bir
+    ///      olasilik degil bir teorem.)
     ///      `quoteReserve == 0` OLAMAZ: aksi halde `mulDiv(tokensOut, 0, ...) + 1`
     ///      her zaman `1` doner -- yani `tokenReserve - 1`'e kadar herhangi bir
     ///      miktar tek birimlik bir bedelle alinabilir. `quoteBuyTokensOut` ve
