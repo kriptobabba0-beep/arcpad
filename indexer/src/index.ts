@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import { ARC_TESTNET_CHAIN_ID, assertArcChain, createArcClient } from '@arcpad/shared'
-import { nextRange } from './cursor'
+import { finalizedHead, nextRange } from './cursor'
 
 const MAX_SPAN = 1_000n
 
@@ -11,12 +11,15 @@ async function main(): Promise<void> {
   const client = createArcClient(rpcUrl)
   await assertArcChain(client)
 
-  const head = await client.getBlock({ blockTag: 'finalized' })
+  // Head'in TEK kaynagi. `client.getBlock({blockTag:'finalized'})` burada
+  // TEKRAR EDILMEZ: tekrar etmek, "tek kaynak" sozunu ikinci bir cagri
+  // yerine yalnizca bir yorumla korurdu.
+  const head = await finalizedHead(client)
   // Faz 3'te imlec Postgres'ten okunacak. Faz 0'da yalnizca baglantinin ve
   // aralik hesabinin calistigini gosteriyoruz.
-  const range = nextRange(head.number - 10n, head.number, MAX_SPAN)
+  const range = nextRange(head - 10n, head, MAX_SPAN)
 
-  console.log(`arc chainId=${ARC_TESTNET_CHAIN_ID} finalizedHead=${head.number} nextRange=`, range)
+  console.log(`arc chainId=${ARC_TESTNET_CHAIN_ID} finalizedHead=${head} nextRange=`, range)
 }
 
 main().catch((error: unknown) => {

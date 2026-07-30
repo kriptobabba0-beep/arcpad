@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
-import { nextRange } from '../src/cursor'
+import { describe, expect, it, vi } from 'vitest'
+import type { PublicClient } from 'viem'
+import { ARC_GETLOGS_MAX_RANGE, finalizedHead, nextRange } from '../src/cursor'
 
 describe('nextRange', () => {
   it('imlec head ile ayniysa islenecek bir sey yoktur', () => {
@@ -20,5 +21,157 @@ describe('nextRange', () => {
 
   it('tam olarak maxSpan kadar blok kaldiginda tek aralikta bitirir', () => {
     expect(nextRange(0n, 500n, 500n)).toEqual({ from: 1n, to: 500n })
+  })
+
+  it('maxSpan sifir ise reddeder (ters aralik uretmez)', () => {
+    expect(() => nextRange(0n, 10n, 0n)).toThrow(RangeError)
+  })
+
+  it('maxSpan negatif ise reddeder', () => {
+    expect(() => nextRange(0n, 10n, -1n)).toThrow(RangeError)
+  })
+
+  it("Arc'in 10.000 blok sinirinin uzerindeki maxSpan i reddeder", () => {
+    expect(() => nextRange(0n, 100_000n, 10_001n)).toThrow(/10000/)
+    expect(nextRange(0n, 100_000n, 10_000n)).toEqual({ from: 1n, to: 10_000n })
+  })
+
+  // EN DAR SINIR: head, maxSpan'in tam BIR fazlasi kadar ileride. Bu, kismalı
+  // dalin en kucuk halidir ve Faz 0'da hic sabitlenmemisti.
+  it('head == cursor + maxSpan + 1 iken tam maxSpan kadar isler', () => {
+    expect(nextRange(100n, 601n, 500n)).toEqual({ from: 101n, to: 600n })
+  })
+
+  it('bir blok kaldiginda tek bloklu aralik dondurur', () => {
+    expect(nextRange(100n, 101n, 500n)).toEqual({ from: 101n, to: 101n })
+  })
+
+  it('gecerli maxSpan araliginin IKI ucunu da sabitler', () => {
+    // Alt uc: 1. Ust uc: ARC_GETLOGS_MAX_RANGE. Ikisi de gecmeli; bir adim
+    // disarilari yukaridaki iki test tarafindan reddediliyor.
+    expect(nextRange(0n, 5n, 1n)).toEqual({ from: 1n, to: 1n })
+    expect(nextRange(0n, 1n, ARC_GETLOGS_MAX_RANGE)).toEqual({ from: 1n, to: 1n })
+  })
+
+  // ---------------------------------------------------------------
+  // KAPSAM OLCULUR, VARSAYILMAZ.
+  //
+  // Yukaridaki ornekler tek tek noktalar. Bir orneklem DEGIL, sinirli bir
+  // ailenin TAMAMI taranir: cursor 0..24, head 0..24, maxSpan 1..12 --
+  // 25*25*12 = 7500 cagri, hepsi deterministik. Sayimin kendisi iddia edilir
+  // ki dongu sinirlarini kucultmek testi sessizce zayiflatamasin.
+  // ---------------------------------------------------------------
+  it('7500 kombinasyonun tamaminda dort degismez korunur', () => {
+    let calls = 0
+    let ranges = 0
+    let nulls = 0
+    let clamped = 0
+
+    for (let cursor = 0n; cursor <= 24n; cursor++) {
+      for (let head = 0n; head <= 24n; head++) {
+        for (let maxSpan = 1n; maxSpan <= 12n; maxSpan++) {
+          calls++
+          const r = nextRange(cursor, head, maxSpan)
+
+          if (head <= cursor) {
+            nulls++
+            expect(r).toBeNull()
+            continue
+          }
+
+          ranges++
+          if (r === null) throw new Error(`beklenmeyen null: ${cursor} ${head} ${maxSpan}`)
+          // 1. Bosluk yok: her zaman imlecten SONRAKI blokta baslar.
+          expect(r.from).toBe(cursor + 1n)
+          // 2. Bos ya da ters aralik yok.
+          expect(r.to).toBeGreaterThanOrEqual(r.from)
+          // 3. head asilmaz.
+          expect(r.to).toBeLessThanOrEqual(head)
+          // 4. maxSpan asilmaz.
+          expect(r.to - r.from + 1n).toBeLessThanOrEqual(maxSpan)
+
+          if (r.to < head) clamped++
+        }
+      }
+    }
+
+    expect(calls).toBe(7500)
+    // Aile GERCEKTEN her iki dali de geziyor mu? Sayilar bunu olcer; "kapsandi
+    // sanilan" dal boyle yakalanir.
+    expect(nulls).toBe(3900)
+    expect(ranges).toBe(3600)
+    expect(clamped).toBe(2014)
+  })
+
+  it('ardisik turlar bosluk da ortusme de birakmaz', () => {
+    // Tek bir noktayi degil, ILERLEYISI sabitler: 0'dan 5000'e 7'lik
+    // adimlarla yurunur ve her aralik bir oncekinin bittigi yerin hemen
+    // ardindan baslar.
+    let cursor = 0n
+    const head = 5_000n
+    const seen: bigint[] = []
+    for (;;) {
+      const r = nextRange(cursor, head, 7n)
+      if (r === null) break
+      expect(r.from).toBe(cursor + 1n)
+      for (let b = r.from; b <= r.to; b++) seen.push(b)
+      cursor = r.to
+    }
+    expect(cursor).toBe(head)
+    expect(seen).toHaveLength(5000)
+    expect(seen[0]).toBe(1n)
+    expect(seen[4999]).toBe(5000n)
+    expect(new Set(seen).size).toBe(5000)
+  })
+})
+
+describe('finalizedHead', () => {
+  /** viem'in `PublicClient`'inin yalnizca `getBlock`'unu tasiyan sahte istemci. */
+  function fakeClient(byTag: Record<string, bigint>) {
+    const getBlock = vi.fn(async ({ blockTag }: { blockTag: string }) => {
+      const number = byTag[blockTag]
+      if (number === undefined) throw new Error(`sahte istemcide etiket yok: ${blockTag}`)
+      return { number }
+    })
+    return { client: { getBlock } as unknown as PublicClient, getBlock }
+  }
+
+  it("`finalized` etiketini okur, `latest`'i DEGIL", async () => {
+    const { client, getBlock } = fakeClient({ latest: 54_326_390n, finalized: 54_326_391n })
+    await expect(finalizedHead(client)).resolves.toBe(54_326_391n)
+    expect(getBlock).toHaveBeenCalledTimes(1)
+    expect(getBlock).toHaveBeenCalledWith({ blockTag: 'finalized' })
+  })
+
+  it("OLCULMUS tutarsizlikta latest'e DUSMEZ (finalized > latest)", async () => {
+    // Gercek okuma: latest 54326390, finalized 54326391. `latest`'e dusen bir
+    // uygulama burada BIR blok geride kalir ve o blogun loglari, imlec
+    // ilerledigi icin bir daha hic taranmaz.
+    const { client } = fakeClient({ latest: 54_326_390n, finalized: 54_326_391n })
+    const head = await finalizedHead(client)
+    expect(head).not.toBe(54_326_390n)
+  })
+
+  it('finalized geriye duserse deger oldugu gibi doner; yutma yeri nextRange', async () => {
+    // Iki ardisik okuma: 54326391 sonra 54326388. `finalizedHead` bunu
+    // DUZELTMEZ -- duzeltmek, head'in tek kaynagi olma sozunu bozardi.
+    const a = fakeClient({ finalized: 54_326_391n })
+    const b = fakeClient({ finalized: 54_326_388n })
+    expect(await finalizedHead(a.client)).toBe(54_326_391n)
+    expect(await finalizedHead(b.client)).toBe(54_326_388n)
+    // Geriye dusmus head, imlec ilerledikten sonra bos donguye cevrilir.
+    expect(nextRange(54_326_391n, 54_326_388n, 1_000n)).toBeNull()
+  })
+
+  it('`safe` etiketini de kullanmaz', async () => {
+    // Olculen ucuncu satir: latest 54326393, finalized 54326393, safe
+    // 54326394. `safe`, `finalized`'in ONUNDE gorulebildi.
+    const { client, getBlock } = fakeClient({
+      latest: 54_326_393n,
+      finalized: 54_326_393n,
+      safe: 54_326_394n,
+    })
+    await expect(finalizedHead(client)).resolves.toBe(54_326_393n)
+    expect(getBlock).not.toHaveBeenCalledWith({ blockTag: 'safe' })
   })
 })
