@@ -730,11 +730,30 @@ contract BondingCurve {
     ///      -- Arc'ta bakiye disaridan degisebildigi icin guvenilmez bir olcum;
     ///      ve callback alternatifi Faz 2'nin selector'unu bu bytecode'a sonsuza
     ///      kadar gomerdi.
-    ///      LIVENESS'I KOTULESTIRMEZ, IYILESTIRIR (olculdu): kurtarilamayan tek
-    ///      durum "hedef kabul eder ama havuzu tohumlayamaz"tir ve IZINSIZ bir
-    ///      `graduate()` o duruma herhangi bir ucuncu tarafin ZORLAMASINA izin
-    ///      verirdi. Geri kalan her bozuk-hedef yolu ya oldugu gibi yeniden
-    ///      denenebilir ya da factory'de hedefi yeniden isaretleyerek cozulur.
+    ///      LIVENESS'I KOTULESTIRMEZ: bozuk-hedef yollarinin hepsi ya oldugu
+    ///      gibi yeniden denenebilir ya da factory'de hedefi yeniden
+    ///      isaretleyerek cozulur (olculdu).
+    ///
+    /// @dev DUZELTME -- BU KONTROL "KABUL ET SONRA TOHUMLAYAMA" DURUMUNU
+    ///      IMKANSIZ KILMAZ, YALNIZCA KARARI TASIR. Onceki hali bunu
+    ///      "ucuncu bir tarafin zorlamasi imkansiz" diye yaziyordu ve o
+    ///      IFADE YANLISTI: kontrol, "ne zaman" kararini CURVE'DEN HEDEFE
+    ///      tasir; kaldirmaz. Faz 2 tasarimin varsaydigi IZINSIZ seeder'i
+    ///      gonderdigi anda -- ki gondermelidir, pump.fun'in ozelligi odur --
+    ///      tamamlanmis bir curve'de o girisi herhangi bir yoldan gecen
+    ///      cagirabilir, ve kabul YENIDEN zorlanabilir hale gelir.
+    ///
+    ///      Curve'un fiilen aldigi sey daha dar ve dogru soylenmelidir:
+    ///      transferin ICINDE bulundugu cerceveyi HEDEFIN KENDI KODU secer,
+    ///      dolayisiyla "kabul et sonra tohumlayama" ancak hedefin kendi
+    ///      cercevesinde MUMKUN OLURSA mumkundur. Bu yuzden FAZ 2
+    ///      YUKUMLULUGU (1) BIR IMA DEGIL, ACIK BIR SARTTIR: hedefin girisi
+    ///      isin TAMAMINI tek islemde yapmali ve HERHANGI bir basarisizlikta
+    ///      revert etmelidir. O tutuldugunda curve tarafindaki atomiklik havuz
+    ///      olusumuna bedava genisler; tutulmadiginda kurtarilamaz durum
+    ///      GERI GELIR ve curve'de onu engelleyecek hicbir sey YOKTUR.
+    ///      Bir sonraki uygulayici "imkansiz" okuyup kurtarma yolunu
+    ///      yazmayabilir; bedeli tam olarak budur.
     ///
     /// @dev D6 -- MIKTARLAR IMMUTABLE VE DEFTERDEN, HICBIR BAKIYEDEN DEGIL.
     ///      pump.fun havuzu curve'un KALAN TUM token bakiyesiyle tohumlar;

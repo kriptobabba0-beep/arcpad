@@ -788,7 +788,7 @@ contract SurfaceTest is Test {
     ///      ve governance'in dort korumasi. `TreasuryIsTheEscrow` F1'in
     ///      olculebilir izidir.
     function test_launchFactoryExposesExactlyTheseErrors() public view {
-        string[] memory expected = new string[](18);
+        string[] memory expected = new string[](19);
         expected[0] = "DegenerateProfile()";
         expected[1] = "EmptyName()";
         expected[2] = "EmptySymbol()";
@@ -803,13 +803,18 @@ contract SurfaceTest is Test {
         expected[10] = "TreasuryIsTheEscrow()";
         expected[11] = "ZeroGovernorAddress()";
         // --- governance ---
+        // `...DelayNotElapsed` ve `...ProposalExpired` AYNI PENCERENIN IKI
+        // YUZUDUR; birinin varligi otekini gerektirir, cunku alttan sinirli
+        // ust sinirsiz bir pencere "suresi gecmis ama hala silahli" bir oneri
+        // birakir.
         expected[12] = "GraduationTargetDelayNotElapsed()";
-        expected[13] = "NoPendingGraduationTarget()";
-        expected[14] = "NotGovernor()";
-        expected[15] = "ZeroGraduationTarget()";
+        expected[13] = "GraduationTargetProposalExpired()";
+        expected[14] = "NoPendingGraduationTarget()";
+        expected[15] = "NotGovernor()";
+        expected[16] = "ZeroGraduationTarget()";
         // --- CurveMath katmani: bugun ULASILAMAZ, yine de yuzeyde ---
-        expected[16] = "InsufficientTokenReserve()";
-        expected[17] = "ZeroReserve()";
+        expected[17] = "InsufficientTokenReserve()";
+        expected[18] = "ZeroReserve()";
         _assertSetEquals(_errorDescriptors("LaunchFactory"), expected, "LaunchFactory hatalari");
     }
 
@@ -831,7 +836,7 @@ contract SurfaceTest is Test {
     }
 
     function test_launchFactoryAbiCensus() public view {
-        _assertEntryCensus("LaunchFactory", 20, 18, 4, 1, 0, 0);
+        _assertEntryCensus("LaunchFactory", 20, 19, 4, 1, 0, 0);
     }
 
     // ---------------------------------------------------------------

@@ -1484,6 +1484,108 @@ contract LaunchFactoryTest is Test {
         factory.applyGraduationTarget();
     }
 
+    /// PENCERE UST SINIRI: `eta + GRADUATION_TARGET_DELAY` aninda HALA inebilir,
+    /// bir saniye sonrasinda INEMEZ.
+    ///
+    /// Alt sinirin iki tarafi yukaridaki testte yurunuyor; burada UST sinirin
+    /// iki tarafi yurunuyor. Ikisini ayri testlerde tutmak bilincli: pencerenin
+    /// bir ucunu silen bir mutasyon otekinin testini KIRMAMALI, yoksa hangi
+    /// ucun korundugu olculemez.
+    function test_theProposalCanStillLandOnTheLastSecondOfTheWindow() public {
+        vm.prank(GOVERNOR);
+        factory.proposeGraduationTarget(address(0xF00D));
+        uint256 deadline = factory.pendingGraduationTargetEta() + factory.GRADUATION_TARGET_DELAY();
+
+        vm.warp(deadline);
+        vm.prank(ALICE);
+        factory.applyGraduationTarget();
+
+        assertEq(factory.graduationTarget(), address(0xF00D));
+        assertEq(factory.pendingGraduationTargetEta(), 0);
+    }
+
+    function test_theProposalExpiresOneSecondLater() public {
+        vm.prank(GOVERNOR);
+        factory.proposeGraduationTarget(address(0xF00D));
+        uint256 deadline = factory.pendingGraduationTargetEta() + factory.GRADUATION_TARGET_DELAY();
+
+        vm.warp(deadline + 1);
+        vm.expectRevert(LaunchFactory.GraduationTargetProposalExpired.selector);
+        factory.applyGraduationTarget();
+
+        assertEq(factory.graduationTarget(), address(0), "suresi gecmis oneri indi");
+
+        // SURESI GECMIS ONERI ATILDIR ama okunabilir kalir; temizleyen bir uye
+        // YOKTUR ve gerekmez -- inebilecegi tek fonksiyon artik reddediyor.
+        assertEq(factory.pendingGraduationTarget(), address(0xF00D));
+
+        // CARE: YENIDEN ONER. Sure bastan baslar ve pencere yeniden acilir.
+        vm.prank(GOVERNOR);
+        factory.proposeGraduationTarget(address(0xF00D));
+        vm.warp(factory.pendingGraduationTargetEta());
+        factory.applyGraduationTarget();
+        assertEq(factory.graduationTarget(), address(0xF00D));
+    }
+
+    /// F-A: UST SINIRIN VARLIK SEBEBI, UCTAN UCA.
+    ///
+    /// Ust sinirsiz halin olculen senaryosu: gun 0'da HENUZ TAMAMLANMIS HIC
+    /// CURVE YOKKEN bir hedef onerilir -- kimse itiraz etmez, cunku
+    /// bosaltilacak bir sey yoktur. Gun 3'te pencere acilir, kimse indirmez,
+    /// izleyenler onerinin dusuruldugunu sanir. Gun 368'de iki launch
+    /// tamamlanmistir ve TEK BIR ISLEM `apply` + iki `graduate()` yapar:
+    /// hirsizlik anindaki IHBAR SURESI SIFIRDIR.
+    ///
+    /// Gecikmenin tek yazili caresi "uc gun icinde tamamlanmis curve'leri
+    /// bosalt"tir ve o care, oneri aninda BOS olan kumeyi korur. Ust sinir tam
+    /// olarak bu ayrisimi kapatir: ihbar ile inme arasindaki mesafe ihbar
+    /// suresini asamaz.
+    function test_aProposalMadeBeforeAnyCurveCompletedCannotBeLandedAYearLater() public {
+        Seeder attacker = new Seeder();
+
+        // GUN 0: hicbir curve tamamlanmamis. Oneri yapilir.
+        vm.prank(GOVERNOR);
+        factory.proposeGraduationTarget(address(attacker));
+        uint256 deadline = factory.pendingGraduationTargetEta() + factory.GRADUATION_TARGET_DELAY();
+
+        // GUN 368: iki launch tamamlanmis durumda.
+        vm.warp(deadline + 365 days);
+        vm.prank(ALICE);
+        (, address curveA) = factory.launch("Arc Coin", "ARC", "ipfs://cid");
+        vm.prank(BOB);
+        (, address curveB) = factory.launch("Brc Coin", "BRC", "ipfs://cid2");
+        vm.prank(BUYER);
+        BondingCurve(curveA).buyExactTokensOut{value: 20_000e18}(S, type(uint256).max);
+        vm.prank(BUYER);
+        BondingCurve(curveB).buyExactTokensOut{value: 20_000e18}(S, type(uint256).max);
+        assertTrue(BondingCurve(curveA).complete() && BondingCurve(curveB).complete());
+
+        uint256 raiseAtRisk = BondingCurve(curveA).realQuoteReserves() + BondingCurve(curveB).realQuoteReserves();
+        assertGt(raiseAtRisk, 24_000e18, "senaryonun riske attigi tutar");
+
+        // TEK ISLEM: indir + iki curve'u mezun et. ILK ADIM DUSER.
+        vm.expectRevert(LaunchFactory.GraduationTargetProposalExpired.selector);
+        factory.applyGraduationTarget();
+
+        // ...ve hedef atanmadigi icin iki curve de hala mezun edilemez.
+        assertEq(factory.graduationTarget(), address(0));
+        vm.expectRevert(BondingCurve.GraduationTargetUnset.selector);
+        attacker.pull(BondingCurve(curveA));
+        vm.expectRevert(BondingCurve.GraduationTargetUnset.selector);
+        attacker.pull(BondingCurve(curveB));
+        assertEq(address(attacker).balance, 0, "saldirgan raise'i aldi");
+
+        // VE DOGRU YOL HALA CALISIYOR: yeniden oner, UC GUN BEKLE -- bu sefer
+        // ihbar suresi tamamlanmis curve'ler ZATEN VARKEN isliyor, yani
+        // gecikmenin caresi (bosaltma) fiilen uygulanabilir durumda.
+        vm.prank(GOVERNOR);
+        factory.proposeGraduationTarget(address(attacker));
+        vm.warp(factory.pendingGraduationTargetEta());
+        factory.applyGraduationTarget();
+        attacker.pull(BondingCurve(curveA));
+        assertGt(address(attacker).balance, 0);
+    }
+
     /// ONERININ UZERINE YAZMAK MUMKUNDUR VE SURE BASTAN BASLAR. Ayri bir
     /// "iptal" uyesi yoktur: yanlis bir oneriyi geri almak dogrusunu yeniden
     /// onermektir.

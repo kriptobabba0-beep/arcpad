@@ -225,6 +225,12 @@ contract LaunchFactory {
     ///      kayda gecirilir, cozulmez: yetki gercektir ve `BondingCurve`in
     ///      "kimse bir launch'in varliklarini hareket ettiremez" vaadi CURVE
     ///      seviyesindedir, factory seviyesinde degil.
+    ///
+    /// @dev BU SABIT IKI KEZ KULLANILIR ve ikincisi tesadufi degildir: pencere
+    ///      `[eta, eta + GRADUATION_TARGET_DELAY]` araligidir, yani ihbar
+    ///      suresi ile INDIRME suresi AYNI sayidir. Gerekcesi
+    ///      `applyGraduationTarget`in NatSpec'inde; ozeti, ihbarin azami
+    ///      bayatliginin ihbar suresini asmamasi gerektigidir.
     uint256 public constant GRADUATION_TARGET_DELAY = 3 days;
 
     /// @notice `BondingCurve.graduate()`i cagirabilecek TEK adres, ve odemeyi
@@ -387,6 +393,16 @@ contract LaunchFactory {
     /// @dev Uc gun gecmedi.
     error GraduationTargetDelayNotElapsed();
 
+    /// @dev Pencere KAPANDI: oneri `eta + GRADUATION_TARGET_DELAY`den sonra
+    ///      indirilemez. `GraduationTargetDelayNotElapsed` ile AYNI PENCERENIN
+    ///      IKI YUZUDUR ve isimleri bilerek kardestir; care de aynidir --
+    ///      yeniden oner ve uc gun bekle. Bu hatanin varlik sebebi
+    ///      `applyGraduationTarget`in NatSpec'inde olculmus haliyle duruyor:
+    ///      ust sinirsiz halde, tamamlanmis hicbir curve yokken yapilmis bir
+    ///      oneri sonsuza kadar silahli kalir ve varliklar geldiginde SIFIR
+    ///      ihbarla inebilir.
+    error GraduationTargetProposalExpired();
+
     /// @dev `escrow` KODSUZ bir adres. Sifir kontrolunden AYRIDIR ve ondan
     ///      SONRA gelir, cunku `address(0)` ikisini birden ihlal eder ve hangi
     ///      hatanin donecegi sabit olmalidir.
@@ -427,7 +443,7 @@ contract LaunchFactory {
     ///       SaleAndSeedStrandSupply, ZeroEscrowAddress, ZeroTreasuryAddress,
     ///       ZeroGovernorAddress, TreasuryIsTheEscrow, GovernorIsTheEscrow,
     ///       NotGovernor, ZeroGraduationTarget, NoPendingGraduationTarget,
-    ///       GraduationTargetDelayNotElapsed}.
+    ///       GraduationTargetDelayNotElapsed, GraduationTargetProposalExpired}.
 
     // ---------------------------------------------------------------
     // Kurulum
@@ -676,10 +692,78 @@ contract LaunchFactory {
     ///            tetikler; olculdu, `make slither --fail-medium` kirmizi
     ///            oluyordu. Ayni ozellik adres uzerinden ifade edilince bulgu
     ///            kaybolur ve ifade de daha dogrudan olur.
+    ///
+    /// @dev PENCERE IKI TARAFTAN DA SINIRLIDIR, ve UST SINIR SONRADAN EKLENDI:
+    ///      ilk hali yalnizca alttan siniryordu, yani suresi gecmis ama
+    ///      indirilmemis bir oneri SONSUZA KADAR SILAHLI kaliyordu. Somut
+    ///      sonucu olculdu: gun 0'da, HENUZ TAMAMLANMIS HIC CURVE YOKKEN bir
+    ///      hedef onerilir; kimse itiraz etmez, cunku bosaltilacak bir sey
+    ///      yoktur; gun 3'te pencere acilir, kimse indirmez ve izleyenler
+    ///      onerinin dusuruldugunu sanir; gun 368'de iki launch tamamlanmistir
+    ///      ve TEK BIR ISLEM `applyGraduationTarget()` + iki `graduate()`
+    ///      cagrisini yapar. Hirsizlik anindaki IHBAR SURESI SIFIRDIR.
+    ///
+    ///      Kusurun kalbi sudur: gecikmenin verdigi ihbar ONERI ANINDAKI
+    ///      ihbardir, korudugu varliklar ise DAHA SONRA gelir -- ve gecikmenin
+    ///      tek yazili caresi ("uc gun icinde tamamlanmis curve'leri mevcut
+    ///      hedefe bosalt") tam olarak oneri aninda BOS olan kumeyi korur.
+    ///      "Oneriden itibaren uc gun ihbar" ile "varliklar hareket etmeden
+    ///      once uc gun ihbar" ayni sey DEGILDIR ve tam olarak varliklar
+    ///      pencereden SONRA geldiginde ayrisirlar.
+    ///
+    /// @dev SURE `eta + GRADUATION_TARGET_DELAY`DIR VE IKINCI BIR SABIT YOKTUR.
+    ///      Bu, sayiyi SERBEST BIR PARAMETRE OLMAKTAN CIKARIR -- deponun diger
+    ///      sabitlerinde (`MIN_OPENING_MARKET_CAP`, `MIN_SALE_AND_SEED`)
+    ///      izlenen kural: sinir bir olcumden ya da zaten var olan bir
+    ///      buyuklukten okunur, secilmez. Iki uctan da ayni sayiya varilir:
+    ///
+    ///        ALT UC (neden daha kisa olmasin): `applyGraduationTarget`
+    ///        IZINSIZDIR ve `eta` UC GUN ONCEDEN bilinen PUBLIC bir
+    ///        degiskendir. Yani indirme adiminin KOORDINASYON MALIYETI YOKTUR:
+    ///        imza gerektirmez, governor'i gerektirmez, herhangi biri -- zaten
+    ///        var olmasi gereken keeper dahil (spec 8) -- tek bir islemle
+    ///        yapabilir. Cok-imzalinin imza toplama maliyeti ONERI aninda
+    ///        ZATEN odenmistir. Dolayisiyla pencere "bir Safe ne kadar surede
+    ///        imzalar" ile boyutlandirilmaz.
+    ///
+    ///        UST UC (neden daha uzun olmasin): pencere ihbar suresini ASARSA,
+    ///        bekleyen durumu okuyup gecikmeyi bekleyen bir gozlemci, bilgisi
+    ///        BAYATLADIKTAN sonra inen bir degisiklikle karsilasabilir --
+    ///        yani duzeltilen kusurun kucuk olcekli hali geri gelir. Pencereyi
+    ///        ihbar suresiyle sinirlamak, ihbarin azami bayatligini ihbar
+    ///        suresinin KENDISIYLE sinirlar: toplam maruziyet en fazla
+    ///        2 x GRADUATION_TARGET_DELAY, yani ALTI GUNDUR.
+    ///
+    ///      Iki uc TEK BIR sayida bulusur ve o sayi sistemde ZATEN VARDIR.
+    ///      Ayri bir `GRADUATION_TARGET_GRACE` sabiti EKLENMEDI: ifadeyi
+    ///      `eta + GRADUATION_TARGET_DELAY` olarak yazmak, iki ucun BIRLIKTE
+    ///      degismesini zorunlu kilar ve yanlis ayarlanabilecek ikinci bir
+    ///      literal birakmaz. Suresi disaridan hesaplanabilir:
+    ///      `pendingGraduationTargetEta() + GRADUATION_TARGET_DELAY()`.
+    ///
+    /// @dev LIVENESS BEDELI BILINCLI VE SINIRLIDIR: suresi gecen bir oneri
+    ///      YENIDEN ONERILIR ve uc gun daha beklenir. D3 bozuk bir hedeften tek
+    ///      cikis oldugu icin bu bir gecikmedir -- ama alti gun boyunca IZINSIZ
+    ///      tek bir islemin gonderilmemis olmasi, tam da "hedef bozuk ve her
+    ///      sey sikismis" senaryosunda gercekci degildir: o senaryoda ihtiyaci
+    ///      olanlar zaten izliyordur. Kaybi olan bir gecikme, sinirsiz silahli
+    ///      bir yetkiye tercih edilir.
+    ///
+    /// @dev IKI SINIR DA KAPSAYICIDIR: `eta` aninda inebilir,
+    ///      `eta + GRADUATION_TARGET_DELAY` aninda HALA inebilir, bir saniye
+    ///      sonrasinda inemez. Ikisinin de iki tarafi testte yurunur.
+    ///
+    /// @dev SURESI GECMIS BIR ONERI TEMIZLENMEZ VE TEMIZLENMESI GEREKMEZ: bu
+    ///      durumda `pendingGraduationTarget` okunabilir ama ATILDIR, cunku
+    ///      inebilecegi tek fonksiyon artik reddeder. Bir "temizle" uyesi,
+    ///      yeniden onermenin zaten yaptigi seyi yapan ikinci bir yol olurdu.
     function applyGraduationTarget() external {
         address next = pendingGraduationTarget;
         if (next == address(0)) revert NoPendingGraduationTarget();
-        if (block.timestamp < pendingGraduationTargetEta) revert GraduationTargetDelayNotElapsed();
+
+        uint256 eta = pendingGraduationTargetEta;
+        if (block.timestamp < eta) revert GraduationTargetDelayNotElapsed();
+        if (block.timestamp > eta + GRADUATION_TARGET_DELAY) revert GraduationTargetProposalExpired();
 
         address previous = graduationTarget;
 
