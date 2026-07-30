@@ -399,6 +399,24 @@ abstract contract BondingCurveInvariantsBase is Test {
             assertEq(handler.completionLeftWrongVirtualReserves(), 0, "completionLeftWrongVirtualReserves");
             _assertNoAvailabilityFailures();
 
+            // TAMAMLANMA SONRASI DAL DA DETERMINISTIK OLARAK YURUNUR.
+            // `afterInvariant` buna taban KOYAMAZ (tamamlanma dizinin son
+            // cagrisinda olursa sonrasinda hic deneme kalmaz), ama burada curve
+            // zaten tamamlanmis durumda: asagidaki uc cagri UCU DE
+            // `_attemptAfterCompletion`a duser -- `callsWhileComplete` her
+            // birinde kosulsuz artar, dolayisiyla `+3` TAM olarak beklenir.
+            // Bu, `invariant_noTradeEverSucceedsAfterCompletion`in bos yere
+            // yesil olmadiginin deterministik kanitidir, ve ikinci satiri
+            // (revert VERISININ `CurveComplete()` oldugu) uc giris noktasinda
+            // birden yurutur -- I4/I5 mutantlarini olduren sey odur.
+            uint256 attemptsBefore = handler.callsWhileComplete();
+            handler.buyExactTokensOut(k, k);
+            handler.buyExactQuoteIn(k, k);
+            handler.sell(k, k);
+            assertEq(handler.callsWhileComplete(), attemptsBefore + 3, "tamamlanma sonrasi dal yurunmedi");
+            assertEq(handler.tradeSucceededAfterCompletion(), 0, "tamamlanmis curve'de islem BASARDI");
+            assertEq(handler.postCompletionRevertHadWrongSelector(), 0, "revert CurveComplete() degil");
+
             vm.revertToState(snap);
         }
     }
