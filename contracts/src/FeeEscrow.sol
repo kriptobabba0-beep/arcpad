@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.26;
 
+import {IFeeEscrow} from "./interfaces/IFeeEscrow.sol";
+
 /// @title FeeEscrow
 /// @notice Ucretlerin biriktigi ve CEKILDIGI defter. Hicbir ucret push
 ///         edilmez.
@@ -54,7 +56,10 @@ pragma solidity ^0.8.26;
 ///      karsilik Faz 1c'dedir: protokol ucret ALICI ADRESI dondurulebilir
 ///      olmalidir, boylece protokol payi yeni bir adrese yonlendirilebilir
 ///      (bloklanan adreste birikmis bakiye yine de kurtarilamaz).
-contract FeeEscrow {
+/// @dev `IFeeEscrow`'u UYGULAR. Bag suslemede degil, derleyicidedir:
+///      `deposit`'in imzasi degistiginde `BondingCurve`'un beklentisiyle
+///      ayrisma derleme hatasi olur, sessiz bir calisma zamani sapmasi degil.
+contract FeeEscrow is IFeeEscrow {
     error ZeroRecipient();
     error ZeroAmount();
     error NothingToClaim();

@@ -23,7 +23,7 @@ Graduation'ın havuz tarafı (Uniswap V4 hook'u, likidite tohumlama, LP token ya
 Bu bölüm her görevin gereksinimlerine **örtük olarak dâhildir**.
 
 - Solidity `0.8.26`, `evm_version = "cancun"`, `via_ir = true`, `optimizer_runs = 800`.
-- `contracts/foundry.toml` **yalnızca** Görev 4'ün ABI yüzey testi için `fs_permissions` eklemek üzere değiştirilebilir. Başka hiçbir değişiklik yapılmaz; yapılırsa rapora gerekçesiyle yazılır.
+- `contracts/foundry.toml` **yalnızca** Task 4'ün ABI yüzey testi için `fs_permissions` eklemek üzere değiştirilebilir. Başka hiçbir değişiklik yapılmaz; yapılırsa rapora gerekçesiyle yazılır.
 - `forge fmt --check --root contracts`, `make lint`, `make slither` temiz olmalı. HIGH/MEDIUM her Slither bulgusu ya düzeltilir ya `docs/audit/slither-triage.json`'a yazılı gerekçeyle işlenir.
 - Testler **her iki profilde** (`default` ve `ci`) yeşil olmalı.
 - **Ücret parçalardan toplanır, toplamdan bölünmez.** `feeOn(x, 95) + feeOn(x, 30)`. `125` ileri yönde (ücret hesaplarken) hiçbir yerde görünmez. Ölçüldü: iki parçanın toplamı, birleşik oranın tavan yuvarlamasını `x ∈ [1, 40000]` aralığının **20.220**'sinde aşar; toplamdan bölmek her seferinde protokolün aleyhinedir.
@@ -39,7 +39,7 @@ Bu bölüm her görevin gereksinimlerine **örtük olarak dâhildir**.
 | Dosya | Sorumluluk |
 |---|---|
 | `contracts/src/libraries/CurveMath.sol` | **değişir** — exact-quote-in algoritması zincirinkiyle değiştirilir |
-| `contracts/src/LaunchToken.sol` | **değişir** — `launchSalt` immutable'ı eklenir (Görev 3'ün kimlik doğrulaması için) |
+| `contracts/src/LaunchToken.sol` | **değişir** — `launchSalt` immutable'ı eklenir (Task 3'ün kimlik doğrulaması için) |
 | `contracts/test/LaunchToken.t.sol` | **değişir** — constructor imzası değiştiği için |
 | `contracts/src/BondingCurve.sol` | **yeni** — rezervler, alım, satım, ücret yönlendirme, tamamlanma |
 | `contracts/src/LaunchFactory.sol` | **yeni** — CREATE2 ile token+curve üretimi, türetilebilir eşleşme |
@@ -53,7 +53,7 @@ Bu bölüm her görevin gereksinimlerine **örtük olarak dâhildir**.
 
 ---
 
-## Görev 1: `CurveMath` — exact-quote-in algoritmasını zincirinkiyle değiştir
+### Task 1: `CurveMath` — exact-quote-in algoritmasını zincirinkiyle değiştir
 
 Faz 1a, `netQuoteIn`'i `@pump-fun/pump-sdk`'nin `getBuyTokenAmountFromSolAmount` yardımcısından aldı. O bir **zincir dışı tahmin edicidir**. Zincirdeki algoritma IDL'de `buy_exact_sol_in` üzerindeki doc-comment'te aynen verilmiştir ve farklıdır:
 
@@ -280,16 +280,16 @@ git commit -m "fix(contracts): use the chain's exact-quote-in algorithm, not the
 
 ---
 
-## Görev 2: `BondingCurve`
+### Task 2: `BondingCurve`
 
 **Files:**
 - Create: `contracts/src/BondingCurve.sol`
 - Create: `contracts/test/BondingCurve.t.sol`
 
 **Interfaces:**
-- Tüketir: `CurveMath` (Görev 1'in düzeltilmiş hâli), `LaunchToken`, `FeeEscrow`.
+- Tüketir: `CurveMath` (Task 1'in düzeltilmiş hâli), `LaunchToken`, `FeeEscrow`.
 - Üretir: `contract BondingCurve` —
-  - `constructor(address creator_, address escrow_, address protocolTreasury_)` — **token argümanı YOKTUR.** Gerekçesi Görev 3'tedir: curve token'dan önce deploy edilir, böylece curve adresi token'a bağlı olmaz ve iki adres birbirini bekleyen döngüsel bir bağımlılık doğmaz. Factory bu üçünü de sabit tuttuğu için curve adresi yalnızca salt'ın fonksiyonudur.
+  - `constructor(address creator_, address escrow_, address protocolTreasury_)` — **token argümanı YOKTUR.** Gerekçesi Task 3'tedir: curve token'dan önce deploy edilir, böylece curve adresi token'a bağlı olmaz ve iki adres birbirini bekleyen döngüsel bir bağımlılık doğmaz. Factory bu üçünü de sabit tuttuğu için curve adresi yalnızca salt'ın fonksiyonudur.
   - `bind(address token_) external` — token adresini **yalnızca factory, yalnızca bir kez** yazar. Bu, constructor'dan ayrılmak zorunda kalan tek alandır. `bind` çağrılmadan önce **her ticaret giriş noktası revert eder**, yani initialize edilmemiş bir pencerede işlem yapılamaz.
   - `buyExactTokensOut(uint256 tokensOut, uint256 maxQuoteIn) payable`
   - `buyExactQuoteIn(uint256 minTokensOut) payable` — rezerve **kısar**, revert etmez.
@@ -421,7 +421,7 @@ git commit -m "feat(contracts): bonding curve with strict CEI and pump.fun's rou
 
 ---
 
-## Görev 3: `LaunchFactory` — sahteciliğe kapalı token↔curve eşleşmesi
+### Task 3: `LaunchFactory` — sahteciliğe kapalı token↔curve eşleşmesi
 
 **Files:**
 - Create: `contracts/src/LaunchFactory.sol`
@@ -452,17 +452,30 @@ kanonik   = (beklenen == token)
 
 Bir sahteci istediği `creator()`, `curve()` ve `metadataURI()` değerlerini iddia edebilir — ama o değerlerle birlikte kendi adresi factory'den türeyen adrese eşit **olamaz**, çünkü o adrese deploy etmek yalnızca factory'nin elindedir. İndexer tek bir `isCanonical` çağrısıyla eler. pump.fun'ın PDA türetmesinin taşıdığı özelliğin aynısıdır ve `curve`'ün constructor argümanlarına dâhil olması, sahtecinin gerçek bir curve'ü iddia edip yine de kendi adresini tutturmasını engeller.
 
-**Bu, `LaunchToken`'ı değiştirir** — merge edilmiş bir kontrat. `launchSalt` immutable'ı eklenir, `LaunchToken.t.sol`'ün tüm kurulum çağrıları ve Görev 4'ün ABI yüzey testi buna göre güncellenir. Kapsam artışı gerçektir ve rapora yazılmalıdır.
+**Bu, `LaunchToken`'ı değiştirir** — merge edilmiş bir kontrat. `launchSalt` immutable'ı eklenir, `LaunchToken.t.sol`'ün tüm kurulum çağrıları ve Task 4'ün ABI yüzey testi buna göre güncellenir. Kapsam artışı gerçektir ve rapora yazılmalıdır.
 
 **Interfaces:**
-- Tüketir: `LaunchToken` (değiştirilmiş), `BondingCurve` (Görev 2).
+- Tüketir: `LaunchToken` (değiştirilmiş), `BondingCurve` (Task 2).
 - Üretir: `contract LaunchFactory` —
   - `launch(string name, string symbol, string uri) → (address token, address curve)`
   - `isCanonical(address token) → bool` — **doğrulamanın tamamı budur.**
   - `predictAddresses(address creator_, string name, string symbol, string uri, uint256 nonce) → (address token, address curve)` — görünüm, off-chain önizleme için.
   - `launchCount() → uint256`
   - Olay: `Launched(address indexed token, address indexed curve, address indexed creator, string name, string symbol, string uri, bytes32 salt)`
-  - Hatalar: `EmptyName()`, `EmptySymbol()`
+  - Hatalar: `EmptyName()`, `EmptySymbol()`, `DegenerateProfile()`, `GraduationRaiseTooSmall()`, `ZeroEscrowAddress()`, `ZeroTreasuryAddress()`
+
+### Task 2'den devreden iki yükümlülük
+
+Bunlar Task 2'nin incelemesinde ölçülerek bulundu ve Task 3 olmadan kapanmıyor.
+
+**1. Factory yalnızca kendi bastığı token'ları bind etmek zorundadır.** `BondingCurve.bind`'in bakiye koruması (`balanceOf(this) >= S + D`) bir **yapılandırma kontrolüdür, mülkiyet kanıtı değil**. `bind` yalnızca "curve'ü geri işaret eden" bir token ister; ERC20 davranışını doğrulamaz. Sahip olmadığı bir bakiyeyi bildiren bir token bu korumayı geçer — ölçüldü. Korumanın bütün gücü bu yükümlülüğün tutulmasına bağlıdır, ve `launch()` token'ı kendisi deploy ettiği için bu doğal olarak sağlanır — ama **bind edilebilecek başka hiçbir yol açılmamalıdır**.
+
+**2. Profil üçlüsünün sağlığı factory'de kontrol edilmelidir, curve'de değil.** Curve'ün constructor'ı `V > 0`, `T > 0`, `S > 0`, `S < T`'yi koruyor; `bind` de `S + D ≤ N`'i. Geriye tek tek parametrelere konamayacak iki dejenerelik kalıyor:
+
+- **`poolSeedSupply == 0`.** `S = 1` hem constructor'dan hem `bind`'den geçiyor ve ilk 1 wei'lik alım curve'ü tamamlayıp havuz tohumu **sıfır** olan bir `Completed` yayıyor. `T − S == 1` aynı şeklin ikinci hâli. Curve'ün hiçbir invariant'ı bozulmuyor, o yüzden orada koruma yok — ama Faz 2'ye sıfır tohumlu bir graduation devredilir.
+- **Açılış piyasa değerinde alt sınır yok.** `V = 1` üretim `T, S` ile bind ediliyor ve tüm satış arzı **3 wei** curve tarafı + 2 wei ücrete satılıyor. `V`'ye taban koymak işe yaramaz: ekonomiyi `V/T` belirler ve `T` de bir argümandır, dolayısıyla taban `T`'yi büyüterek aşılır.
+
+İkisinin de savunulabilir kontrolü **üçlü üzerinedir ve factory'ye aittir**: `poolSeedSupply(S, T) > 0` ve açılış piyasa değeri `V·N/T` için bir alt sınır. Factory zaten profili kendi immutable'larında tutuyor, yani kontrol deploy başına bir kez çalışır ve her curve'e bedava yayılır. `DegenerateProfile()` bunun içindir.
 
 - [ ] **Adım 1: Başarısız testleri yaz**
 
@@ -520,9 +533,45 @@ Beklenen: `Source "../src/LaunchFactory.sol" not found`.
 
 ```solidity
 contract LaunchFactory {
+    // Piyasa degeri tabani = testnet profilinin acilis degeri (4 USDC).
+    uint256 public constant MIN_OPENING_MARKET_CAP = 4e18;
+    // Raise tabani = testnet profilinin kendi graduation raise'i (~12,1614 USDC).
+    uint256 public constant MIN_GRADUATION_RAISE = 12_161_433_369_060_378_706;
+
     address public immutable escrow;
     address public immutable protocolTreasury;
+    // PROFIL FACTORY'DE DURUR ve her curve'e aynen gecirilir.
+    uint256 public immutable VIRTUAL_TOKEN_RESERVES;   // T
+    uint256 public immutable VIRTUAL_QUOTE_RESERVES;   // V
+    uint256 public immutable SALE_SUPPLY;              // S
     uint256 public launchCount;
+
+    constructor(
+        address escrow_,
+        address protocolTreasury_,
+        uint256 virtualTokenReserves_,   // DIKKAT: T once, V sonra --
+        uint256 virtualQuoteReserves_,   // BondingCurve'un constructor sirasi budur
+        uint256 saleSupply_
+    ) {
+        if (escrow_ == address(0)) revert ZeroEscrowAddress();
+        if (protocolTreasury_ == address(0)) revert ZeroTreasuryAddress();
+
+        // Profil sagligi: deploy basina bir kez, her curve'e bedava yayilir.
+        // Sira baglayicidir -- piyasa degeri RAISE'DEN ONCE gelir, yoksa
+        // raise korumasi piyasa degeri sinir testini maskeler.
+        if (saleSupply_ >= virtualTokenReserves_) revert DegenerateProfile();
+        if (CurveMath.poolSeedSupply(saleSupply_, virtualTokenReserves_) == 0) revert DegenerateProfile();
+        if (CurveMath.marketCap(virtualQuoteReserves_, virtualTokenReserves_, LAUNCH_TOKEN_TOTAL_SUPPLY)
+                < MIN_OPENING_MARKET_CAP) revert DegenerateProfile();
+        if (CurveMath.graduationRaise(saleSupply_, virtualQuoteReserves_, virtualTokenReserves_)
+                < MIN_GRADUATION_RAISE) revert GraduationRaiseTooSmall();
+
+        escrow = escrow_;
+        protocolTreasury = protocolTreasury_;
+        VIRTUAL_TOKEN_RESERVES = virtualTokenReserves_;
+        VIRTUAL_QUOTE_RESERVES = virtualQuoteReserves_;
+        SALE_SUPPLY = saleSupply_;
+    }
 
     function launch(string calldata name_, string calldata symbol_, string calldata uri_)
         external
@@ -535,13 +584,19 @@ contract LaunchFactory {
 
         // Once curve: constructor argumanlari token'i ICERMEZ, bu yuzden
         // adresi token'a bagli degildir ve dongusellik dogmaz.
-        curve = address(new BondingCurve{salt: salt}(msg.sender, escrow, protocolTreasury));
+        curve = address(
+            new BondingCurve{salt: salt}(
+                msg.sender, escrow, protocolTreasury,
+                VIRTUAL_TOKEN_RESERVES, VIRTUAL_QUOTE_RESERVES, SALE_SUPPLY
+            )
+        );
 
         // Sonra token: ayni salt, ve arz dogrudan curve'e basilir.
         token = address(new LaunchToken{salt: salt}(name_, symbol_, uri_, msg.sender, curve, salt));
 
-        BondingCurve(curve).bind(token);
+        // Olay bind'DEN ONCE: BondingCurve'un kati CEI sirasiyla ayni disiplin.
         emit Launched(token, curve, msg.sender, name_, symbol_, uri_, salt);
+        BondingCurve(curve).bind(token);
     }
 
     /// @notice Bir token'in bu factory tarafindan uretilip uretilmedigi.
@@ -565,7 +620,7 @@ contract LaunchFactory {
 }
 ```
 
-`BondingCurve.bind(address token_)`, Görev 2'nin constructor'ından ayrılan tek adımdır: curve, token'dan önce deploy edildiği için token adresini constructor'da alamaz. `bind` **yalnızca factory tarafından, yalnızca bir kez** çağrılabilir ve `token`'ı yazdıktan sonra bir daha yazılamaz. Görev 2'nin `Üretir` bloğu buna göre güncellenir: `token` artık `immutable` değil, `bind` ile bir kez yazılan bir alandır. Testleri: `test_bindRevertsWhenCalledByAnyoneButTheFactory`, `test_bindRevertsOnTheSecondCall`, `test_everyTradingEntrypointRevertsBeforeBind`.
+`BondingCurve.bind(address token_)`, Task 2'nin constructor'ından ayrılan tek adımdır: curve, token'dan önce deploy edildiği için token adresini constructor'da alamaz. `bind` **yalnızca factory tarafından, yalnızca bir kez** çağrılabilir ve `token`'ı yazdıktan sonra bir daha yazılamaz. Task 2'nin `Üretir` bloğu buna göre güncellenir: `token` artık `immutable` değil, `bind` ile bir kez yazılan bir alandır. Testleri: `test_bindRevertsWhenCalledByAnyoneButTheFactory`, `test_bindRevertsOnTheSecondCall`, `test_everyTradingEntrypointRevertsBeforeBind`.
 
 - [ ] **Adım 4: Testleri çalıştır**
 
@@ -586,7 +641,7 @@ git commit -m "feat(contracts): launch factory with an unforgeable token identit
 
 ---
 
-## Görev 4: Invariant paketi ve ABI yüzey testi
+### Task 4: Invariant paketi ve ABI yüzey testi
 
 **Files:**
 - Create: `contracts/test/invariant/CurveTradingHandler.sol`
@@ -692,5 +747,5 @@ Faz 1b'nin hayatta kalan beş mutantını bu teste karşı çalıştır: `issue(
 Deploy script'i, Arc testnet entegrasyonu, ve şunlar:
 
 - **Creator değiştirilebilirliği.** pump.fun'da curve creator'ı **dört ayrı yetki yoluyla değişebilir** ve her biri `SetCreatorEvent` yayar. arcpad'in spec §5.7'si creator'ın ücret alıcı cüzdanını değiştirebileceğini söylüyor. Faz 3'ün indexer'ı `Launched` olayındaki değeri **önbelleğe alırsa yanlış olur** — değişim olayına abone olmak zorundadır. Faz 1d bu yolu ve olayını tanımlamalı.
-- **`LaunchToken` provenance.** `factory` alanı ve `curve_.code.length` kontrolü Görev 3'ün CREATE2 kurgusunu tamamlar; kurgu oturduktan sonra eklenmeli.
+- **`LaunchToken` provenance.** `factory` alanı ve `curve_.code.length` kontrolü Task 3'ün CREATE2 kurgusunu tamamlar; kurgu oturduktan sonra eklenmeli.
 - **`v4-periphery` bağımlılığı** hâlâ hiçbir şey tarafından import edilmiyor; Faz 2'nin `HookMiner` ihtiyacı doğrulanana kadar tutuluyor.

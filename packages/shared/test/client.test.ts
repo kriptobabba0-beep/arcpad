@@ -4,7 +4,7 @@ import { assertArcChain, createArcClient } from '../src/client'
 
 describe('createArcClient', () => {
   it('Arc testnet zincirine baglanmis, chain alani daralmis bir client dondurur', () => {
-    const client = createArcClient('https://rpc.testnet.arc.network')
+    const client = createArcClient('https://rpc.testnet.arc.io')
     // `client.chain` bare `PublicClient` donus tipiyle `Chain | undefined`
     // olurdu; burada opsiyonel zincirleme olmadan dogrudan okunabiliyor
     // olmasi donus tipinin dogru cikarildigini kanitlar.

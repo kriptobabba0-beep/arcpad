@@ -9,6 +9,11 @@ contracts/out/
 contracts/cache/
 contracts/broadcast/*/dry-run/
 contracts/.gas-snapshot
+# `make test` runs `forge test --root contracts` FROM THE REPO ROOT, and forge
+# persists failing invariant sequences to `<cwd>/cache/invariant/failures/...`
+# -- i.e. here, not under contracts/. Iki kez olustu. Bir sonraki basarisiz
+# invariant kosusu temiz bir agaci yine kirletirdi.
+cache/
 
 # Node
 node_modules/

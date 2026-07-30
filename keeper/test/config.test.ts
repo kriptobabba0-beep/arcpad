@@ -4,12 +4,12 @@ import { loadKeeperConfig } from '../src/config'
 describe('loadKeeperConfig', () => {
   it('gecerli ortamdan yapilandirma uretir', () => {
     const config = loadKeeperConfig({
-      ARC_RPC_URL: 'https://rpc.testnet.arc.network',
+      ARC_RPC_URL: 'https://rpc.testnet.arc.io',
       KEEPER_POLL_INTERVAL_MS: '2000',
       KEEPER_DRY_RUN: 'false',
     })
     expect(config).toEqual({
-      rpcUrl: 'https://rpc.testnet.arc.network',
+      rpcUrl: 'https://rpc.testnet.arc.io',
       pollIntervalMs: 2000,
       dryRun: false,
     })
@@ -20,19 +20,19 @@ describe('loadKeeperConfig', () => {
   })
 
   it('poll araligi belirtilmezse 5000 ms varsayar', () => {
-    const config = loadKeeperConfig({ ARC_RPC_URL: 'https://rpc.testnet.arc.network' })
+    const config = loadKeeperConfig({ ARC_RPC_URL: 'https://rpc.testnet.arc.io' })
     expect(config.pollIntervalMs).toBe(5000)
   })
 
   it('guvenli tarafta durur: dryRun varsayilan olarak aciktir', () => {
-    const config = loadKeeperConfig({ ARC_RPC_URL: 'https://rpc.testnet.arc.network' })
+    const config = loadKeeperConfig({ ARC_RPC_URL: 'https://rpc.testnet.arc.io' })
     expect(config.dryRun).toBe(true)
   })
 
   it('poll araligi sayi degilse hata firlatir', () => {
     expect(() =>
       loadKeeperConfig({
-        ARC_RPC_URL: 'https://rpc.testnet.arc.network',
+        ARC_RPC_URL: 'https://rpc.testnet.arc.io',
         KEEPER_POLL_INTERVAL_MS: 'soon',
       }),
     ).toThrow(/KEEPER_POLL_INTERVAL_MS/)
