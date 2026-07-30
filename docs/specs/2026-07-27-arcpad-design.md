@@ -52,8 +52,8 @@ Tasarım bu bulgular üzerine kurulu. Her biri uygulama sırasında yeniden doğ
 | Alan | Değer |
 |---|---|
 | Chain ID | `5042002` (`0x4CEF52`) |
-| RPC | `https://rpc.testnet.arc.network` |
-| WebSocket | `wss://rpc.testnet.arc.network` |
+| RPC | `https://rpc.testnet.arc.io` |
+| WebSocket | `wss://rpc.testnet.arc.io` |
 | Explorer | `https://testnet.arcscan.app` (Blockscout) |
 | Faucet | `https://faucet.circle.com` — istek başına 10 USDC |
 | Native gas | USDC |
@@ -62,6 +62,8 @@ Tasarım bu bulgular üzerine kurulu. Her biri uygulama sırasında yeniden doğ
 | Multicall3 | `0xcA11bde05977b3631167028862bE2a173976CA11` |
 | Permit2 | `0x000000000022D473030F116dDEE9F6B43aC78BA3` |
 | CREATE2 Factory | `0x4e59b44847b379578588920cA78FbF26c0B4956C` |
+
+**Alan adı `arc.network`'ten `arc.io`'ya taşındı.** Circle'ın dokümanlarındaki her RPC ve explorer URL'i bugün `arc.io` altında; `docs.arc.network/llms.txt` `docs.arc.io/llms.txt`'ye 301 veriyor. Eski `rpc.testnet.arc.network` hâlâ cevap veriyor ama artık dokümante değil, dolayısıyla kullanımdan kalkmış sayılır. Depoda tek kaynak `packages/shared/src/chain.ts`'tir ve CI'ın Arc fork job'ı da aynı hostu kullanır.
 
 ### 3.2 Native USDC'nin çift görünümü
 
@@ -163,19 +165,21 @@ d:\pumpfunforarc\
 
 | Kontrat | Sorumluluk |
 |---|---|
-| `LaunchFactory` | Giriş noktası. `LaunchToken` + `BondingCurve` klonunu üretir, o anki `FeeSchedule` adresini launch'a yazar, geliştirici ilk alımını atomik yapar, graduation'ı orkestre eder. Launch kaydını tutar. Oluşturma ücretsizdir. |
-| `FeeSchedule` | Market cap kademelerini taşıyan **immutable** kontrat. Bir kez deploy edilir, hiç değişmez; `LaunchFactory` adresini her launch'a yazar, böylece bir launch'ın ücretleri yayınlandıktan sonra değiştirilemez. Tabloyu güncellemek yeni bir deployment demektir ve yalnızca sonraki launch'ları etkiler. |
-| `LaunchToken` | Sabit arzlı ERC-20, 18 decimal. `name`, `symbol`, `metadataURI`, `curve` alanları token üzerinde — zincirden okunabilir, backend'e bağımlı değil. **Tüm arz constructor'da tek seferde `BondingCurve`'e basılır.** Curve, satılabilir kısmı (`S`) kendi sayacıyla sınırlar; rezerve kalan (`D`) aynı bakiyede durur ve graduation'da havuza aktarılır. Sonradan mint fonksiyonu yoktur. |
-| `BondingCurve` | **Launch başına bir EIP-1167 klonu.** Satış arzını tutar. `buy()` (payable), `sell()`, `quoteBuy()`, `quoteSell()`. |
+| `LaunchFactory` | Giriş noktası. `launch(name, symbol, uri)` — **üç argüman, `payable` değil**. Aynı CREATE2 salt'ıyla önce `BondingCurve`'ü, sonra `LaunchToken`'ı deploy eder ve ikisini `bind` ile bağlar. Profil (`V`, `T`, `S`) factory'nin immutable'larıdır, launch argümanı değil. Graduation'ı **orkestre etmez**: iki döndürülebilir üye tutar — `graduationTarget()` ve `protocolTreasury()` — ve curve ikisini de çalışma anında buradan okur (§5.6). `isCanonical(token)` bir token'ın kimliğini kendi verisinden yeniden türetir. Oluşturma ücretsizdir. |
+| `LaunchToken` | Sabit arzlı ERC-20, 18 decimal. `name`, `symbol`, `metadataURI`, `creator`, `curve`, `launchSalt` alanları token üzerinde — zincirden okunabilir, backend'e bağımlı değil; `launchSalt` `isCanonical`'ın türetmeyi tamamlaması için orada durur. **Tüm arz constructor'da tek seferde `BondingCurve`'e basılır.** Curve, satılabilir kısmı (`S`) kendi sayacıyla sınırlar; rezerve kalan (`D`) aynı bakiyede durur ve graduation'da havuza aktarılır. Sonradan mint fonksiyonu yoktur; **burn fonksiyonu da yoktur** (§7.1). |
+| `BondingCurve` | **Launch başına tam bir `new BondingCurve{salt}` deploymentı** — proxy değil. Satış arzını tutar. Üç ticaret giriş noktası: `buyExactTokensOut(uint256,uint256)` (payable), `buyExactQuoteIn(uint256)` (payable, `msg.value` bütçedir), `sellExactTokensIn(uint256,uint256)`. Bir de tek çıkış yolu: `graduate()` (§5.6). **Zincirde kota (quote) fonksiyonu yoktur** — gerekçesi §6.3. |
 | `ArcpadHook` | Uniswap V4 singleton hook. Havuzun kendi ücreti sıfırdır; ücreti hook alır ve `FeeEscrow`'a yazar. |
 | `FeeEscrow` | Pull-based bakiyeler. Hiçbir ücret push edilmez. |
 | `LaunchLocker` | Graduate olan V4 likidite pozisyonunu ve artan arzı **kalıcı** tutar. Çıkarma yolu yoktur. |
 | `BuybackVault` | Geri alınan tokenları beş yıla yayarak doğrusal serbest bırakır. |
 | `ArcpadRouter` | Graduation sonrası swap'ler için minimal V4 router. `PoolManager.unlock` geri çağrısı üzerinden `exactInputSingle` / `exactOutputSingle`. |
-| `libraries/CurveMath` | Saf matematik. Fuzz ve invariant testlerinin asıl hedefi. |
-| `libraries/LaunchConfig` | Parametre struct'ı ve doğrulaması. |
+| `libraries/CurveMath` | Saf matematik, tamamı `internal`. Fuzz ve invariant testlerinin asıl hedefi. |
 
-**Neden launch başına ayrı curve klonu:** İzolasyon. Bir muhasebe hatasının yarıçapı tek bir launch olur, tüm protokol değil. Her klon yalnızca kendi tokenını ve kendi topladığı USDC'yi tutar. EIP-1167 minimal proxy sayesinde deploy maliyeti düşüktür ve Arc'ta gas zaten ~$0,01 hedefindedir.
+**Faz 1c sonunda `contracts/src` altında fiilen duran beş dosya:** `LaunchFactory`, `LaunchToken`, `BondingCurve`, `FeeEscrow`, `libraries/CurveMath` (artı `interfaces/IFeeEscrow`). Tablonun geri kalanı — `ArcpadHook`, `LaunchLocker`, `BuybackVault`, `ArcpadRouter` — Faz 2 ve sonrasıdır ve henüz yazılmamıştır. **`libraries/LaunchConfig` hiç yazılmayacaktır:** parametreleri taşıyacak bir struct'a ihtiyaç kalmadı, çünkü `V`, `T` ve `S` factory'nin immutable'larıdır ve doğrulamaları factory'nin constructor'ında, deploy başına bir kez yapılır (`DegenerateProfile`, `GraduationRaiseTooSmall`, `SaleAndSeedExceedSupply`, `SaleAndSeedStrandSupply`).
+
+**`FeeSchedule` de yazılmadı, ve bu bilinçlidir.** Curve'ün ücreti kademeli değil düzdür (§5.5 Rejim 1), dolayısıyla curve'ün bir kademe tablosuna bakması gerekmiyor: oranlar `BondingCurve` üzerinde `PROTOCOL_FEE_BPS = 95` ve `CREATOR_FEE_BPS = 30` olarak `public constant`'tır ve kontratın bytecode'una gömülüdür — bir adres yazmaktan daha güçlü bir dondurma. Kademe tablosunun bir yere yazılması gereken tek yer graduation **sonrası** havuzdur (Rejim 2), yani Faz 2'nin problemidir; o fazda ayrı bir immutable kontrat mı yoksa hook'un kendi sabitleri mi olacağı orada karara bağlanır.
+
+**Neden launch başına ayrı bir curve:** İzolasyon. Bir muhasebe hatasının yarıçapı tek bir launch olur, tüm protokol değil. Her curve yalnızca kendi tokenını ve kendi topladığı USDC'yi tutar. **Ucuzluk için proxy kullanılmadı; adres türetilebilirliği için tam deployment yapıldı.** pump.fun'da curve ile mint arasındaki eşleşme saf bir PDA türetmesidir, yani herkes doğrulayabilir; EVM'deki karşılığı CREATE2'dir. Factory önce curve'ü `salt` ile deploy eder (constructor argümanları token'ı içermez, dolayısıyla döngü yoktur), sonra token'ı **aynı** salt'la; `LaunchToken.launchSalt` sayesinde `isCanonical` token'ın adresini yalnızca token'ın kendi açıkladığı verilerden yeniden türetir. Bir EIP-1167 klonunda initcode sabit olduğu için bu türetme bu ayrımı yapamazdı. Deploy maliyeti bu yüzden kabul edilmiştir; Arc'ta gas zaten ~$0,01 hedefindedir.
 
 **Neden ayrı bir NFT position manager yok:** V4'te likidite `PoolManager.modifyLiquidity` ile doğrudan yönetilir. `LaunchLocker` pozisyonun sahibi olur ve içinde likidite **çekme yolu bulunmaz**. Bu, bir NFT'yi kilitlemekten daha güçlü bir garantidir: kilitlenecek bir NFT yoktur, likiditeyi hareket ettirebilecek kod hiç yazılmamıştır.
 
@@ -227,6 +231,15 @@ D = 7,931e14 × 2,799e14 / 1,073e15 = 2,069e14  → havuz tohumu `D`
 
 85 SOL bir parametre değildir; bu üç sayıdan çıkan bir sonuçtur.
 
+**`R` bir alt sınırdır, tek bir sayı değildir — ve bu yolun kendisine bağlıdır.** `R = V·S/(T−S)` curve'ün *sürekli* karşılığıdır; curve'ün satış arzı tükendiğinde fiilen tuttuğu tutar `realQuoteReserves`'tir ve ondan **kesinlikle büyüktür**. Sebep `quoteBuyCost`'un koşulsuz `+1`'idir: her alım maliyete bir birim ekler, dolayısıyla fazlalık **alım başına** birikir. Ulaşılabilir en küçük değer `R + 1`'dir (satış arzının tamamını alan tek bir alım); ölçüldü — altı işlemlik bir dizi `R + 11` bıraktı, ve yukarı doğru bir sınır yoktur. Yani **iki alımla tamamlanan bir launch, tek alımla tamamlanan bir launch'tan kesinlikle daha yüksek bir fiyattan havuz açar.**
+
+Bunun iki sonucu vardır ve ikisi de bağlayıcıdır:
+
+- **Tek bir sabit açılış fiyatı ima eden hiçbir cümle doğru değildir.** Havuz `R_actual / D` fiyatından açar ve o oran işlem geçmişine bağlıdır. §10 invariant 6 bu yüzden bir eşitlik değil, yönü olan bir eşitsizliktir.
+- **Yön her zaman protokol lehinedir ve bu bir teoremdir, bir yuvarlama tesadüfü değil.** `D` aşağı yuvarlandığı için `D < S(T−S)/T`; havuzu tam `P_final`'den açacak olan `R₀ = D·V/(T−S−D)` değeri bu durumda `R`'nin üzerindeki kesirli değerin altında kalır. Ulaşılabilir her `R_actual` için havuz `P_final`'in **üstünde** açar. Ölçüldü: her iki kutsanmış profilde de `R₀`, `R`'nin sırasıyla 0,957 ve 0,681 wei üzerinde, ulaşılabilir minimum ise `R + 1`. Genel hâli: **`D < S(T−S)/T` ⟹ havuz `P_final`'in üstünde açar**, profil değişse bile.
+
+`LaunchFactory.MIN_GRADUATION_RAISE` bu yüzden `R`'yi, yani bir **alt sınırı** tabanlar; güvenli yön budur.
+
 **Yuvarlama yönleri pump.fun'ın SDK kaynağından birebir alınmıştır** (`@pump-fun/pump-sdk@1.36.0`, `src/bondingCurve.ts` ve `src/fees.ts`). Dördü de protokol lehinedir ve tahmin değil, kopyadır:
 
 ```
@@ -258,17 +271,21 @@ Birincil (konfigürasyondan gelen) parametreler dörttür: `V`, `T`, `S`, `N`. G
 | Satış arzı `S` | 793.100.000 × 10¹⁸ | aynı |
 | Toplam arz `N` | 1.000.000.000 × 10¹⁸ | aynı |
 | Sanal USDC rezervi `V` | 4,292 × 10¹⁸ | **4.292 × 10¹⁸** |
-| → Havuz tohumu `D = S(T−S)/T` | 206.886.011,18 (arzın %20,69'u) | aynı |
-| → `N − S` (pump.fun'ın rezerve rakamı, `D` değil) | 206.900.000 (arzın %20,69'u) | aynı |
-| → Graduation `R = V·S/(T−S)` | **≈ 12,16 USDC** | **≈ 12.161 USDC** |
+| → Havuz tohumu `D = S(T−S)/T` | `206_886_011_183_597_390_493_942_218` wei (arzın %20,69'u) | aynı |
+| → `N − S` (pump.fun'ın rezerve rakamı, `D` değil) | 206.900.000 × 10¹⁸ (arzın %20,69'u) | aynı |
+| → Graduation `R = V·S/(T−S)` | **≈ 12,16 USDC** — alt sınır, §5.2 | **≈ 12.161 USDC** — alt sınır |
 | → Fiyat katı `(T/(T−S))²` | 14,7× | aynı |
 | → Açılış FDV | 4,00 USDC | **4.000 USDC** |
 | → Graduation FDV | ≈ 58,78 USDC | **≈ 58.783 USDC** |
 | Launch ücreti | **yok** | **yok** |
-| İşlem ücreti | kademeli — §5.5 | aynı |
-| Geliştirici ilk alım tavanı | satış arzının %5'i | aynı |
+| İşlem ücreti (curve) | düz %1,25 — §5.5 Rejim 1 | aynı |
+| Geliştirici ilk alımı | zincirde yok — ayrı ikinci işlem | aynı |
+
+`D` her iki profilde de aynıdır çünkü yalnızca `S` ve `T`'ye bağlıdır ve iki profil ikisini de paylaşır; tam değeri `LaunchFactory.MIN_SALE_AND_SEED`'in türetmesinde ve `BondingCurve.poolSeedSupply` immutable'ında birebir bu sayıdır. Havuz **`D` ile tohumlanır, `N − S` ile değil** — gerekçe §5.6'dadır.
 
 `N − S`, `D`'nin yuvarlanmış bir görünümü değildir; ikisi ayrı sayılardır ve aradaki **13.988,82 token** kalıcı olarak kilitlenir — ayrıntı ve kanıt için §5.2.
+
+**Geliştirici ilk alımı için zincirde ne atomik bir yol ne de bir tavan vardır.** `launch` üç argüman alır, `payable` değildir ve hiçbir şey satın almaz; değer gönderen bir çağrı revert eder. Dolayısıyla geliştiricinin ilk alımı **dürüstçe ikinci bir işlemdir**: aynı bloğa girebilir ama aynı işlem değildir, ve arada başkasının alım yapabileceği bir pencere vardır. Spec'in ilk sürümündeki "satış arzının %5'i" tavanı da **hiçbir kontratta yoktur**; arayüzde gösterilecek her tavan zincirde karşılığı olmayan bir vaat olurdu. Tavanı gerçekten isteyen bir tasarım onu `launch`'ın kendisine koymak zorundadır — o da `launch`'ı `payable` yapmak ve alım yolunu factory'den geçirmek demektir; Faz 1c bunu yapmamayı seçti, çünkü curve'ün tek ticaret yüzeyi olması ve `launch`'ın hiç değer taşımaması reentrancy yüzeyini sıfırda tutuyor.
 
 **Token oluşturmak ücretsizdir.** pump.fun'ın modeli budur — `create_v2`'nin argümanlarında hiç ücret alanı yoktur ve protokol yalnızca işlem ücretlerinden kazanır. Ponsfamily 0,0005 ETH alıyor, ama düşük sürtünme daha çok launch, daha çok launch daha çok işlem hacmi demek; gelir oradan gelir. Arc'ta gas zaten ~$0,01 olduğu için spam engeli olarak da ayrı bir ücrete ihtiyaç yok.
 
@@ -286,18 +303,25 @@ Parametreler deploy anında immutable olarak verilir; testnet ve üretim profill
 
 ### 5.4 Yaşam döngüsü
 
+Curve'de **enum yoktur; iki bool vardır** ve ikisi de tek yönlüdür. Durum üçtür:
+
 ```
-NotGraduated(0) ──sold == S──▶ Swept(1) ──havuz kuruldu──▶ PoolCreated(2)
-                                   │
-                                   └──7 gün + rescue()──▶ Rescued(3)
+!complete ──realTokenReserves == 0──▶ complete ──graduate()──▶ graduated
+ (aktif)          (tamamlayan alımın içinde)     (hedefin çağrısı, ayrı işlem)
 ```
 
-- **NotGraduated** — curve aktif, al/sat açık.
-- **Swept** — satış arzı tükendi, curve kapandı, varlıklar havuz kurulumu için ayrıldı. Normal akışta bu faz, tamamlayan alım işleminin içinde tek atomik adımda geçilir ve `PoolCreated`'a ulaşılır.
-- **PoolCreated** — V4 havuzu açık, likidite `LaunchLocker`'da kalıcı kilitli, işlem havuzda devam eder.
-- **Rescued** — otomatik graduation başarısız oldu ve 7 gün içinde kimse `pushGraduation()` ile ileri itemedi. Kalıcı olarak işaretlenir; bu bir başarısızlık damgasıdır, normal bir son değildir.
+- **`!complete`** — curve aktif, al/sat açık.
+- **`complete`** — satış arzı tükendi. Üç ticaret giriş noktasının üçü de `CurveComplete()` ile revert eder. Bu bayrak tamamlayan alımın **içinde**, her dış çağrıdan önce yazılır ve `Completed(token, realQuoteReserves, poolSeedSupply)` olayı yayılır.
+- **`graduated`** — terminal. `D` token ve `R` quote graduation hedefine geri alınamaz şekilde ödendi; curve bir daha hiçbir varlık hareket ettirmez. `graduated ⇒ complete`, tersi tutmaz.
 
-Son alım kısmi doldurulabilir: satış arzından kalan miktar talep edilenden azsa, alıcı kalanı alır ve fazla `msg.value` iade edilir. Gerçekleşen miktarlar olaydan okunmalıdır, talepten değil.
+**Dört fazlı `Swept`/`PoolCreated`/`Rescued` diyagramı yazılmadı, ve bu bilinçli bir sapmadır.** O diyagram graduation'ın tamamlayan alımın *içinde* atomik olduğunu varsayıyordu; o hâlde havuz kurulumundaki bir başarısızlık `complete`'in hiç çevrilememesi demek olurdu — yani Faz 2'deki bir hata Faz 1'in ticaretini bozardı. Ölçüldü: katlanmış hâlde, reddeden bir hedefle satış arzının son diliminin alımı **sonsuza kadar** revert eder, satışlar ise çalışmaya devam eder; bricklenen şey ticaret değil **tamamlanmadır**. Ayrıldığında aynı başarısızlık yalnızca bir yeniden denemedir (§5.6). Ayrıldığı andan itibaren `pushGraduation()` da hedefin kendi izinsiz girişinden ibarettir ve `Rescued`'ın bir karşılığı kalmaz — ne 7 günlük sayaç, ne `rescue()` valfi, ne başarısızlık damgası yazılmıştır.
+
+**Kısmi doldurma yalnızca bir giriş noktasında vardır** ve bu ayrım bağlayıcıdır:
+
+- `buyExactQuoteIn(minTokensOut)` — bütçe kalan rezervi aşarsa **kısar**: kalanın tamamı satılır, ücret yeni anapara üzerinden yeniden alınır ve artan `msg.value` iade edilir. Slipaj `minTokensOut` ile korunur.
+- `buyExactTokensOut(tokensOut, maxQuoteIn)` — **kısmaz, revert eder**: `tokensOut > realTokenReserves` ise `NotEnoughTokensToBuy()`. pump.fun'ın `buy`'unun davranışı budur.
+
+Arayüzdeki miktar girişi ikincisini, "X USDC ile al" kısayolları birincisini kullanır (§5.8). Her iki durumda da gerçekleşen miktarlar `Trade` olayından okunmalıdır, talepten değil.
 
 ### 5.5 Ücretler
 
@@ -318,6 +342,8 @@ Curve'de LP payı sıfırdır — çünkü curve'de likidite sağlayıcı yoktur
 ### Rejim 1 — bonding curve: düz %1,25
 
 Curve üzerindeki her alım ve satımda sabit oran: **%0,95 protokol + %0,30 creator = %1,25**. Market cap'e bakılmaz, kademe taraması yapılmaz. Faz 1'in ihtiyacı yalnızca budur.
+
+Zincirdeki karşılığı `BondingCurve.PROTOCOL_FEE_BPS = 95` ve `BondingCurve.CREATOR_FEE_BPS = 30`'dur — **`public constant`**, yani bir launch parametresi değil kontratın bytecode'una gömülü iki sayı. Creator adresi sıfırsa creator payı hiç alınmaz ve protokol payına da **katlanmaz**; işlem sadece 30 bps daha ucuz olur.
 
 **Ücret parçalardan toplanır, toplamdan bölünmez.** pump.fun'ın yaptığı budur:
 
@@ -358,11 +384,13 @@ Kademe seçimi: `marketCap` ilk kademenin eşiğinin altındaysa ilk kademe; de�
 
 **Kademe tablosu launch anında dondurulur ve bir daha değişmez.** Burada pump.fun'dan bilinçli olarak ayrılıyoruz: onların `FeeConfig`'i `admin` alanı olan global bir hesap, yani yönetici tabloyu güncellediğinde **zaten yayınlanmış** launch'ların ücreti de değişir. Bizde değişmez — creator ve alıcılar tam olarak neye girdiklerini bilir.
 
-Bu yalnızca Rejim 2'yi (havuz kademeleri) ilgilendirir; curve'ün düz oranı zaten launch'ın immutable parametresidir.
+Bu yalnızca Rejim 2'yi (havuz kademeleri) ilgilendirir; curve'ün düz oranı zaten kontratın `public constant`'ıdır ve deploy edilmiş bir curve'de değiştirilemez.
 
-Uygulaması bir kilit mekanizmasıyla değil, **değişmezlikle** yapılır: kademe tablosu `FeeSchedule` adlı immutable bir kontrat olarak bir kez deploy edilir, `LaunchFactory` o anki `FeeSchedule` adresini her yeni launch'ın içine yazar. Launch başına maliyet tek bir adres (20 bayt); garanti ise kontrat bytecode'unun değiştirilemezliğinden gelir. Tabloyu güncellemek yeni bir `FeeSchedule` deploy etmek demektir ve **yalnızca sonraki launch'ları** etkiler.
+**Rejim 2'nin dondurma mekanizması Faz 2'ye aittir ve henüz yazılmamıştır.** Spec'in ilk sürümü bunun için `FeeSchedule` adlı immutable bir kontrat öngörüyor ve `LaunchFactory`'nin o anki adresi her launch'a yazmasını istiyordu. Faz 1c o kontratı yazmadı, çünkü Faz 1'de dondurulacak bir kademe tablosu yok: curve'ün oranı zaten bytecode'da sabit — bir adres yazmaktan daha güçlü bir garanti, ve launch başına 20 baytlık depolama maliyeti de yok. Karar Faz 2'ye devredilir: kademe tablosu ya ayrı bir immutable kontratta ya da doğrudan `ArcpadHook`'un sabitlerinde yaşar. **Bağlayıcı olan şey mekanizma değil özelliktir:** bir launch'ın havuz ücretleri yayınlandıktan sonra değişmemelidir. Burada pump.fun'dan bilinçli olarak ayrılıyoruz — onların `FeeConfig`'i `admin` alanı olan global bir hesap, yani yönetici tabloyu güncellediğinde zaten yayınlanmış launch'ların ücreti de değişir.
 
 Bunun bedeli: hatalı bir tabloyla yayınlanan launch'lar düzeltilemez. Kabul ediyoruz — düzeltilebilir bir ücret, güvenilmesi gereken bir yetki noktası demektir ve bu ürünün en temel vaadiyle çelişir.
+
+**Ücret oranının değişmezliği ile ücret *alıcısının* değişmezliği aynı şey değildir.** Protokol payının alıcısı (`LaunchFactory.protocolTreasury`) **döndürülebilirdir** ve curve onu her yatırımda factory'den okur; ayrıntı §5.6'nın yönetişim bölümünde.
 
 **Ücret hesabındaki iki ince nokta** (pump.fun SDK kaynağından):
 
@@ -385,19 +413,53 @@ Graduation'ımız — raise `R` üretimde **≈12.161 USDC**, FDV ise **≈58.78
 
 ### 5.6 Graduation ve havuz kurulumu
 
-Satış arzı tükendiğinde, tamamlayan işlemin içinde:
+**Graduation tamamlayan alımın içinde değildir; ayrı bir çağrıdır.** Gerekçe §5.4'te: katlanmış hâlde Faz 2'deki bir başarısızlık Faz 1'in son alımını kalıcı olarak bozar, ayrılmış hâlde aynı başarısızlık bir yeniden denemedir.
 
-1. Curve kapanır, `sold == S` doğrulanır.
-2. Curve'de biriken `R` USDC'nin **tamamı** havuza gider. Ayrıca bir ücret kesilmez: ücretler zaten her işlem anında alınıp `FeeEscrow`'a yazılmıştır ve rezervlere hiç girmemiştir (§5.2, §5.5). Bu, §5.2'deki `D = R / P_final` süreklilik koşulunun tuttuğu tek senaryodur — `R`'den burada bir kesinti yapılsaydı havuz curve'ün kapanış fiyatının altında açardı.
+**Curve tarafı — yazıldı ve donduruldu.** `graduate() external returns (uint256 baseAmount, uint256 quoteAmount)`, ve sırası bağlayıcıdır:
 
-   > pump.fun'ın buradaki `pool_migration_fee`'si (15.000.001 lamports) Solana'nın hesap kirası içindir. Arc'ta böyle bir maliyet yoktur, dolayısıyla karşılığı da yoktur.
-3. `D` miktarındaki token curve'ün kendi bakiyesinde beklemektedir (tüm arz constructor'da tek seferde curve'e basılmıştı, §5.1); bu adımda oradan havuza aktarılır ve havuz tohumu olarak kullanılır.
-4. V4 havuzu `initialize` edilir; `sqrtPriceX96 = sqrt(P_final)`.
-5. `LaunchLocker`, `PoolManager.unlock` geri çağrısı içinde tam aralık (`MIN_TICK`–`MAX_TICK`) likidite ekler.
-6. Mevcut miktarların tamamı likiditeye dönüşmezse artan toz `LaunchLocker`'da kalıcı kilitlenir.
-7. Faz `PoolCreated` olur, `Graduated` olayı yayınlanır.
+1. **Doğrula.** `!complete` → `NotComplete()`. `graduated` → `AlreadyGraduated()` (ikinci çağrı sessiz bir no-op **değildir**; pump.fun'ın tersine). Hedef `LaunchFactory.graduationTarget()`'tan **STATICCALL** ile okunur; `address(0)` → `GraduationTargetUnset()`; `msg.sender != target` → `NotGraduationTarget()`.
+2. **Defteri yaz.** `graduated = true` — tek bir SSTORE, ve `complete` ile aynı slota paketlenir (ölçüldü: slot 5, offset 1), yani kontrat yeni bir slot kazanmaz.
+3. **Olay.** `Graduated(token, to, baseAmount, quoteAmount)`; `to` indekslidir çünkü hedef yeniden işaretlenebilir.
+4. **Dış çağrılar.** `IERC20(token).transfer(target, D)`, sonra `target.call{value: R}("")`; ikincisi başarısızsa `GraduationPayoutFailed()`.
 
-Adım 4–5 başarısız olursa launch `Swept` fazında kalır ve **herkes** `pushGraduation()` çağırabilir. 7 gün boyunca kimse başaramazsa `rescue()` valfi açılır.
+**Miktarlar immutable'dan ve defterden okunur, hiçbir bakiyeden değil:** `baseAmount = poolSeedSupply` (`D`), `quoteAmount = realQuoteReserves` (`R`). Sebep ekonomik değil epistemiktir. Arc'ta üçüncü bir taraf curve'ün **iki** bakiyesini de curve'de hiçbir kod çalıştırmadan artırabilir — canlı ölçüm: 6 decimal ERC-20 görünümünden yapılan bir `transfer` hedefin native bakiyesini artırdı ve `receive()` hiç çalışmadı. Bakiye okuyan bir hâl, §10 invariant 6'yı "bağış olmadığı sürece" geçerli bir iddiaya çevirirdi: kimsenin uygulayamayacağı bir ön koşul ve hiçbir testin kazara ihlal etmeyeceği bir sessizlik. Ölçüldü: +7 ether native ve +1000e18 token bağışıyla bile dönen değerler tam olarak `(D, R)`'dir ve bağışlar curve'de kalıcı kilitlenir. **Bu aynı zamanda pump.fun'dan bilinçli bir sapmadır** — upstream havuzu curve'ün kalan tüm token bakiyesiyle (`N − S`) tohumlar; `N − S` ile havuz `P_final`'in %0,0068 **altında** açardı ve invariant 6 bir eşitlik olarak düşerdi.
+
+**Bayrak ödemeden önce yazılır ve atomiklik yeniden denenebilirliği sağlar.** Ödeme başarısız olursa işlemin tamamı — SSTORE dahil — geri alınır. Ölçüldü: `receive()`'i revert eden bir hedefte `GraduationPayoutFailed()` döner, `graduated` hâlâ `false`, token transferi geri alınmış ve curve `R`'yi tutuyor; hedef onarıldıktan sonra **aynı çağrı başarır ve aynı `(D, R)`'yi döndürür**. Reddeden bir hedef bir launch'ı geciktirir, strand edemez. Bayrağı çağrıların arkasına almak (pump.fun'ın Solana sırası) hedefin `receive()`'inden yapılan geri girişin başarmasına ve hedefin `2D`/`2R` almasına yol açardı.
+
+**`graduate()`'i yalnızca çözülmüş hedef çağırabilir.** İzinsizlik bir seviye yukarı, hedefin kendi girişine taşınır — pump.fun'ın özelliği orada birebir yeniden üretilir. Gerekçe: değer transferi alıcının kodunu **curve'ün çağrı çerçevesinde** çalıştırır, ve keyfi bir çağıran bunun *ne zaman* olacağını seçebilseydi bu `FeeEscrow` kısıt (2)'nin aynen tekrarı olurdu. Kontrol ayrıca üçüncü bir tarafın kurtarılamaz duruma (hedef kabul eder ama tohumlayamaz) zorlamasını imkânsız kılar. Ama kontrol kararı **yeniden konumlandırır, ortadan kaldırmaz**: Faz 2'nin seeder'ı izinsiz olacağı için o noktada herhangi biri tamamlanmış bir curve'e kabul ettirebilir; accept-then-fail'i yalnızca hedefin kendi çerçevesi engelleyebilir.
+
+**Graduation ücreti yoktur — "şimdilik sıfır" değil, yapısal sıfır.** Ücret yalnızca `R`'den alınabilir çünkü `D` immutable'dır; `R − f` değişmemiş bir `D`'ye karşı havuzu `P_final`'in `f/R` altında açar. Ölçeklendi: 2 USDC'lik bir ücret 164,5 ppm'dir, yani bu spec'in `N − S` gerekçesiyle zaten yasakladığı 67,6 ppm'lik süreksizliğin **2,6 katı**.
+
+> pump.fun'ın buradaki `pool_migration_fee`'si (15.000.001 lamports) Solana'nın hesap kirası içindir. Arc'ta böyle bir maliyet yoktur, dolayısıyla karşılığı da yoktur.
+
+**Curve'de olmayan ve olmaması gereken şeyler** — liste kendisi taşıyıcıdır, çünkü buraya giren her şey kalıcıdır: `graduateTo(address)` yok (çağıranın seçtiği hedef, fazladan bir adımla hırsızlıktır); curve'de `setGraduationTarget` yok; `onGraduation(...)` callback'i yok (Faz 2'nin selector'ünü sonsuza kadar gömmeye gerek yok); `sqrtPriceX96`, `TickMath`, karekök yok — kapanış fiyatı mevcut iki getter'dan **tam** okunur (`virtualQuoteReserves / virtualTokenReserves`, ölçüldü: tamamlanmada sırasıyla `V + R_actual` ve `T − S`) ve `graduate()` ikisini de mutasyona uğratmaz; `pool`/`poolId`/`poolKey` yok; artığın (`N − S − D`) ya da bağışların sweep'i yok; owner, pause, `graduated`'ı temizleyen hiçbir yol yok.
+
+**Hedef tarafı — Faz 2, henüz yazılmadı.** Hedefin izinsiz girişi curve'ün `graduate()`'ini çağırır, `(D, R)`'yi alır ve **aynı işlemde**: V4 havuzunu `initialize` eder (`sqrtPriceX96 = sqrt(R/D)`, `P_final`'den değil — §5.2, `R` yola bağlıdır); `LaunchLocker` `PoolManager.unlock` geri çağrısı içinde tam aralık (`MIN_TICK`–`MAX_TICK`) likidite ekler; likiditeye dönüşmeyen toz `LaunchLocker`'da kalıcı kilitlenir. Faz 2'nin borçları, her biri adıyla:
+
+1. **`O-ATOMIC-SEED`** — hedefin girişi işi tek işlemde bitirmeli ve herhangi bir başarısızlıkta revert etmelidir. "Al" ile "tohumla"yı ayrı işlemlere bölen bir hedef, tek kurtarılamaz durumu (hedef kabul etti ama tohumlayamadı) **bilerek** yeniden yaratır.
+2. **`O-BARE-RECEIVE`** — hedefin `receive()`'i çıplak bir kabul olmalıdır. Somut içeriği ölçülmüş çapraz-curve penceresidir: curve A'nın ödemesi sırasında hedefin `receive()`'i curve B'yi mezun edebilir ve çağıran kontrolü geçer, çünkü `msg.sender` hedefin kendisidir.
+3. **`O-REPOINTABLE`** — hedef yeniden işaretlenebilir olmalıdır; factory tarafında karşılanmıştır (aşağıda).
+4. **`O-BATCH-TRYCATCH`** — toplu bir keeper girişi (`graduateMany([...])`) her curve'ü `try/catch` ile sarmalıdır, aksi halde zaten mezun olmuş tek bir curve bütün partiyi revert ettirir.
+5. **`O-TREASURY-PER-DEPOSIT`** — protokol ücreti yönlendiren her Faz 2 kontratı treasury'yi **her yatırımda** `LaunchFactory.protocolTreasury()`'den çözmelidir, asla kurulumda önbelleğe almamalıdır. Pool creation anında önbelleğe alan bir hook, ilk rotasyondan sonra **sonsuza kadar eski adrese ödemeye devam eder**.
+
+**İsim çakışması — kayda geçiriliyor.** Curve `Graduated` yayınlar. Faz 2'nin havuz/locker katmanı **`Graduated` adını kullanamaz**: iki kontratın farklı şekilli iki olay yayması indexer için bir tuzaktır, çünkü topic0 ayrışır ve birine göre yazılmış bir filtre ötekini sessizce boş döndürür. Faz 2'nin olayının adı **`PoolSeeded`** olmalıdır.
+
+#### Yönetişim — iki döndürülebilir üye
+
+Factory'nin `governor`'ı **immutable**'dır ve yalnızca iki yetkisi vardır; launch edemez, duraklatamaz, bir curve'e dokunamaz. Bir Safe olması beklenir, anahtar rotasyonu orada yaşar.
+
+| Üye | Kim değiştirir | Gecikme | Neden |
+|---|---|---|---|
+| `graduationTarget` | `proposeGraduationTarget` (governor) → `applyGraduationTarget` (**izinsiz**) | **3 gün** ihbar, ardından **3 günlük inme penceresi** — ikisi de kamuya açık | Hedef bir launch'ın **tüm** raise'ini alır, ve `graduate()` çağrı anında okuduğu için bir yeniden işaretleme zaten tamamlanmış curve'lerin ödemesini de yeni adrese yönlendirir. Üç günlük ihbarda herkes o curve'leri mevcut hedefe boşaltabilir. |
+| `protocolTreasury` | `setProtocolTreasury` (governor) | **yok, anında** | Gecikmenin karşılığı olan çare burada yoktur: rotasyon birikmiş `owed[eski]`ye dokunmaz, eski adres onu aynen talep etmeye devam eder — kamunun "önce boşalt" diye yapacağı bir şey yok. Buna karşılık bedeli somuttur: bloklanmış bir treasury'de geçen her gün, hiçbir zaman talep edilemeyecek alacak olarak birikir. |
+
+**Pencere iki taraftan da sınırlıdır: `[eta, eta + 3 gün]`.** Yalnızca alttan sınırlı bir pencere, süresi geçmiş ama indirilmemiş bir öneriyi **sonsuza kadar silahlı** bırakırdı — ve gecikmenin tek çaresi tam olarak öneri anında **boş** olan kümeyi korur. Ölçülen senaryo: gün 0'da, tamamlanmış hiç curve yokken bir hedef önerilir (kimse itiraz etmez, boşaltılacak bir şey yoktur), gün 3'te pencere açılır ve kimse indirmez, gün 368'de iki launch tamamlanmıştır ve tek bir işlem `applyGraduationTarget()` + iki `graduate()` yapar; hırsızlık anındaki ihbar süresi **sıfırdır**. Üst sınır bunu kapatır: ihbar ile inme arasındaki mesafe ihbar süresini aşamaz, yani toplam maruziyet en fazla **6 gündür**. Süresi geçen öneri `GraduationTargetProposalExpired()` ile reddedilir; çare yeniden önermek ve üç gün daha beklemektir. İkinci bir sabit yoktur — sınır `eta + GRADUATION_TARGET_DELAY` olarak yazılır, çünkü indirme adımı **izinsizdir** ve `eta` üç gün önceden bilinen public bir değişkendir: o adımın koordinasyon maliyeti yoktur, dolayısıyla pencere "bir Safe ne kadar sürede imzalar" ile değil "ihbar ne kadar bayatlayabilir" ile boyutlandırılır.
+
+**Hedef atanana kadar `graduationTarget` `address(0)`dır** ve o hâlde her `graduate()` çağrısı `GraduationTargetUnset()` ile döner. Bu, Faz 1'in Faz 2'den **önce** deploy edilip launch etmesine izin veren şeydir; hedef çağrı anında çözüldüğü için curve'e ne bir slot ne bir constructor argümanı ekler. Tek seferlik bir latch riskli değil, geliştirme yoluyla bağdaşmaz olurdu: Arc'ın hiçbir yerinde Uniswap V4 yoktur — dört kanonik `PoolManager` adresi de 5042002 zincirinde kodsuzdur — yani ilk hedef kendi deploy ettiğimiz bir şey olacak ve mainnet'ten önce en az bir kez değişecektir.
+
+**Protokol payının alıcısı curve'de kopyalanmaz, `protocolTreasury()` ile her yatırımda factory'den okunur.** `FeeEscrow` kısıt (4) Faz 1c'ye yazılı bir borç bırakmıştı — "protokol ücret alıcı adresi döndürülebilir olmalıdır" — ve o borcu ödeyen tek "döndürülebilir" tanımı budur: rotasyon **zaten canlı** curve'lere de ulaşır. Kopya tutan bir hâlde Arc treasury'yi bloklasa ticaret çalışmaya devam eder (alacak pull-based'dir), `owed[treasury]` sınırsız büyür, `claim` revert eder ve hiçbir yol yeniden yönlendirmez. Bedeli ölçüldü ve dürüstçe kaydedildi: bir işlemin **ilk** ticaretinde +5.514 gaz (+%2,96 — 2.600 adres erişimi + 2.100 soğuk SLOAD + ~814), sıcakta +1.014, `graduate()`'te **sıfır** (graduation ücret almaz, dolayısıyla bu okumayı hiç yapmaz). Arc'ın ~0,01 USD'lik işlem maliyetinde %3 ≈ 0,0003 USD'dir; alternatif, bloklanmış bir treasury'de o curve'ün gelecekteki tüm protokol payını kaybetmektir. **Birikmiş alacak taşınmaz:** `owed[eski]` escrow'da aynen kalır; rotasyon yalnızca bundan sonraki yatırımların alıcısını değiştirir.
+
+`FeeEscrow` bu asimetrinin diğer ucudur ve **immutable kalır**: escrow birikmiş alacakları tutar, onu döndürmek geçmiş ücretleri yeni bir deftere taşımaz, yalnızca defteri çatallar.
 
 **Hook adres madenciliği.** V4'te hook adresinin son bitleri hangi izinlere sahip olduğunu kodlar. `ArcpadHook` için gereken bayraklar: `BEFORE_INITIALIZE` (havuzun bize ait olduğunu doğrulamak), `BEFORE_SWAP` ve `BEFORE_SWAP_RETURNS_DELTA` (girdi üzerinden ücret kesmek). Deploy script'i, bu bayraklara uyan bir adres üretene kadar CREATE2 salt'ını arar. Sıradan bir `forge create` yeterli değildir.
 
@@ -415,6 +477,8 @@ Creator projeyi terk ederse ücret akışı iki yolla devredilebilir:
 - **Gönüllü:** creator alıcıyı doğrudan yeni cüzdana taşır.
 - **Protokol önerili:** protokol yeni bir alıcı önerir, **3 gün** kamuya açık bekleme süresi işler, sonra uygulanır. Bu pencerede holder'lar çıkabilir veya örgütlenebilir.
 
+**Bu bölümün tamamı Faz 1c'de henüz yazılmamıştır ve arayüz bugün bunlardan hiçbirini gösteremez.** Zincirdeki hâl: `BondingCurve.creator` **immutable**'dır, creator payı doğrudan o adrese yatırılır ve `FeeEscrow` alacakları alıcı adresine göre anahtarlar — ne curve'de ne escrow'da bir yeniden atama yolu vardır. Dolayısıyla creator launch sonrası **hiçbir şey yapamaz**; yapabildiği tek şey `FeeEscrow.claim(creator)`'dır, o da zaten izinsizdir ve alıcıyı değiştirmez. Faz 1c'de fiilen var olan 3 günlük gecikme bu değil, `graduationTarget`'ınkidir (§5.6); döndürülebilir olan tek ücret alıcısı da **protokolünküdür**, creator'ınki değil. Yukarıdaki iki yol Faz 5'in işidir ve §5.8'deki creator fee sharing ile aynı yere oturur — o faz geldiğinde alıcı adresi curve'ün immutable'ından bir registry'ye taşınmak zorundadır; bunu `BondingCurve`'ün mevcut bytecode'una eklemek mümkün değildir.
+
 ### 5.8 pump.fun'dan öğrenilen ek özellikler — karar
 
 Aşağıdakiler ponsfamily dokümanlarında hiç geçmiyor; pump.fun'ın resmî dokümanlarından öğrenildi. Her biri için karar:
@@ -430,7 +494,7 @@ Aşağıdakiler ponsfamily dokümanlarında hiç geçmiyor; pump.fun'ın resmî 
 | **Mayhem modu** | Coin başına bayrak, ayrı ücret alıcı kümesi | **Kapsam dışı.** Resmî dokümanlar ne yaptığını açıklamıyor; anlamadığımız bir mekanizmayı kopyalamıyoruz. |
 | **Ayrı buyback ücret alıcısı** | Her işlemde `feeRecipient` + `buybackFeeRecipient` | **Benimsendi**; `BuybackVault` bu rolü üstleniyor. |
 | **Çoklu ücret alıcısı (8 adet)** | Solana'da hesap yazma çakışmasını dağıtmak için | **Reddedildi.** EVM'de böyle bir çakışma yok; tek escrow kontratı yeterli. |
-| **Kısmi doldurma** | `buy`'da yok ama ayrı bir instruction var: `buy_exact_quote_in_v2(spendable_quote_in, min_tokens_out)` — "şu kadara kadar harca", kalan kadarını verir, slipaj `min_tokens_out` ile korunur | **Benimsendi, iki giriş noktası olarak.** İlk taslak `buy`'ı gevşetip kısmi doldurma yapacaktı; kaynağa bakınca daha temiz olanı görüldü: `buy(tokensOut, maxQuoteIn)` kalandan fazlası istenirse revert eder, `buyExactQuoteIn(quoteIn, minTokensOut)` kalanı doldurup fazlayı iade eder. Arayüzdeki miktar girişi birincisini, "X USDC ile al" kısayolları ikincisini kullanır. |
+| **Kısmi doldurma** | `buy`'da yok ama ayrı bir instruction var: `buy_exact_quote_in_v2(spendable_quote_in, min_tokens_out)` — "şu kadara kadar harca", kalan kadarını verir, slipaj `min_tokens_out` ile korunur | **Benimsendi, iki giriş noktası olarak.** İlk taslak `buy`'ı gevşetip kısmi doldurma yapacaktı; kaynağa bakınca daha temiz olanı görüldü. Zincirdeki isimler: **`buyExactTokensOut(tokensOut, maxQuoteIn)`** kalandan fazlası istenirse `NotEnoughTokensToBuy()` ile revert eder, **`buyExactQuoteIn(minTokensOut)`** — bütçe `msg.value`'dur, ayrı bir argüman değil — kalanı doldurup fazlayı iade eder. Arayüzdeki miktar girişi birincisini, "X USDC ile al" kısayolları ikincisini kullanır. |
 | **Metadata sınırları** | isim ≤32, sembol ≤13, uri ≤200 | **Benimsendi** (ponsfamily'nin 10 karakterlik ticker sınırı yerine 13). |
 
 ---
@@ -443,7 +507,11 @@ Tek bir TypeScript süreci. viem ile `eth_getLogs` çeker; imleç `sync_state` t
 
 Arc'ta reorg olmadığı için geri alma mantığı yazılmaz. Buna rağmen her satır `(tx_hash, log_index)` üzerinde **idempotent upsert** edilir, çünkü süreç yeniden başladığında aynı logları tekrar görmek normaldir. Blok grubu başına tek veritabanı transaction'ı: ya hepsi yazılır ya hiçbiri.
 
-**Dinlenen olaylar:** `LaunchCreated`, `Bought`, `Sold`, `Graduated`, `FeeEscrow.Deposited`, `FeeEscrow.Claimed`, `LaunchToken.Transfer`, ve graduation sonrası `PoolManager.Swap`.
+**Dinlenen olaylar — zincirdeki adlarıyla:** `LaunchFactory.Launched(token, curve, creator, name, symbol, uri, salt)`; `BondingCurve.Trade(...)` — **al ve sat tek olaydır**, yön `isBuy` alanındadır ve olay dört rezervin dördünü de taşır, böylece indexer her işlemden sonraki durumu zincire tekrar sormadan yeniden kurar; `BondingCurve.Completed(token, realQuoteReserves, poolSeedSupply)`; `BondingCurve.Graduated(token, to, baseAmount, quoteAmount)`; `FeeEscrow.Deposited`, `FeeEscrow.Claimed`; `LaunchToken.Transfer`; ve graduation sonrası Faz 2'nin `PoolSeeded`'ı ile `PoolManager.Swap`.
+
+Yönetişim olayları da izlenmelidir, çünkü ikisi de para akışını değiştirir: `GraduationTargetProposed(target, eta)` — bir keeper yalnızca bunu izleyerek "üç gün içinde boşaltılması gereken curve'ler" listesini kurabilir (§5.6) — `GraduationTargetChanged` ve `ProtocolTreasuryChanged`.
+
+Ayrı `LaunchCreated` / `Bought` / `Sold` olayları **yoktur**; spec'in ilk sürümündeki bu adlar zincirde karşılık bulmaz.
 
 **EIP-7708 tuzağı:** Arc'ta her native transfer de sistem adresinden bir `Transfer` logu yayınlar. Holder tablosu doldurulurken emitter adresi mutlaka ilgili `LaunchToken` adresine göre filtrelenmelidir; aksi halde USDC hareketleri token bakiyesi sanılır.
 
@@ -452,7 +520,7 @@ Arc'ta reorg olmadığı için geri alma mantığı yazılmaz. Buna rağmen her 
 | Tablo | İçerik |
 |---|---|
 | `sync_state` | Indexer imleci: son işlenen blok, son çalışma zamanı |
-| `tokens` | Adres, curve, creator, metadata, arz parametreleri, faz, pool id, oluşturulma zamanı |
+| `tokens` | Adres, curve, creator, metadata, `launchSalt`, arz parametreleri, `complete` / `graduated` bayrakları (§5.4 — enum yok), pool id, oluşturulma zamanı |
 | `trades` | Her al/sat: taraf, miktarlar, fiyat, ücret, tx, blok, zaman, `source ∈ {curve, pool}`, `is_dev` |
 | `holders` | `(token, holder) → balance`, `Transfer`'lardan türetilir |
 | `candles` | 1 dakikalık OHLCV; 5M/1H/6H/1D/ALL görünümleri bunlardan toplanır |
@@ -470,7 +538,13 @@ Arc'ta reorg olmadığı için geri alma mantığı yazılmaz. Buna rağmen her 
 
 - **Liste ve geçmiş** — server component'lerden doğrudan Postgres sorgusu. Araya ayrı bir API katmanı konmaz.
 - **API route'ları yalnızca yazma için** — chat mesajı gönderme, limit emir oluşturma.
-- **İşlem anındaki kota her zaman zincirden** — `curve.quoteBuy()` / `quoteSell()`, graduation sonrası V4 üzerinden. Kullanıcının imzaladığı fiyat, indexer'ın kaç saniye geride olduğuna bağlı olamaz.
+- **İşlem anındaki kota indexer'dan değil, zincir durumundan hesaplanır.** Kullanıcının imzaladığı fiyat, indexer'ın kaç saniye geride olduğuna bağlı olamaz. Ama **kotanın kendisi zincirde hesaplanamaz:** `BondingCurve`'de `quoteBuy()`/`quoteSell()` diye bir üye yoktur, hiçbir view kota fonksiyonu yoktur, ve `CurveMath`'in tamamı `internal`'dır — yani `eth_call` ile çağrılabilecek bir yüzey mevcut değildir. Okunacak şey dört rezervdir (`virtualQuoteReserves`, `virtualTokenReserves`, `realTokenReserves`, `realQuoteReserves`) ve bunlar zaten `public` getter'lardır; tek bir Multicall3 çağrısı dördünü de bir blokta getirir.
+
+  Bunun sonucu: **`CurveMath`'in bire bir TypeScript portu bir kolaylık değil, taşıyıcı bir bileşendir.** `packages/shared` altında yaşar ve zincirle aynı yuvarlamayı yapmak zorundadır — `quoteBuyCost`'un koşulsuz `+1`'i, `feeOn`'un tavana yuvarlaması, `quoteBuyTokensOut`'un curve teriminin **içindeki** `−1`'i, ve `correctedNetQuoteIn`'in ücretleri düzeltme **öncesi** net üzerinden alıp bir daha hesaplamaması dahil. pump.fun'ın kendi SDK'sının zincirden ayrıştığı yer tam olarak burasıdır: `getBuyTokenAmountFromSolAmount` 200.000 örneğin %51,16'sında zincirden **fazla** token vaat ediyor, ve sapmanın yönü her seferinde aynı. Portun doğruluğu bir tahmin değil, ABI-parity testiyle aynı sınıfta bir CI kapısıdır (§10).
+
+  **Slipaj koruması kotadan gelmez, argümandan gelir.** Üç giriş noktasının üçü de kendi sınırını taşır — `buyExactTokensOut(tokensOut, maxQuoteIn)`, `buyExactQuoteIn(minTokensOut)`, `sellExactTokensIn(tokensIn, minQuoteOut)` — ve sınırlar kullanıcının fiilen ödediği/aldığı **net** tutara karşı tutulur, ücret öncesi curve tutarına karşı değil. Yerel hesaplama yanılsa bile zarar bu sınırlarla çevrilidir.
+
+- **Graduation sonrası** kota V4 üzerinden okunur; o yol Faz 2'dedir.
 
 **"Recent buys" sıralaması:** `token_stats.last_buy_at` üzerinde azalan sıra — yani en son alım işlemi gerçekleşen token en üstte. Etiketin harfi harfine karşılığı budur ve tek indeksli kolonla yüz binlerce satırda anlık çalışır. Momentum tabanlı bir sıralama daha "akıllı" olurdu ama kullanıcı "Recent buys" yazısına tıklarken yeniliği bekler, ivmeyi değil; etiket ile davranış ayrışmamalıdır.
 
@@ -483,11 +557,17 @@ Arc'ta reorg olmadığı için geri alma mantığı yazılmaz. Buna rağmen her 
 | Rota | İçerik |
 |---|---|
 | `/` | Explore. Üstte "Graduated" bölümü (kart ızgarası + sayfalama), altta "Explore" bölümü: sıralama (Recent buys / Newest / Oldest / Market cap / Volume) + yaş (All / 24h / 7d) + ızgara + sayfalama |
-| `/token/[address]` | About paneli (açıklama, yakılan miktar, kontrat ve havuz linkleri) · sol al-sat paneli (Market / Limit / Orders, slippage, %25–100 kısayolları) · orta grafik (market cap, likidite, 24s hacim, ATH, zaman aralıkları) · sağ chat · altta Recent trades / Holders sekmeleri |
-| `/create` | Launch formu (isim, ticker, açıklama, görsel + IPFS onayı, X, Telegram, geliştirici alımı, Advanced) + sağda canlı önizleme kartı |
+| `/token/[address]` | About paneli (açıklama, token ve curve adresleri — ikisi de ArcScan'e) · sol al-sat paneli (Market / Limit / Orders, slippage, %25–100 kısayolları) · orta grafik (market cap, likidite, 24s hacim, ATH, zaman aralıkları) · sağ chat · altta Recent trades / Holders sekmeleri |
+| `/create` | Launch formu (isim ≤32, ticker ≤13, açıklama, görsel + IPFS onayı, X, Telegram) + sağda canlı önizleme kartı |
 | `/analytics` | 24h / All time geçişi, istatistik ızgarası, günlük hacim ve launch bar grafikleri |
 | `/profile/[address]` | Launch'lar, pozisyonlar, işlem geçmişi, talep edilebilir ücretler |
 | ⌘K modal | Tam ekran arama: sıralama + yaş filtresi + sonuç satırları + sayfalama |
+
+**About panelinde "Burned" satırı yoktur, çünkü yakma yolu yoktur.** `LaunchToken` OpenZeppelin'in `ERC20`'sidir ve `burn` fonksiyonu taşımaz; `to == address(0)`'a yapılan bir transfer OZ'un içinde `ERC20InvalidReceiver` ile revert eder. Native tarafta da yakılamaz: Arc sıfır adrese native transferi yasaklar (§3.3). Gösterilecek bir sayı olmadığı için satırın kendisi kaldırıldı — sıfır göstermek "yakılabilir ama yakılmamış" der ve bu da yanlıştır.
+
+**Havuz linki Faz 1'de yoktur** — henüz havuz yoktur. Faz 2'de eklenecek link ArcScan'e gider; Dexscreener ve GeckoTerminal §2'de kapsam dışıdır ve testnet'te zaten çalışmaz (§13). Faz 1'de About panelinin gösterdiği iki adres token ve curve'dür; curve adresi burada durmalıdır, çünkü kullanıcının fonu curve'dedir ve `isCanonical` ile doğrulanabilecek olan da odur.
+
+**Create formunda "Advanced" bölümü yoktur, çünkü içine konacak bir şey yoktur.** `launch` üç argüman alır — `name`, `symbol`, `uri` — ve başka her parametre (`V`, `T`, `S`, escrow, treasury, governor) factory'nin immutable'ıdır; hiçbiri launch başına seçilemez. Formun geri kalan alanları (açıklama, görsel, X, Telegram) `uri`'nin arkasındaki IPFS metadata'sına gider, zincire ayrı ayrı değil. Geliştirici ilk alımı da formda değildir: `launch` `payable` olmadığı için o **ayrı bir ikinci işlemdir** (§5.3) ve arayüz onu launch başarıyla indikten *sonra* teklif etmelidir — form içinde tek bir "başlat ve al" düğmesi göstermek, kullanıcıya atomik olmayan bir şeyi atomik gibi sunmak olurdu.
 
 ### 7.2 Bileşenler
 
@@ -506,12 +586,17 @@ web/
 │   ├── explore/    TokenCard, TokenGrid, FilterBar, Pagination, GraduatedSection
 │   ├── search/     SearchModal, SearchResultRow
 │   ├── token/      AboutPanel, TradePanel, PriceChart, ChatPanel, TradesTable, HoldersTable
-│   ├── create/     LaunchForm, ImageUpload, TokenPreviewCard, AdvancedSection
+│   ├── create/     LaunchForm, ImageUpload, TokenPreviewCard
 │   ├── analytics/  StatGrid, DailyBarChart, RangeToggle
 │   └── ui/         Button, Input, Tabs, Pill, Card, Skeleton
-├── hooks/          useQuote, useLaunch, useTrade, useTokenStats, useChat
-└── lib/            db, chain, format, brand, abi (packages/shared'den)
+├── hooks/          useLaunch, useTrade, useTokenStats, useChat
+└── lib/            db, chain, format, brand, abi (packages/shared'den),
+                    curve (CurveMath portu — saf fonksiyon, hook değil)
 ```
+
+**`useQuote` diye bir hook yoktur ve olmamalıdır.** Kota bir React durumu değil, dört rezervin saf bir fonksiyonudur (§6.3): aynı girdi her zaman aynı çıktıyı verir ve zamana, render'a ya da bir cache'e bağlı değildir. Bir hook'un arkasına konması iki kod yolu doğurur — biri ekranda gösterilen sayı, öteki `writeContract`'a giden calldata — ve bu ikisi ayrıştığında kullanıcı gördüğünden farklı bir işlem imzalar. Saf fonksiyon her ikisini de aynı çağrıdan besler; rezervleri getiren şey (`useReadContracts` / Multicall3) ayrı bir katmandır ve kotayı hesaplamaz, yalnızca girdisini taşır.
+
+**wagmi 3'te `useAccount` kullanılmamalıdır.** Kurulu sürümde (`wagmi@3.7.4`) `useAccount`, `useConnection`'ın `@deprecated` işaretli bir takma adıdır — `exports/index.d.ts` onu `useConnection as useAccount` diye yeniden ihraç eder; aynısı `useAccountEffect` → `useConnectionEffect` için de geçerlidir. `WalletButton` ve cüzdana bakan her bileşen doğrudan `useConnection` kullanır.
 
 ### 7.3 Tasarım tokenları
 
@@ -523,8 +608,12 @@ text        #FAFAFA      muted    #8A8A8A
 accent      #C6F24E      (lime — grafikler, vurgular, "Graduated" rozeti)
 primary     #7E8F2E      (zeytin — birincil CTA butonları)
 radius      kart 20px · pill 999px · input 14px
-tipografi   serif wordmark + geometrik sans gövde
+tipografi   henüz seçilmedi — bkz. aşağıdaki not
 ```
+
+**Birincil CTA'nın metni koyudur, beyaz değil — ve bu ekran görüntülerinden bilinçli bir sapmadır.** Referans arayüz zeytin `#7E8F2E` zemin üzerine beyaz metin kullanıyor; ölçüldü, kontrast **3,59:1** ve WCAG AA'nın normal metin için istediği 4,5:1'in altında kalıyor. Aynı zeminde `#0B0B0B` metin **5,49:1** verir. Değişen tek şey metin rengidir; palet yukarıdaki paletin aynısıdır. Hover'da zemin `#C6F24E`'ye çıkar ve metin aynı kalır. Bu bir yorumda değil bir kapıda durmalıdır: `web/test/contrast.test.ts` `globals.css`'i okuyup token çiftlerini çözer ve her çiftin eşiğini iddia eder, yani bir token karardığında test kırılır.
+
+**Tipografi henüz bir karar değil, bir boşluktur.** Spec'in ilk sürümü "serif wordmark + geometrik sans gövde" diyordu; iskelet **hiçbir font yüklemiyor** — `web/app/layout.tsx`'te `next/font` çağrısı, `globals.css`'te `@font-face` ya da `font-family` yok — dolayısıyla bugün render edilen şey tarayıcının sistem yığınıdır ve platformdan platforma değişir. İki sonuç: (1) tipografi kararı Faz 4'te açıkça verilmeli ve fontlar **kendi sunucumuzdan** servis edilmelidir; (2) o karar verilene kadar hiçbir ekran görüntüsü ya da tasarım incelemesi "spec'teki tipografi" diye bir şeye dayanamaz, çünkü öyle bir şey uygulamada yok.
 
 **Locale açıkça sabitlenir: `en-US`, nokta ondalık.** Referans ekran görüntülerindeki `0,0005` ve `$57,53M` biçimleri pons'un tercihi değil, tarayıcının `tr-TR` locale'iydi — site `Intl.NumberFormat`'i locale sabitlemeden kullanıyor. Kripto arayüzünde `1,234` bir kullanıcı için "bin iki yüz otuz dört", diğeri için "bir virgül iki üç dört" demektir; para söz konusuyken bu belirsizlik kabul edilemez.
 
@@ -539,8 +628,9 @@ Limen Finance'teki keeper deseniyle aynı: tek TypeScript süreci, viem, şifrel
 **Görevleri:**
 
 1. **Limit emir tetikleme** — `limit_orders` tablosunu ve güncel fiyatı izler; tetiklenen emirleri zincire gönderir.
-2. **Graduation itme** — `Swept` fazında takılmış launch'lar için `pushGraduation()` çağırır.
-3. **Ölü emir temizliği** — bakiyesi yetmeyen veya süresi geçmiş emirleri iptal eder.
+2. **Graduation itme** — `complete` olup `graduated` olmamış curve'ler için **Faz 2 hedefinin izinsiz girişini** çağırır, curve'ün kendisini değil: `BondingCurve.graduate()`'i yalnızca çözülmüş hedef çağırabilir (§5.6), bir keeper doğrudan çağırırsa `NotGraduationTarget()` alır. Toplu bir giriş kullanılıyorsa her curve `try/catch` ile sarılmalıdır (`O-BATCH-TRYCATCH`) — zaten mezun olmuş tek bir curve `AlreadyGraduated()` ile bütün partiyi revert ettirir. `pushGraduation()` / `rescue()` diye üyeler yoktur ve yazılmayacaktır; başarısız bir graduation kalıcı bir faz değil, aynı `(D, R)`'yi döndüren bir yeniden denemedir.
+3. **Hedef değişikliğini boşaltma** — `GraduationTargetProposed(target, eta)` görüldüğünde, `eta`'dan önce tamamlanmış her curve'ü **mevcut** hedefe boşaltır. Üç günlük gecikmenin tek pratik değeri budur (§5.6); onu kullanacak süreç keeper'dır.
+4. **Ölü emir temizliği** — bakiyesi yetmeyen veya süresi geçmiş emirleri iptal eder.
 
 Nonce yönetimi, gas yükseltme ve yeniden deneme mantığı keeper'ın sorumluluğundadır.
 
@@ -550,12 +640,16 @@ Nonce yönetimi, gas yükseltme ve yeniden deneme mantığı keeper'ın sorumlul
 
 | Katman | Politika |
 |---|---|
-| Kontrat | Custom error'lar, CEI sırası, `ReentrancyGuard`, pull-based ödemeler. Native çıkış transferi her zaman CEI'nin en sonunda, dönüş değeri kontrol edilerek. |
-| Graduation | Başarısızlık `Swept` fazında bekler; izinsiz `pushGraduation()`; 7 gün sonra `rescue()` valfi, kalıcı `Rescued` işareti. |
+| Kontrat | Custom error'lar, **katı CEI sırası**, pull-based ödemeler. Native çıkış transferi her zaman CEI'nin en sonunda, dönüş değeri kontrol edilerek. |
+| Graduation | Başarısız bir ödeme işlemin tamamını geri alır: `graduated` `false` kalır, curve `R`'yi tutar, hedef onarıldıktan sonra **aynı çağrı aynı `(D, R)`'yi döndürür**. Reddeden bir hedef geciktirir, strand edemez. Kurtarılamayan tek durum "hedef kabul etti ama tohumlayamadı"dır ve karşılığı hedefin atomikliği (`O-ATOMIC-SEED`) ile hedefin yeniden işaretlenebilirliğidir (§5.6). |
 | Ücret ödemesi | Push yok. Escrow'a yazılır, kullanıcı çeker. |
-| Frontend | Revert'ler custom error selector'ından çözümlenip okunabilir metne çevrilir. Slippage kullanıcı kontrolündedir, kota zincirden okunur. |
+| Frontend | Revert'ler custom error selector'ından çözümlenip okunabilir metne çevrilir. Slippage kullanıcı kontrolündedir, kota zincir durumundan hesaplanır (§6.3). |
 | Indexer | Idempotent upsert; süreç ölürse imleçten devam eder. Blok grubu başına atomik yazma. |
 | Keeper | Nonce takibi, gas yükseltme, başarısız emirlerin karantinası. |
+
+**`BondingCurve` bilerek `ReentrancyGuard` kullanmaz.** Spec'in ilk sürümü onu kontrat satırında listeliyordu; kontratın merkezî iddiası katı CEI'nin guard'ı gereksiz kıldığıdır ve bir guard eklemek sıraya güvenmediğinizi söylerdi. Sıra bağlayıcıdır: doğrula → defteri yaz → bayrağı çevir → olayı yay → token transferi → escrow'a yatır → iade. Her defter yazımı her dış çağrıdan **önce** biter, dolayısıyla reentrant bir çağrı asla bayat rezerv göremez. `bind` ve `graduate()`'in yazımdan önce yaptığı iki okuma bu sıradan sapar ama ikisi de `view` arayüzler üzerinden yapılır — solc `view` için STATICCALL üretir ve STATICCALL altında her yazım revert eder. **Bu yüzden `view` süsleme değil taşıyıcıdır:** o arayüz beyanlarından birini non-`view` yapmak, görünür hiçbir etkisi olmayan tek kelimelik bir değişiklikle reentrancy kapanışını sessizce kaldırır. Testler her ikisi için yazım sayacı **ve** kontrol grubuyla ölçer.
+
+Bu, spec'in geri kalanı için bir muafiyet değildir: yeni yazılan kontratlar CEI'yi bu titizlikte yürütemiyorsa guard kullanır.
 
 ---
 
@@ -570,7 +664,7 @@ Nonce yönetimi, gas yükseltme ve yeniden deneme mantığı keeper'ın sorumlul
 | Invariant | Standart EVM | `CurveHandler` ile aşağıdaki invariant'lar |
 | Fork | Arc testnet fork | Gerçek native USDC ile alım, kendi V4 deploymentımıza karşı graduation, hook ücret akışı, EIP-7708 log davranışı |
 | Servis | Vitest | indexer, keeper, web birimleri |
-| E2E | Playwright | Launch → al → sat → graduate → havuzda al akışı |
+| E2E | Playwright | **Faz 1'de:** launch → al → sat → `buyExactQuoteIn` kısması → `complete`. Akış burada biter; graduation'ın havuz tarafı Faz 2'dir ve o gelene kadar E2E'de `graduate()` çağıracak bir hedef yoktur. **Faz 2'de** akış "→ graduate → havuzda al" ile uzatılır. |
 
 **Invariant'lar:**
 
@@ -579,11 +673,13 @@ Nonce yönetimi, gas yükseltme ve yeniden deneme mantığı keeper'ın sorumlul
 3. Toplam arz sabit; graduation sonrası curve'de satılabilir token kalmaz
 4. Escrow'un toplam borcu ≤ escrow bakiyesi
 5. Gidiş-dönüş bir işlem curve'ün bakiyesini asla azaltamaz (yuvarlama yönü kilidi)
-6. **Süreklilik:** graduation anında havuzun `sqrtPriceX96`'sı curve'ün kapanış fiyatının kareköküne eşittir
+6. **Süreklilik:** havuz curve'ün kapanış fiyatının **altında açamaz** — `R_actual / D ≥ P_final`, her ulaşılabilir işlem yolu için.
 
-6 numaralı invariant, §5.2'deki tüm parametre türetmesinin doğruluğunu tek bir assert ile yakalar.
+6 numaralı invariant, §5.2'deki tüm parametre türetmesinin doğruluğunu tek bir assert ile yakalar. **Bir eşitlik değil, yönü olan bir eşitsizliktir**, ve bu bir gevşetme değil düzeltmedir: curve'ün tamamlanmada tuttuğu tutar `R = V·S/(T−S)` değil `realQuoteReserves`'tir ve ondan kesinlikle büyüktür (§5.2 — `quoteBuyCost`'un `+1`'i alım başına birikir), dolayısıyla tek bir açılış fiyatı yoktur. Yön teoremdir: `D` aşağı yuvarlandığı için `D < S(T−S)/T`, ve bu tek başına ulaşılabilir her `R_actual` için havuzun `P_final`'in üstünde açmasını verir. Ölçüldü — altı işlemlik bir yaşam döngüsünde `R_actual = R + 11` ve boşluk `+2,15 × 10⁻²²`; teorik `R` değerinde boşluk **negatiftir** ama o durum ulaşılamaz. Miktarların bakiyeden değil immutable'dan ve defterden okunması, invariant'ı "bağış olmadığı sürece" kaydından kurtaran şeydir (§5.6).
 
 **ABI-parity testi:** indexer, web ve keeper'ın kullandığı ABI'ler `forge build` çıktısına karşı doğrulanır; kontrat arayüzü değişip tüketici güncellenmezse CI kırılır.
+
+**`CurveMath` port-parity testi:** zincirde kota fonksiyonu olmadığı için arayüzün gösterdiği her sayı TypeScript portundan gelir (§6.3), yani portun zincirden ayrışması sessiz bir kullanıcı-zararı hatasıdır. Port, Solidity kütüphanesinin ürettiği vektörlere karşı — beş fonksiyonun her biri için, sıfır ve sınır girdileri dahil — doğrulanır. Bu, ABI-parity testiyle aynı sınıfta bir kapıdır: kontrat matematiği değişip port güncellenmezse CI kırılır.
 
 ---
 
@@ -607,8 +703,8 @@ Nonce yönetimi, gas yükseltme ve yeniden deneme mantığı keeper'ın sorumlul
 | Faz | İçerik | Sonunda elde edilen |
 |---|---|---|
 | 0 | Repo iskeleti, Foundry yapılandırması (cancun/via_ir), V4 submodule'leri, CI kapıları | `forge test` yeşil, boş iskelet |
-| 1 | `CurveMath`, `LaunchToken`, `BondingCurve`, `LaunchFactory`, `FeeEscrow` — tam test | Kontratlar Arc testnet'te; `cast` ile launch/buy/sell yapılabiliyor |
-| 2 | V4 deploymentı, `ArcpadHook` (adres madenciliği), `LaunchLocker`, graduation, `ArcpadRouter` | Curve tükenince havuz açılıyor, likidite kalıcı kilitli |
+| 1 | `CurveMath`, `LaunchToken`, `BondingCurve`, `LaunchFactory`, `FeeEscrow` — tam test. Curve'ün graduation **yüzeyi** de buraya dahildir (`graduate()`, `graduated`, `Graduated`) ve factory'nin iki döndürülebilir üyesi de öyle | Kontratlar Arc testnet'te; `cast` ile launch/buy/sell yapılabiliyor; curve tamamlanabiliyor ve hedef atandığında mezun olabiliyor |
+| 2 | V4 deploymentı, `ArcpadHook` (adres madenciliği), `LaunchLocker`, **graduation hedefi** (izinsiz giriş, atomik tohumlama, `PoolSeeded`), `ArcpadRouter` | Curve tükenince havuz açılıyor, likidite kalıcı kilitli |
 | 3 | Indexer + Postgres + token detay sayfası | Tarayıcıda gerçek token alınıp satılabiliyor |
 | 4 | Explore + ⌘K arama + create sayfası | Ürün "pons gibi" görünüyor |
 | 5 | Analytics + profil + ücret talebi + `BuybackVault` | Creator kazancını çekebiliyor |

@@ -54,8 +54,24 @@ abstract contract BondingCurveInvariantsBase is Test {
 
     address[3] internal eoas;
 
+    /// @notice Factory ile kurulan iki konfigurasyonda GERCEK factory; ucuncude
+    ///         `address(0)` (orada curve'un factory'si BU KONTRATTIR).
+    LaunchFactory internal factory;
+
+    /// BU KONTRAT UCUNCU KONFIGURASYONDA CURVE'UN FACTORY'SIDIR, dolayisiyla
+    /// `ILaunchFactory`nin iki uyesini tasimak ZORUNDADIR: `protocolTreasury()`
+    /// her islemde, `graduationTarget()` her `graduate()` cagrisinda STATICCALL
+    /// ile okunur. Ilk iki konfigurasyonda bu iki alan KULLANILMAZ -- oradaki
+    /// okumalar gercek `LaunchFactory`ye gider ve hedef propose/warp/apply ile
+    /// atanir, yani D3'un timelock'u da kampanyanin kurulumunda YURUNUR.
+    address public protocolTreasury = TREASURY;
+    address public graduationTarget;
+
     /// @dev Alt sinif curve'u kurar ve `virtualQuote`'u yazar.
     function _deployCurve() internal virtual;
+
+    /// @dev Alt sinif hedefi kendi factory'sine gore atar.
+    function _pointGraduationTargetAt(address target) internal virtual;
 
     /// @dev Alt sinif hangi giris noktalarinin fuzz edilecegini secer.
     function _selectors() internal pure virtual returns (bytes4[] memory);
@@ -72,6 +88,14 @@ abstract contract BondingCurveInvariantsBase is Test {
         // Butce, cagri basina `V/4`. Profil olcegiyle birlikte kayar, boylece
         // testnet ve uretim ayni sayida cagriyla curve'un ayni kesrini yurur.
         handler = new CurveTradingHandler(curve, eoas, virtualQuote / 4);
+
+        // HANDLER GRADUATION HEDEFIDIR. D4 yalnizca cozulmus hedefin
+        // cagirmasina izin verdigi icin baska bir yol yoktur: handler ya hedef
+        // olur ya da `graduate()` bu kampanyada HIC ULASILAMAZ kalir -- ve
+        // ulasilamaz bir eylem, yeni eklenen iki faz dalini BOS YERE yesil
+        // birakirdi. Kurulum sirasi zorunlu: hedef handler'in adresidir, yani
+        // handler'in var olmasi gerekir.
+        _pointGraduationTargetAt(address(handler));
 
         // IKI TARAF DA FONLANIR VE SEBEBI OLCULDU: `vm.prank(actor)` altinda
         // `{value: x}` ile yapilan cagriyi PRANK EDILEN adres oder, cagriyi
@@ -96,7 +120,9 @@ abstract contract BondingCurveInvariantsBase is Test {
     // 1. Odeme gucu
     // ---------------------------------------------------------------
 
-    /// @notice Curve, defterinde yazili quote'u her zaman odeyebilmeli.
+    /// @notice Curve, defterinde yazili quote'u her zaman odeyebilmeli --
+    ///         GRADUATION'A KADAR. Sonrasinda defter kasten sifirlanmaz ve
+    ///         bakiye sifirdir.
     /// @dev SATICININ ALDIGI HER SEY `realQuoteReserves`'ten cikar
     ///      (`proceeds <= realQuoteReserves`), dolayisiyla bakiye defteri
     ///      karsiliyorsa curve hicbir satisi karsilayamaz duruma DUSEMEZ.
@@ -106,7 +132,27 @@ abstract contract BondingCurveInvariantsBase is Test {
     ///      `assertEq` ise BU handler'in dunyasinda gecerli olan daha guclu
     ///      olcum aracidir: burada bagis yolu yoktur, dolayisiyla fazla bakiye
     ///      "muhasebeye girmemis para" demektir. Ikisi bilerek birlikte durur.
+    ///
+    /// @dev FAZA GORE AYRILDI, VE IKI SATIR DA AYRILMAK ZORUNDAYDI. Graduation
+    ///      `R`yi bakiyeden cikarir ama `realQuoteReserves`i BILEREK
+    ///      sifirlamaz (tasarim 7.2 madde 7: graduation sonrasi `R`, bir
+    ///      dogrulayicinin havuzla karsilastirabilecegi tek zincir kaydidir).
+    ///      Dolayisiyla `0 >= R` de YANLIS olur -- yani NatSpec'in "zincirdeki
+    ///      gercek garanti" dedigi satir ILK dusen satirdir. Yalnizca
+    ///      `assertEq`i ayirmak bu invariant'i kirmizi birakirdi.
+    ///
+    /// @dev `graduated` DALI BOS YERE YESIL DEGILDIR:
+    ///      `test_graduationPaysExactlyDAndRAndCannotBeRepeated` bu fonksiyonu
+    ///      graduation'dan SONRA DOGRUDAN cagirir, yani dalin yurundugu
+    ///      deterministik olarak gosterilir. Rastgele dizi bunu garanti etmez
+    ///      (graduation'a ulasmak tamamlanma VE hedefin cozulmus olmasini
+    ///      gerektirir), bu yuzden `afterInvariant()`a bir taban KONMAZ --
+    ///      bkz. oradaki olculmus kural.
     function invariant_curveHoldsAtLeastWhatItOwesTraders() public view {
+        if (curve.graduated()) {
+            assertEq(address(curve).balance, 0, "mezun curve bakiye tutuyor");
+            return;
+        }
         assertGe(address(curve).balance, curve.realQuoteReserves());
         assertEq(address(curve).balance, curve.realQuoteReserves());
     }
@@ -124,8 +170,24 @@ abstract contract BondingCurveInvariantsBase is Test {
     /// @dev Ikinci satir AYNADIR ve aktor tarafindan olculur: satilmis her
     ///      token bir aktorun bakiyesindedir. Reentrancy'nin defteri bayat
     ///      rezervle uzerine yazmasi tam olarak burada gorunur.
+    ///
+    /// @dev ILK SATIR FAZA GORE AYRILDI, IKINCISI AYRILMADI VE AYRILMAMALI.
+    ///      Graduation `D` tokeni curve'den cikarir, dolayisiyla artik
+    ///      `N - S - D` olur. Ama `D` `N - S` ARTIGINDAN cikar ve HEDEFE gider,
+    ///      bir AKTORE degil -- yani `heldByActors == S - realTokenReserves`
+    ///      graduation'dan sonra da AYNEN gecerlidir. Onu da ayirmak, dogru
+    ///      olan bir satiri kirmak olurdu.
+    ///
+    /// @dev IKINCI SATIRIN GRADUATION SONRASI GECERLILIGI BIR ON KOSULA
+    ///      DAYANIR: hedef (bu kurgu da handler'in KENDISI) aktor kumesinde
+    ///      OLMAMALIDIR. Varsayim degil, olculur:
+    ///      `test_graduationPaysExactlyDAndRAndCannotBeRepeated` dort aktoru
+    ///      tek tek handler adresiyle karsilastirir. Hedef bir aktor olsaydi bu
+    ///      satir `D` kadar kayar ve kimse bunu yazmamis olurdu.
     function invariant_realTokenReservesEqualTokenBalanceMinusSold() public view {
-        assertEq(token.balanceOf(address(curve)) - curve.realTokenReserves(), LAUNCH_TOKEN_TOTAL_SUPPLY - S);
+        uint256 expectedResidue =
+            curve.graduated() ? LAUNCH_TOKEN_TOTAL_SUPPLY - S - curve.poolSeedSupply() : LAUNCH_TOKEN_TOTAL_SUPPLY - S;
+        assertEq(token.balanceOf(address(curve)) - curve.realTokenReserves(), expectedResidue);
 
         uint256 heldByActors;
         for (uint256 i = 0; i < 4; i++) {
@@ -187,6 +249,36 @@ abstract contract BondingCurveInvariantsBase is Test {
     function invariant_noTradeEverSucceedsAfterCompletion() public view {
         assertEq(handler.tradeSucceededAfterCompletion(), 0);
         assertEq(handler.postCompletionRevertHadWrongSelector(), 0);
+    }
+
+    // ---------------------------------------------------------------
+    // 5b. Graduation terminal ve TEK SEFERLIK
+    // ---------------------------------------------------------------
+
+    /// @notice Mezun olmak geri alinamaz, tamamlanmadan once olamaz, ve iki kez
+    ///         olamaz.
+    ///
+    /// @dev DORT SATIR, DORDU DE AYRI BIR MUTANTI OLDURUR:
+    ///        1. `graduatedWasUnset` -- bayragin geri alinmasi.
+    ///           NEGATIF bir ghost'tur (graduation hic olmazsa da sifir kalir);
+    ///           `completeWasUnset`in aynasi olarak duruyor, kapsam iddiasi
+    ///           DEGIL.
+    ///        2. `graduatedBeforeCompletion` -- `NotComplete` korumasinin
+    ///           silinmesi. Handler bu hucreyi ONCEDEN FILTRELEMEZ: filtreleyen
+    ///           bir handler'da mutant GORUNMEZ olurdu.
+    ///        3. `secondGraduateSucceeded` -- `AlreadyGraduated` korumasinin
+    ///           silinmesi ya da bayragin dis cagrilarin arkasina alinmasi.
+    ///        4. DURUMUN KENDISI, ghost'suz: `graduated => complete`. Ilk uc
+    ///           satir yalnizca handler'in DENEDIGI cagrilari olcer; bu satir
+    ///           zinciri durumdan okur ve `invariant_completeIsNeverUnset`in
+    ///           ucuncu satiriyla ayni ailedendir.
+    function invariant_graduationIsTerminalAndHappensAtMostOnce() public view {
+        assertEq(handler.graduatedWasUnset(), 0, "graduated geri alindi");
+        assertEq(handler.graduatedBeforeCompletion(), 0, "tamamlanmamis curve mezun oldu");
+        assertEq(handler.preCompletionGraduateHadWrongSelector(), 0, "revert NotComplete() degil");
+        assertEq(handler.secondGraduateSucceeded(), 0, "curve IKI KEZ mezun oldu");
+        assertEq(handler.secondGraduateHadWrongSelector(), 0, "revert AlreadyGraduated() degil");
+        assertTrue(!curve.graduated() || curve.complete(), "graduated ama complete degil");
     }
 
     // ---------------------------------------------------------------
@@ -262,6 +354,11 @@ abstract contract BondingCurveInvariantsBase is Test {
         assertEq(handler.buyOverBudgetQuoteInReverted(), 0, "buyOverBudgetQuoteIn");
         assertEq(handler.reentrantBuyReverted(), 0, "reentrantBuy");
         assertEq(handler.reentrantSellReverted(), 0, "reentrantSell");
+        // SEKIZINCI GIRIS NOKTASI. Handler hedefin KENDISIDIR ve `receive()`i
+        // ciplak bir kabuldur, dolayisiyla tamamlanmis ve henuz mezun olmamis
+        // bir curve'de `graduate()`in revert etmesi icin MESRU bir sebep
+        // yoktur -- bu yuzden burada taban sifirdir.
+        assertEq(handler.graduateReverted(), 0, "graduate");
     }
 
     // ---------------------------------------------------------------
@@ -421,6 +518,82 @@ abstract contract BondingCurveInvariantsBase is Test {
         }
     }
 
+    /// @notice `graduate()` FIILEN CALISTI, TAM OLARAK `(D, R)` odedi, ve
+    ///         ikincisi reddedildi.
+    ///
+    /// @dev BU TEST R-3'UN UCUNCU PARCASIDIR VE VAROLMA SEBEBI SUDUR:
+    ///      yukaridaki iki faz dali ile `graduatedWasUnset` ghost'u, `graduate()`
+    ///      HIC CALISMADIGINDA DA YESILDIR. Biri dalin alinmamasindan, oteki
+    ///      NEGATIF bir ghost olmasindan. Yani "kapsam" iddiasini onlar
+    ///      TASIYAMAZ -- ve tasiyamadiklari sey bu projenin ikinci adi konmus
+    ///      hatasidir: kapsam bosluğu MUTANT/EYLEM SECIMINDE, olcumde degil.
+    ///
+    /// @dev VE NICIN `afterInvariant()` DEGIL. O mekanizma dogal secim gibi
+    ///      gorunur ama bu dosyanin KENDI OLCUMU onu yasakliyor:
+    ///      `sellsMeasuredForFees > 0` orada denenmis ve `--fuzz-seed 1`
+    ///      altinda DUSMUSTU; oraya yalnizca YAPISAL OLARAK GARANTI sayaclar
+    ///      girer. `graduate()`e ulasmak tamamlanma VE hedefin cozulmus olmasini
+    ///      gerektirir, yani bir satistan STRIKT OLARAK DAHA AZ garantidir --
+    ///      `graduations > 0`u oraya koymak paketi gudumlu-kirilgan yapardi.
+    ///      Rastgele dizide garanti olmayan her sey burada, deterministik
+    ///      olarak iddia edilir.
+    function test_graduationPaysExactlyDAndRAndCannotBeRepeated() public {
+        // ON KOSUL: hedef, aktor kumesinin DISINDA olmali. Bu varsayim
+        // `invariant_realTokenReservesEqualTokenBalanceMinusSold`in ikinci
+        // satirini graduation sonrasi ayakta tutan seydir -- `D` bir aktore
+        // gitseydi o satir sessizce kayardi.
+        for (uint256 i = 0; i < 4; i++) {
+            assertTrue(handler.actors(i) != address(handler), "hedef aktor kumesinde");
+        }
+
+        // (a) TAMAMLANMADAN ONCE: `NotComplete`, ve bu hucre R-6'nin mutantini
+        //     olduren hucredir.
+        handler.graduate();
+        assertEq(handler.graduations(), 0, "tamamlanmamis curve mezun oldu");
+        assertEq(handler.graduatedBeforeCompletion(), 0);
+        assertEq(handler.preCompletionGraduateHadWrongSelector(), 0, "revert NotComplete() degil");
+        assertGt(handler.graduateAttemptsBeforeCompletion(), 0, "(a) hucresi yurunmedi");
+
+        // (b) TAMAMLANDIKTAN SONRA: basari, ve TAM DEGERLER.
+        handler.buyRemainingExactOut(0, 0);
+        assertTrue(curve.complete(), "kapatici tamamlamadi");
+        uint256 r = curve.realQuoteReserves();
+        uint256 d = curve.poolSeedSupply();
+        uint256 residue = LAUNCH_TOKEN_TOTAL_SUPPLY - S - d;
+
+        handler.graduate();
+
+        assertEq(handler.graduations(), 1, "graduate() calismadi");
+        assertEq(handler.graduateReverted(), 0);
+        assertEq(handler.baseReceivedOnGraduation(), d, "baz bacagi `D` degil");
+        assertEq(handler.quoteReceivedOnGraduation(), r, "quote bacagi `R` degil");
+        assertTrue(curve.graduated());
+        assertEq(token.balanceOf(address(handler)), d, "hedef `D` almadi");
+        assertEq(address(curve).balance, 0, "curve bakiye tuttu");
+        assertEq(token.balanceOf(address(curve)), residue, "artik `N - S - D` degil");
+        // Defter BILEREK sifirlanmaz.
+        assertEq(curve.realQuoteReserves(), r);
+        assertEq(curve.virtualTokenReserves(), T - S);
+
+        // (c) IKINCI CAGRI: `AlreadyGraduated`, ve HICBIR SEY HAREKET ETMEZ.
+        handler.graduate();
+        assertEq(handler.graduations(), 1, "ikinci graduation basardi");
+        assertEq(handler.secondGraduateSucceeded(), 0);
+        assertEq(handler.secondGraduateHadWrongSelector(), 0, "revert AlreadyGraduated() degil");
+        assertGt(handler.graduateAttemptsAfterGraduation(), 0, "(c) hucresi yurunmedi");
+        assertEq(token.balanceOf(address(handler)), d);
+
+        // VE IKI FAZ DALI DA BURADA FIILEN YURUNUR. Invariant'lar dogrudan
+        // cagrilir: dallarin BOS YERE yesil olmadiginin kaniti budur.
+        invariant_curveHoldsAtLeastWhatItOwesTraders();
+        invariant_realTokenReservesEqualTokenBalanceMinusSold();
+        invariant_graduationIsTerminalAndHappensAtMostOnce();
+        // Ve graduation'in DOKUNMAMASI gereken invariant: ghost akislari.
+        invariant_ghostFlowsMatchTheLedger();
+        invariant_noTradeEverSucceedsAfterCompletion();
+        _assertNoAvailabilityFailures();
+    }
+
     /// @notice KODLU aktorun `receive()` icinden curve'e GERCEKTEN geri
     ///         girdigini olcer.
     /// @dev Faz 1b'nin olculen kor noktasi tam olarak buydu: handler'in uc
@@ -476,14 +649,23 @@ abstract contract BondingCurveInvariantsBase is Test {
         assertEq(handler.buyOverBudgetQuoteInReverted(), 0, "buyOverBudgetQuoteIn");
         assertEq(handler.reentrantBuyReverted(), 0, "reentrantBuy");
         assertEq(handler.reentrantSellReverted(), 0, "reentrantSell");
+        // SEKIZINCI GIRIS NOKTASI. Handler hedefin KENDISIDIR ve `receive()`i
+        // ciplak bir kabuldur, dolayisiyla tamamlanmis ve henuz mezun olmamis
+        // bir curve'de `graduate()`in revert etmesi icin MESRU bir sebep
+        // yoktur -- bu yuzden burada taban sifirdir.
+        assertEq(handler.graduateReverted(), 0, "graduate");
     }
 
     // ---------------------------------------------------------------
     // Yardimcilar
     // ---------------------------------------------------------------
 
+    /// @dev `graduate()` UC KONFIGURASYONUN UCUNDE DE hedeftedir. Kapaticisiz
+    ///      konfigurasyonda curve pratikte tamamlanmaz, dolayisiyla orada eylem
+    ///      (a) hucresini -- "tamamlanmadan once `NotComplete`" -- yurur; o da
+    ///      R-6'nin mutantini olduren hucredir.
     function _allSelectors() internal pure returns (bytes4[] memory sel) {
-        sel = new bytes4[](7);
+        sel = new bytes4[](8);
         sel[0] = CurveTradingHandler.buyExactTokensOut.selector;
         sel[1] = CurveTradingHandler.buyExactQuoteIn.selector;
         sel[2] = CurveTradingHandler.sell.selector;
@@ -491,24 +673,39 @@ abstract contract BondingCurveInvariantsBase is Test {
         sel[4] = CurveTradingHandler.buyOverBudgetQuoteIn.selector;
         sel[5] = CurveTradingHandler.reentrantBuy.selector;
         sel[6] = CurveTradingHandler.reentrantSell.selector;
+        sel[7] = CurveTradingHandler.graduate.selector;
     }
 
     function _tradingSelectors() internal pure returns (bytes4[] memory sel) {
-        sel = new bytes4[](5);
+        sel = new bytes4[](6);
         sel[0] = CurveTradingHandler.buyExactTokensOut.selector;
         sel[1] = CurveTradingHandler.buyExactQuoteIn.selector;
         sel[2] = CurveTradingHandler.sell.selector;
         sel[3] = CurveTradingHandler.reentrantBuy.selector;
         sel[4] = CurveTradingHandler.reentrantSell.selector;
+        sel[5] = CurveTradingHandler.graduate.selector;
     }
 
-    /// @dev Curve'u factory ile, yani URUNDEKI TEK YOLLA kurar.
+    /// @dev Curve'u factory ile, yani URUNDEKI TEK YOLLA kurar. Governor bu
+    ///      test kontratidir, boylece D3'un iki fazli setter'i kampanyanin
+    ///      kurulumunda GERCEKTEN yurunur.
     function _launchViaFactory(uint256 v) internal {
-        LaunchFactory factory = new LaunchFactory(address(escrow), TREASURY, T, v, S);
+        factory = new LaunchFactory(address(escrow), TREASURY, address(this), T, v, S);
         vm.prank(LAUNCHER);
         (, address curveAddr) = factory.launch("arcpad", "ARC", "ipfs://arcpad");
         curve = BondingCurve(curveAddr);
         virtualQuote = v;
+    }
+
+    /// @dev GERCEK YOL: oner, uc gun bekle, indir. Kurulumda yurunmesi
+    ///      tesadufi degil -- kampanyanin hedefi ancak timelock'tan geciyorsa
+    ///      atanir, yani `graduate()`in ulasilabilir olmasi D3'un fiilen
+    ///      calistigina baglidir.
+    function _pointViaTimelock(address target) internal {
+        factory.proposeGraduationTarget(target);
+        vm.warp(block.timestamp + factory.GRADUATION_TARGET_DELAY());
+        factory.applyGraduationTarget();
+        assertEq(factory.graduationTarget(), target, "hedef inmedi");
     }
 }
 
@@ -523,6 +720,10 @@ contract BondingCurveInvariantsTest is BondingCurveInvariantsBase {
 
     function _selectors() internal pure override returns (bytes4[] memory) {
         return _tradingSelectors();
+    }
+
+    function _pointGraduationTargetAt(address target) internal override {
+        _pointViaTimelock(target);
     }
 
     /// @dev BU KONFIGURASYONDA EK BIR TABAN YOK, ve sebebi tahmin degil OLCUM.
@@ -551,6 +752,10 @@ contract BondingCurveInvariantsTestCompletion is BondingCurveInvariantsBase {
 
     function _selectors() internal pure override returns (bytes4[] memory) {
         return _allSelectors();
+    }
+
+    function _pointGraduationTargetAt(address target) internal override {
+        _pointViaTimelock(target);
     }
 
     /// @dev Yedi hedeften IKISI kapatici, dolayisiyla 64 cagrilik bir dizide
@@ -582,7 +787,7 @@ contract BondingCurveInvariantsTestCompletion is BondingCurveInvariantsBase {
 ///      yurur.
 contract BondingCurveInvariantsTestZeroCreator is BondingCurveInvariantsBase {
     function _deployCurve() internal override {
-        curve = new BondingCurve(address(0), address(escrow), TREASURY, T, V_TESTNET, S);
+        curve = new BondingCurve(address(0), address(escrow), T, V_TESTNET, S);
         LaunchToken t = new LaunchToken("arcpad", "ARC", "ipfs://arcpad", LAUNCHER, address(curve), bytes32(0));
         curve.bind(address(t));
         virtualQuote = V_TESTNET;
@@ -590,6 +795,15 @@ contract BondingCurveInvariantsTestZeroCreator is BondingCurveInvariantsBase {
 
     function _selectors() internal pure override returns (bytes4[] memory) {
         return _allSelectors();
+    }
+
+    /// @dev BURADA FACTORY BU KONTRATTIR, dolayisiyla hedef dogrudan yazilir.
+    ///      Timelock'un YURUNMEDIGI konfigurasyon budur ve bu bilerek boyle:
+    ///      timelock factory'nin ozelligidir, curve'un degil -- curve yalnizca
+    ///      `graduationTarget()`in DONDURDUGU degeri gorur. Gercek factory ile
+    ///      timelock'tan gecen yol diger iki konfigurasyonda yurunur.
+    function _pointGraduationTargetAt(address target) internal override {
+        graduationTarget = target;
     }
 
     /// @dev Yedi hedeften IKISI kapatici, dolayisiyla 64 cagrilik bir dizide

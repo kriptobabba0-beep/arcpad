@@ -80,6 +80,16 @@ contract CurveTradingHandler is CommonBase, StdUtils {
     BondingCurve public immutable curve;
     IERC20 public immutable token;
     FeeEscrow public immutable escrow;
+
+    /// @notice Ucret olcumunun bakacagi alici.
+    /// @dev SNAPSHOT'TIR VE BILINCLIDIR. `curve.protocolTreasury()` artik her
+    ///      yatirimda factory'den okunur (F1), yani rotasyon CANLI curve'e
+    ///      ulasir -- ama BU KAMPANYADA hicbir handler eylemi treasury'yi
+    ///      dondurmez, dolayisiyla snapshot ile canli deger AYNIDIR. Rotasyonu
+    ///      olcen sey `BondingCurve.t.sol` ve `LaunchFactory.t.sol`daki
+    ///      deterministik testlerdir. Buraya bir rotasyon eylemi eklenirse bu
+    ///      alan da canliya cevrilmelidir; aksi halde ucret sayaclari sessizce
+    ///      yanlis aliciya bakar.
     address public immutable protocolTreasury;
 
     /// @notice SIFIR OLABILIR. Sifirsa creator payi hic alinmamalidir --
@@ -127,6 +137,33 @@ contract CurveTradingHandler is CommonBase, StdUtils {
     uint256 public postCompletionRevertHadWrongSelector;
     uint256 public completeWasUnset;
 
+    /// @notice `graduated` bir kez gorulduyse true.
+    bool public ghostSawGraduated;
+    /// @notice `graduated` GERI ALINDI. `completeWasUnset`in aynasi.
+    /// @dev NEGATIF BIR GHOST OLDUGU KAYDA GECIRILIYOR: `graduate()` hic
+    ///      cagrilmadiginda da SIFIR kalir, dolayisiyla YAZILDIGI BOSLUGU
+    ///      KENDISI TESPIT EDEMEZ. Pozitif kapsam iddiasi
+    ///      `test_graduationPaysExactlyDAndRAndCannotBeRepeated` icinde,
+    ///      DETERMINISTIK olarak yapilir -- rastgele dizi bunu garanti
+    ///      etmedigi icin `afterInvariant()`a KONMAZ (o dosyanin olculmus
+    ///      kurali: yalnizca yapisal olarak garanti sayaclar oraya girer).
+    uint256 public graduatedWasUnset;
+
+    /// @notice TAMAMLANMADAN ONCE `graduate()` BASARDI. `NotComplete`
+    ///         korumasinin silinmesi tam olarak burada gorunur, ve baska
+    ///         hicbir yerde gorunmez: mutant sonrasinda curve gercekten oder
+    ///         durumda kalir, YALAN SOYLEYEN sey `realQuoteReserves`tir.
+    uint256 public graduatedBeforeCompletion;
+    /// @notice ...ve tamamlanmadan onceki revert `NotComplete()` DEGILDI.
+    uint256 public preCompletionGraduateHadWrongSelector;
+
+    /// @notice IKINCI graduation BASARDI. `AlreadyGraduated` korumasinin
+    ///         silinmesi ya da bayragin dis cagrilarin arkasina alinmasi burada
+    ///         gorunur.
+    uint256 public secondGraduateSucceeded;
+    /// @notice ...ve ikinci cagrinin revert'i `AlreadyGraduated()` DEGILDI.
+    uint256 public secondGraduateHadWrongSelector;
+
     /// @notice Yatirilan iki payin toplami `feeOn(x,95) + feeOn(x,30)`'a esit
     ///         degil.
     uint256 public feeNotSummedFromParts;
@@ -163,6 +200,7 @@ contract CurveTradingHandler is CommonBase, StdUtils {
     uint256 public buyOverBudgetQuoteInReverted;
     uint256 public reentrantBuyReverted;
     uint256 public reentrantSellReverted;
+    uint256 public graduateReverted;
 
     /// @notice Teshis icin: yukaridaki sayaclardan biri arttiginda gorulen son
     ///         revert selector'u. Hicbir iddia buna bakmaz; bir
@@ -177,6 +215,11 @@ contract CurveTradingHandler is CommonBase, StdUtils {
     // ---------------------------------------------------------------
 
     uint256 public completions;
+    uint256 public graduations;
+    uint256 public graduateAttemptsBeforeCompletion;
+    uint256 public graduateAttemptsAfterGraduation;
+    uint256 public baseReceivedOnGraduation;
+    uint256 public quoteReceivedOnGraduation;
     uint256 public clampsObserved;
     uint256 public callsWhileComplete;
     uint256 public tradesByCodedActor;
@@ -456,6 +499,90 @@ contract CurveTradingHandler is CommonBase, StdUtils {
             return;
         }
         _settleObservations(actor, s, false, e, tokensIn);
+    }
+
+    // ---------------------------------------------------------------
+    // Giris noktasi 8: graduation
+    // ---------------------------------------------------------------
+
+    /// @notice Curve'un terminal cikisi. BU HANDLER HEDEFIN KENDISIDIR.
+    ///
+    /// @dev NICIN HANDLER'IN KENDISI HEDEF: D4 yalnizca cozulmus hedefin
+    ///      `graduate()`i cagirmasina izin verir, dolayisiyla handler ya hedef
+    ///      OLMAK ya da hedef olan bir kontrata sahip olmak zorundadir.
+    ///      Handler'in `receive()`i vardir (ciplak kabul), yani odemenin native
+    ///      bacagi basarisiz OLAMAZ -- `graduateReverted == 0` bu yuzden mesru
+    ///      bir KULLANILABILIRLIK iddiasidir.
+    ///
+    /// @dev BU EYLEM `_settleObservations` CAGIRMAZ VE BU BILINCLI BIR
+    ///      TERCIHTIR, unutulmus bir satir DEGIL. Gerekce olculebilir:
+    ///      `ghostQuoteIn`/`ghostQuoteOut` BAKIYE DELTALARIDIR ve her eylemde
+    ///      `_settleObservations` icinde birikirler. `graduate()` ise `R`yi
+    ///      bakiyeden cikarir ama `realQuoteReserves`e DOKUNMAZ, dolayisiyla
+    ///      `invariant_ghostFlowsMatchTheLedger` kimligi ancak bu eylem o
+    ///      muhasebeyi CALISTIRMAZSA ayakta kalir. Kopyala-yapistir ile
+    ///      eklenmis bir `_settleObservations` cagrisi, graduation'la hicbir
+    ///      ilgisi olmayan bir invariant'i kirar ve hata "graduate() ghost
+    ///      muhasebesini bozdu" gibi OKUNUR -- oysa dogru okuma "ghost
+    ///      muhasebesinin graduation hakkinda bir iddiasi yok"tur. Ayni
+    ///      sebeple `graduate()` ucret de yatirmaz (D7), yani ucret sayaclarinin
+    ///      da burada isi yoktur.
+    ///
+    /// @dev UC HUCRE YURUNUR, biri degil -- ve bu bilerek boyledir: eylem
+    ///      "tamamlandi mi" diye ONCEDEN filtrelemez, cunku o filtre
+    ///      `NotComplete` korumasini silen mutanti (R-6) GORUNMEZ kilardi.
+    ///        (a) tamamlanmadan once  -> `NotComplete()` BEKLENIR
+    ///        (b) tamamlandi, mezun degil -> BASARI beklenir
+    ///        (c) zaten mezun         -> `AlreadyGraduated()` BEKLENIR
+    ///      Uc hucrenin de kendi ihlal sayaci ve kendi kapsam sayaci vardir.
+    function graduate() external {
+        bool wasComplete = curve.complete();
+        bool wasGraduated = curve.graduated();
+
+        if (!wasComplete) {
+            graduateAttemptsBeforeCompletion++;
+            try curve.graduate() {
+                graduatedBeforeCompletion++;
+            } catch (bytes memory err) {
+                if (_selectorOf(err) != BondingCurve.NotComplete.selector) {
+                    preCompletionGraduateHadWrongSelector++;
+                    lastUnexpectedRevert = _selectorOf(err);
+                }
+            }
+            _settleGraduationGhosts();
+            return;
+        }
+
+        if (wasGraduated) {
+            graduateAttemptsAfterGraduation++;
+            try curve.graduate() {
+                secondGraduateSucceeded++;
+            } catch (bytes memory err) {
+                if (_selectorOf(err) != BondingCurve.AlreadyGraduated.selector) {
+                    secondGraduateHadWrongSelector++;
+                    lastUnexpectedRevert = _selectorOf(err);
+                }
+            }
+            _settleGraduationGhosts();
+            return;
+        }
+
+        try curve.graduate() returns (uint256 base, uint256 quote) {
+            graduations++;
+            baseReceivedOnGraduation += base;
+            quoteReceivedOnGraduation += quote;
+        } catch (bytes memory err) {
+            graduateReverted++;
+            lastUnexpectedRevert = _selectorOf(err);
+        }
+        _settleGraduationGhosts();
+    }
+
+    /// @dev YALNIZCA geri alinamazlik ghost'u. Akis muhasebesine dokunmaz;
+    ///      gerekcesi `graduate()`in NatSpec'inde.
+    function _settleGraduationGhosts() internal {
+        if (curve.graduated()) ghostSawGraduated = true;
+        if (ghostSawGraduated && !curve.graduated()) graduatedWasUnset++;
     }
 
     // ---------------------------------------------------------------

@@ -13,7 +13,7 @@ import {IFeeEscrow} from "./interfaces/IFeeEscrow.sol";
 /// @dev Bu fazda tek varlik native USDC'dir. Ozel pairing asset destegi
 ///      kapsam disidir (spec 2).
 ///
-/// @dev ENTEGRASYON KISITLARI -- dordu de dagitilmis kontratin gercek
+/// @dev ENTEGRASYON KISITLARI -- besi de dagitilmis kontratin gercek
 ///      ozellikleridir ve baska hicbir yerde yazili degildir.
 ///
 /// @dev (1) BAKIYE deposit() DISINDAN DA ARTABILIR VE O PARA GERI ALINAMAZ.
@@ -56,6 +56,33 @@ import {IFeeEscrow} from "./interfaces/IFeeEscrow.sol";
 ///      karsilik Faz 1c'dedir: protokol ucret ALICI ADRESI dondurulebilir
 ///      olmalidir, boylece protokol payi yeni bir adrese yonlendirilebilir
 ///      (bloklanan adreste birikmis bakiye yine de kurtarilamaz).
+///
+///      DURUMU: ODENDI (Faz 1c2). `LaunchFactory.protocolTreasury` artik
+///      IMMUTABLE DEGILDIR ve `setProtocolTreasury` ile dondurulebilir;
+///      `BondingCurve.protocolTreasury()` onu HER YATIRIMDA factory'den okur,
+///      dolayisiyla rotasyon YALNIZCA gelecek launch'lara degil ZATEN CANLI
+///      curve'lere de ulasir -- bu cumlenin tamamiyla odenmesi icin gereken
+///      sey tam olarak buydu. Kisitlarin geri kalani AYNEN GECERLIDIR:
+///      birikmis `owed[bloklu]` hala kurtarilamaz, ve bu kontrata hala owner,
+///      yeniden atama ve kurtarma yolu EKLENMEMISTIR.
+/// @dev (5) `claim` SINIRSIZ BIR GAZ KUYUSUDUR VE IZINSIZDIR. Alicinin
+///      `receive()`i CAGIRANIN cerceve icinde calisir ve escrow onu
+///      SINIRLAYAMAZ -- `claim` bilerek izinsizdir (kisit (2)'nin dayandigi
+///      ozellik), dolayisiyla herkes bir baskasi adina cagirabilir ve dusman
+///      bir alici o cagirana keyfi bir bedel odetebilir. OLCULDU: dusman bir
+///      alici, claim BASARIYLA SONUCLANIRKEN 96.760.436 gaz yakiyor.
+///      `try/catch` CARE DEGILDIR: kontrolu geri verir, GAZI vermez
+///      (EIP-150'nin 63/64 kurali). `isCanonical`in NatSpec'indeki olcumle
+///      ayni sinif, farkli kontrat.
+///
+///      DOLAYISIYLA: ZINCIR USTUNDEN `claim` cagiran her kod ILETTIGI GAZI
+///      ACIKCA SINIRLAMAK ZORUNDADIR (`claim{gas: N}(recipient)`), aksi halde
+///      kendi isleminin butun butcesini ucuncu bir tarafa kaptirabilir. Zincir
+///      disi cagiranlar (alicinin kendisi, bir keeper, arayuz) ETKILENMEZ:
+///      bedeli yalnizca kendileri oder ve kendi gaz tavanlarini zaten koyarlar.
+///      Bu kontratin ICINDEN kapatilamaz, cunku kapatmanin tek yolu ya
+///      izinsizligi ya da hep-ya-hic odemeyi birakmaktir; ikisi de spec'in
+///      bilerek sectigi ozelliklerdir.
 /// @dev `IFeeEscrow`'u UYGULAR. Bag suslemede degil, derleyicidedir:
 ///      `deposit`'in imzasi degistiginde `BondingCurve`'un beklentisiyle
 ///      ayrisma derleme hatasi olur, sessiz bir calisma zamani sapmasi degil.

@@ -16,7 +16,17 @@ import {LaunchToken} from "../src/LaunchToken.sol";
 /// Bu kontratin varlik sebebi, sahteciligin GERCEKTEN mumkun oldugunu once
 /// olcmektir. Faz 1b'nin dersi baglayicidir: kurgunun saldiriyi mumkun
 /// kildigi dogrulanmadan yazilan bir "sahtecilik testi" hicbir sey kanitlamaz.
+///
+/// F1'DEN SONRA SAHTECININ ISI ARTTI VE BU KAYDA GECIRILIYOR: curve artik
+/// `protocolTreasury()`i her yatirimda FACTORY'SINDEN okur, dolayisiyla
+/// sahtecinin kendisi de `ILaunchFactory`nin iki uyesini SUNMAK zorundadir --
+/// aksi halde sahte curve'de HICBIR islem yapilamaz ve sahtecilik "tamamen
+/// tutarli" olmaz. Iki uyeyi de gercek factory'den yansitir; maliyeti iki
+/// satirdir, yani bu bir GUVENLIK ozelligi DEGILDIR ve boyle sunulmamalidir.
+/// Ayiran tek sey hala `isCanonical`dir.
 contract Forger {
+    LaunchFactory public target;
+
     function forge(
         LaunchFactory f,
         string memory name_,
@@ -25,17 +35,88 @@ contract Forger {
         address creator_,
         bytes32 salt_
     ) external returns (BondingCurve curve, LaunchToken token) {
+        target = f;
         curve = new BondingCurve(
-            creator_,
-            f.escrow(),
-            f.protocolTreasury(),
-            f.VIRTUAL_TOKEN_RESERVES(),
-            f.VIRTUAL_QUOTE_RESERVES(),
-            f.SALE_SUPPLY()
+            creator_, f.escrow(), f.VIRTUAL_TOKEN_RESERVES(), f.VIRTUAL_QUOTE_RESERVES(), f.SALE_SUPPLY()
         );
         token = new LaunchToken(name_, symbol_, uri_, creator_, address(curve), salt_);
         curve.bind(address(token));
     }
+
+    /// @dev Sahte curve'un factory'si BUDUR, dolayisiyla iki okuma da buraya
+    ///      duser. Gercek factory'nin degerleri aynen yansitilir.
+    function protocolTreasury() external view returns (address) {
+        return target.protocolTreasury();
+    }
+
+    function graduationTarget() external view returns (address) {
+        return target.graduationTarget();
+    }
+}
+
+/// KODU OLAN ama defter OLMAYAN adres: `owed(address)` selector'u yok ve
+/// fallback'i de yok. En gercekci operator hatasinin sekli budur -- yanlis
+/// yapistirilmis bir kontrat adresi (token, curve, factory, Safe...).
+contract NotALedger {
+    function unrelated() external pure returns (uint256) {
+        return 1;
+    }
+}
+
+/// Uyeyi TASIYAN ama REVERT EDEN defter.
+contract RevertingLedger {
+    function owed(address) external pure returns (uint256) {
+        revert("no ledger here");
+    }
+}
+
+/// Uyeyi tasiyan ama YAPISAL OLARAK IMKANSIZ cevap donduren defter:
+/// `owed[address(0)]` bir `FeeEscrow`da ASLA sifirdan farkli olamaz, cunku
+/// `deposit` sifir aliciyi `ZeroRecipient()` ile reddeder.
+contract LyingLedger {
+    function owed(address) external pure returns (uint256) {
+        return 1;
+    }
+}
+
+/// ACIK HUCRE: dolgun bir fallback ile 32 bayt SIFIR donduren kontrat.
+/// Yoklamayi GECER. Kayitli ve bilincli; bkz. `EscrowIsNotAFeeEscrow` NatSpec'i.
+contract PermissiveFallback {
+    fallback(bytes calldata) external payable returns (bytes memory) {
+        return abi.encode(uint256(0));
+    }
+}
+
+/// MESRU BIR ESCROW'UN VEKILI. `delegatecall` ile gercek uygulamaya gider,
+/// dolayisiyla yoklamaya SIFIR doner ve KABUL EDILMELIDIR -- yoklama davranisi
+/// olcer, kod hash'ini degil.
+contract EscrowProxy {
+    address internal immutable IMPLEMENTATION;
+
+    constructor(address implementation_) {
+        IMPLEMENTATION = implementation_;
+    }
+
+    fallback() external payable {
+        address impl = IMPLEMENTATION;
+        assembly {
+            calldatacopy(0, 0, calldatasize())
+            let ok := delegatecall(gas(), impl, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            switch ok
+            case 0 { revert(0, returndatasize()) }
+            default { return(0, returndatasize()) }
+        }
+    }
+}
+
+/// Graduation hedefi. `receive()` ciplak bir kabuldur.
+contract Seeder {
+    function pull(BondingCurve curve) external returns (uint256, uint256) {
+        return curve.graduate();
+    }
+
+    receive() external payable {}
 }
 
 /// `launch`'i bir SOZLESME olarak cagiran aktor. Cagiran ekseninin ikinci
@@ -60,6 +141,7 @@ contract LaunchFactoryTest is Test {
     uint256 internal constant V_TESTNET = 4_292e15;
 
     address internal constant TREASURY = address(0x7EA5);
+    address internal constant GOVERNOR = address(0x600D);
     address internal constant ALICE = address(0xA11CE);
     address internal constant BOB = address(0xB0B);
     address internal constant BUYER = address(0xB0FFEE);
@@ -69,14 +151,14 @@ contract LaunchFactoryTest is Test {
 
     function setUp() public {
         escrow = new FeeEscrow();
-        factory = new LaunchFactory(address(escrow), TREASURY, T, V, S);
+        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S);
         vm.deal(ALICE, 100e18);
         vm.deal(BOB, 100e18);
         vm.deal(BUYER, 1_000_000e18);
     }
 
     function _newFactory(uint256 t_, uint256 v_, uint256 s_) internal returns (LaunchFactory) {
-        return new LaunchFactory(address(escrow), TREASURY, t_, v_, s_);
+        return new LaunchFactory(address(escrow), TREASURY, GOVERNOR, t_, v_, s_);
     }
 
     /// Fuzz edilen bir dizeyi token sinirlarina sigdirir; bos ise yedegi verir.
@@ -165,6 +247,12 @@ contract LaunchFactoryTest is Test {
         assertEq(fakeCurve.protocolTreasury(), BondingCurve(realCurve).protocolTreasury());
 
         // --- 4. Sahte curve BOZUK DEGIL: ayni fiyattan ticaret yapiyor ---
+        // F1'den sonra bu ancak sahteci `ILaunchFactory`nin iki uyesini de
+        // sunuyorsa dogrudur (bkz. `Forger` NatSpec'i) -- sunmayan bir sahteci
+        // hicbir islem yapamaz. Iki satirlik bir maliyet, yani bir guvenlik
+        // ozelligi DEGIL; ama sahte curve'un artik gercek bir factory'ye
+        // BAGIMLI olmasi kayda deger: `f.protocolTreasury()` degistiginde
+        // sahte curve'un ucret alicisi da degisir.
         vm.prank(BUYER);
         fakeCurve.buyExactTokensOut{value: 10e18}(1e24, type(uint256).max);
         vm.prank(BUYER);
@@ -1122,17 +1210,16 @@ contract LaunchFactoryTest is Test {
     /// iki iddia bunu ayrica sabitler.
     function test_constructorRejectsAZeroEscrowOrTreasury() public {
         vm.expectRevert(LaunchFactory.ZeroEscrowAddress.selector);
-        new LaunchFactory(address(0), TREASURY, T, V, S);
+        new LaunchFactory(address(0), TREASURY, GOVERNOR, T, V, S);
 
         vm.expectRevert(LaunchFactory.ZeroTreasuryAddress.selector);
-        new LaunchFactory(address(escrow), address(0), T, V, S);
+        new LaunchFactory(address(escrow), address(0), GOVERNOR, T, V, S);
+
+        vm.expectRevert(LaunchFactory.ZeroGovernorAddress.selector);
+        new LaunchFactory(address(escrow), TREASURY, address(0), T, V, S);
 
         assertTrue(
             LaunchFactory.ZeroEscrowAddress.selector != BondingCurve.ZeroEscrow.selector,
-            "factory and curve must not share an error selector"
-        );
-        assertTrue(
-            LaunchFactory.ZeroTreasuryAddress.selector != BondingCurve.ZeroTreasury.selector,
             "factory and curve must not share an error selector"
         );
     }
@@ -1150,11 +1237,11 @@ contract LaunchFactoryTest is Test {
     /// launch'inda, ancak BIR ALICININ isleminde goruluyor.
     function test_constructorRejectsACodelessEscrow() public {
         vm.expectRevert(LaunchFactory.EscrowHasNoCode.selector);
-        new LaunchFactory(address(0xE0A), TREASURY, T, V, S);
+        new LaunchFactory(address(0xE0A), TREASURY, GOVERNOR, T, V, S);
 
         // KABUL EDILEN TARAF: kodu olan bir escrow gecer ve gercekten ticaret
         // yapar -- kontrolun fazla siki olmadigini gosterir.
-        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, T, V, S);
+        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S);
         vm.prank(ALICE);
         (address token, address curve) = ok.launch("Arc Coin", "ARC", "ipfs://cid");
         vm.prank(BUYER);
@@ -1162,19 +1249,189 @@ contract LaunchFactoryTest is Test {
         assertGt(LaunchToken(token).balanceOf(BUYER), 0);
     }
 
+    /// KOD VARLIGI YETMEZ. `EscrowHasNoCode` bir adres SEKLINI eliyor, gitmek
+    /// istedigi durumu degil: KODU OLAN ama yanlis turde bir escrow ile
+    /// factory deploy olur, `launch` BASARIR, `isCanonical` **true** doner --
+    /// yani indexer onu gercek bir launch olarak listeler -- ve sonra her alim
+    /// sonsuza kadar revert eder, mint'in %100'u cikisi olmayan bir curve'de
+    /// kalir. Tam olarak kod kontrolunun ENGELLEMEK ICIN yazildigi durum, bir
+    /// adres sekli oteden.
+    ///
+    /// UC BASARISIZLIK SEKLI DE AYNI SELECTOR'U URETMELI -- `try/catch`in
+    /// varlik sebebi budur; onsuz (a) ve (b) CAGRILANIN revert verisini yukari
+    /// tasir ve hangi katmanin reddettigi kaybolurdu.
+    function test_constructorRejectsACodedButWrongTypeEscrow() public {
+        // MOCK'LAR ONCE DEPLOY EDILIR. Arguman icindeki bir `new`, `vm`in
+        // "sonraki cagri"sidir ve beklentiyi KENDISI tuketir -- ilk hali
+        // boyleydi ve test "revert etmedi" diye dusuyordu.
+        address noMember = address(new NotALedger());
+        address reverting = address(new RevertingLedger());
+        address lying = address(new LyingLedger());
+        address someToken = address(new LaunchToken("Arc Coin", "ARC", "ipfs://cid", ALICE, address(this), bytes32(0)));
+
+        // (a) uye YOK (ve fallback de yok)
+        vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
+        new LaunchFactory(noMember, TREASURY, GOVERNOR, T, V, S);
+
+        // (b) uye REVERT ediyor
+        vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
+        new LaunchFactory(reverting, TREASURY, GOVERNOR, T, V, S);
+
+        // (c) YAPISAL OLARAK IMKANSIZ cevap
+        vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
+        new LaunchFactory(lying, TREASURY, GOVERNOR, T, V, S);
+
+        // ...ve gercekci operator hatasinin kendisi: baska bir arcpad
+        // kontratini yapistirmak.
+        vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
+        new LaunchFactory(someToken, TREASURY, GOVERNOR, T, V, S);
+    }
+
+    /// YOKLAMA FAZLA KISITLAMIYOR -- iki kabul tanigi.
+    ///
+    /// (1) ZATEN KULLANIMDA olan bir escrow gecer. Bu, `totalOwed() == 0`
+    ///     seklinde bir yoklamanin NEDEN yanlis olacagini sabitler: her deger
+    ///     mesrudur, dolayisiyla onceden bilinen bir cevap degildir.
+    ///     `owed[address(0)]` ise `deposit`'in `ZeroRecipient()` korumasi
+    ///     yuzunden HER ZAMAN sifirdir.
+    /// (2) VEKIL arkasindaki mesru bir escrow gecer -- yoklama davranisi olcer,
+    ///     kod hash'i ya da kod uzunlugu degil.
+    function test_theLedgerProbeAcceptsAUsedEscrowAndAProxiedOne() public {
+        // (1) escrow'a gercek bir alacak yaz.
+        escrow.deposit{value: 1 ether}(ALICE);
+        assertGt(escrow.totalOwed(), 0, "on kosul: escrow KULLANIMDA olmali");
+        assertGt(escrow.owed(ALICE), 0);
+        assertEq(escrow.owed(address(0)), 0, "sifir alici anahtari yazilamaz");
+
+        LaunchFactory used = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S);
+        assertEq(used.escrow(), address(escrow));
+
+        // (2) vekil.
+        EscrowProxy proxy = new EscrowProxy(address(new FeeEscrow()));
+        LaunchFactory proxied = new LaunchFactory(address(proxy), TREASURY, GOVERNOR, T, V, S);
+        assertEq(proxied.escrow(), address(proxy));
+
+        // ...ve vekilli factory gercekten ticaret yapar: yoklama kozmetik
+        // degil, calisan bir escrow'u kabul ettigi olculuyor.
+        vm.prank(ALICE);
+        (, address curve) = proxied.launch("Arc Coin", "ARC", "ipfs://cid");
+        vm.prank(BUYER);
+        BondingCurve(curve).buyExactQuoteIn{value: 1e18}(0);
+        assertGt(FeeEscrow(address(proxy)).owed(TREASURY), 0, "vekilli escrow ucreti yazmadi");
+    }
+
+    /// YOKLANAN ANAHTARIN OZELLIGI, TEK BIR ADRESLE DEGIL FUZZ ILE.
+    ///
+    /// Iddia sudur: escrow'un KIME alacak yazdigi, factory'nin onu kabul
+    /// etmesini DEGISTIRMEMELIDIR. Bu, `owed(address(0))` disinda herhangi bir
+    /// anahtari yoklayan her hali eler -- `owed(address(1))`, `owed(TREASURY)`,
+    /// `owed(msg.sender)`... -- cunku o anahtarlarin hepsi mesru olarak
+    /// yazilabilir ve yazildiklarinda saglikli bir escrow REDDEDILIRDI.
+    /// `address(0)` tek istisnadir ve istisna olmasi `deposit`'in
+    /// `ZeroRecipient()` korumasindan gelir; asagidaki ikinci iddia o sebebi
+    /// dogrudan pinler.
+    ///
+    /// AILENIN DETERMINISTIK YARISI. Asagidaki fuzz iddiasi DOGRU ama YETMEZ ve
+    /// bu OLCULDU: `owed(address(1))` yoklayan mutant (P4) 256 kosuluk fuzz'i
+    /// SAG GECTI, cunku fuzzer'in 2^160 adres icinden tam olarak `address(1)`i
+    /// secmesi gerekiyordu. Rastgeleligin kapatmadigi yeri isimlendirilmis bir
+    /// kume kapatir: bir yoklamanin makul olarak secebilecegi HER anahtara
+    /// alacak yazilir ve escrow yine de KABUL EDILMELIDIR.
+    ///
+    /// Bu, "bir mutanti kovalamak" degil AILEYI adlandirmaktir: listedeki her
+    /// adres, birinin `owed(address(0))` yerine yazmayi dusunebilecegi bir
+    /// anahtardir.
+    function test_theLedgerProbeIgnoresCreditAtEveryPlausibleProbeKey() public {
+        address[9] memory keys =
+            [address(1), address(2), address(0xdead), TREASURY, GOVERNOR, ALICE, BOB, address(escrow), address(this)];
+
+        vm.deal(address(this), 100 ether);
+        for (uint256 i = 0; i < keys.length; i++) {
+            escrow.deposit{value: 1 ether}(keys[i]);
+            assertGt(escrow.owed(keys[i]), 0, "on kosul: her anahtara alacak yazilmali");
+        }
+
+        LaunchFactory f = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S);
+        assertEq(f.escrow(), address(escrow), "escrow makul bir anahtarda alacagi oldugu icin reddedildi");
+
+        // ...ve YAZILAMAYAN tek anahtar hala sifir. Yoklamanin dayandigi sey
+        // budur ve listedeki hicbir adres bu ozelligi tasimaz.
+        assertEq(escrow.owed(address(0)), 0, "yazilamayan tek anahtar");
+    }
+
+    /// Tek bir adresle yazilmis hali yalnizca o adresi yoklayan mutanti
+    /// oldururdu; ozellik olarak yazilmis hali AILEYI oldurur.
+    function testFuzz_theLedgerProbeIgnoresWhichRecipientsHaveCredit(address recipient, uint96 amount) public {
+        vm.assume(recipient != address(0));
+        amount = uint96(bound(amount, 1, 1_000e18));
+        // `vm.deal` bakiyeyi ATAR, eklemez -- ikinci `deposit` icin de yer
+        // birakilmali, aksi halde o cagri OutOfFunds ile duser ve
+        // `vm.expectRevert` sahte bir hata verir (olculdu).
+        vm.deal(address(this), uint256(amount) + 1 ether);
+        escrow.deposit{value: amount}(recipient);
+        assertGt(escrow.owed(recipient), 0, "on kosul: alacak yazilmali");
+
+        LaunchFactory f = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S);
+        assertEq(f.escrow(), address(escrow), "escrow bir aliciya alacak yazdigi icin reddedildi");
+
+        // VE SEBEBIN KENDISI: sifir alici anahtari YAZILAMAZ, dolayisiyla
+        // `owed[address(0)]` her zaman sifirdir. Yoklamanin dayandigi degismez
+        // budur ve varsayim degil, escrow'un kendi korumasinin sonucudur.
+        vm.expectRevert(FeeEscrow.ZeroRecipient.selector);
+        escrow.deposit{value: 1}(address(0));
+        assertEq(escrow.owed(address(0)), 0);
+    }
+
+    /// ACIK HUCRE, CALISTIRILABILIR HALDE. Dolgun bir fallback ile 32 bayt
+    /// sifir donduren bir kontrat yoklamayi GECER. Kapatmak icin kod hash'i ya
+    /// da ERC-165 gerekirdi ve ikisi de vekilleri/yukseltmeleri disarida
+    /// birakirdi. Bu test o siniri OLCUYOR; kapali olmayan bir hucreyi kapali
+    /// gostermemek icin buradadir.
+    function test_theLedgerProbeDoesNotSeeAPermissiveFallback() public {
+        PermissiveFallback wrong = new PermissiveFallback();
+        LaunchFactory accepted = new LaunchFactory(address(wrong), TREASURY, GOVERNOR, T, V, S);
+        assertEq(accepted.escrow(), address(wrong), "acik hucre kapandiysa bu testi guncelle");
+
+        // VE KACIRILANIN SONUCU OLCULUYOR. Bu sekil FAIL-CLOSED DEGILDIR:
+        // ticaret CALISIR, ucret "escrow"a girer ve SESSIZCE KAYBOLUR --
+        // fallback her cagriya sifir dondugu icin hicbir alacak yazilmaz ve
+        // `claim` yolu yoktur. Kodsuz/yanlis-tur escrow'da bedel BRICKLENMIS
+        // BIR CURVE'DIR (gorunur), burada KAYIP UCRETTIR (gorunmez). Ikisi
+        // arasindaki fark, bu hucreyi acik birakmanin gercek maliyetidir.
+        vm.prank(ALICE);
+        (, address curve) = accepted.launch("Arc Coin", "ARC", "ipfs://cid");
+        vm.prank(BUYER);
+        BondingCurve(curve).buyExactQuoteIn{value: 1e18}(0);
+        assertGt(address(wrong).balance, 0, "ucret sahte escrow'a girmedi");
+        assertEq(FeeEscrow(address(wrong)).owed(TREASURY), 0, "sahte defter alacak yazmiyor");
+    }
+
     /// SIRA TANIGI: `address(0)` hem sifir hem kodsuzdur. Sifir kontrolu ONCE
     /// gelir ve bu sabittir.
     function test_aZeroEscrowIsReportedAsZeroNotAsCodeless() public {
         vm.expectRevert(LaunchFactory.ZeroEscrowAddress.selector);
-        new LaunchFactory(address(0), TREASURY, T, V, S);
+        new LaunchFactory(address(0), TREASURY, GOVERNOR, T, V, S);
         assertEq(address(0).code.length, 0, "address(0) violates BOTH escrow guards");
     }
 
-    /// AYNA: `protocolTreasury` icin BOYLE BIR KONTROL YOKTUR ve olmamalidir.
+    /// AYNA: `protocolTreasury` icin bir KOD KONTROLU yoktur ve olmamalidir.
     /// Escrow'daki alacak pull-based oldugu icin EOA bir treasury ile ticaret
-    /// sorunsuz calisir; risk tam olarak TEK bir argumandadir. Bu test o
-    /// asimetriyi sabitler -- treasury'ye de bir kod kontrolu eklenirse
-    /// burada kirilir.
+    /// sorunsuz calisir. Bu test o asimetriyi sabitler -- treasury'ye bir kod
+    /// kontrolu eklenirse burada kirilir (mutant M51, `setUp()`te olur).
+    ///
+    /// DUZELTME (F1): eski hali "risk tam olarak TEK bir argumandadir" diyordu
+    /// ve bunu CALISTIRILABILIR BIR YASAK olarak sabitliyordu. O genelleme
+    /// YANLISTI ve olculdu: risk IKI argumandadir, ve ikincisinin kotu degeri
+    /// birincisinin IYI degeridir (`protocolTreasury == escrow`). Bu test artik
+    /// dar olani sabitler -- "kod kontrolu YOK" -- ve genis olani
+    /// (`hicbir treasury kontrolu yok`) DEGIL; esitsizlik korumasinin kendi
+    /// testi `test_constructorRejectsTheEscrowAsTheTreasury`tir.
+    ///
+    /// M51 hakkinda: kod kontrolu mutanti HALA `setUp()`te olur, cunku
+    /// TREASURY bir EOA'dir. Degisen sey mutantin ne kanitladigi: artik
+    /// "treasury'de hicbir koruma olmamali" degil, "treasury'de KOD KONTROLU
+    /// olmamali" demektir. Bir Safe treasury `receive()`i olan bir kontrattir
+    /// ve kabul edilmek zorundadir; asagidaki ikinci yari onu olcer.
     function test_anEoaTreasuryIsAcceptedAndTradesNormally() public {
         assertEq(TREASURY.code.length, 0, "the treasury fixture must be an EOA for this test to mean anything");
 
@@ -1196,5 +1453,480 @@ contract LaunchFactoryTest is Test {
         // treasury'ye gondermez. Kodsuz escrow'un aksine EOA treasury'nin
         // ticaret kirmamasinin SEBEBI tam olarak budur.
         assertEq(TREASURY.balance, 0, "the credit must be pull-based, not pushed to the treasury");
+
+        // IKINCI YARI: KOD SAHIBI bir treasury de kabul edilir. Bir Safe
+        // `receive()`i olan bir kontrattir; `code.length == 0` seklindeki bir
+        // koruma onu DISLARDI. Kabul edilen kume "EOA"lar degil,
+        // "escrow OLMAYAN, sifir OLMAYAN her adres"tir.
+        Seeder safeLike = new Seeder();
+        LaunchFactory f2 = new LaunchFactory(address(escrow), address(safeLike), GOVERNOR, T, V, S);
+        vm.prank(ALICE);
+        (, address curve2) = f2.launch("Arc Coin", "ARC", "ipfs://cid");
+        vm.prank(BUYER);
+        BondingCurve(curve2).buyExactQuoteIn{value: 1e18}(0);
+        assertGt(escrow.owed(address(safeLike)), 0, "kontrat treasury de calismali");
+    }
+
+    // ---------------------------------------------------------------
+    // F1 -- protokol ucret alicisi: koruma ve rotasyon
+    // ---------------------------------------------------------------
+
+    /// F1'IN KORUMASI. Iki adres argumani KOMSUDUR ve escrow'u ikisine birden
+    /// yapistirmak gercek bir operator hatasidir; eski tek koruma
+    /// (`!= address(0)`) onu gecirirdi.
+    ///
+    /// Korumasiz halin OLCULEN sonucu (Faz 1c final incelemesi, P4 probu):
+    /// factory kurulur, `launch` basarir, `isCanonical` true doner, HER islem
+    /// basarir -- ve tek bir 100 USDC'lik `buyExactQuoteIn`de
+    /// 938_271_604_938_271_605 wei kalici olarak talep edilemez hale gelir,
+    /// cunku `FeeEscrow`un `receive()`i yoktur ve `claim(escrow)`
+    /// `TransferFailed()` ile doner. Hicbir hacim siniri yoktur: 95 bps'in
+    /// tamami, sonsuza kadar.
+    ///
+    /// SIRA TANIGI da burada: `address(0)` hem sifirdir hem escrow DEGILDIR,
+    /// dolayisiyla sifir kontrolu ONCE gelir ve bu sabittir.
+    function test_constructorRejectsTheEscrowAsTheTreasury() public {
+        vm.expectRevert(LaunchFactory.TreasuryIsTheEscrow.selector);
+        new LaunchFactory(address(escrow), address(escrow), GOVERNOR, T, V, S);
+
+        vm.expectRevert(LaunchFactory.ZeroTreasuryAddress.selector);
+        new LaunchFactory(address(escrow), address(0), GOVERNOR, T, V, S);
+
+        // Ve escrow'un KENDISI disinda her sey gecer -- koruma dardir.
+        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S);
+        assertEq(ok.protocolTreasury(), TREASURY);
+    }
+
+    /// Ucuncu adres argumaninin ayni hucresi. `governor == escrow` GOVERNANCE'I
+    /// SONSUZA KADAR OLDURUR: escrow hicbir cagri yapamaz, dolayisiyla hicbir
+    /// hedef atanamaz (yani HICBIR curve mezun olamaz) ve treasury
+    /// dondurulemez. Deploy aninda bilinebilir, dolayisiyla burada elenir.
+    ///
+    /// `governor == protocolTreasury` ise KABUL EDILIR: ayni Safe pekala ikisi
+    /// birden olabilir.
+    function test_constructorRejectsTheEscrowAsGovernorButAcceptsTheTreasuryAsGovernor() public {
+        vm.expectRevert(LaunchFactory.GovernorIsTheEscrow.selector);
+        new LaunchFactory(address(escrow), TREASURY, address(escrow), T, V, S);
+
+        vm.expectRevert(LaunchFactory.ZeroGovernorAddress.selector);
+        new LaunchFactory(address(escrow), TREASURY, address(0), T, V, S);
+
+        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, TREASURY, T, V, S);
+        assertEq(ok.governor(), TREASURY);
+        assertEq(ok.protocolTreasury(), TREASURY);
+    }
+
+    /// F1'IN CEKIRDEGI, GERCEK FACTORY UZERINDEN: rotasyon CANLI bir curve'e
+    /// ULASIR.
+    ///
+    /// `BondingCurve.protocolTreasury` bir immutable KOPYA olsaydi bu test
+    /// yazilamazdi ve `FeeEscrow` kisit (4)'un Faz 1c'ye biraktigi borc
+    /// odenmemis kalirdi: Arc treasury'yi bloklarsa ticaret devam eder,
+    /// `owed[bloklu]` buyur, `claim` revert eder ve hicbir yol yeniden
+    /// yonlendirmez -- ne gelecek launch'lar icin, ne canli curve'ler icin.
+    ///
+    /// IKINCI YARI: BIRIKMIS ALACAK TASINMAZ. `owed[eski]` eski adresin talebi
+    /// olarak aynen durur; rotasyonun kapattigi sey KANAMANIN DEVAMIDIR,
+    /// gecmis degil (kisit (4) bunu zaten soyluyor).
+    function test_rotatingTheTreasuryRedirectsTheFeesOfEveryLiveCurve() public {
+        address newTreasury = address(0xBEEF);
+
+        vm.prank(ALICE);
+        (, address curveA) = factory.launch("Arc Coin", "ARC", "ipfs://cid");
+        vm.prank(BOB);
+        (, address curveB) = factory.launch("Brc Coin", "BRC", "ipfs://cid2");
+
+        vm.prank(BUYER);
+        BondingCurve(curveA).buyExactQuoteIn{value: 10e18}(0);
+        uint256 owedOld = escrow.owed(TREASURY);
+        assertGt(owedOld, 0);
+
+        vm.expectEmit(true, true, false, false, address(factory));
+        emit LaunchFactory.ProtocolTreasuryChanged(TREASURY, newTreasury);
+        vm.prank(GOVERNOR);
+        factory.setProtocolTreasury(newTreasury);
+
+        // IKI CANLI CURVE DE yeni adresi gorur -- rotasyon "gelecek
+        // launch'lar" ile sinirli DEGILDIR.
+        assertEq(BondingCurve(curveA).protocolTreasury(), newTreasury, "canli curve A rotasyonu gormedi");
+        assertEq(BondingCurve(curveB).protocolTreasury(), newTreasury, "canli curve B rotasyonu gormedi");
+
+        vm.prank(BUYER);
+        BondingCurve(curveA).buyExactQuoteIn{value: 10e18}(0);
+        vm.prank(BUYER);
+        BondingCurve(curveB).buyExactQuoteIn{value: 10e18}(0);
+
+        assertGt(escrow.owed(newTreasury), 0, "yeni treasury'ye yazilmadi");
+        assertEq(escrow.owed(TREASURY), owedOld, "birikmis alacak tasindi");
+
+        // VE ESKI ADRES BIRIKMISI HALA CEKEBILIR.
+        escrow.claim(TREASURY);
+        assertEq(TREASURY.balance, owedOld);
+    }
+
+    /// Setter'in korumalari CONSTRUCTOR'INKININ AYNISIDIR. Bir setter
+    /// constructor'in korumalarini gevsetirse koruma yok demektir -- ve
+    /// `BondingCurve` bu degeri DOGRULAMAZ, yani sifir olmama garantisinin tek
+    /// yeri burasidir. Sifir bir treasury her islemi `FeeEscrow.ZeroRecipient`
+    /// ile kirardi.
+    function test_theTreasurySetterCarriesTheSameGuardsAsTheConstructor() public {
+        vm.prank(GOVERNOR);
+        vm.expectRevert(LaunchFactory.ZeroTreasuryAddress.selector);
+        factory.setProtocolTreasury(address(0));
+
+        vm.prank(GOVERNOR);
+        vm.expectRevert(LaunchFactory.TreasuryIsTheEscrow.selector);
+        factory.setProtocolTreasury(address(escrow));
+
+        assertEq(factory.protocolTreasury(), TREASURY, "basarisiz cagri degeri degistirdi");
+    }
+
+    /// ROTASYON `isCanonical`I VE `predictAddresses`I BOZMAZ -- ve bu bir
+    /// TUZAKTIR: `protocolTreasury` curve'un constructor argumanlari arasinda
+    /// KALSAYDI, initcode'un parcasi olurdu ve ilk rotasyondan sonra
+    /// `_curveAddress` her ONCEKI curve icin yanlis adres uretirdi;
+    /// `isCanonical` o launch'lar icin sessizce `false` donerdi -- indexer
+    /// gercek launch'lari sahte sayardi.
+    function test_isCanonicalAndPredictAddressesSurviveATreasuryRotation() public {
+        vm.prank(ALICE);
+        (address token, address curve) = factory.launch("Arc Coin", "ARC", "ipfs://cid");
+        assertTrue(factory.isCanonical(token));
+
+        (address predictedToken, address predictedCurve) =
+            factory.predictAddresses(BOB, "Brc Coin", "BRC", "ipfs://cid2", factory.launchCount());
+
+        vm.prank(GOVERNOR);
+        factory.setProtocolTreasury(address(0xBEEF));
+
+        assertTrue(factory.isCanonical(token), "rotasyon eski launch'i kanonik OLMAKTAN cikardi");
+
+        vm.prank(BOB);
+        (address token2, address curve2) = factory.launch("Brc Coin", "BRC", "ipfs://cid2");
+        assertEq(token2, predictedToken, "rotasyon onizlenen token adresini kaydirdi");
+        assertEq(curve2, predictedCurve, "rotasyon onizlenen curve adresini kaydirdi");
+        assertTrue(factory.isCanonical(token2));
+        assertEq(BondingCurve(curve).protocolTreasury(), BondingCurve(curve2).protocolTreasury());
+    }
+
+    // ---------------------------------------------------------------
+    // D3 -- graduation hedefi: iki fazli, uc gunluk, kamuya acik
+    // ---------------------------------------------------------------
+
+    /// Hedef ATANMADAN once her `graduate()` cagrisi `GraduationTargetUnset`
+    /// ile doner ve bu, Faz 2 var olmadigi surece herkesin gorecegi hatadir.
+    function test_theGraduationTargetStartsUnsetAndGraduationSaysSo() public {
+        assertEq(factory.graduationTarget(), address(0));
+        assertEq(factory.pendingGraduationTarget(), address(0));
+        assertEq(factory.pendingGraduationTargetEta(), 0);
+
+        vm.prank(ALICE);
+        (, address curve) = factory.launch("Arc Coin", "ARC", "ipfs://cid");
+        vm.prank(BUYER);
+        BondingCurve(curve).buyExactTokensOut{value: 20_000e18}(S, type(uint256).max);
+
+        vm.expectRevert(BondingCurve.GraduationTargetUnset.selector);
+        BondingCurve(curve).graduate();
+    }
+
+    /// YALNIZCA GOVERNOR. Iki setter de ayni kapiya baglidir; `apply` ise
+    /// IZINSIZDIR (asagida).
+    function test_onlyTheGovernorMayProposeATargetOrRotateTheTreasury() public {
+        vm.prank(ALICE);
+        vm.expectRevert(LaunchFactory.NotGovernor.selector);
+        factory.proposeGraduationTarget(address(0xF00D));
+
+        vm.prank(ALICE);
+        vm.expectRevert(LaunchFactory.NotGovernor.selector);
+        factory.setProtocolTreasury(address(0xF00D));
+
+        // Factory'nin KENDISI de degil, deploy eden de degil.
+        vm.expectRevert(LaunchFactory.NotGovernor.selector);
+        factory.proposeGraduationTarget(address(0xF00D));
+    }
+
+    function test_aZeroGraduationTargetCannotBeProposed() public {
+        vm.prank(GOVERNOR);
+        vm.expectRevert(LaunchFactory.ZeroGraduationTarget.selector);
+        factory.proposeGraduationTarget(address(0));
+    }
+
+    /// UC GUN, VE SINIRIN IKI TARAFI DA OLCULUR. `eta - 1` reddedilir, `eta`
+    /// tam kabul edilir.
+    ///
+    /// `apply` IZINSIZDIR ve bu bilinclidir: governor onerirken yetkisini
+    /// ZATEN kullanmistir, ikinci adim yalnizca surenin gectiginin
+    /// dogrulanmasidir -- yani hedefin inmesi governor'in ikinci bir islem
+    /// yapmasina BAGIMLI degildir.
+    function test_theTargetLandsOnlyAfterThreeDaysAndAnyoneMayApplyIt() public {
+        address target = address(0xF00D);
+
+        vm.expectRevert(LaunchFactory.NoPendingGraduationTarget.selector);
+        factory.applyGraduationTarget();
+
+        uint256 eta = block.timestamp + 3 days;
+        vm.expectEmit(true, false, false, true, address(factory));
+        emit LaunchFactory.GraduationTargetProposed(target, eta);
+        vm.prank(GOVERNOR);
+        factory.proposeGraduationTarget(target);
+
+        assertEq(factory.GRADUATION_TARGET_DELAY(), 3 days);
+        assertEq(factory.pendingGraduationTarget(), target);
+        assertEq(factory.pendingGraduationTargetEta(), eta);
+        assertEq(factory.graduationTarget(), address(0), "oneri hemen indi");
+
+        vm.warp(eta - 1);
+        vm.prank(ALICE);
+        vm.expectRevert(LaunchFactory.GraduationTargetDelayNotElapsed.selector);
+        factory.applyGraduationTarget();
+
+        vm.warp(eta);
+        vm.expectEmit(true, true, false, false, address(factory));
+        emit LaunchFactory.GraduationTargetChanged(address(0), target);
+        // IZINSIZ: cagiran ALICE, governor DEGIL.
+        vm.prank(ALICE);
+        factory.applyGraduationTarget();
+
+        assertEq(factory.graduationTarget(), target);
+        assertEq(factory.pendingGraduationTarget(), address(0), "bekleyen temizlenmedi");
+        assertEq(factory.pendingGraduationTargetEta(), 0, "eta temizlenmedi");
+
+        // Ve ikinci bir `apply` bekleyen olmadigi icin duser -- `eta == 0`
+        // bekleyen olmamanin TANIMIDIR ve sira bu yuzden onemlidir: sure
+        // kontrolu once gelseydi bos durumda "bekle" denirdi.
+        vm.expectRevert(LaunchFactory.NoPendingGraduationTarget.selector);
+        factory.applyGraduationTarget();
+    }
+
+    /// PENCERE UST SINIRI: `eta + GRADUATION_TARGET_DELAY` aninda HALA inebilir,
+    /// bir saniye sonrasinda INEMEZ.
+    ///
+    /// Alt sinirin iki tarafi yukaridaki testte yurunuyor; burada UST sinirin
+    /// iki tarafi yurunuyor. Ikisini ayri testlerde tutmak bilincli: pencerenin
+    /// bir ucunu silen bir mutasyon otekinin testini KIRMAMALI, yoksa hangi
+    /// ucun korundugu olculemez.
+    function test_theProposalCanStillLandOnTheLastSecondOfTheWindow() public {
+        vm.prank(GOVERNOR);
+        factory.proposeGraduationTarget(address(0xF00D));
+        uint256 deadline = factory.pendingGraduationTargetEta() + factory.GRADUATION_TARGET_DELAY();
+
+        vm.warp(deadline);
+        vm.prank(ALICE);
+        factory.applyGraduationTarget();
+
+        assertEq(factory.graduationTarget(), address(0xF00D));
+        assertEq(factory.pendingGraduationTargetEta(), 0);
+    }
+
+    function test_theProposalExpiresOneSecondLater() public {
+        vm.prank(GOVERNOR);
+        factory.proposeGraduationTarget(address(0xF00D));
+        uint256 deadline = factory.pendingGraduationTargetEta() + factory.GRADUATION_TARGET_DELAY();
+
+        vm.warp(deadline + 1);
+        vm.expectRevert(LaunchFactory.GraduationTargetProposalExpired.selector);
+        factory.applyGraduationTarget();
+
+        assertEq(factory.graduationTarget(), address(0), "suresi gecmis oneri indi");
+
+        // SURESI GECMIS ONERI ATILDIR ama okunabilir kalir; temizleyen bir uye
+        // YOKTUR ve gerekmez -- inebilecegi tek fonksiyon artik reddediyor.
+        assertEq(factory.pendingGraduationTarget(), address(0xF00D));
+
+        // CARE: YENIDEN ONER. Sure bastan baslar ve pencere yeniden acilir.
+        vm.prank(GOVERNOR);
+        factory.proposeGraduationTarget(address(0xF00D));
+        vm.warp(factory.pendingGraduationTargetEta());
+        factory.applyGraduationTarget();
+        assertEq(factory.graduationTarget(), address(0xF00D));
+    }
+
+    /// F-A: UST SINIRIN VARLIK SEBEBI, UCTAN UCA.
+    ///
+    /// Ust sinirsiz halin olculen senaryosu: gun 0'da HENUZ TAMAMLANMIS HIC
+    /// CURVE YOKKEN bir hedef onerilir -- kimse itiraz etmez, cunku
+    /// bosaltilacak bir sey yoktur. Gun 3'te pencere acilir, kimse indirmez,
+    /// izleyenler onerinin dusuruldugunu sanir. Gun 368'de iki launch
+    /// tamamlanmistir ve TEK BIR ISLEM `apply` + iki `graduate()` yapar:
+    /// hirsizlik anindaki IHBAR SURESI SIFIRDIR.
+    ///
+    /// Gecikmenin tek yazili caresi "uc gun icinde tamamlanmis curve'leri
+    /// bosalt"tir ve o care, oneri aninda BOS olan kumeyi korur. Ust sinir tam
+    /// olarak bu ayrisimi kapatir: ihbar ile inme arasindaki mesafe ihbar
+    /// suresini asamaz.
+    function test_aProposalMadeBeforeAnyCurveCompletedCannotBeLandedAYearLater() public {
+        Seeder attacker = new Seeder();
+
+        // GUN 0: hicbir curve tamamlanmamis. Oneri yapilir.
+        vm.prank(GOVERNOR);
+        factory.proposeGraduationTarget(address(attacker));
+        uint256 deadline = factory.pendingGraduationTargetEta() + factory.GRADUATION_TARGET_DELAY();
+
+        // GUN 368: iki launch tamamlanmis durumda.
+        vm.warp(deadline + 365 days);
+        vm.prank(ALICE);
+        (, address curveA) = factory.launch("Arc Coin", "ARC", "ipfs://cid");
+        vm.prank(BOB);
+        (, address curveB) = factory.launch("Brc Coin", "BRC", "ipfs://cid2");
+        vm.prank(BUYER);
+        BondingCurve(curveA).buyExactTokensOut{value: 20_000e18}(S, type(uint256).max);
+        vm.prank(BUYER);
+        BondingCurve(curveB).buyExactTokensOut{value: 20_000e18}(S, type(uint256).max);
+        assertTrue(BondingCurve(curveA).complete() && BondingCurve(curveB).complete());
+
+        uint256 raiseAtRisk = BondingCurve(curveA).realQuoteReserves() + BondingCurve(curveB).realQuoteReserves();
+        assertGt(raiseAtRisk, 24_000e18, "senaryonun riske attigi tutar");
+
+        // TEK ISLEM: indir + iki curve'u mezun et. ILK ADIM DUSER.
+        vm.expectRevert(LaunchFactory.GraduationTargetProposalExpired.selector);
+        factory.applyGraduationTarget();
+
+        // ...ve hedef atanmadigi icin iki curve de hala mezun edilemez.
+        assertEq(factory.graduationTarget(), address(0));
+        vm.expectRevert(BondingCurve.GraduationTargetUnset.selector);
+        attacker.pull(BondingCurve(curveA));
+        vm.expectRevert(BondingCurve.GraduationTargetUnset.selector);
+        attacker.pull(BondingCurve(curveB));
+        assertEq(address(attacker).balance, 0, "saldirgan raise'i aldi");
+
+        // VE DOGRU YOL HALA CALISIYOR: yeniden oner, UC GUN BEKLE -- bu sefer
+        // ihbar suresi tamamlanmis curve'ler ZATEN VARKEN isliyor, yani
+        // gecikmenin caresi (bosaltma) fiilen uygulanabilir durumda.
+        vm.prank(GOVERNOR);
+        factory.proposeGraduationTarget(address(attacker));
+        vm.warp(factory.pendingGraduationTargetEta());
+        factory.applyGraduationTarget();
+        attacker.pull(BondingCurve(curveA));
+        assertGt(address(attacker).balance, 0);
+    }
+
+    /// ONERININ UZERINE YAZMAK MUMKUNDUR VE SURE BASTAN BASLAR. Ayri bir
+    /// "iptal" uyesi yoktur: yanlis bir oneriyi geri almak dogrusunu yeniden
+    /// onermektir.
+    function test_proposingAgainReplacesThePendingTargetAndRestartsTheClock() public {
+        vm.prank(GOVERNOR);
+        factory.proposeGraduationTarget(address(0xBAD));
+        uint256 firstEta = factory.pendingGraduationTargetEta();
+
+        vm.warp(block.timestamp + 2 days);
+        vm.prank(GOVERNOR);
+        factory.proposeGraduationTarget(address(0xF00D));
+
+        assertEq(factory.pendingGraduationTarget(), address(0xF00D));
+        // `firstEta + 2 gun`, `block.timestamp + 3 gun` DEGIL: ikinci sekil
+        // TIMESTAMP'in ortak-alt-ifade elenmesine acik ve testi kendi
+        // kurgusundan bagimsiz olarak yaniltabilir (bkz. asagidaki testin
+        // notu). Buradaki iki deger de FACTORY'DEN okunur.
+        assertEq(factory.pendingGraduationTargetEta(), firstEta + 2 days, "saat bastan baslamadi");
+        assertGt(factory.pendingGraduationTargetEta(), firstEta, "saat bastan baslamadi");
+
+        // Ilk onerinin ORIJINAL suresi gelse bile inecek olan ikincidir --
+        // ve o da henuz hazir degildir.
+        vm.warp(firstEta);
+        vm.expectRevert(LaunchFactory.GraduationTargetDelayNotElapsed.selector);
+        factory.applyGraduationTarget();
+
+        vm.warp(factory.pendingGraduationTargetEta());
+        factory.applyGraduationTarget();
+        assertEq(factory.graduationTarget(), address(0xF00D));
+    }
+
+    /// R-11. DEPLOY EDILMIS CIFT CALISIYOR: gercek factory, gercek curve,
+    /// gercek hedef, ve arada 3 gunluk timelock.
+    ///
+    /// Bu testin olctugu sey ne factory'nin ne curve'un tek basina
+    /// olcemedigi seydir: curve'un bytecode'undaki `0xa4b20f13` STATICCALL'u,
+    /// factory'nin AYNI ADLA ve AYNI MUTABILITE ile sundugu uyeye dusuyor mu.
+    /// Bir invariant harness'inda hedef bir mock'tur ve orada kanitlanan sey
+    /// gercek `LaunchFactory` hakkinda HICBIR SEY soylemez -- bu depoda on kez
+    /// olusmus "bir giris noktasinda kapatilan ozellik hepsinde kapatilmis
+    /// gorunur" hatasinin bir katman yukarisi.
+    function test_theDeployedPairGraduatesEndToEnd() public {
+        Seeder seeder = new Seeder();
+
+        vm.prank(ALICE);
+        (address token, address curveAddr) = factory.launch("Arc Coin", "ARC", "ipfs://cid");
+        BondingCurve curve = BondingCurve(curveAddr);
+
+        vm.prank(BUYER);
+        curve.buyExactTokensOut{value: 20_000e18}(S, type(uint256).max);
+        assertTrue(curve.complete());
+
+        // HEDEF INMEDEN once cagri `GraduationTargetUnset` ile doner...
+        vm.expectRevert(BondingCurve.GraduationTargetUnset.selector);
+        seeder.pull(curve);
+
+        vm.prank(GOVERNOR);
+        factory.proposeGraduationTarget(address(seeder));
+
+        // ...ve ONERI YETMEZ, INMESI gerekir.
+        vm.expectRevert(BondingCurve.GraduationTargetUnset.selector);
+        seeder.pull(curve);
+
+        vm.warp(factory.pendingGraduationTargetEta());
+        factory.applyGraduationTarget();
+
+        uint256 r = curve.realQuoteReserves();
+        uint256 d = curve.poolSeedSupply();
+        (uint256 base, uint256 quote) = seeder.pull(curve);
+
+        assertEq(base, d);
+        assertEq(quote, r);
+        assertEq(LaunchToken(token).balanceOf(address(seeder)), d);
+        assertEq(address(seeder).balance, r);
+        assertTrue(curve.graduated());
+        assertTrue(factory.isCanonical(token), "mezun bir launch kanonik kalmali");
+    }
+
+    /// D3'UN VAROLMA SEBEBI: BOZUK BIR HEDEFTEN TEK CIKIS. Hedef odemeyi
+    /// alamiyorsa graduation revert eder ve curve mezun OLMAZ; care hedefi
+    /// yeniden isaretlemektir -- ve o da uc gun surer.
+    ///
+    /// Arc'ta bugun Uniswap V4 HICBIR YERDE yoktur (dort kanonik `PoolManager`
+    /// adresi de 5042002 zincirinde kodsuzdur), yani ilk hedef kendi deploy
+    /// ettigimiz bir sey olacak ve mainnet'ten once en az bir kez
+    /// degistirilecektir. Tek seferlik bir latch riskli degil, gelistirme
+    /// yoluyla BAGDASMAZ olurdu.
+    function test_abrokenTargetIsRecoverableOnlyBecauseTheTargetCanBeRepointed() public {
+        NoReceiveTarget broken = new NoReceiveTarget();
+        Seeder good = new Seeder();
+
+        vm.prank(ALICE);
+        (, address curveAddr) = factory.launch("Arc Coin", "ARC", "ipfs://cid");
+        BondingCurve curve = BondingCurve(curveAddr);
+        vm.prank(BUYER);
+        curve.buyExactTokensOut{value: 20_000e18}(S, type(uint256).max);
+
+        vm.prank(GOVERNOR);
+        factory.proposeGraduationTarget(address(broken));
+        // SURE FACTORY'DEN OKUNUR, `block.timestamp + 3 days` DIYE
+        // HESAPLANMAZ. Olculdu: `via_ir` + optimizer altinda solc ayni cagri
+        // cercevesindeki TIMESTAMP okumalarini ORTAK ALT IFADE olarak eler --
+        // gercek zincirde dogru, `vm.warp` altinda YANLIS. Ikinci bir
+        // `vm.warp(block.timestamp + 3 days)` bu yuzden ILK degeri yeniden
+        // kullaniyordu ve testi sahte bir sebeple kirmizi yapiyordu.
+        vm.warp(factory.pendingGraduationTargetEta());
+        factory.applyGraduationTarget();
+
+        vm.expectRevert(BondingCurve.GraduationPayoutFailed.selector);
+        broken.pull(curve);
+        assertFalse(curve.graduated(), "bozuk hedef bayragi latch etti");
+
+        vm.prank(GOVERNOR);
+        factory.proposeGraduationTarget(address(good));
+        vm.warp(factory.pendingGraduationTargetEta());
+        factory.applyGraduationTarget();
+
+        (uint256 base, uint256 quote) = good.pull(curve);
+        assertEq(base, curve.poolSeedSupply());
+        assertEq(quote, curve.realQuoteReserves());
+        assertTrue(curve.graduated());
+    }
+}
+
+/// `receive()` OLMAYAN hedef: odemenin native bacagi cagrilacak bir fonksiyon
+/// bulamaz ve butun islem geri alinir.
+contract NoReceiveTarget {
+    function pull(BondingCurve curve) external returns (uint256, uint256) {
+        return curve.graduate();
     }
 }
