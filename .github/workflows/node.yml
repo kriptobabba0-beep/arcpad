@@ -24,6 +24,24 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+
+    # `@arcpad/db` testleri GERCEK bir Postgres ister ve veritabani yoksa
+    # ATLAMAZ, COKER (packages/db/test/setup.ts). Bu servis olmadan `pnpm -r
+    # test` adimi kirmizi olur -- bilerek: Faz 0'in devir listesi (satir 41-42)
+    # "hicbir CI is akisi henuz calismadi, kapilarin degeri sifir" diye
+    # kaydetti; atlayan bir veritabani testi ayni siniftir.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: arcpad
+          POSTGRES_PASSWORD: arcpad
+          POSTGRES_DB: arcpad
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+
     steps:
       - uses: actions/checkout@v4
 
@@ -48,6 +66,8 @@ jobs:
 
       - name: Test
         run: pnpm -r test
+        env:
+          DATABASE_URL: postgres://arcpad:arcpad@localhost:5432/arcpad
 
       - name: Build web
         run: pnpm --filter @arcpad/web build
