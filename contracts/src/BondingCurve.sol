@@ -808,9 +808,19 @@ contract BondingCurve {
     ///      hedef onarildiktan sonra ayni cagri BASARIR ve ayni `(D, R)`yi
     ///      dondurur. Yani ATOMIKLIK YENIDEN DENENEBILIRLIGI SAGLAR ve CEI
     ///      reentrancy guvenligini BEDAVA verir. Bayragi cagrilarin ARKASINA
-    ///      almak (pump.fun'in Solana sirasi) hedefin `receive()`inden yapilan
-    ///      geri girisin BASARMASINA ve hedefin `2D`/`2R` almasina yol acar;
-    ///      testler revert'i degil MIKTARLARI iddia eder.
+    ///      almak (pump.fun'in Solana sirasi) geri girisin `NotComplete` ve
+    ///      `AlreadyGraduated` korumalarini ASMASINA yol acar.
+    ///      DUZELTME (reentrancy fuzzing kampanyasi, olculdu): koruma bypass'i
+    ///      GERCEK ama `2D`/`2R` DEGIL. Geri giren cerceve TABAN BACAGINDA
+    ///      olur -- OZ `ERC20InsufficientBalance` (`0xe450d38c`) -- cunku
+    ///      curve'de kalan artik `N-S-D ~ 1.5e21`, ikinci bir `D ~ 2.07e26`nin
+    ///      bes kat buyukluk altinda, ve taban bacagi quote bacagindan ONCE
+    ///      siralanir. Obur taraftan da dogrulandi: bu mutasyon altinda
+    ///      `nativeIsConserved` ve `everyCurveCoversItsOwnLedger` GECTI.
+    ///      Asil sonuc miktar degil GORUNURLUK: graduation ortasindaki bir
+    ///      curve, kontrolu verdigi her koda karsi GOZLEMLENEBILIR SEKILDE
+    ///      ODEME GUCSUZ olur. Testler bu yuzden hem revert'i hem miktarlari
+    ///      degil, ARA DURUMU iddia eder.
     ///
     /// @dev UC TICARET GIRIS NOKTASI `graduated` KONTROLU ICERMEZ ve icermemeli.
     ///      Cikarim zinciri: `graduated => complete` (1. koruma),
