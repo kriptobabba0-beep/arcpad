@@ -222,9 +222,18 @@ abstract contract BondingCurveInvariantsBase is Test {
     ///      yapisal olmaktan cikarir; burada fuzz invariant'i olarak YENIDEN
     ///      KURULUR. Iki kapatici giris noktasi iki yolu da yurur: tam-cikisla
     ///      kalanin tamami, ve rezervi asan butceyle kisma.
+    /// @dev UCUNCU SATIR GHOST'SUZDUR VE ESDEGERLIGIN EKSIK YONUNU KAPATIR.
+    ///      Ilk iki satir yalnizca tamamlanmanin GERCEKLESTIGI islemi olcer;
+    ///      tamamlanma esigini gevsetip `realTokenReserves == 0` yerine
+    ///      `<= 1e18` yazan bir mutant, o esigi fuzzer'in tam olarak o araliga
+    ///      dusmesini gerektirdigi icin ghost sayacini hic tetiklemeyebilir.
+    ///      Bu satir durumun kendisini okur: `complete` ise rezerv SIFIR
+    ///      olmalidir. `invariant_completeIsNeverUnset`teki ters yonle birlikte
+    ///      (`rezerv == 0` ise `complete`) TAM ESDEGERLIK elde edilir.
     function invariant_exactOutCompletionLeavesNoDust() public view {
         assertEq(handler.completionLeftDust(), 0);
         assertEq(handler.completionLeftWrongVirtualReserves(), 0);
+        assertTrue(!curve.complete() || curve.realTokenReserves() == 0, "complete ama rezerv sifir degil");
     }
 
     // ---------------------------------------------------------------
@@ -267,12 +276,76 @@ abstract contract BondingCurveInvariantsBase is Test {
     ///      (bkz. CurveMathInvariants.t.sol tautoloji notu). Quote tarafi
     ///      curve'un NATIVE BAKIYESINDEN, token tarafi AKTORUN ERC-20
     ///      bakiyesinden okunur.
+    ///
+    /// @dev DUZELTME (inceleme): bu gerekce ILK IKI SATIR icin gecerlidir,
+    ///      `curveInMismatch` icin DEGIL. O sayacin olctugu delta
+    ///      `virtualQuoteReserves()` farkidir, yani DEFTERDEN okunur.
+    ///      Tautoloji olmamasinin sebebi kaynagin disarida olmasi degil,
+    ///      KARSILASTIRILAN SEYIN farkli olmasidir: beklenen deger cagridan
+    ///      ONCE, giris noktasinin algoritmasi handler'da yeniden yurutulerek
+    ///      hesaplanir (`_expectedForQuoteIn` / `_expectedForExactOut`), sonra
+    ///      defterin fiilen ne kadar kaydigina bakilir. Yani iddia "defter
+    ///      kendisiyle tutarli" degil, "defter kaydi kontratin izlemesi gereken
+    ///      algoritmanin verdigi sayi kadar" demektir. `CurveMath`in KENDISI
+    ///      mutasyona ugrarsa iki taraf birlikte kayar ve bu sayac gormez --
+    ///      o katman `CurveMath*.t.sol` tarafindan korunur (bkz. handler bas
+    ///      notu).
     function invariant_ghostFlowsMatchTheLedger() public view {
         assertEq(curve.realQuoteReserves(), handler.ghostQuoteIn() - handler.ghostQuoteOut());
         assertEq(curve.realTokenReserves(), S + handler.ghostTokensIn() - handler.ghostTokensOut());
         assertEq(handler.curveInMismatch(), 0, "curveIn");
         assertEq(handler.tokensMovedMismatch(), 0, "tokensMoved");
     }
+
+    // ---------------------------------------------------------------
+    // KAPSAM TABANLARI -- her KOSUNUN sonunda, konfigurasyona gore
+    // ---------------------------------------------------------------
+
+    /// @notice Foundry bunu her invariant KOSUSUNUN sonunda cagirir. Buradaki
+    ///         iddialar guvenlik degil KAPSAM iddialaridir.
+    ///
+    /// @dev NICIN GEREKLI. Yukaridaki dokuz invariant'in bir kismi ancak belirli
+    ///      hucreler yurunduyse ANLAMLIDIR:
+    ///      `feesAlwaysSummedFromPartsNeverDividedFromTotal` yalnizca ucreti
+    ///      fiilen olculmus bir islem varsa, `noTradeEverSucceedsAfterCompletion`
+    ///      yalnizca tamamlanma sonrasi bir deneme yapildiysa bir sey soyler.
+    ///      Sayaclar bastan beri tutuluyordu ama HICBIR IDDIA ONLARI OKUMUYORDU
+    ///      -- yani bir kosu sessizce bos gecebilirdi. Olculdu: ornek
+    ///      kosularda `sellsMeasuredForFees` = 0 (kapaticili iki konfigurasyon),
+    ///      `callsWhileComplete` = 0 (kapaticisiz konfigurasyon),
+    ///      `clampsObserved` = 0 (uc konfigurasyonun her birinde en az bir
+    ///      kosuda). Bu, bu dosyanin kendi "bir giris noktasinda kapatilan
+    ///      ozellik hepsinde kapatilmis gorunur" desenidir, KAPSAM SAYACI
+    ///      mekanizmasinin kendisine uygulanmis hali.
+    ///
+    /// @dev TABANLAR YAPISAL OLARAK GARANTI OLANLARLA SINIRLI, VE HANGILERININ
+    ///      GARANTI OLDUGU TAHMIN EDILMEDI, OLCULDU. Ilk denemede buraya
+    ///      `sellsMeasuredForFees > 0` da konmustu ve `--fuzz-seed 1` altinda
+    ///      256 kosunun en az birinde DUSTU (`0 <= 0`); iki kapaticili
+    ///      konfigurasyonda ise curve dizinin ilk cagrilarinda tamamlandigi icin
+    ///      satis olcumu SIK SIK hic olmuyor (ornek kosularda sellsFee = 0).
+    ///      Yani "her kosuda en az bir satisin ucreti olculur" YANLIS bir
+    ///      iddiadir ve buraya konmasi paketi gudumlu-kirilgan yapardi.
+    ///      Rastgele dizide garanti OLMAYAN her sey burada DEGIL,
+    ///      deterministik `test_` fonksiyonlarinda iddia ediliyor:
+    ///      satis/alim ucret olcumu ve iki tamamlanma yolu
+    ///      `test_completionFromManyStatesLeavesNoDustOnEitherPath` icinde,
+    ///      reentrancy penceresi `test_theCodedActorActuallyReentersTheCurve`
+    ///      icinde.
+    ///
+    /// @dev Buradaki iki aktor tabani en saglam olanlar: `tradesBy*Actor`
+    ///      sayaclari her DENEMEDE artar -- basarisiz cagrilarda ve tamamlanma
+    ///      sonrasi denemelerde de -- dolayisiyla 64 cagrilik bir dizide
+    ///      sifir kalmalari icin fuzzer'in tek bir aktor sinifina hic
+    ///      dusmemesi gerekir.
+    function afterInvariant() public view {
+        assertGt(handler.tradesByCodelessActor(), 0, "kodsuz aktor hic islem denemedi");
+        assertGt(handler.tradesByCodedActor(), 0, "kodlu aktor hic islem denemedi");
+        _afterInvariantForThisProfile();
+    }
+
+    /// @dev Konfigurasyona ozgu taban; alt sinif doldurur.
+    function _afterInvariantForThisProfile() internal view virtual;
 
     // ---------------------------------------------------------------
     // HUCRE YURUYUSU -- fuzz'in yurudugunu VARSAYMAK yerine OLCMEK
@@ -306,6 +379,16 @@ abstract contract BondingCurveInvariantsBase is Test {
             } else {
                 handler.buyOverBudgetQuoteIn(k);
                 assertGt(handler.clampsObserved(), 0, "kisma yolu yurunmedi");
+            }
+
+            // UCRET OLCUMUNUN FIILEN CALISTIGI BURADA IDDIA EDILIYOR, ve
+            // burada cunku rastgele dizide garanti DEGIL (bkz. afterInvariant
+            // notu). `_warmUp` k >= 3'te en az bir alim ve bir satis yurutur,
+            // dolayisiyla `feesAlwaysSummedFromPartsNeverDividedFromTotal`in
+            // BOS YERE yesil olmadigi deterministik olarak gosterilir.
+            if (k >= 3) {
+                assertGt(handler.buysMeasuredForFees(), 0, "hicbir alimda ucret olculmedi");
+                assertGt(handler.sellsMeasuredForFees(), 0, "hicbir satista ucret olculmedi");
             }
 
             assertTrue(curve.complete(), "tamamlanmadi");
@@ -347,13 +430,23 @@ abstract contract BondingCurveInvariantsBase is Test {
         _assertNoAvailabilityFailures();
     }
 
+    /// @dev ISINMA TURU KONTROLLU, IKINCI BIR RASTGELE DIZI DEGIL -- ve bu
+    ///      duzeltme OLCUMLE geldi. Ilk hali aktoru de `seed`den turetiyordu,
+    ///      dolayisiyla bir `sell` cagrisi cogu zaman BAKIYESI SIFIR bir aktore
+    ///      dusup sessizce erken donuyordu: `sellsMeasuredForFees` SIFIR
+    ///      kaliyordu ve asagidaki iddia dusuyordu (uc ayri fuzz-seed'de,
+    ///      `0 <= 0`). Simdi her turda AYNI aktorle once alim, sonra satis
+    ///      yapilir; bakiye tanim geregi sifir olamaz, `ProceedsTooSmall` on
+    ///      filtresi devreye girmez ve satis ucret olcumu GARANTIDIR.
+    /// @dev Miktarlar kucuk tutulur: yirmi turun toplami satis arzinin ~%7'sini
+    ///      gecmez, yani isinma turu curve'u tamamlayamaz (ustteki
+    ///      `assertFalse(curve.complete())` bunu ayrica dogrular).
     function _warmUp(uint256 k) internal {
         for (uint256 i = 0; i < k; i++) {
-            uint256 seed = uint256(keccak256(abi.encode(k, i, address(this))));
-            // Miktarlar kucuk tutulur: yirmi turun toplami bile satis arzinin
-            // onda birine varmaz, yani isinma turu curve'u tamamlayamaz.
-            if (i % 3 == 2) handler.sell(seed, (seed % (S / 512)) + 1);
-            else handler.buyExactTokensOut(seed, (seed % (S / 256)) + 1);
+            uint256 who = i % 4;
+            uint256 amount = (uint256(keccak256(abi.encode(k, i))) % (S / 256)) + 1e18;
+            handler.buyExactTokensOut(who, amount);
+            if (i % 3 == 2) handler.sell(who, amount / 2);
         }
     }
 
@@ -413,6 +506,22 @@ contract BondingCurveInvariantsTest is BondingCurveInvariantsBase {
     function _selectors() internal pure override returns (bytes4[] memory) {
         return _tradingSelectors();
     }
+
+    /// @dev BU KONFIGURASYONDA EK BIR TABAN YOK, ve sebebi tahmin degil OLCUM.
+    ///      Buraya once `buysMeasuredForFees > 0` konmustu; `--fuzz-seed 2` ve
+    ///      `3` altinda DUSTU. Mekanizma: `reentrantBuy` hedefi `tokensOut`u
+    ///      `_bound(amount, 1, realTokenReserves)` ile sinirlar ve fuzzer'in
+    ///      sozlugu `type(uint256).max`i sever, yani ILK cagri kalan rezervin
+    ///      TAMAMINI alip curve'u tamamlayabilir. O cagri kodlu aktoru
+    ///      SILAHLANDIRDIGI icin ucret olcumu atlanir (ic islem deltalari
+    ///      bozar), ve tamamlanmadan sonra HICBIR cagri olculmez -- dolayisiyla
+    ///      sayac butun kosu boyunca sifir kalir. Bu bir kusur degil, dizinin
+    ///      mesru bir sonucudur; iddia edilemez olan sey odur.
+    ///      Tamamlanma da garanti degildir (kapatici yok), o yuzden `completions`
+    ///      uzerine de taban konmaz. Ucret olcumunun fiilen calistigi
+    ///      `test_completionFromManyStatesLeavesNoDustOnEitherPath` icinde
+    ///      deterministik olarak iddia ediliyor.
+    function _afterInvariantForThisProfile() internal view override {}
 }
 
 /// @notice Uretim profili, creator DOLU, kapaticilar ACIK.
@@ -424,6 +533,19 @@ contract BondingCurveInvariantsTestCompletion is BondingCurveInvariantsBase {
 
     function _selectors() internal pure override returns (bytes4[] memory) {
         return _allSelectors();
+    }
+
+    /// @dev Yedi hedeften IKISI kapatici, dolayisiyla 64 cagrilik bir dizide
+    ///      tamamlanmanin gerceklesmemesi olasiligi (5/7)^64 ~ 2e-9'dur;
+    ///      taban gudumlu degil YAPISALDIR. `== 1` cunku tamamlanma geri
+    ///      alinamaz, ikinci kez olamaz.
+    /// @dev Yedi hedeften IKISI kapatici, dolayisiyla 64 cagrilik bir dizide
+    ///      tamamlanmanin gerceklesmemesi olasiligi (5/7)^64 ~ 2e-9'dur; taban
+    ///      gudumlu degil YAPISALDIR. `== 1` cunku tamamlanma geri alinamaz.
+    ///      `callsWhileComplete` uzerine taban KONMAZ: tamamlanma dizinin SON
+    ///      cagrisinda olursa sonrasinda deneme kalmaz.
+    function _afterInvariantForThisProfile() internal view override {
+        assertEq(handler.completions(), 1, "curve tamamlanmadi");
     }
 }
 
@@ -450,5 +572,14 @@ contract BondingCurveInvariantsTestZeroCreator is BondingCurveInvariantsBase {
 
     function _selectors() internal pure override returns (bytes4[] memory) {
         return _allSelectors();
+    }
+
+    /// @dev Yedi hedeften IKISI kapatici, dolayisiyla 64 cagrilik bir dizide
+    ///      tamamlanmanin gerceklesmemesi olasiligi (5/7)^64 ~ 2e-9'dur; taban
+    ///      gudumlu degil YAPISALDIR. `== 1` cunku tamamlanma geri alinamaz.
+    ///      `callsWhileComplete` uzerine taban KONMAZ: tamamlanma dizinin SON
+    ///      cagrisinda olursa sonrasinda deneme kalmaz.
+    function _afterInvariantForThisProfile() internal view override {
+        assertEq(handler.completions(), 1, "curve tamamlanmadi");
     }
 }

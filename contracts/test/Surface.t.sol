@@ -17,22 +17,61 @@ import {FeeEscrow} from "../src/FeeEscrow.sol";
 ///      listesi yalnizca "bekledigim seyler duruyor mu" diye sorar; butun mesele
 ///      EKLENMIS bir fonksiyonu gormektir, ve o soruyu ancak TAM ESITLIK sorar.
 ///
-/// @dev UC AYRI PIN, cunku tek basina hicbiri yetmiyor:
+/// @dev BU DOSYA "IMZA SAYAN" HALINDEN BIR TUR DAHA ILERI GOTURULDU, cunku ilk
+///      hali AYNI HATANIN BIR KATMAN ASAGISINI yapiyordu: `methodIdentifiers`
+///      anahtarlari imzayi tasir ama MUTABILITE'yi, DONUS TIPINI, hata
+///      ARITESINI ve olaylarin KIMLIGINI tasimaz. Olculdu: `claim(address)
+///      external` -> `external payable`, `sellExactTokensIn` -> `payable`,
+///      `claim` -> `returns (uint256)`, `Trade`in `indexed trader`ini indekssiz
+///      yapmak, `Deposited`i `FeeCredited` diye yeniden adlandirmak, `Claimed`e
+///      ucuncu bir parametre eklemek ve `TokenTransferFailed()` ->
+///      `TokenTransferFailed(address)` -- YEDISI DE paketin tamamini yesil
+///      birakiyordu.
 ///
-///      (1) FONKSIYON IMZALARI -- `methodIdentifiers` anahtarlari, iki yonlu tam
-///          esitlik. Eksik olan da hata, fazla olan da.
-///      (2) HATA ISIMLERI -- `.abi` uzerinde jsonpath filtresi, iki yonlu tam
-///          esitlik. Kutuphane katmani hatalari DAHIL; gerekce asagida.
-///      (3) GIRDI TURU SAYIMI -- `.abi` icindeki her girisin `type` alani
-///          sayilir. (1) ve (2)'nin GORMEDIGI seyi gorur: `receive()` ve
-///          `fallback()` bir selector TASIMAZ, dolayisiyla `methodIdentifiers`
-///          icinde HIC GORUNMEZLER. `FeeEscrow`'un kisit (1)'i tam olarak
-///          "receive()/fallback() YOKTUR" diye yazilmis bir ozelliktir ve (1)
-///          ile (2) onu ekleyen bir mutanti yesil birakirdi. Ayni sayim
-///          eklenen bir OLAYI ve eklenen bir constructor'i da yakalar.
+/// @dev BES AYRI PIN, cunku tek basina hicbiri yetmiyor:
 ///
-/// @dev CIKARMA MEKANIZMASI: `methodIdentifiers`. Iki aday da BU FOUNDRY
-///      SURUMUNDE (forge 1.6.0-rc1) denendi ve ikisi de calisti; secim
+///      (1) FONKSIYON IMZALARI -- `methodIdentifiers` anahtarlari, iki yonlu
+///          tam esitlik. Eksik olan da hata, fazla olan da.
+///      (2) FONKSIYON TANIMLAYICILARI -- `imza <mutabilite> -> (donus tipleri)`,
+///          iki yonlu. `payable` kazanan bir `claim`i, `returns` kazanan bir
+///          fonksiyonu ve durum degistiren bir fonksiyonun ayni imzali bir
+///          `public` mapping getter'iyla degistirilmesini (mutabilite `view`e
+///          duser) bu yakalar. Constructor'in kendi tanimlayicisi da buraya
+///          dahildir: `LaunchToken`in constructor ARGUMAN SIRASI
+///          `LaunchFactory.isCanonical`in CREATE2 turetmesinde tasiyicidir.
+///      (3) HATA TANIMLAYICILARI -- `Ad(girdi tipleri)`, iki yonlu. ARITE
+///          BURADA KAPANIR: `TokenTransferFailed()` -> `...(address)` gorunur.
+///      (4) OLAY TANIMLAYICILARI -- `Ad(tipler) indexed:(indeksli parametre
+///          ADLARI)`, iki yonlu. Olay adini, aritesini, tiplerini ve HANGI
+///          parametrenin indeksli oldugunu birlikte sabitler. Faz 3'un
+///          indexer'i topic duzenine baglidir: `indexed` kaldirmak her
+///          `getLogs` filtresini SESSIZCE bos dondurur.
+///      (5) GIRDI TURU SAYIMI -- `.abi` icindeki her girisin `type` alani
+///          sayilir. (1)-(4)'un GORMEDIGI seyi gorur: `receive()` ve
+///          `fallback()` bir selector TASIMAZ ve `methodIdentifiers` icinde HIC
+///          GORUNMEZ. `FeeEscrow`un kisit (1)'i tam olarak "receive()/fallback()
+///          YOKTUR" diye yazilmis bir ozelliktir.
+///
+/// @dev PINLENMEYENLER -- BU DOSYANIN KENDI ACIK HUCRELERI, raporda degil
+///      BURADA duruyorlar cunku okuyan kisi dosyanin ne vaat ettigini
+///      buradan okur:
+///        (a) INDEKSSIZ parametre ADLARI hicbir yerde pinlenmez (fonksiyon,
+///            hata ve olay girdileri). Tip ve sira pinlidir; yalnizca
+///            `uint256 tokenAmount` -> `uint256 amount` gorunmez. Indeksli olay
+///            parametrelerinin adlari pinlidir, cunku topic kimligini onlar
+///            tasir.
+///        (b) `anonymous` olaylar. ABI'de `"anonymous": true` alani vardir,
+///            okunmuyor. arcpad'de anonim olay yoktur.
+///        (c) FONKSIYON ADI ASIRI YUKLENMESI (overload) tanimlayici uretimini
+///            belirsiz kilardi. Varsayim degil, CALISTIRILABILIR ON KOSUL:
+///            asagidaki `_functionDescriptors` her ad icin TAM BIR
+///            `stateMutability` sonucu bekler ve overload'da o iddia duser.
+///        (d) NatSpec, doc-string ve gorunurluk-disi nitelikler (`virtual`,
+///            `override`) ABI'de yoktur ve pinlenemez.
+///
+/// @dev CIKARMA MEKANIZMASI: fonksiyon IMZALARI icin `methodIdentifiers`,
+///      geri kalan her sey icin `.abi` uzerinde jsonpath. Iki aday da BU
+///      FOUNDRY SURUMUNDE (forge 1.6.0-rc1) denendi ve ikisi de calisti; secim
 ///      calismasina degil, DONDURDUKLERI SEYE dayaniyor:
 ///
 ///        `vm.parseJsonKeys(j, ".methodIdentifiers")`
@@ -42,23 +81,25 @@ import {FeeEscrow} from "../src/FeeEscrow.sol";
 ///          -> ["bind", "buyExactQuoteIn", ...]                    (20 giris)
 ///
 ///      Ikinci yol yalnizca ISIM verir; parametre turleri `.inputs[*].type`
-///      altinda AYRI bir sorgudadir ve ikisini birlestirmek iki sorgunun
-///      indekslerinin ortustugu VARSAYIMINA dayanir -- yani "kimsenin
-///      yazmadigi bir sebeple gecen test". Ustelik isim-yalnizca bir kume
-///      `deposit(address)` -> `deposit(address,uint256)` degisikligini HIC
-///      GORMEZ; bu, Faz 1b'nin "isim sayma" hatasinin cikarma katmaninda
-///      yeniden uretilmis halidir. `methodIdentifiers` imzayi solc'un kendisi
-///      birlestirmis olarak verir ve ustelik selector'u da tasir -- yani
-///      yeniden ayristirma yoktur. Bu yuzden fonksiyonlarda (1) secildi.
+///      altinda AYRI bir sorgudadir ve ikisini DUZLESTIRILMIS halde
+///      birlestirmek iki sorgunun indekslerinin ortustugu VARSAYIMINA dayanir
+///      -- her fonksiyonun girdi SAYISI farkli oldugu icin o varsayim yanlistir
+///      ve gruplama geri kurtarilamaz. `methodIdentifiers` imzayi solc'un
+///      kendisi birlestirmis olarak verir. Bu yuzden imzalarda (1) secildi.
 ///
-///      Hatalar icin `methodIdentifiers` KULLANILAMAZ (yalnizca fonksiyon
-///      tasir), dolayisiyla (2) zorunlu olarak jsonpath filtresidir. Orada
-///      isim-yalnizca olmasi kabul edildi ve acik hucre olarak raporlandi:
-///      var olan bir hatanin ARITESINI degistiren bir mutant (`ZeroToken()` ->
-///      `ZeroToken(address)`) bu testte gorunmez.
+///      (2)-(4)'teki jsonpath sorgulari bu tuzagi ICERMEZ, cunku hepsi TEK BIR
+///      UYE uzerinde `name == 'X'` ile filtrelenir ve o uyenin kendi girdi
+///      dizisini okur. Duzlestirme yoktur; gruplama sorgunun kendisindedir.
+///
+/// @dev UC KODLAMA OLCULDU ve `_strings` ucunu de ele alir:
+///        eslesme YOK        -> `vm.parseJson` BOS bytes doner (revert ETMEZ)
+///        TEK eslesme        -> SKALER string olarak kodlanir (96 bayt)
+///        COK eslesme        -> `string[]`
+///      Once dizi denenir, olmazsa skaler. Ikisi de tutmazsa cagri revert eder
+///      ve test DUSER -- fail-closed.
 ///
 /// @dev KUTUPHANE KATMANI HATALARI YUZEYIN PARCASIDIR -- karar ve gerekcesi.
-///      `CurveMath`'in hatalari `BondingCurve`'un DECLARE ETTIGI kumede
+///      `CurveMath`in hatalari `BondingCurve`un DECLARE ETTIGI kumede
 ///      degildir ama derlenen ABI'sinde vardir ve disari propagate olur.
 ///      Karar: YUZEYIN PARCASIDIR, digerleriyle ayni sekilde iki yonlu
 ///      pinlenir. Uc gerekce:
@@ -85,45 +126,132 @@ import {FeeEscrow} from "../src/FeeEscrow.sol";
 ///      fonksiyonu `public`/`external`e cevirmek kutuphaneyi cagiran her
 ///      kontratin DELEGATECALL ile baglanmasi gereken, deploy zamaninda ayri
 ///      bir adres isteyen bir sey haline getirir -- ve bu, hicbir davranis
-///      testinin gormedigi bir dagitim degisikligidir. Bos kume iddiasi onu
-///      yakalar. Ayrica (b)'nin kaynagi olan bes hatanin listesi de burada
-///      pinlenir.
+///      testinin gormedigi bir dagitim degisikligidir.
 ///
-/// @dev `LaunchToken`'in "toplam arz sonsuza kadar sabit" iddiasi bugune kadar
-///      yalnizca YUKARIDAN pinliydi (`totalSupply() == TOTAL_SUPPLY` gibi
-///      olcumler). Iki yonlu esitlik onu ASAGIDAN da pinler: `mint`, `issue`,
-///      `burn`, `setMinter` -- adi ne olursa olsun -- fonksiyon kumesine bir
-///      GIRIS EKLER ve fazlalik hatadir.
+/// @dev `LaunchToken`in "toplam arz sonsuza kadar sabit" iddiasi bugune kadar
+///      yalnizca YUKARIDAN pinliydi. Iki yonlu esitlik onu ASAGIDAN da pinler:
+///      `mint`, `issue`, `burn`, `setMinter` -- adi ne olursa olsun -- fonksiyon
+///      kumesine bir GIRIS EKLER ve fazlalik hatadir.
 contract SurfaceTest is Test {
     // ---------------------------------------------------------------
-    // Cikarma
+    // Ham okuma
     // ---------------------------------------------------------------
 
-    /// @dev `fs_permissions` bu faz icin bilerek acildi: salt okuma, yalnizca
-    ///      `./out`. Dosya yoksa `vm.readFile` REVERT eder -- yani yanlis
-    ///      yazilmis bir kontrat adi testi sessizce bos kumeyle gecirmez,
-    ///      kirar. Fail-closed.
+    /// @dev Dosya yoksa `vm.readFile` REVERT eder -- yani yanlis yazilmis bir
+    ///      kontrat adi testi sessizce bos kumeyle gecirmez, kirar.
     function _artifact(string memory contractName) internal view returns (string memory) {
         return vm.readFile(string.concat("out/", contractName, ".sol/", contractName, ".json"));
     }
+
+    /// @dev `abi.decode`u yakalanabilir kilmak icin DIS fonksiyon; `_strings`
+    ///      bunu `this.` ile cagirir.
+    function decodeStringArray(bytes calldata raw) external pure returns (string[] memory) {
+        return abi.decode(raw, (string[]));
+    }
+
+    /// @notice Bir jsonpath sorgusunun string sonuclari.
+    /// @dev Uc kodlamayi da ele alir; bkz. dosya bas notu.
+    function _strings(string memory json, string memory path) internal view returns (string[] memory) {
+        bytes memory raw = vm.parseJson(json, path);
+        if (raw.length == 0) return new string[](0);
+        try this.decodeStringArray(raw) returns (string[] memory many) {
+            return many;
+        } catch {
+            string[] memory one = new string[](1);
+            one[0] = abi.decode(raw, (string));
+            return one;
+        }
+    }
+
+    function _join(string[] memory parts) internal pure returns (string memory out) {
+        for (uint256 i = 0; i < parts.length; i++) {
+            out = i == 0 ? parts[i] : string.concat(out, ",", parts[i]);
+        }
+    }
+
+    /// @dev `bind(address)` -> `bind`.
+    function _nameOf(string memory signature) internal pure returns (string memory) {
+        bytes memory b = bytes(signature);
+        uint256 n = 0;
+        while (n < b.length && b[n] != "(") n++;
+        bytes memory name = new bytes(n);
+        for (uint256 i = 0; i < n; i++) {
+            name[i] = b[i];
+        }
+        return string(name);
+    }
+
+    function _member(string memory kind, string memory name) internal pure returns (string memory) {
+        return string.concat("$.abi[?(@.type == '", kind, "' && @.name == '", name, "')]");
+    }
+
+    // ---------------------------------------------------------------
+    // Tanimlayicilar
+    // ---------------------------------------------------------------
 
     function _functionSignatures(string memory contractName) internal view returns (string[] memory) {
         return vm.parseJsonKeys(_artifact(contractName), ".methodIdentifiers");
     }
 
-    /// @dev Bes kontratin HEPSINDE en az dort hata vardir. Bu onemlidir:
-    ///      jsonpath tek bir eslesme dondurdugunde Foundry onu dizi DEGIL
-    ///      skaler olarak kodlar ve `abi.decode(..., (string[]))` revert eder.
-    ///      Bugunku hicbir kontrat o sinira yakin degil; oraya dusuren bir
-    ///      mutasyon zaten testi KIRARDI (decode revert'i basarisizliktir),
-    ///      yani sapma yonunde de fail-closed.
-    function _errorNames(string memory contractName) internal view returns (string[] memory) {
-        return abi.decode(vm.parseJson(_artifact(contractName), "$.abi[?(@.type == 'error')].name"), (string[]));
+    /// @dev `imza <mutabilite> -> (donus tipleri)`.
+    function _functionDescriptors(string memory contractName) internal view returns (string[] memory out) {
+        string memory j = _artifact(contractName);
+        string[] memory sigs = vm.parseJsonKeys(j, ".methodIdentifiers");
+        out = new string[](sigs.length);
+        for (uint256 i = 0; i < sigs.length; i++) {
+            string memory base = _member("function", _nameOf(sigs[i]));
+            string[] memory mutability = _strings(j, string.concat(base, ".stateMutability"));
+            // ON KOSUL, VARSAYIM DEGIL: ada gore filtreleme ancak ad benzersizse
+            // tanimlayiciyi belirler. Overload eklenirse burasi duser.
+            assertEq(mutability.length, 1, string.concat(contractName, ": asiri yuklenmis ad -> ", sigs[i]));
+            string[] memory outputs = _strings(j, string.concat(base, ".outputs[*].type"));
+            out[i] = string.concat(sigs[i], " ", mutability[0], " -> (", _join(outputs), ")");
+        }
     }
 
-    /// @dev ABI'deki her girisin `type` alani, sirasiyla. Sayimi cagiran yapar.
+    /// @dev `constructor(tipler) <mutabilite>`; constructor'i olmayan kontratta
+    ///      bos kume. `LaunchToken`in arguman SIRASI `isCanonical`in CREATE2
+    ///      turetmesinde tasiyicidir -- bir alan dusurulurse sahteci o alani
+    ///      serbestce degistirip kanonik kalir (bkz. `LaunchFactory` NatSpec).
+    function _constructorDescriptor(string memory contractName) internal view returns (string[] memory out) {
+        string memory j = _artifact(contractName);
+        string[] memory mutability = _strings(j, "$.abi[?(@.type == 'constructor')].stateMutability");
+        if (mutability.length == 0) return new string[](0);
+        assertEq(mutability.length, 1, string.concat(contractName, ": birden fazla constructor"));
+        string[] memory inputs = _strings(j, "$.abi[?(@.type == 'constructor')].inputs[*].type");
+        out = new string[](1);
+        out[0] = string.concat("constructor(", _join(inputs), ") ", mutability[0]);
+    }
+
+    /// @dev `Ad(girdi tipleri)` -- ARITE BURADA KAPANIR.
+    function _errorDescriptors(string memory contractName) internal view returns (string[] memory out) {
+        string memory j = _artifact(contractName);
+        string[] memory names = _strings(j, "$.abi[?(@.type == 'error')].name");
+        out = new string[](names.length);
+        for (uint256 i = 0; i < names.length; i++) {
+            string[] memory inputs = _strings(j, string.concat(_member("error", names[i]), ".inputs[*].type"));
+            out[i] = string.concat(names[i], "(", _join(inputs), ")");
+        }
+    }
+
+    /// @dev `Ad(tipler) indexed:(indeksli parametre adlari)`.
+    ///      Indeksli parametrelerin ADI tasinir, tipi degil: topic kimligini
+    ///      tasiyan sey odur, ve ayni tipte iki parametre arasinda `indexed`
+    ///      tasinmasi ancak adla gorunur.
+    function _eventDescriptors(string memory contractName) internal view returns (string[] memory out) {
+        string memory j = _artifact(contractName);
+        string[] memory names = _strings(j, "$.abi[?(@.type == 'event')].name");
+        out = new string[](names.length);
+        for (uint256 i = 0; i < names.length; i++) {
+            string memory base = _member("event", names[i]);
+            string[] memory types = _strings(j, string.concat(base, ".inputs[*].type"));
+            string[] memory topics = _strings(j, string.concat(base, ".inputs[?(@.indexed == true)].name"));
+            out[i] = string.concat(names[i], "(", _join(types), ") indexed:(", _join(topics), ")");
+        }
+    }
+
     function _entryTypes(string memory contractName) internal view returns (string[] memory) {
-        return abi.decode(vm.parseJson(_artifact(contractName), "$.abi[*].type"), (string[]));
+        return _strings(_artifact(contractName), "$.abi[*].type");
     }
 
     // ---------------------------------------------------------------
@@ -131,7 +259,7 @@ contract SurfaceTest is Test {
     // ---------------------------------------------------------------
 
     /// @dev IKI YONLULUK SART. Yalnizca "beklenenlerin hepsi duruyor mu" diye
-    ///      bakan bir dongu, EKLENMIS bir fonksiyonu goremez -- ve butun mesele
+    ///      bakan bir dongu, EKLENMIS bir uyeyi goremez -- ve butun mesele
     ///      odur. Uzunluk esitligi ayrica tutulur: iki yon de tekrarlanan bir
     ///      girisi tek basina yakalayamaz.
     function _assertSetEquals(string[] memory actual, string[] memory expected, string memory label) internal pure {
@@ -152,9 +280,6 @@ contract SurfaceTest is Test {
         return false;
     }
 
-    /// @dev `receive`, `fallback`, `constructor` ve `event` girisleri
-    ///      `methodIdentifiers` icinde HIC GORUNMEZ; bu sayim onlarin tek
-    ///      koruyucusudur.
     function _assertEntryCensus(
         string memory contractName,
         uint256 functions,
@@ -189,15 +314,15 @@ contract SurfaceTest is Test {
     // Okudugumuz artifact GERCEKTEN test edilen kontrat mi
     // ---------------------------------------------------------------
 
-    /// @dev "Kimsenin yazmadigi bir sebeple gecen test"e karsi bag: yukaridaki
-    ///      butun iddialar `out/<C>.sol/<C>.json`'un o kontratin artifact'i
-    ///      OLDUGUNU varsayar. Burada varsayilmiyor, olculuyor: `FeeEscrow`
-    ///      deploy edilir ve zincirdeki runtime kodu artifact'in
-    ///      `deployedBytecode.object`'i ile BAYT BAYT karsilastirilir.
-    ///      `FeeEscrow` secildi cunku tek immutable'i ve constructor argumani
-    ///      yoktur -- diger dortunde immutable degerleri runtime koduna
-    ///      gomuldugu icin esitlik yapisal olarak tutmaz.
-    ///      Bagi tek bir kontratta kurmak yeter: dosya adi seman hepsinde ayni.
+    /// @dev "Kimsenin yazmadigi bir sebeple gecen test"e karsi bag: butun
+    ///      iddialar `out/<C>.sol/<C>.json`in o kontratin artifact'i OLDUGUNU
+    ///      varsayar. Burada varsayilmiyor, olculuyor: `FeeEscrow` deploy edilir
+    ///      ve zincirdeki runtime kodu artifact'in `deployedBytecode.object`i
+    ///      ile BAYT BAYT karsilastirilir. `FeeEscrow` secildi cunku tek
+    ///      immutable'i ve constructor argumani yoktur -- diger dortunde
+    ///      immutable degerleri runtime koduna gomuldugu icin esitlik yapisal
+    ///      olarak tutmaz. Dosya adi semasi hepsinde ayni oldugu icin bagi tek
+    ///      bir kontratta kurmak yeter.
     function test_artifactPathResolvesToTheContractUnderTest() public {
         FeeEscrow escrow = new FeeEscrow();
         bytes memory onChain = address(escrow).code;
@@ -210,10 +335,9 @@ contract SurfaceTest is Test {
     // LaunchToken
     // ---------------------------------------------------------------
 
-    /// @dev BU LISTE `LaunchToken`'in ARZ SABITLIGI IDDIASININ ASAGIDAN PINI.
+    /// @dev BU LISTE `LaunchToken`in ARZ SABITLIGI IDDIASININ ASAGIDAN PINI.
     ///      Icinde `mint` YOK, `issue` YOK, `burn` YOK, `setMinter` YOK --
-    ///      ve bu bir dilek degil, iki yonlu esitligin sonucu: adi ne olursa
-    ///      olsun yeni bir giris kumeyi buyutur ve `FAZLA` ile kirar.
+    ///      ve bu bir dilek degil, iki yonlu esitligin sonucu.
     function test_launchTokenExposesExactlyTheseFunctions() public view {
         string[] memory expected = new string[](14);
         expected[0] = "TOTAL_SUPPLY()";
@@ -233,21 +357,51 @@ contract SurfaceTest is Test {
         _assertSetEquals(_functionSignatures("LaunchToken"), expected, "LaunchToken fonksiyonlari");
     }
 
+    function test_launchTokenFunctionMutabilityAndReturns() public view {
+        string[] memory expected = new string[](14);
+        expected[0] = "TOTAL_SUPPLY() view -> (uint256)";
+        expected[1] = "allowance(address,address) view -> (uint256)";
+        expected[2] = "approve(address,uint256) nonpayable -> (bool)";
+        expected[3] = "balanceOf(address) view -> (uint256)";
+        expected[4] = "creator() view -> (address)";
+        expected[5] = "curve() view -> (address)";
+        expected[6] = "decimals() view -> (uint8)";
+        expected[7] = "launchSalt() view -> (bytes32)";
+        expected[8] = "metadataURI() view -> (string)";
+        expected[9] = "name() view -> (string)";
+        expected[10] = "symbol() view -> (string)";
+        expected[11] = "totalSupply() view -> (uint256)";
+        expected[12] = "transfer(address,uint256) nonpayable -> (bool)";
+        expected[13] = "transferFrom(address,address,uint256) nonpayable -> (bool)";
+        _assertSetEquals(_functionDescriptors("LaunchToken"), expected, "LaunchToken tanimlayicilari");
+
+        string[] memory ctor = new string[](1);
+        ctor[0] = "constructor(string,string,string,address,address,bytes32) nonpayable";
+        _assertSetEquals(_constructorDescriptor("LaunchToken"), ctor, "LaunchToken constructor");
+    }
+
     function test_launchTokenExposesExactlyTheseErrors() public view {
         string[] memory expected = new string[](11);
         // OZ ERC20'nin kendi hatalari -- bizim degil ama YUZEYDE.
-        expected[0] = "ERC20InsufficientAllowance";
-        expected[1] = "ERC20InsufficientBalance";
-        expected[2] = "ERC20InvalidApprover";
-        expected[3] = "ERC20InvalidReceiver";
-        expected[4] = "ERC20InvalidSender";
-        expected[5] = "ERC20InvalidSpender";
-        expected[6] = "NameTooLong";
-        expected[7] = "SymbolTooLong";
-        expected[8] = "UriTooLong";
-        expected[9] = "ZeroCreator";
-        expected[10] = "ZeroCurve";
-        _assertSetEquals(_errorNames("LaunchToken"), expected, "LaunchToken hatalari");
+        expected[0] = "ERC20InsufficientAllowance(address,uint256,uint256)";
+        expected[1] = "ERC20InsufficientBalance(address,uint256,uint256)";
+        expected[2] = "ERC20InvalidApprover(address)";
+        expected[3] = "ERC20InvalidReceiver(address)";
+        expected[4] = "ERC20InvalidSender(address)";
+        expected[5] = "ERC20InvalidSpender(address)";
+        expected[6] = "NameTooLong()";
+        expected[7] = "SymbolTooLong()";
+        expected[8] = "UriTooLong()";
+        expected[9] = "ZeroCreator()";
+        expected[10] = "ZeroCurve()";
+        _assertSetEquals(_errorDescriptors("LaunchToken"), expected, "LaunchToken hatalari");
+    }
+
+    function test_launchTokenExposesExactlyTheseEvents() public view {
+        string[] memory expected = new string[](2);
+        expected[0] = "Approval(address,address,uint256) indexed:(owner,spender)";
+        expected[1] = "Transfer(address,address,uint256) indexed:(from,to)";
+        _assertSetEquals(_eventDescriptors("LaunchToken"), expected, "LaunchToken olaylari");
     }
 
     function test_launchTokenAbiCensus() public view {
@@ -260,9 +414,7 @@ contract SurfaceTest is Test {
 
     /// @dev Faz 1b'nin hayatta kalan besinci mutanti burada oturuyordu:
     ///      `sweep` yerine `collect(address)`. `collect` uydurma degildir --
-    ///      pump.fun'in kendi talimati `collect_creator_fee_v2`. Isim sayan
-    ///      bir test onu goremez; iki yonlu esitlik `FAZLA -> collect(address)`
-    ///      ile kirar.
+    ///      pump.fun'in kendi talimati `collect_creator_fee_v2`.
     function test_feeEscrowExposesExactlyTheseFunctions() public view {
         string[] memory expected = new string[](4);
         expected[0] = "claim(address)";
@@ -272,21 +424,44 @@ contract SurfaceTest is Test {
         _assertSetEquals(_functionSignatures("FeeEscrow"), expected, "FeeEscrow fonksiyonlari");
     }
 
-    function test_feeEscrowExposesExactlyTheseErrors() public view {
+    /// @dev `claim` `nonpayable` OLMAK ZORUNDA. `payable` olsaydi deger
+    ///      gonderen bir cagiran (ya da toplu odeme yapan bir router) parayi
+    ///      escrow'a birakir, escrow onu HICBIR alacaga yazmaz, ve kontratin
+    ///      `receive()`i, sahibi ve kurtarma yolu YOKTUR -- yani para kalici
+    ///      olarak kaybolur. Kontratin kendi bas NatSpec'i tam olarak bu risk
+    ///      sinifini sayiyor; bu satir onu ABI seviyesinde sabitler.
+    function test_feeEscrowFunctionMutabilityAndReturns() public view {
         string[] memory expected = new string[](4);
-        expected[0] = "NothingToClaim";
-        expected[1] = "TransferFailed";
-        expected[2] = "ZeroAmount";
-        expected[3] = "ZeroRecipient";
-        _assertSetEquals(_errorNames("FeeEscrow"), expected, "FeeEscrow hatalari");
+        expected[0] = "claim(address) nonpayable -> ()";
+        expected[1] = "deposit(address) payable -> ()";
+        expected[2] = "owed(address) view -> (uint256)";
+        expected[3] = "totalOwed() view -> (uint256)";
+        _assertSetEquals(_functionDescriptors("FeeEscrow"), expected, "FeeEscrow tanimlayicilari");
+        _assertSetEquals(_constructorDescriptor("FeeEscrow"), new string[](0), "FeeEscrow constructor");
     }
 
-    /// @dev `receive` = 0 ve `fallback` = 0, `FeeEscrow`'un kisit (1)'inin
-    ///      TAM OLARAK ifade ettigi ozellik: duz bir native gonderim
-    ///      BASARISIZ OLMALI. `methodIdentifiers` bu ikisini hic gormez,
-    ///      dolayisiyla bu sayim onlarin tek koruyucusu.
-    ///      `constructor` = 0 cunku kontratin bildirilmis bir constructor'i
-    ///      yoktur; eklenmesi de yuzey degisikligidir.
+    function test_feeEscrowExposesExactlyTheseErrors() public view {
+        string[] memory expected = new string[](4);
+        expected[0] = "NothingToClaim()";
+        expected[1] = "TransferFailed()";
+        expected[2] = "ZeroAmount()";
+        expected[3] = "ZeroRecipient()";
+        _assertSetEquals(_errorDescriptors("FeeEscrow"), expected, "FeeEscrow hatalari");
+    }
+
+    /// @dev `Deposited.recipient` ve `Claimed.recipient` INDEKSLI kalmali:
+    ///      alicinin kendi ucret gecmisini cekmesi bu topic'e baglidir.
+    function test_feeEscrowExposesExactlyTheseEvents() public view {
+        string[] memory expected = new string[](2);
+        expected[0] = "Claimed(address,uint256) indexed:(recipient)";
+        expected[1] = "Deposited(address,address,uint256) indexed:(recipient,from)";
+        _assertSetEquals(_eventDescriptors("FeeEscrow"), expected, "FeeEscrow olaylari");
+    }
+
+    /// @dev `receive` = 0 ve `fallback` = 0, `FeeEscrow`un kisit (1)'inin TAM
+    ///      OLARAK ifade ettigi ozellik: duz bir native gonderim BASARISIZ
+    ///      OLMALI. `methodIdentifiers` bu ikisini hic gormez, dolayisiyla bu
+    ///      sayim onlarin tek koruyucusu.
     function test_feeEscrowAbiCensus() public view {
         _assertEntryCensus("FeeEscrow", 4, 4, 2, 0, 0, 0);
     }
@@ -320,41 +495,87 @@ contract SurfaceTest is Test {
         _assertSetEquals(_functionSignatures("BondingCurve"), expected, "BondingCurve fonksiyonlari");
     }
 
-    /// @dev Son bes giris `CurveMath`'ten gelir. Yukaridaki karar geregi
+    /// @dev `sellExactTokensIn` `nonpayable` OLMAK ZORUNDA: satis yolunda
+    ///      curve'e giren native tutar YOKTUR, gonderilen deger hicbir deftere
+    ///      yazilmaz ve cikis yolu olmayan bir kontratta kalir. Iki alim yolu
+    ///      ise `payable` OLMAK ZORUNDA.
+    function test_bondingCurveFunctionMutabilityAndReturns() public view {
+        string[] memory expected = new string[](20);
+        expected[0] = "CREATOR_FEE_BPS() view -> (uint256)";
+        expected[1] = "INITIAL_REAL_TOKEN_RESERVES() view -> (uint256)";
+        expected[2] = "INITIAL_VIRTUAL_QUOTE_RESERVES() view -> (uint256)";
+        expected[3] = "INITIAL_VIRTUAL_TOKEN_RESERVES() view -> (uint256)";
+        expected[4] = "PROTOCOL_FEE_BPS() view -> (uint256)";
+        expected[5] = "bind(address) nonpayable -> ()";
+        expected[6] = "buyExactQuoteIn(uint256) payable -> ()";
+        expected[7] = "buyExactTokensOut(uint256,uint256) payable -> ()";
+        expected[8] = "complete() view -> (bool)";
+        expected[9] = "creator() view -> (address)";
+        expected[10] = "escrow() view -> (address)";
+        expected[11] = "factory() view -> (address)";
+        expected[12] = "poolSeedSupply() view -> (uint256)";
+        expected[13] = "protocolTreasury() view -> (address)";
+        expected[14] = "realQuoteReserves() view -> (uint256)";
+        expected[15] = "realTokenReserves() view -> (uint256)";
+        expected[16] = "sellExactTokensIn(uint256,uint256) nonpayable -> ()";
+        expected[17] = "token() view -> (address)";
+        expected[18] = "virtualQuoteReserves() view -> (uint256)";
+        expected[19] = "virtualTokenReserves() view -> (uint256)";
+        _assertSetEquals(_functionDescriptors("BondingCurve"), expected, "BondingCurve tanimlayicilari");
+
+        string[] memory ctor = new string[](1);
+        ctor[0] = "constructor(address,address,address,uint256,uint256,uint256) nonpayable";
+        _assertSetEquals(_constructorDescriptor("BondingCurve"), ctor, "BondingCurve constructor");
+    }
+
+    /// @dev Son bes giris `CurveMath`ten gelir. Yukaridaki karar geregi
     ///      YUZEYIN PARCASIDIR ve isaretlenerek pinlenir; `NetTooSmall`
     ///      ULASILABILIR (`buyExactQuoteIn`), digerleri bugun degildir.
     function test_bondingCurveExposesExactlyTheseErrors() public view {
         string[] memory expected = new string[](27);
-        expected[0] = "AlreadyBound";
-        expected[1] = "CurveComplete";
-        expected[2] = "NotBound";
-        expected[3] = "NotEnoughTokensToBuy";
-        expected[4] = "NotFactory";
-        expected[5] = "PayoutFailed";
-        expected[6] = "ProceedsTooSmall";
-        expected[7] = "RefundFailed";
-        expected[8] = "SaleSupplyNotBelowTokenReserves";
-        expected[9] = "SlippageExceeded";
-        expected[10] = "TokenBalanceBelowSaleAndSeed";
-        expected[11] = "TokenDoesNotPointBack";
-        expected[12] = "TokenTransferFailed";
-        expected[13] = "ZeroEscrow";
-        expected[14] = "ZeroQuoteIn";
-        expected[15] = "ZeroSaleSupply";
-        expected[16] = "ZeroToken";
-        expected[17] = "ZeroTokensIn";
-        expected[18] = "ZeroTokensOut";
-        expected[19] = "ZeroTreasury";
-        expected[20] = "ZeroVirtualQuoteReserves";
-        expected[21] = "ZeroVirtualTokenReserves";
+        expected[0] = "AlreadyBound()";
+        expected[1] = "CurveComplete()";
+        expected[2] = "NotBound()";
+        expected[3] = "NotEnoughTokensToBuy()";
+        expected[4] = "NotFactory()";
+        expected[5] = "PayoutFailed()";
+        expected[6] = "ProceedsTooSmall()";
+        expected[7] = "RefundFailed()";
+        expected[8] = "SaleSupplyNotBelowTokenReserves()";
+        expected[9] = "SlippageExceeded()";
+        expected[10] = "TokenBalanceBelowSaleAndSeed()";
+        expected[11] = "TokenDoesNotPointBack()";
+        expected[12] = "TokenTransferFailed()";
+        expected[13] = "ZeroEscrow()";
+        expected[14] = "ZeroQuoteIn()";
+        expected[15] = "ZeroSaleSupply()";
+        expected[16] = "ZeroToken()";
+        expected[17] = "ZeroTokensIn()";
+        expected[18] = "ZeroTokensOut()";
+        expected[19] = "ZeroTreasury()";
+        expected[20] = "ZeroVirtualQuoteReserves()";
+        expected[21] = "ZeroVirtualTokenReserves()";
         // --- CurveMath katmani: ULASILABILIR ---
-        expected[22] = "NetTooSmall";
+        expected[22] = "NetTooSmall()";
         // --- CurveMath katmani: bugun ULASILAMAZ, yine de yuzeyde ---
-        expected[23] = "InsufficientTokenReserve";
-        expected[24] = "InvalidBps";
-        expected[25] = "ZeroAmount";
-        expected[26] = "ZeroReserve";
-        _assertSetEquals(_errorNames("BondingCurve"), expected, "BondingCurve hatalari");
+        expected[23] = "InsufficientTokenReserve()";
+        expected[24] = "InvalidBps()";
+        expected[25] = "ZeroAmount()";
+        expected[26] = "ZeroReserve()";
+        _assertSetEquals(_errorDescriptors("BondingCurve"), expected, "BondingCurve hatalari");
+    }
+
+    /// @dev `Trade.trader` INDEKSLI kalmali. Faz 3'un indexer'i bir launch'in
+    ///      gecmisini bu olaydan yeniden kurar (dort rezervi de tasimasinin
+    ///      sebebi budur) ve trader topic'i uzerinden filtreler; `indexed`i
+    ///      kaldirmak her `getLogs` filtresini SESSIZCE bos dondurur -- src'de
+    ///      TEK KELIMELIK bir degisiklik. `Completed.token` ayni sinifta.
+    function test_bondingCurveExposesExactlyTheseEvents() public view {
+        string[] memory expected = new string[](2);
+        expected[0] = "Completed(address,uint256,uint256) indexed:(token)";
+        expected[1] =
+        "Trade(address,bool,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256) indexed:(trader)";
+        _assertSetEquals(_eventDescriptors("BondingCurve"), expected, "BondingCurve olaylari");
     }
 
     function test_bondingCurveAbiCensus() public view {
@@ -382,26 +603,60 @@ contract SurfaceTest is Test {
         _assertSetEquals(_functionSignatures("LaunchFactory"), expected, "LaunchFactory fonksiyonlari");
     }
 
-    /// @dev `LaunchFactory`'nin NatSpec'i ULASILABILIR dokuzu sayiyor. Buradaki
+    /// @dev `launch` `nonpayable` OLMAK ZORUNDA -- ucretsizdir ve deger gonderen
+    ///      bir cagri revert etmelidir (src NatSpec'i bunu acikca soyluyor).
+    ///      `isCanonical` ve `predictAddresses` `view` kalmali: ikisi de zincir
+    ///      disi dogrulayicinin cagirdigi saf sorgulardir.
+    function test_launchFactoryFunctionMutabilityAndReturns() public view {
+        string[] memory expected = new string[](12);
+        expected[0] = "MIN_GRADUATION_RAISE() view -> (uint256)";
+        expected[1] = "MIN_OPENING_MARKET_CAP() view -> (uint256)";
+        expected[2] = "MIN_SALE_AND_SEED() view -> (uint256)";
+        expected[3] = "SALE_SUPPLY() view -> (uint256)";
+        expected[4] = "VIRTUAL_QUOTE_RESERVES() view -> (uint256)";
+        expected[5] = "VIRTUAL_TOKEN_RESERVES() view -> (uint256)";
+        expected[6] = "escrow() view -> (address)";
+        expected[7] = "isCanonical(address) view -> (bool)";
+        expected[8] = "launch(string,string,string) nonpayable -> (address,address)";
+        expected[9] = "launchCount() view -> (uint256)";
+        expected[10] = "predictAddresses(address,string,string,string,uint256) view -> (address,address)";
+        expected[11] = "protocolTreasury() view -> (address)";
+        _assertSetEquals(_functionDescriptors("LaunchFactory"), expected, "LaunchFactory tanimlayicilari");
+
+        string[] memory ctor = new string[](1);
+        ctor[0] = "constructor(address,address,uint256,uint256,uint256) nonpayable";
+        _assertSetEquals(_constructorDescriptor("LaunchFactory"), ctor, "LaunchFactory constructor");
+    }
+
+    /// @dev `LaunchFactory`nin NatSpec'i ULASILABILIR dokuzu sayiyor. Buradaki
     ///      kume onbir: solc, bu kontratin fiilen revert edebilecegi iki
     ///      `CurveMath` hatasini da ABI'ye koyuyor (besini degil -- uyeligi
     ///      derleyici seciyor, bkz. dosya bas notu (b)). Ikisi de bugun
     ///      ULASILAMAZ ve isaretlenerek pinleniyor.
     function test_launchFactoryExposesExactlyTheseErrors() public view {
         string[] memory expected = new string[](11);
-        expected[0] = "DegenerateProfile";
-        expected[1] = "EmptyName";
-        expected[2] = "EmptySymbol";
-        expected[3] = "EscrowHasNoCode";
-        expected[4] = "GraduationRaiseTooSmall";
-        expected[5] = "SaleAndSeedExceedSupply";
-        expected[6] = "SaleAndSeedStrandSupply";
-        expected[7] = "ZeroEscrowAddress";
-        expected[8] = "ZeroTreasuryAddress";
+        expected[0] = "DegenerateProfile()";
+        expected[1] = "EmptyName()";
+        expected[2] = "EmptySymbol()";
+        expected[3] = "EscrowHasNoCode()";
+        expected[4] = "GraduationRaiseTooSmall()";
+        expected[5] = "SaleAndSeedExceedSupply()";
+        expected[6] = "SaleAndSeedStrandSupply()";
+        expected[7] = "ZeroEscrowAddress()";
+        expected[8] = "ZeroTreasuryAddress()";
         // --- CurveMath katmani: bugun ULASILAMAZ, yine de yuzeyde ---
-        expected[9] = "InsufficientTokenReserve";
-        expected[10] = "ZeroReserve";
-        _assertSetEquals(_errorNames("LaunchFactory"), expected, "LaunchFactory hatalari");
+        expected[9] = "InsufficientTokenReserve()";
+        expected[10] = "ZeroReserve()";
+        _assertSetEquals(_errorDescriptors("LaunchFactory"), expected, "LaunchFactory hatalari");
+    }
+
+    /// @dev UC indeksli alan: `token`, `curve`, `creator`. Faz 3'un indexer'i
+    ///      bir launch'i bu olaydan yeniden kurar ve ucunun de topic olmasi
+    ///      "bu creator'in launch'lari" gibi sorgularin tek dayanagidir.
+    function test_launchFactoryExposesExactlyTheseEvents() public view {
+        string[] memory expected = new string[](1);
+        expected[0] = "Launched(address,address,address,string,string,string,bytes32) indexed:(token,curve,creator)";
+        _assertSetEquals(_eventDescriptors("LaunchFactory"), expected, "LaunchFactory olaylari");
     }
 
     function test_launchFactoryAbiCensus() public view {
@@ -419,19 +674,25 @@ contract SurfaceTest is Test {
     ///      gormez -- bytecode degisir, sonuclar degismez.
     function test_curveMathExposesNoExternalFunctions() public view {
         _assertSetEquals(_functionSignatures("CurveMath"), new string[](0), "CurveMath fonksiyonlari");
+        _assertSetEquals(_functionDescriptors("CurveMath"), new string[](0), "CurveMath tanimlayicilari");
+        _assertSetEquals(_constructorDescriptor("CurveMath"), new string[](0), "CurveMath constructor");
     }
 
-    /// @dev `BondingCurve` ve `LaunchFactory`'nin ABI'sinde gorunen kutuphane
+    /// @dev `BondingCurve` ve `LaunchFactory`nin ABI'sinde gorunen kutuphane
     ///      hatalarinin KAYNAK listesi. Burada eksilme/artma, oradaki iki
     ///      kumeyi de sessizce kaydirirdi.
     function test_curveMathExposesExactlyTheseErrors() public view {
         string[] memory expected = new string[](5);
-        expected[0] = "InsufficientTokenReserve";
-        expected[1] = "InvalidBps";
-        expected[2] = "NetTooSmall";
-        expected[3] = "ZeroAmount";
-        expected[4] = "ZeroReserve";
-        _assertSetEquals(_errorNames("CurveMath"), expected, "CurveMath hatalari");
+        expected[0] = "InsufficientTokenReserve()";
+        expected[1] = "InvalidBps()";
+        expected[2] = "NetTooSmall()";
+        expected[3] = "ZeroAmount()";
+        expected[4] = "ZeroReserve()";
+        _assertSetEquals(_errorDescriptors("CurveMath"), expected, "CurveMath hatalari");
+    }
+
+    function test_curveMathExposesNoEvents() public view {
+        _assertSetEquals(_eventDescriptors("CurveMath"), new string[](0), "CurveMath olaylari");
     }
 
     function test_curveMathAbiCensus() public view {

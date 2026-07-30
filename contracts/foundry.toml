@@ -19,10 +19,24 @@ bytecode_hash = "none"
 # Bağımlılıkların kendi remappings.txt dosyalarını bağlamsal olarak okur.
 auto_detect_remappings = true
 
-# SALT OKUMA, YALNIZCA `out/`. Task 4'un ABI yuzey testi derleme ciktisindaki
-# artifact'i (`out/<C>.sol/<C>.json`) okur ve dis fonksiyon kumesini beklenen
-# kumeyle IKI YONLU karsilastirir. `vm.readFile` bu izin olmadan revert eder.
-# Yazma izni BILEREK verilmemistir: testin yapmasi gereken tek sey okumaktir.
+# SALT OKUMA, YALNIZCA `out/`. Task 4'un ABI yuzey testi artifact'i
+# (`out/<C>.sol/<C>.json`) okur ve yuzeyi beklenen kumeyle IKI YONLU
+# karsilastirir.
+#
+# BU SATIR BUGUN GEREKLI DEGIL VE OYLE OLDUGU OLCULDU. forge 1.6.0-rc1,
+# `fs_permissions` HIC TANIMLI DEGILKEN artifact dizinine ORTUK bir okuma izni
+# verir: her iki giris de silindiginde Surface.t.sol 25/25 GECIYOR. Izin
+# sistemi o halde de calisiyor -- ayni kosuda `foundry.toml`, `src/FeeEscrow.sol`,
+# `remappings.txt` ve `test/` okumalari REDDEDILDI, `out/` altina yazma da
+# reddedildi.
+#
+# YINE DE DURUYOR, cunku ortuk izin KOSULLU: `fs_permissions` bir kez
+# tanimlandiginda ortuk izin ORTADAN KALKAR ve yalnizca listelenenler gecerli
+# olur. Olculdu -- liste `[{read, "./src"}]` yapildiginda `src/FeeEscrow.sol`
+# okunabilir hale geldi ama `out/` REDDEDILDI. Yani baska bir amacla eklenecek
+# ILK `fs_permissions` girisi (Faz 1d'nin deploy script'i en olasi aday) yuzey
+# testini sessizce kirardi. Bu satir tam olarak onu engeller ve hicbir sey
+# genisletmez: `access = "read"` ortuk iznin zaten verdigi seviyedir.
 fs_permissions = [{ access = "read", path = "./out" }]
 
 [profile.default.fuzz]
@@ -51,9 +65,15 @@ optimizer_runs = 800
 bytecode_hash = "none"
 auto_detect_remappings = true
 
-# Profiller skaler/dizi build anahtarlarini miras ALMAZ; default'takiyle
-# kelimesi kelimesine ayni izin burada tekrarlanir. Ayrisirsa yuzey testi CI
-# profilinde sessizce revert eder.
+# TEKRAR BILINCLIDIR VE GEREKCESI MIRAS DEGIL, DEGISTIRME (REPLACE)
+# SEMANTIGIDIR. Olculdu: `fs_permissions` [profile.default]'tan DIGER
+# PROFILLERCE MIRAS ALINIR (ci profilinde anahtar hic yokken default'un listesi
+# gecerliydi), ama bir profil kendi listesini tanimlarsa default'unkini
+# TAMAMEN degistirir (default `[out, src]`, ci `[out]` iken ci altinda `src`
+# reddedildi, ayni dosyayla default altinda okunabildi -- yani profil secimi de
+# boylece dogrulanmis oldu). Dolayisiyla ileride [profile.ci]'ye baska bir
+# amacla eklenecek tek bir giris, default'tan gelen `./out` iznini yalnizca CI'da
+# dusururdu. Her profilin listesi kendi kendine yeterli tutuluyor.
 fs_permissions = [{ access = "read", path = "./out" }]
 
 [profile.ci.fuzz]
