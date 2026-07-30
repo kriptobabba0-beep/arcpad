@@ -54,6 +54,15 @@ import {FeeEscrow} from "../src/FeeEscrow.sol";
 ///          `fallback()` bir selector TASIMAZ ve `methodIdentifiers` icinde HIC
 ///          GORUNMEZ. `FeeEscrow`un kisit (1)'i tam olarak "receive()/fallback()
 ///          YOKTUR" diye yazilmis bir ozelliktir.
+///      (6) CURVE'UN BYTECODE'UNDAKI BAGIMLILIK -- (1)-(5) YUZEYLERI sabitler,
+///          bagimliligin YONUNU sabitlemez. `BondingCurve`in deployed kodunda
+///          `graduationTarget()` (0xa4b20f13) ve `protocolTreasury()`
+///          (0x803db96d) selector'leri ARANIR: iki uye de curve'e degil
+///          FACTORY'ye aittir ve curve deploy edildikten sonra onlara olan
+///          bagimliligi degistirilemez.
+///      (7) OLAY ADI SAHIPLIGI -- `Graduated` adinin TAM OLARAK BIR kontratta
+///          oldugu. Faz 2 ayni adi baska bir sekille kullanirsa topic0 ayrisir
+///          ve Faz 3'un filtreleri hata vermeden BOS doner.
 ///
 /// @dev PINLENMEYENLER -- BU DOSYANIN KENDI ACIK HUCRELERI, raporda degil
 ///      BURADA duruyorlar cunku okuyan kisi dosyanin ne vaat ettigini
@@ -473,8 +482,13 @@ contract SurfaceTest is Test {
     // BondingCurve
     // ---------------------------------------------------------------
 
+    /// @dev BU LISTE TAM OLARAK DORT NON-VIEW GIRIS NOKTASI + BIR TERMINAL
+    ///      CIKIS ICERIR ve fazlasi hatadir. `graduate()` eklendi; eklenmesi bu
+    ///      dosyada ALTI iddiayi birden kirdi (fonksiyon kumesi, tanimlayici
+    ///      kumesi, hata kumesi, olay kumesi, sayim, ve constructor
+    ///      tanimlayicisi) -- pin'in tasarlandigi gibi calismasi budur.
     function test_bondingCurveExposesExactlyTheseFunctions() public view {
-        string[] memory expected = new string[](20);
+        string[] memory expected = new string[](22);
         expected[0] = "CREATOR_FEE_BPS()";
         expected[1] = "INITIAL_REAL_TOKEN_RESERVES()";
         expected[2] = "INITIAL_VIRTUAL_QUOTE_RESERVES()";
@@ -487,14 +501,16 @@ contract SurfaceTest is Test {
         expected[9] = "creator()";
         expected[10] = "escrow()";
         expected[11] = "factory()";
-        expected[12] = "poolSeedSupply()";
-        expected[13] = "protocolTreasury()";
-        expected[14] = "realQuoteReserves()";
-        expected[15] = "realTokenReserves()";
-        expected[16] = "sellExactTokensIn(uint256,uint256)";
-        expected[17] = "token()";
-        expected[18] = "virtualQuoteReserves()";
-        expected[19] = "virtualTokenReserves()";
+        expected[12] = "graduate()";
+        expected[13] = "graduated()";
+        expected[14] = "poolSeedSupply()";
+        expected[15] = "protocolTreasury()";
+        expected[16] = "realQuoteReserves()";
+        expected[17] = "realTokenReserves()";
+        expected[18] = "sellExactTokensIn(uint256,uint256)";
+        expected[19] = "token()";
+        expected[20] = "virtualQuoteReserves()";
+        expected[21] = "virtualTokenReserves()";
         _assertSetEquals(_functionSignatures("BondingCurve"), expected, "BondingCurve fonksiyonlari");
     }
 
@@ -502,8 +518,19 @@ contract SurfaceTest is Test {
     ///      curve'e giren native tutar YOKTUR, gonderilen deger hicbir deftere
     ///      yazilmaz ve cikis yolu olmayan bir kontratta kalir. Iki alim yolu
     ///      ise `payable` OLMAK ZORUNDA.
+    /// @dev `graduate()` `nonpayable` OLMAK ZORUNDA: `payable` olsaydi cagiran
+    ///      curve'e native birakabilir ve curve onu BIR DAHA hareket
+    ///      ettiremezdi (tamamlanma sonrasi tek cikis yolu graduation'dir ve o
+    ///      da defterden odeme yapar). Bu tek kelimelik bir src degisikligidir
+    ///      ve baska hicbir test gormez.
+    /// @dev `protocolTreasury()` `view -> (address)` OLARAK KALIR ama artik bir
+    ///      IMMUTABLE GETTER'I DEGIL, factory'ye giden bir okumadir (F1). ABI
+    ///      bu farki TASIMAZ -- ve bu bir bosluk degil, bilincli bir sonuctur:
+    ///      Faz 2'nin hook'u ile Faz 3'un indexer'i acisindan yuzey aynidir.
+    ///      Degisikligin ABI'de gorundugu yerler constructor'in ARITESI
+    ///      (`ZeroTreasury()` argumaniyla birlikte gitti) ve hata kumesidir.
     function test_bondingCurveFunctionMutabilityAndReturns() public view {
-        string[] memory expected = new string[](20);
+        string[] memory expected = new string[](22);
         expected[0] = "CREATOR_FEE_BPS() view -> (uint256)";
         expected[1] = "INITIAL_REAL_TOKEN_RESERVES() view -> (uint256)";
         expected[2] = "INITIAL_VIRTUAL_QUOTE_RESERVES() view -> (uint256)";
@@ -516,26 +543,36 @@ contract SurfaceTest is Test {
         expected[9] = "creator() view -> (address)";
         expected[10] = "escrow() view -> (address)";
         expected[11] = "factory() view -> (address)";
-        expected[12] = "poolSeedSupply() view -> (uint256)";
-        expected[13] = "protocolTreasury() view -> (address)";
-        expected[14] = "realQuoteReserves() view -> (uint256)";
-        expected[15] = "realTokenReserves() view -> (uint256)";
-        expected[16] = "sellExactTokensIn(uint256,uint256) nonpayable -> ()";
-        expected[17] = "token() view -> (address)";
-        expected[18] = "virtualQuoteReserves() view -> (uint256)";
-        expected[19] = "virtualTokenReserves() view -> (uint256)";
+        expected[12] = "graduate() nonpayable -> (uint256,uint256)";
+        expected[13] = "graduated() view -> (bool)";
+        expected[14] = "poolSeedSupply() view -> (uint256)";
+        expected[15] = "protocolTreasury() view -> (address)";
+        expected[16] = "realQuoteReserves() view -> (uint256)";
+        expected[17] = "realTokenReserves() view -> (uint256)";
+        expected[18] = "sellExactTokensIn(uint256,uint256) nonpayable -> ()";
+        expected[19] = "token() view -> (address)";
+        expected[20] = "virtualQuoteReserves() view -> (uint256)";
+        expected[21] = "virtualTokenReserves() view -> (uint256)";
         _assertSetEquals(_functionDescriptors("BondingCurve"), expected, "BondingCurve tanimlayicilari");
 
         string[] memory ctor = new string[](1);
-        ctor[0] = "constructor(address,address,address,uint256,uint256,uint256) nonpayable";
+        ctor[0] = "constructor(address,address,uint256,uint256,uint256) nonpayable";
         _assertSetEquals(_constructorDescriptor("BondingCurve"), ctor, "BondingCurve constructor");
     }
 
     /// @dev Son bes giris `CurveMath`ten gelir. Yukaridaki karar geregi
     ///      YUZEYIN PARCASIDIR ve isaretlenerek pinlenir; `NetTooSmall`
     ///      ULASILABILIR (`buyExactQuoteIn`), digerleri bugun degildir.
+    /// @dev `ZeroTreasury()` BU KUMEDEN CIKTI ve cikmasi F1'in olculebilir
+    ///      izidir: curve artik bir treasury argumani ALMAZ, dolayisiyla o hata
+    ///      ULASILAMAZ olurdu. Ulasilamaz bir hatayi yuzeyde birakmak bu
+    ///      dosyanin (c) gerekcesine gore savunulabilirdi ama BURADA DEGIL:
+    ///      `CurveMath`in iki hatasi bir GUN ulasilabilir hale gelebilir,
+    ///      `ZeroTreasury` ise bir daha ASLA -- argumani yok.
+    /// @dev BES YENI HATA graduation'dandir ve `NotComplete()` ile
+    ///      `CurveComplete()`in AYRI selector'ler oldugu burada gorunur.
     function test_bondingCurveExposesExactlyTheseErrors() public view {
-        string[] memory expected = new string[](27);
+        string[] memory expected = new string[](31);
         expected[0] = "AlreadyBound()";
         expected[1] = "CurveComplete()";
         expected[2] = "NotBound()";
@@ -555,16 +592,21 @@ contract SurfaceTest is Test {
         expected[16] = "ZeroToken()";
         expected[17] = "ZeroTokensIn()";
         expected[18] = "ZeroTokensOut()";
-        expected[19] = "ZeroTreasury()";
-        expected[20] = "ZeroVirtualQuoteReserves()";
-        expected[21] = "ZeroVirtualTokenReserves()";
+        expected[19] = "ZeroVirtualQuoteReserves()";
+        expected[20] = "ZeroVirtualTokenReserves()";
+        // --- graduation ---
+        expected[21] = "AlreadyGraduated()";
+        expected[22] = "GraduationPayoutFailed()";
+        expected[23] = "GraduationTargetUnset()";
+        expected[24] = "NotComplete()";
+        expected[25] = "NotGraduationTarget()";
         // --- CurveMath katmani: ULASILABILIR ---
-        expected[22] = "NetTooSmall()";
+        expected[26] = "NetTooSmall()";
         // --- CurveMath katmani: bugun ULASILAMAZ, yine de yuzeyde ---
-        expected[23] = "InsufficientTokenReserve()";
-        expected[24] = "InvalidBps()";
-        expected[25] = "ZeroAmount()";
-        expected[26] = "ZeroReserve()";
+        expected[27] = "InsufficientTokenReserve()";
+        expected[28] = "InvalidBps()";
+        expected[29] = "ZeroAmount()";
+        expected[30] = "ZeroReserve()";
         _assertSetEquals(_errorDescriptors("BondingCurve"), expected, "BondingCurve hatalari");
     }
 
@@ -573,36 +615,122 @@ contract SurfaceTest is Test {
     ///      sebebi budur) ve trader topic'i uzerinden filtreler; `indexed`i
     ///      kaldirmak her `getLogs` filtresini SESSIZCE bos dondurur -- src'de
     ///      TEK KELIMELIK bir degisiklik. `Completed.token` ayni sinifta.
+    /// @dev `Graduated`in IKI indeksli alani da tasiyicidir: `token` Faz 3'un
+    ///      birincil anahtaridir, `to` ise hedefin YENIDEN ISARETLENEBILIR
+    ///      olmasi yuzunden ("bu havuzu hangi hedef tohumladi") bir sorgudur.
+    ///      Birini indekssiz yapmak src'de tek kelimedir ve her `getLogs`
+    ///      filtresini SESSIZCE bos dondurur.
     function test_bondingCurveExposesExactlyTheseEvents() public view {
-        string[] memory expected = new string[](2);
+        string[] memory expected = new string[](3);
         expected[0] = "Completed(address,uint256,uint256) indexed:(token)";
-        expected[1] =
+        expected[1] = "Graduated(address,address,uint256,uint256) indexed:(token,to)";
+        expected[2] =
         "Trade(address,bool,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256) indexed:(trader)";
         _assertSetEquals(_eventDescriptors("BondingCurve"), expected, "BondingCurve olaylari");
     }
 
     function test_bondingCurveAbiCensus() public view {
-        _assertEntryCensus("BondingCurve", 20, 27, 2, 1, 0, 0);
+        _assertEntryCensus("BondingCurve", 22, 31, 3, 1, 0, 0);
+    }
+
+    /// @notice Curve'un RUNTIME KODU, factory'de var olmasini gerektirdigi iki
+    ///         uyenin selector'unu ICERIR.
+    ///
+    /// @dev R-11. Yukaridaki pinler factory'nin ABI'sini sabitler, ama
+    ///      BAGIMLILIGIN YONUNU gostermezler: bagimlilik curve'un
+    ///      BYTECODE'UNDADIR ve deploy edildikten sonra degistirilemez. Bu test
+    ///      onu ARTIFACT'TAN olcer: `graduationTarget()` (0xa4b20f13) ve
+    ///      `protocolTreasury()` (0x803db96d) literalleri curve'un deployed
+    ///      kodunda ARANIR. Ikisini birden yeniden adlandiran ya da non-`view`
+    ///      yapan bir factory, deploy ettigi her curve'u kirar -- ilkinde
+    ///      graduation'i, ikincisinde HER ISLEMI.
+    ///
+    /// @dev NICIN AYRI BIR IDDIA. `LaunchFactory`nin ABI pinleri bu iki uyeyi
+    ///      SILMEYE karsi korur, ama curve'un onlara BAGLI OLMAYI BIRAKMASINA
+    ///      karsi korumaz: `protocolTreasury()`i tekrar bir immutable'a
+    ///      cevirmek (yani F1'i geri almak) factory'nin yuzeyini hic
+    ///      degistirmez ve buradaki ikinci arama DUSER.
+    function test_theCurveRuntimeCodeContainsTheFactorySelectorsItDependsOn() public view {
+        bytes memory code = vm.parseJsonBytes(_artifact("BondingCurve"), ".deployedBytecode.object");
+        assertGt(code.length, 0, "runtime kod bos");
+        assertTrue(_containsSelector(code, 0xa4b20f13), "graduationTarget() selector'u curve kodunda YOK");
+        assertTrue(_containsSelector(code, 0x803db96d), "protocolTreasury() selector'u curve kodunda YOK");
+    }
+
+    /// @notice `Graduated` adi TAM OLARAK BIR kontrat tarafindan sahiplenilir ve
+    ///         topic0'i su literaldir.
+    ///
+    /// @dev R-10'un yeni yarisi. Tehlike su: Faz 2'nin havuz/locker katmani da
+    ///      `Graduated` adli ama BASKA SEKILLI bir olay yayinlarsa topic0
+    ///      ayrisir ve birine gore yazilmis her `getLogs` filtresi otekini
+    ///      SESSIZCE bos dondurur -- hata vermez, BOS DONER. Karar kayda
+    ///      gecirildi (`BondingCurve` NatSpec'i): Faz 2'nin olayi `PoolSeeded`
+    ///      adini alacaktir. Bu test o karari CALISTIRILABILIR yapar: bes
+    ///      kontratin olay adlari taranir ve `Graduated` birden fazla yerde
+    ///      gorunurse duser.
+    /// @dev Literal topic0 ayrica olayin SEKLINI kilitler; yukaridaki
+    ///      tanimlayici pini de yapar ama bu satir Faz 3'un filtre sabitiyle
+    ///      BIRE BIR karsilastirilabilir bir sayi verir.
+    function test_theGraduatedEventNameIsClaimedByExactlyOneContract() public view {
+        string[5] memory contracts = ["BondingCurve", "LaunchFactory", "LaunchToken", "FeeEscrow", "CurveMath"];
+        uint256 claims;
+        for (uint256 i = 0; i < contracts.length; i++) {
+            string[] memory names = _strings(_artifact(contracts[i]), "$.abi[?(@.type == 'event')].name");
+            for (uint256 j = 0; j < names.length; j++) {
+                if (keccak256(bytes(names[j])) == keccak256("Graduated")) claims++;
+            }
+        }
+        assertEq(claims, 1, "`Graduated` adi birden fazla kontratta -- indexer filtreleri sessizce bosalir");
+
+        assertEq(
+            keccak256("Graduated(address,address,uint256,uint256)"),
+            bytes32(0x18a56450d3c666e2bae9e0829fcada82a9ab0deef6e33c2496752c88d4155c9d),
+            "Graduated topic0"
+        );
+    }
+
+    /// @dev Dort baytlik dizi aramasi. `code.length < 4` durumunda dongu hic
+    ///      calismaz ve `false` doner (fail-closed).
+    function _containsSelector(bytes memory code, bytes4 selector) internal pure returns (bool) {
+        for (uint256 i = 0; i + 4 <= code.length; i++) {
+            if (
+                code[i] == selector[0] && code[i + 1] == selector[1] && code[i + 2] == selector[2]
+                    && code[i + 3] == selector[3]
+            ) return true;
+        }
+        return false;
     }
 
     // ---------------------------------------------------------------
     // LaunchFactory
     // ---------------------------------------------------------------
 
+    /// @dev BU KUMEDE UC MUTATIF UYE VAR ve ucu de governance'tir; DORDUNCUSU
+    ///      OLMAMALIDIR. Ozellikle bir `setGovernor`, bir `setEscrow`, bir
+    ///      `setProfile` ya da bir `pause` bu kumeye bir GIRIS EKLER ve fazlalik
+    ///      hatadir -- iki yonlu esitligin butun anlami budur.
     function test_launchFactoryExposesExactlyTheseFunctions() public view {
-        string[] memory expected = new string[](12);
-        expected[0] = "MIN_GRADUATION_RAISE()";
-        expected[1] = "MIN_OPENING_MARKET_CAP()";
-        expected[2] = "MIN_SALE_AND_SEED()";
-        expected[3] = "SALE_SUPPLY()";
-        expected[4] = "VIRTUAL_QUOTE_RESERVES()";
-        expected[5] = "VIRTUAL_TOKEN_RESERVES()";
-        expected[6] = "escrow()";
-        expected[7] = "isCanonical(address)";
-        expected[8] = "launch(string,string,string)";
-        expected[9] = "launchCount()";
-        expected[10] = "predictAddresses(address,string,string,string,uint256)";
-        expected[11] = "protocolTreasury()";
+        string[] memory expected = new string[](20);
+        expected[0] = "GRADUATION_TARGET_DELAY()";
+        expected[1] = "MIN_GRADUATION_RAISE()";
+        expected[2] = "MIN_OPENING_MARKET_CAP()";
+        expected[3] = "MIN_SALE_AND_SEED()";
+        expected[4] = "SALE_SUPPLY()";
+        expected[5] = "VIRTUAL_QUOTE_RESERVES()";
+        expected[6] = "VIRTUAL_TOKEN_RESERVES()";
+        expected[7] = "applyGraduationTarget()";
+        expected[8] = "escrow()";
+        expected[9] = "governor()";
+        expected[10] = "graduationTarget()";
+        expected[11] = "isCanonical(address)";
+        expected[12] = "launch(string,string,string)";
+        expected[13] = "launchCount()";
+        expected[14] = "pendingGraduationTarget()";
+        expected[15] = "pendingGraduationTargetEta()";
+        expected[16] = "predictAddresses(address,string,string,string,uint256)";
+        expected[17] = "proposeGraduationTarget(address)";
+        expected[18] = "protocolTreasury()";
+        expected[19] = "setProtocolTreasury(address)";
         _assertSetEquals(_functionSignatures("LaunchFactory"), expected, "LaunchFactory fonksiyonlari");
     }
 
@@ -610,24 +738,43 @@ contract SurfaceTest is Test {
     ///      bir cagri revert etmelidir (src NatSpec'i bunu acikca soyluyor).
     ///      `isCanonical` ve `predictAddresses` `view` kalmali: ikisi de zincir
     ///      disi dogrulayicinin cagirdigi saf sorgulardir.
+    /// @dev `graduationTarget()` `view -> (address)` OLMAK ZORUNDA VE BU
+    ///      SATIRIN OLCTUGU SEY CURVE'UN BYTECODE'UDUR: `BondingCurve`
+    ///      `ILaunchFactory` uzerinden `view` cagirir, yani solc STATICCALL
+    ///      uretir; bu uyeyi non-`view` yapmak (ya da yeniden adlandirmak)
+    ///      deploy edilmis HER curve'un graduation'ini kirar. `protocolTreasury()`
+    ///      icin AYNISI gecerlidir ve orada bedeli daha da yuksektir: HER
+    ///      ISLEM o okumadan gecer.
+    /// @dev `proposeGraduationTarget` / `setProtocolTreasury` `nonpayable`,
+    ///      `applyGraduationTarget` da `nonpayable` VE IZINSIZDIR (governor
+    ///      kontrolu yalnizca ilk ikisindedir); izinsizlik ABI'de gorunmez,
+    ///      `LaunchFactory.t.sol` onu davranissal olarak olcer.
     function test_launchFactoryFunctionMutabilityAndReturns() public view {
-        string[] memory expected = new string[](12);
-        expected[0] = "MIN_GRADUATION_RAISE() view -> (uint256)";
-        expected[1] = "MIN_OPENING_MARKET_CAP() view -> (uint256)";
-        expected[2] = "MIN_SALE_AND_SEED() view -> (uint256)";
-        expected[3] = "SALE_SUPPLY() view -> (uint256)";
-        expected[4] = "VIRTUAL_QUOTE_RESERVES() view -> (uint256)";
-        expected[5] = "VIRTUAL_TOKEN_RESERVES() view -> (uint256)";
-        expected[6] = "escrow() view -> (address)";
-        expected[7] = "isCanonical(address) view -> (bool)";
-        expected[8] = "launch(string,string,string) nonpayable -> (address,address)";
-        expected[9] = "launchCount() view -> (uint256)";
-        expected[10] = "predictAddresses(address,string,string,string,uint256) view -> (address,address)";
-        expected[11] = "protocolTreasury() view -> (address)";
+        string[] memory expected = new string[](20);
+        expected[0] = "GRADUATION_TARGET_DELAY() view -> (uint256)";
+        expected[1] = "MIN_GRADUATION_RAISE() view -> (uint256)";
+        expected[2] = "MIN_OPENING_MARKET_CAP() view -> (uint256)";
+        expected[3] = "MIN_SALE_AND_SEED() view -> (uint256)";
+        expected[4] = "SALE_SUPPLY() view -> (uint256)";
+        expected[5] = "VIRTUAL_QUOTE_RESERVES() view -> (uint256)";
+        expected[6] = "VIRTUAL_TOKEN_RESERVES() view -> (uint256)";
+        expected[7] = "applyGraduationTarget() nonpayable -> ()";
+        expected[8] = "escrow() view -> (address)";
+        expected[9] = "governor() view -> (address)";
+        expected[10] = "graduationTarget() view -> (address)";
+        expected[11] = "isCanonical(address) view -> (bool)";
+        expected[12] = "launch(string,string,string) nonpayable -> (address,address)";
+        expected[13] = "launchCount() view -> (uint256)";
+        expected[14] = "pendingGraduationTarget() view -> (address)";
+        expected[15] = "pendingGraduationTargetEta() view -> (uint256)";
+        expected[16] = "predictAddresses(address,string,string,string,uint256) view -> (address,address)";
+        expected[17] = "proposeGraduationTarget(address) nonpayable -> ()";
+        expected[18] = "protocolTreasury() view -> (address)";
+        expected[19] = "setProtocolTreasury(address) nonpayable -> ()";
         _assertSetEquals(_functionDescriptors("LaunchFactory"), expected, "LaunchFactory tanimlayicilari");
 
         string[] memory ctor = new string[](1);
-        ctor[0] = "constructor(address,address,uint256,uint256,uint256) nonpayable";
+        ctor[0] = "constructor(address,address,address,uint256,uint256,uint256) nonpayable";
         _assertSetEquals(_constructorDescriptor("LaunchFactory"), ctor, "LaunchFactory constructor");
     }
 
@@ -636,8 +783,12 @@ contract SurfaceTest is Test {
     ///      `CurveMath` hatasini da ABI'ye koyuyor (besini degil -- uyeligi
     ///      derleyici seciyor, bkz. dosya bas notu (b)). Ikisi de bugun
     ///      ULASILAMAZ ve isaretlenerek pinleniyor.
+    /// @dev YEDI YENI HATA: uc adres argumaninin "rolunu tasiyamaz" hucreleri
+    ///      (`TreasuryIsTheEscrow`, `GovernorIsTheEscrow`, `ZeroGovernorAddress`)
+    ///      ve governance'in dort korumasi. `TreasuryIsTheEscrow` F1'in
+    ///      olculebilir izidir.
     function test_launchFactoryExposesExactlyTheseErrors() public view {
-        string[] memory expected = new string[](11);
+        string[] memory expected = new string[](18);
         expected[0] = "DegenerateProfile()";
         expected[1] = "EmptyName()";
         expected[2] = "EmptySymbol()";
@@ -647,23 +798,40 @@ contract SurfaceTest is Test {
         expected[6] = "SaleAndSeedStrandSupply()";
         expected[7] = "ZeroEscrowAddress()";
         expected[8] = "ZeroTreasuryAddress()";
+        // --- adres argumanlari: rolu tasiyamaz ---
+        expected[9] = "GovernorIsTheEscrow()";
+        expected[10] = "TreasuryIsTheEscrow()";
+        expected[11] = "ZeroGovernorAddress()";
+        // --- governance ---
+        expected[12] = "GraduationTargetDelayNotElapsed()";
+        expected[13] = "NoPendingGraduationTarget()";
+        expected[14] = "NotGovernor()";
+        expected[15] = "ZeroGraduationTarget()";
         // --- CurveMath katmani: bugun ULASILAMAZ, yine de yuzeyde ---
-        expected[9] = "InsufficientTokenReserve()";
-        expected[10] = "ZeroReserve()";
+        expected[16] = "InsufficientTokenReserve()";
+        expected[17] = "ZeroReserve()";
         _assertSetEquals(_errorDescriptors("LaunchFactory"), expected, "LaunchFactory hatalari");
     }
 
     /// @dev UC indeksli alan: `token`, `curve`, `creator`. Faz 3'un indexer'i
     ///      bir launch'i bu olaydan yeniden kurar ve ucunun de topic olmasi
     ///      "bu creator'in launch'lari" gibi sorgularin tek dayanagidir.
+    /// @dev UC GOVERNANCE OLAYI: `GraduationTargetProposed` gecikmenin KAMUYA
+    ///      ACIK yarisidir (bir keeper yalnizca onu izleyerek "uc gun icinde
+    ///      bosaltilmasi gereken curve'ler" listesini kurar), `eta` INDEKSSIZ
+    ///      kalir cunku ona gore filtre yapilmaz. Ikisi de `previous`/`current`
+    ///      tasir: bir denetci rotasyon gecmisini yalnizca loglardan kurar.
     function test_launchFactoryExposesExactlyTheseEvents() public view {
-        string[] memory expected = new string[](1);
-        expected[0] = "Launched(address,address,address,string,string,string,bytes32) indexed:(token,curve,creator)";
+        string[] memory expected = new string[](4);
+        expected[0] = "GraduationTargetChanged(address,address) indexed:(previous,current)";
+        expected[1] = "GraduationTargetProposed(address,uint256) indexed:(target)";
+        expected[2] = "Launched(address,address,address,string,string,string,bytes32) indexed:(token,curve,creator)";
+        expected[3] = "ProtocolTreasuryChanged(address,address) indexed:(previous,current)";
         _assertSetEquals(_eventDescriptors("LaunchFactory"), expected, "LaunchFactory olaylari");
     }
 
     function test_launchFactoryAbiCensus() public view {
-        _assertEntryCensus("LaunchFactory", 12, 11, 1, 1, 0, 0);
+        _assertEntryCensus("LaunchFactory", 20, 18, 4, 1, 0, 0);
     }
 
     // ---------------------------------------------------------------

@@ -130,6 +130,171 @@ contract RejectingSeller {
     }
 }
 
+/// Revert verisinden selector cikaran ortak yardimci; ic cercevelerden
+/// olculen revert'ler icin gerekli (`try/catch` bir kontrat cagrisi ister,
+/// `receive()` icinden yapilan ham `.call` istemez).
+function selectorOf(bytes memory err) pure returns (bytes4) {
+    if (err.length < 4) return bytes4(0);
+    return bytes4(err[0]) | (bytes4(err[1]) >> 8) | (bytes4(err[2]) >> 16) | (bytes4(err[3]) >> 24);
+}
+
+/// GRADUATION HEDEFI. `receive()` CIPLAK BIR KABULDUR ve bu Faz 2'nin
+/// yukumlulugu (2)'sidir: odeme hedefin KENDI durum makinesi ucus halindeyken,
+/// curve'un cagri cercevesinde calisir.
+contract PoolSeeder {
+    uint256 public baseReceived;
+    uint256 public quoteReceived;
+    uint256 public pulls;
+
+    function pull(BondingCurve curve) external returns (uint256 base, uint256 quote) {
+        (base, quote) = curve.graduate();
+        baseReceived += base;
+        quoteReceived += quote;
+        pulls++;
+    }
+
+    receive() external payable {}
+}
+
+/// Odemeyi REDDEDEN hedef; ONARILABILIR. Yeniden denemenin ayni `(D, R)`yi
+/// dondurdugu ancak onarim sonrasi olculebilir -- ve o olcum "reddeden bir
+/// havuz bir launch'i strand edemez" cumlesinin ikinci yarisidir.
+contract RejectingSeeder {
+    bool public repaired;
+
+    function repair() external {
+        repaired = true;
+    }
+
+    function pull(BondingCurve curve) external returns (uint256, uint256) {
+        return curve.graduate();
+    }
+
+    receive() external payable {
+        require(repaired, "no native");
+    }
+}
+
+/// `receive()` HIC OLMAYAN hedef. `RejectingSeeder`dan ayri bir vakadir:
+/// orada revert bir `require`dan gelir, burada cagrilacak fonksiyon YOKTUR.
+contract NoReceiveSeeder {
+    function pull(BondingCurve curve) external returns (uint256, uint256) {
+        return curve.graduate();
+    }
+}
+
+/// Odeme cercevesinin ICINDEN curve'un BES giris noktasini da yoklayan hedef.
+/// Yalnizca "revert etti mi" degil HANGI selector ile revert ettigi olculur;
+/// alim yollarinda `complete` korumasini silmek davranisi degistirmez,
+/// yalnizca selector'u degistirir.
+contract ProbingSeeder {
+    BondingCurve public curve;
+    bytes4[5] public seen;
+    bool public probed;
+
+    function pull(BondingCurve curve_) external returns (uint256, uint256) {
+        curve = curve_;
+        return curve_.graduate();
+    }
+
+    receive() external payable {
+        if (probed) return;
+        probed = true;
+        seen[0] = _probe(abi.encodeWithSelector(BondingCurve.graduate.selector));
+        seen[1] = _probe(abi.encodeWithSelector(BondingCurve.buyExactTokensOut.selector, 1, type(uint256).max));
+        seen[2] = _probe(abi.encodeWithSelector(BondingCurve.buyExactQuoteIn.selector, uint256(0)));
+        seen[3] = _probe(abi.encodeWithSelector(BondingCurve.sellExactTokensIn.selector, 1, 0));
+        seen[4] = _probe(abi.encodeWithSelector(BondingCurve.bind.selector, address(0xBEEF)));
+    }
+
+    /// @dev Basari `bytes4(0)` dondurur ve testte IHLAL olarak okunur.
+    function _probe(bytes memory data) internal returns (bytes4) {
+        (bool ok, bytes memory err) = address(curve).call(data);
+        if (ok) return bytes4(0);
+        return selectorOf(err);
+    }
+}
+
+/// CAPRAZ CURVE. Curve A'nin odemesi icinde curve B'yi mezun eder. Ucuncu bir
+/// tarafca somurulemez (cagiran hedefin KENDISIDIR) ama Faz 2 yazarinin
+/// carpacagi vaka budur.
+contract CrossCurveSeeder {
+    BondingCurve public other;
+    bool public done;
+    bytes4 public innerFailure;
+
+    function setOther(BondingCurve other_) external {
+        other = other_;
+    }
+
+    function pull(BondingCurve curve) external returns (uint256, uint256) {
+        return curve.graduate();
+    }
+
+    receive() external payable {
+        if (done || address(other) == address(0)) return;
+        done = true;
+        (bool ok, bytes memory err) = address(other).call(abi.encodeWithSelector(BondingCurve.graduate.selector));
+        if (!ok) innerFailure = selectorOf(err);
+    }
+}
+
+/// FACTORY ROLUNU OYNAYAN OLCUM ARACI. Curve'un factory'sinden okudugu IKI
+/// uyeyi de NON-`view` olarak sunar ve istege bagli olarak SSTORE yapar --
+/// yani `view`in TASIYICI oldugu iddiasi burada OLCULUR, kaynak koddan
+/// OKUNMAZ. Kontrol grubu ayni fonksiyonun statik OLMAYAN bir cagriyla
+/// sayaci artirmasidir; o olmadan test "herhangi bir sebeple revert eden" bir
+/// kontratta da gecerdi.
+contract MeasuringFactory {
+    BondingCurve public curve;
+    LaunchToken public token;
+
+    address internal treasury;
+    address internal target;
+
+    uint256 public writes;
+    bool public writeOnTargetRead;
+    bool public writeOnTreasuryRead;
+
+    constructor(address treasury_, uint256 t_, uint256 v_, uint256 s_) {
+        treasury = treasury_;
+        curve = new BondingCurve(address(0xC7EA), address(new FeeEscrow()), t_, v_, s_);
+        token = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", address(0xC7EA), address(curve), bytes32(0));
+        curve.bind(address(token));
+    }
+
+    function setTarget(address target_) external {
+        target = target_;
+    }
+
+    function armTargetWrite() external {
+        writeOnTargetRead = true;
+    }
+
+    function armTreasuryWrite() external {
+        writeOnTreasuryRead = true;
+    }
+
+    /// @dev NON-`view` BILEREK. Curve'un YEREL arayuzu bunu `view` beyan eder,
+    ///      dolayisiyla solc curve tarafinda STATICCALL uretir ve asagidaki
+    ///      SSTORE o cercevede YASAKTIR.
+    function graduationTarget() external returns (address) {
+        if (writeOnTargetRead) writes += 1;
+        return target;
+    }
+
+    function protocolTreasury() external returns (address) {
+        if (writeOnTreasuryRead) writes += 1;
+        return treasury;
+    }
+
+    function pull() external returns (uint256, uint256) {
+        return curve.graduate();
+    }
+
+    receive() external payable {}
+}
+
 /// @dev Sabitlenmis her beklenen deger ZINCIR ALGORITMASINDAN ELLE
 ///      turetilmistir; hicbiri `CurveMath` cagrilarak uretilmemistir. Testin
 ///      kutuphaneyi kendisiyle karsilastirmasi bu projenin defalarca
@@ -149,6 +314,14 @@ contract BondingCurveTest is Test {
     FeeEscrow internal escrow;
     BondingCurve internal curve;
     LaunchToken internal token;
+
+    /// BU TEST KONTRATI CURVE'LERIN FACTORY'SIDIR (deploy eden odur), yani
+    /// `ILaunchFactory`nin IKI uyesini TASIMAK ZORUNDADIR: `protocolTreasury()`
+    /// HER islemde, `graduationTarget()` her `graduate()` cagrisinda STATICCALL
+    /// ile okunur. Ikisi de DEGISKENDIR, cunku rotasyonun CANLI bir curve'e
+    /// ulastigi ancak boyle olculebilir.
+    address public protocolTreasury = TREASURY;
+    address public graduationTarget;
 
     function setUp() public {
         escrow = new FeeEscrow();
@@ -173,11 +346,11 @@ contract BondingCurveTest is Test {
     }
 
     function _newCurve(address creator_, address escrow_) internal returns (BondingCurve) {
-        return new BondingCurve(creator_, escrow_, TREASURY, T, V, S);
+        return new BondingCurve(creator_, escrow_, T, V, S);
     }
 
     function _curveWithProfile(uint256 t_, uint256 v_, uint256 s_) internal returns (BondingCurve) {
-        return new BondingCurve(CREATOR, address(escrow), TREASURY, t_, v_, s_);
+        return new BondingCurve(CREATOR, address(escrow), t_, v_, s_);
     }
 
     /// Uretim disi bir profille tam bir launch (curve + token + bind).
@@ -290,12 +463,26 @@ contract BondingCurveTest is Test {
         unbound.sellExactTokensIn(1e18, 0);
     }
 
-    function test_constructorRejectsZeroEscrowAndZeroTreasury() public {
+    /// Curve `escrow`u IMMUTABLE tutar ve sifir olmasini reddeder.
+    ///
+    /// `protocolTreasury` icin BURADA ARTIK BIR KONTROL YOKTUR ve olmamalidir:
+    /// curve o adresi bir argumandan almaz, `protocolTreasury()` ile HER
+    /// YATIRIMDA factory'den okur (F1). Sifir olmama garantisinin tek yeri
+    /// `LaunchFactory`'nin constructor'i ve setter'idir; buraya bir kontrol
+    /// koymak gercek factory ile ULASILAMAZ bir dal, yani mutasyonla
+    /// oldurulemeyen olu kod olurdu.
+    ///
+    /// Asimetri kasitlidir: escrow BIRIKMIS alacaklari tutar, dolayisiyla onu
+    /// dondurmek gecmis ucretleri tasimaz, yalnizca defteri catallar. Treasury
+    /// rotasyonunda ise `owed[eski]` eski adresin talebi olarak aynen kalir.
+    function test_constructorRejectsZeroEscrowAndTakesNoTreasuryArgument() public {
         vm.expectRevert(BondingCurve.ZeroEscrow.selector);
-        new BondingCurve(CREATOR, address(0), TREASURY, T, V, S);
+        new BondingCurve(CREATOR, address(0), T, V, S);
 
-        vm.expectRevert(BondingCurve.ZeroTreasury.selector);
-        new BondingCurve(CREATOR, address(escrow), address(0), T, V, S);
+        // Ve treasury'yi factory'den okur: bu test kontrati curve'un
+        // factory'sidir ve `protocolTreasury()`si TREASURY dondurur.
+        assertEq(curve.protocolTreasury(), TREASURY, "treasury factory'den okunmuyor");
+        assertEq(curve.factory(), address(this));
     }
 
     /// Profil artik factory'den geldigi icin YANLIS BIR DEPLOY ARGUMANI
@@ -303,13 +490,13 @@ contract BondingCurveTest is Test {
     /// reddedilir.
     function test_constructorRejectsADegenerateProfile() public {
         vm.expectRevert(BondingCurve.ZeroVirtualTokenReserves.selector);
-        new BondingCurve(CREATOR, address(escrow), TREASURY, 0, V, S);
+        new BondingCurve(CREATOR, address(escrow), 0, V, S);
 
         vm.expectRevert(BondingCurve.ZeroVirtualQuoteReserves.selector);
-        new BondingCurve(CREATOR, address(escrow), TREASURY, T, 0, S);
+        new BondingCurve(CREATOR, address(escrow), T, 0, S);
 
         vm.expectRevert(BondingCurve.ZeroSaleSupply.selector);
-        new BondingCurve(CREATOR, address(escrow), TREASURY, T, V, 0);
+        new BondingCurve(CREATOR, address(escrow), T, V, 0);
 
         // S == T reddedilir; sinirin GECEN tarafi (S = T - 1) constructor'dan
         // gecer. Bu bir ONAY DEGILDIR: constructor yalnizca ARITMETIK olarak
@@ -317,12 +504,12 @@ contract BondingCurveTest is Test {
         // arz -- henuz bilinmez. `S = T - 1` fiilen kullanilamaz ve bunu
         // `bind` reddeder; asagidaki test o katmani kapatir.
         vm.expectRevert(BondingCurve.SaleSupplyNotBelowTokenReserves.selector);
-        new BondingCurve(CREATOR, address(escrow), TREASURY, T, V, T);
+        new BondingCurve(CREATOR, address(escrow), T, V, T);
 
         vm.expectRevert(BondingCurve.SaleSupplyNotBelowTokenReserves.selector);
-        new BondingCurve(CREATOR, address(escrow), TREASURY, T, V, T + 1);
+        new BondingCurve(CREATOR, address(escrow), T, V, T + 1);
 
-        BondingCurve edge = new BondingCurve(CREATOR, address(escrow), TREASURY, T, V, T - 1);
+        BondingCurve edge = new BondingCurve(CREATOR, address(escrow), T, V, T - 1);
         assertEq(edge.INITIAL_REAL_TOKEN_RESERVES(), T - 1);
 
         // ...ve ona bir token BAGLANAMAZ: S = 1,073e27 > N = 1e27.
@@ -382,7 +569,7 @@ contract BondingCurveTest is Test {
         // Ve testnet profili (V'nin 1/1000'i) ayni kod tabaniyla deploy
         // edilebilir: yalnizca argumanlar degisir, `poolSeedSupply` ise
         // V'den bagimsiz oldugu icin AYNI kalir.
-        BondingCurve testnet = new BondingCurve(CREATOR, address(escrow), TREASURY, T, 4_292e15, S);
+        BondingCurve testnet = new BondingCurve(CREATOR, address(escrow), T, 4_292e15, S);
         assertEq(testnet.INITIAL_VIRTUAL_QUOTE_RESERVES(), 4_292e15);
         assertEq(testnet.poolSeedSupply(), 206_886_011_183_597_390_493_942_218);
 
@@ -1273,6 +1460,502 @@ contract BondingCurveTest is Test {
             // {0, 1} kumesindedir -- asla negatif, asla 2 ve uzeri.
             assertLe(gross - spent, 1, "slack outside {0, 1}");
         }
+    }
+
+    // ---------------------------------------------------------------
+    // Graduation
+    // ---------------------------------------------------------------
+
+    /// Uretim profilinde tam-cikisla tamamlanan bir curve'un TAM degerleri.
+    /// Elle turetilmis (`CurveMath` cagrilmadan): bkz.
+    /// `test_completeFlipsInsideTheBuyThatDrainsRealTokenReserves`.
+    uint256 internal constant R_AFTER_EXACT_OUT_COMPLETION = 12_161_433_369_060_378_706_681;
+    uint256 internal constant D_POOL_SEED = 206_886_011_183_597_390_493_942_218;
+    uint256 internal constant RESIDUE_AFTER_GRADUATION = 13_988_816_402_609_506_057_782;
+
+    function _completeCurve() internal {
+        vm.deal(BUYER, 100_000e18);
+        vm.prank(BUYER);
+        curve.buyExactTokensOut{value: 20_000e18}(S, type(uint256).max);
+        assertTrue(curve.complete(), "curve tamamlanmadi");
+        assertEq(curve.realQuoteReserves(), R_AFTER_EXACT_OUT_COMPLETION);
+    }
+
+    /// R-1. `graduated` `complete` ILE AYNI SLOT'ta ve ONDAN SONRA gelir.
+    ///
+    /// Olcum artifact'tan degil ZINCIRDEN yapilir, ve bu daha guclu: slot 5
+    /// ham olarak okunur, yani hem PAKETLENDIGI hem de OFFSET'LERIN SIRASI
+    /// dogrulanir. `graduated` once declare edilseydi ayni bayraklar
+    /// `0x0100`/`0x0101` verirdi; ayri bir slota dusseydi slot 5 tamamlanmadan
+    /// sonra da `0x01` kalir ve slot 6 `0x01` olurdu.
+    ///
+    /// Deploy edildikten sonra bu duzen her curve icin sonsuza kadar sabittir.
+    function test_graduatedPacksIntoCompletesSlotAndComesAfterIt() public {
+        bytes32 slot5 = vm.load(address(curve), bytes32(uint256(5)));
+        assertEq(slot5, bytes32(0), "baslangicta iki bayrak da kapali");
+
+        _completeCurve();
+        assertEq(vm.load(address(curve), bytes32(uint256(5))), bytes32(uint256(0x01)), "complete offset 0 olmali");
+
+        PoolSeeder seeder = new PoolSeeder();
+        graduationTarget = address(seeder);
+        seeder.pull(curve);
+
+        assertEq(vm.load(address(curve), bytes32(uint256(5))), bytes32(uint256(0x0101)), "graduated offset 1'de olmali");
+        assertEq(vm.load(address(curve), bytes32(uint256(6))), bytes32(0), "graduated yeni bir slot aldi");
+    }
+
+    /// R-6. Tamamlanmamis bir curve MEZUN EDILEMEZ. Korumanin silinmesi
+    /// `realQuoteReserves`i satis ortasinda disari odetir, `graduated` latch
+    /// eder ve kalan her alici hicbir satisi karsilayamayan bir curve'de islem
+    /// yapar -- ve hicbir odeme gucu invariant'i bunu goremez, cunku curve
+    /// SONRASINDA gercekten oder duruma dusmez; YALAN SOYLEYEN sey
+    /// `realQuoteReserves`tir.
+    function test_graduateRevertsBeforeCompletion() public {
+        PoolSeeder seeder = new PoolSeeder();
+        graduationTarget = address(seeder);
+
+        // Once hic islem olmadan.
+        vm.expectRevert(BondingCurve.NotComplete.selector);
+        seeder.pull(curve);
+
+        // Sonra satis arzinin bir kismi satildiktan sonra: koruma hala
+        // reddeder, ve reddetmesi `NotComplete` ILE olur.
+        vm.deal(BUYER, 100_000e18);
+        vm.prank(BUYER);
+        curve.buyExactTokensOut{value: 1_000e18}(1_000_000e18, type(uint256).max);
+        assertGt(curve.realQuoteReserves(), 0);
+
+        vm.expectRevert(BondingCurve.NotComplete.selector);
+        seeder.pull(curve);
+        assertFalse(curve.graduated());
+        assertEq(address(curve).balance, curve.realQuoteReserves());
+    }
+
+    /// `GraduationTargetUnset` CAGIRAN KONTROLUNDEN ONCE gelir, ve bu SIRA
+    /// olculebilir: hedef atanmamisken cagiran KIM OLURSA OLSUN gordugu hata
+    /// budur. Sira ters olsaydi bu hata yalnizca `msg.sender == address(0)`
+    /// iken ulasilabilir olurdu -- yani pratikte hic.
+    function test_graduateRevertsWhenTheTargetIsUnsetWhoeverCalls() public {
+        _completeCurve();
+        assertEq(graduationTarget, address(0), "on kosul: hedef atanmamis");
+
+        vm.prank(ALICE);
+        vm.expectRevert(BondingCurve.GraduationTargetUnset.selector);
+        curve.graduate();
+
+        PoolSeeder seeder = new PoolSeeder();
+        vm.expectRevert(BondingCurve.GraduationTargetUnset.selector);
+        seeder.pull(curve);
+
+        // Ve bu, Faz 2 var olmadigi surece herkesin gorecegi hatadir.
+        vm.expectRevert(BondingCurve.GraduationTargetUnset.selector);
+        curve.graduate();
+    }
+
+    /// R-4. Cozulmus hedef DISINDA kimse cagiramaz -- ve bu IKI TANIKLA
+    /// olculur: bir EOA ve KODU OLAN ikinci bir kontrat. Ikincisi
+    /// `msg.sender.code.length != 0` seklindeki mutanti oldurur; yalnizca EOA
+    /// taniginda o mutant HAYATTA KALIRDI.
+    function test_graduateRevertsForEveryCallerButTheResolvedTarget() public {
+        _completeCurve();
+        PoolSeeder theTarget = new PoolSeeder();
+        PoolSeeder anotherContract = new PoolSeeder();
+        graduationTarget = address(theTarget);
+
+        vm.prank(ALICE);
+        vm.expectRevert(BondingCurve.NotGraduationTarget.selector);
+        curve.graduate();
+
+        vm.expectRevert(BondingCurve.NotGraduationTarget.selector);
+        anotherContract.pull(curve);
+
+        // Factory'nin kendisi de cagiramaz: yetki `bind`ten AYRIDIR.
+        vm.expectRevert(BondingCurve.NotGraduationTarget.selector);
+        curve.graduate();
+
+        assertFalse(curve.graduated());
+
+        // Hedef gecer.
+        theTarget.pull(curve);
+        assertTrue(curve.graduated());
+    }
+
+    /// MUTLU YOL. Donen degerler, olay, iki bakiye, ve MUTASYONA UGRAMAYAN
+    /// rezervler.
+    ///
+    /// Rezervlerin sifirlanmamasi bilincli (tasarim 7.2 madde 7): tamamlanma
+    /// sonrasi her giris noktasi zaten revert eder, dolayisiyla bayat bir okuma
+    /// ulasilamazdir; buna karsilik `realQuoteReserves` graduation sonrasi bir
+    /// dogrulayicinin havuzla karsilastirabilecegi TEK zincir kaydidir. Ayni
+    /// sebeple kapanis fiyati da hala okunabilir kalir:
+    /// `virtualQuoteReserves == V + R` ve `virtualTokenReserves == T - S`.
+    function test_graduatePaysDFromTheImmutableAndRFromTheLedger() public {
+        _completeCurve();
+        PoolSeeder seeder = new PoolSeeder();
+        graduationTarget = address(seeder);
+
+        uint256 escrowOwedBefore = escrow.totalOwed();
+
+        vm.expectEmit(true, true, false, true, address(curve));
+        emit BondingCurve.Graduated(address(token), address(seeder), D_POOL_SEED, R_AFTER_EXACT_OUT_COMPLETION);
+        (uint256 base, uint256 quote) = seeder.pull(curve);
+
+        assertEq(base, D_POOL_SEED, "baz bacagi immutable `D` olmali");
+        assertEq(quote, R_AFTER_EXACT_OUT_COMPLETION, "quote bacagi defterdeki `R` olmali");
+        assertEq(base, curve.poolSeedSupply());
+
+        assertTrue(curve.graduated());
+        assertEq(token.balanceOf(address(seeder)), D_POOL_SEED);
+        assertEq(address(seeder).balance, R_AFTER_EXACT_OUT_COMPLETION);
+        assertEq(address(curve).balance, 0, "curve butun raise'i odedi");
+        assertEq(token.balanceOf(address(curve)), RESIDUE_AFTER_GRADUATION, "artik `N - S - D` olmali");
+
+        // DEFTER MUTASYONA UGRAMAZ.
+        assertEq(curve.realQuoteReserves(), R_AFTER_EXACT_OUT_COMPLETION, "realQuoteReserves sifirlanmis");
+        assertEq(curve.realTokenReserves(), 0);
+        assertEq(curve.virtualQuoteReserves(), V + R_AFTER_EXACT_OUT_COMPLETION, "V + R");
+        assertEq(curve.virtualTokenReserves(), T - S, "T - S");
+
+        // D7: graduation UCRET ALMAZ. Escrow'un toplam alacagi degismez.
+        assertEq(escrow.totalOwed(), escrowOwedBefore, "graduation escrow'a bir sey yatirdi");
+    }
+
+    /// `graduate()` `payable` DEGILDIR. Yuzey testi mutabiliteyi ABI'de pinler;
+    /// bu satir onu DAVRANISSAL olarak da kapatir. `payable` olsaydi gonderilen
+    /// deger curve'de kalir ve bir daha CIKAMAZDI.
+    function test_graduateIsNotPayable() public {
+        _completeCurve();
+        PoolSeeder seeder = new PoolSeeder();
+        graduationTarget = address(seeder);
+
+        vm.deal(address(this), 1 ether);
+        (bool ok,) = address(curve).call{value: 1 wei}(abi.encodeWithSelector(BondingCurve.graduate.selector));
+        assertFalse(ok, "graduate deger kabul etti");
+        assertFalse(curve.graduated());
+    }
+
+    /// R-2. Ikinci cagri REVERT eder (pump.fun'in sessiz no-op'unun aksine).
+    function test_theSecondGraduateRevertsAlreadyGraduated() public {
+        _completeCurve();
+        PoolSeeder seeder = new PoolSeeder();
+        graduationTarget = address(seeder);
+        seeder.pull(curve);
+
+        vm.expectRevert(BondingCurve.AlreadyGraduated.selector);
+        seeder.pull(curve);
+
+        // Hedef degistirilse bile ikinci bir odeme YOKTUR.
+        PoolSeeder second = new PoolSeeder();
+        graduationTarget = address(second);
+        vm.expectRevert(BondingCurve.AlreadyGraduated.selector);
+        second.pull(curve);
+
+        assertEq(token.balanceOf(address(second)), 0);
+        assertEq(address(second).balance, 0);
+        assertEq(seeder.pulls(), 1);
+    }
+
+    /// R-2 + R-8. Odeme cercevesinden yapilan GERI GIRIS `AlreadyGraduated`
+    /// alir VE -- tasiyici kisim -- hedef TAM OLARAK BIR KEZ `D` ve `R` alir.
+    /// Bayragi dis cagrilarin ARKASINA almak (pump.fun'in Solana sirasi) ic
+    /// cagriyi BASARILI kilar ve hedef `2D`/`2R` alirdi; yalnizca "ikinci cagri
+    /// dustu" diyen bir iddia o mutanti YASATIR.
+    ///
+    /// Ayni cerceveden UC TICARET GIRIS NOKTASI da yoklanir ve her biri
+    /// `CurveComplete()` selector'u ile dusmelidir (R-13). "Revert etti" demek
+    /// YETMEZ: alim yollarinda `complete` korumasini silmek davranisi
+    /// degistirmez, cunku cagri `NotEnoughTokensToBuy` ya da kismadan sonra
+    /// `CurveMath.ZeroAmount`a duser.
+    function test_reentrantGraduateGetsAlreadyGraduatedAndEveryTradeGetsCurveComplete() public {
+        _completeCurve();
+        ProbingSeeder seeder = new ProbingSeeder();
+        graduationTarget = address(seeder);
+
+        seeder.pull(curve);
+
+        assertTrue(seeder.probed(), "odeme cercevesi hic acilmadi");
+        assertEq(seeder.seen(0), BondingCurve.AlreadyGraduated.selector, "ic graduate");
+        assertEq(seeder.seen(1), BondingCurve.CurveComplete.selector, "buyExactTokensOut");
+        assertEq(seeder.seen(2), BondingCurve.CurveComplete.selector, "buyExactQuoteIn");
+        assertEq(seeder.seen(3), BondingCurve.CurveComplete.selector, "sellExactTokensIn");
+        assertEq(seeder.seen(4), BondingCurve.NotFactory.selector, "bind");
+
+        // TAM OLARAK BIR KEZ.
+        assertEq(token.balanceOf(address(seeder)), D_POOL_SEED, "baz bacagi bir kereden fazla odendi");
+        assertEq(address(seeder).balance, R_AFTER_EXACT_OUT_COMPLETION, "quote bacagi bir kereden fazla odendi");
+        assertEq(address(curve).balance, 0);
+        assertEq(token.balanceOf(address(curve)), RESIDUE_AFTER_GRADUATION);
+
+        // Ve zincirin dorduncu halkasi, FACTORY'NIN kendi cercevesinden:
+        // `graduated => bound`, dolayisiyla `bind` de kapalidir.
+        LaunchToken other = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(curve), bytes32(0));
+        vm.expectRevert(BondingCurve.AlreadyBound.selector);
+        curve.bind(address(other));
+    }
+
+    /// CAPRAZ CURVE PENCERESI ULASILABILIRDIR. Tasarimin reentrancy bolumu
+    /// yalnizca AYNI curve hakkinda yazilmisti; Faz 2 yazarinin carpacagi vaka
+    /// budur ve Faz 2 yukumlulugu (2)'nin somut icerigidir.
+    function test_crossCurveGraduationInsideThePayoutIsReachable() public {
+        (BondingCurve curveB, LaunchToken tokenB) = _launch(CREATOR, escrow);
+
+        _completeCurve();
+        vm.deal(BUYER, 100_000e18);
+        vm.prank(BUYER);
+        curveB.buyExactTokensOut{value: 20_000e18}(S, type(uint256).max);
+        assertTrue(curveB.complete());
+
+        CrossCurveSeeder seeder = new CrossCurveSeeder();
+        seeder.setOther(curveB);
+        graduationTarget = address(seeder);
+
+        seeder.pull(curve);
+
+        assertEq(seeder.innerFailure(), bytes4(0), "ic graduate basarisiz oldu");
+        assertTrue(curve.graduated());
+        assertTrue(curveB.graduated(), "capraz curve mezun olmadi");
+        assertEq(address(seeder).balance, 2 * R_AFTER_EXACT_OUT_COMPLETION, "R1 + R2");
+        assertEq(token.balanceOf(address(seeder)), D_POOL_SEED);
+        assertEq(tokenB.balanceOf(address(seeder)), D_POOL_SEED);
+    }
+
+    /// R-9. REDDEDEN BIR HEDEF BIR LAUNCH'I STRAND EDEMEZ. Dort iddia birden:
+    /// hata `GraduationPayoutFailed()`, bayrak GERI ALINMIS, token transferi
+    /// GERI ALINMIS, ve -- yarinin tasiyici olani -- onarimdan sonra AYNI cagri
+    /// AYNI `(D, R)`yi dondurur.
+    function test_aRejectingTargetCannotStrandTheLaunchAndTheRetryPaysTheSame() public {
+        _completeCurve();
+        RejectingSeeder seeder = new RejectingSeeder();
+        graduationTarget = address(seeder);
+
+        vm.expectRevert(BondingCurve.GraduationPayoutFailed.selector);
+        seeder.pull(curve);
+
+        assertFalse(curve.graduated(), "bayrak reddedilen odemede latch etti");
+        assertEq(address(curve).balance, R_AFTER_EXACT_OUT_COMPLETION, "curve `R`yi kaybetti");
+        assertEq(curve.realQuoteReserves(), R_AFTER_EXACT_OUT_COMPLETION);
+        assertEq(token.balanceOf(address(seeder)), 0, "token transferi geri alinmadi");
+        assertEq(token.balanceOf(address(curve)), N - S);
+
+        seeder.repair();
+        (uint256 base, uint256 quote) = seeder.pull(curve);
+        assertEq(base, D_POOL_SEED);
+        assertEq(quote, R_AFTER_EXACT_OUT_COMPLETION);
+        assertTrue(curve.graduated());
+    }
+
+    /// `receive()` HIC OLMAYAN hedef de fail-closed'dir. `RejectingSeeder`dan
+    /// ayri bir vakadir: orada revert bir `require`dan gelir, burada
+    /// cagrilacak fonksiyon yoktur. Care hedefi YENIDEN ISARETLEMEKTIR (D3).
+    function test_aTargetWithNoReceiveFailsClosedAndRepointingIsTheRemedy() public {
+        _completeCurve();
+        NoReceiveSeeder broken = new NoReceiveSeeder();
+        graduationTarget = address(broken);
+
+        vm.expectRevert(BondingCurve.GraduationPayoutFailed.selector);
+        broken.pull(curve);
+        assertFalse(curve.graduated());
+        assertEq(address(curve).balance, R_AFTER_EXACT_OUT_COMPLETION);
+
+        // D3: yeniden isaretleme TEK caredir ve calisir.
+        PoolSeeder good = new PoolSeeder();
+        graduationTarget = address(good);
+        (uint256 base, uint256 quote) = good.pull(curve);
+        assertEq(base, D_POOL_SEED);
+        assertEq(quote, R_AFTER_EXACT_OUT_COMPLETION);
+    }
+
+    /// R-7. BU TESTIN ADI "MIKTARLAR" DEGIL "BAGIS"TIR, ve olmasi gereken de
+    /// bu: bakiye okuyan bir hal `(D, R)` yerine bakiyeleri oderdi ve
+    /// BAGIS OLMADIGI SURECE ayni sonucu verirdi -- hicbir test bagis
+    /// yapmadigi icin de yesil kalirdi. Tasarim ile pump.fun'in davranisi
+    /// arasinda duran TEK sey budur.
+    ///
+    /// Bagislar Arc'ta gercektir: 6 decimal ERC-20 gorunumunden yapilan bir
+    /// `transfer` native bakiyeyi artirir ve `receive()` HIC calismaz (canli
+    /// olcum, `FeeEscrow` kisit (1)). `vm.deal` o kanalin yerine gecen bir
+    /// vekildir ve fork'ta yeniden olculmesi gerekir.
+    function test_donationsDoNotChangeWhatGraduationPays() public {
+        _completeCurve();
+
+        // NATIVE BAGIS: bakiye defterin 7 ether uzerine cikar.
+        vm.deal(address(curve), address(curve).balance + 7 ether);
+        // TOKEN BAGISI: alici tokenlerini curve'e geri gonderir.
+        vm.prank(BUYER);
+        assertTrue(token.transfer(address(curve), 1_000e18));
+
+        assertEq(address(curve).balance, R_AFTER_EXACT_OUT_COMPLETION + 7 ether, "bagis kanali kurulmadi");
+        assertEq(token.balanceOf(address(curve)), N - S + 1_000e18);
+
+        PoolSeeder seeder = new PoolSeeder();
+        graduationTarget = address(seeder);
+        (uint256 base, uint256 quote) = seeder.pull(curve);
+
+        assertEq(base, D_POOL_SEED, "baz bacagi bakiyeden okundu");
+        assertEq(quote, R_AFTER_EXACT_OUT_COMPLETION, "quote bacagi bakiyeden okundu");
+
+        // BAGISLAR CURVE'DE KALIR, SONSUZA KADAR.
+        assertEq(address(curve).balance, 7 ether);
+        assertEq(token.balanceOf(address(curve)), RESIDUE_AFTER_GRADUATION + 1_000e18);
+    }
+
+    /// D5'in GEREKCESI DUZELTILDI: cagiran zorunlu olarak bir kontrat DEGILDIR.
+    /// Hedef bir EOA olabilir, `graduate()`i dogrudan cagirir ve `R` ile `D`yi
+    /// alir. Bu bugun onemlidir: Arc'in HICBIR yerinde Uniswap V4 yoktur, yani
+    /// ilk graduation'lar tam olarak bu yolla yapilacaktir.
+    ///
+    /// D5'in ayakta kalan gerekcesi ise sudur: bes basarisizlik modunun BESI DE
+    /// ayri selector tasir, dolayisiyla hicbir cagiran -- EOA da olsa --
+    /// "zaten mezun oldu"yu baska bir basarisizlikla karistiramaz.
+    function test_anEoaTargetCanGraduateDirectly() public {
+        _completeCurve();
+        graduationTarget = ALICE;
+
+        uint256 balanceBefore = ALICE.balance;
+        vm.prank(ALICE);
+        (uint256 base, uint256 quote) = curve.graduate();
+
+        assertEq(base, D_POOL_SEED);
+        assertEq(quote, R_AFTER_EXACT_OUT_COMPLETION);
+        assertEq(ALICE.balance, balanceBefore + R_AFTER_EXACT_OUT_COMPLETION, "EOA hedef `R`yi almadi");
+        assertEq(token.balanceOf(ALICE), D_POOL_SEED);
+        assertTrue(curve.graduated());
+
+        vm.prank(ALICE);
+        vm.expectRevert(BondingCurve.AlreadyGraduated.selector);
+        curve.graduate();
+    }
+
+    /// R-5. HEDEF OKUMASI BIR STATICCALL'DUR -- kaynak kodda `view` YAZILI
+    /// OLDUGU icin degil, YAZIMIN REVERT ETTIGI OLCULDUGU icin.
+    ///
+    /// KONTROL GRUBU ZORUNLUDUR: ayni fonksiyon statik OLMAYAN bir cagriyla
+    /// sayaci 1'e cikarir. O olmadan bu test "herhangi bir sebeple revert eden"
+    /// bir kontratta da gecerdi ve hicbir sey kanitlamazdi.
+    ///
+    /// Arayuzu non-`view` yapmak src'de TEK KELIMELIK bir degisikliktir,
+    /// GORUNUR hicbir etkisi yoktur ve reentrancy kapanisini sessizce kaldirir.
+    function test_theGraduationTargetReadIsAStaticcallAndTheWriteReverts() public {
+        MeasuringFactory f = new MeasuringFactory(TREASURY, T, V, S);
+        BondingCurve c = f.curve();
+
+        vm.deal(BUYER, 100_000e18);
+        vm.prank(BUYER);
+        c.buyExactTokensOut{value: 20_000e18}(S, type(uint256).max);
+        assertTrue(c.complete());
+
+        f.setTarget(address(f));
+        f.armTargetWrite();
+
+        (bool ok,) = address(f).call(abi.encodeWithSelector(MeasuringFactory.pull.selector));
+        assertFalse(ok, "SSTORE yapan bir `graduationTarget()` cagrisi gecti");
+        assertEq(f.writes(), 0, "yazim STATICCALL altinda gerceklesti");
+        assertFalse(c.graduated());
+
+        // KONTROL: ayni fonksiyon, statik OLMAYAN cagri.
+        f.graduationTarget();
+        assertEq(f.writes(), 1, "kontrol grubu yazamadi -- test hicbir sey olcmuyor");
+    }
+
+    /// F1'IN AYNI OLCUMU, YATIRIM ANINDAKI OKUMA ICIN. `protocolTreasury()`
+    /// artik ticaretin ORTASINDA factory'ye gider; `view` orada da TASIYICIDIR
+    /// ve hucre bu depoda daha once YURUNMEMISTIR.
+    ///
+    /// Kapsam farki tasiyici: hedef okumasi yalnizca `graduate()`te, treasury
+    /// okumasi UC TICARET GIRIS NOKTASININ UCUNDE de vardir (satista ayrica).
+    /// Bu yuzden iki alim yolu ve satis yolu AYRI AYRI olculur.
+    function test_theTreasuryReadIsAStaticcallOnEveryTradingPath() public {
+        MeasuringFactory f = new MeasuringFactory(TREASURY, T, V, S);
+        BondingCurve c = f.curve();
+        LaunchToken tk = f.token();
+
+        // KONTROL GRUBU, GIRIS NOKTASI BASINA: silahsizken UCU DE BASARIR.
+        // Bu olmadan asagidaki uc basarisizlik "SSTORE yuzunden" degil
+        // "herhangi bir sebeple" olabilirdi ve test hicbir sey olcmezdi.
+        vm.deal(BUYER, 100_000e18);
+        vm.prank(BUYER);
+        c.buyExactTokensOut{value: 1_000e18}(1_000_000e18, type(uint256).max);
+        vm.prank(BUYER);
+        c.buyExactQuoteIn{value: 1_000e18}(0);
+        vm.prank(BUYER);
+        tk.approve(address(c), type(uint256).max);
+        vm.prank(BUYER);
+        c.sellExactTokensIn(1e18, 0);
+
+        f.armTreasuryWrite();
+
+        vm.prank(BUYER);
+        (bool ok1,) = address(c).call{value: 10e18}(
+            abi.encodeWithSelector(BondingCurve.buyExactTokensOut.selector, 1e18, type(uint256).max)
+        );
+        assertFalse(ok1, "buyExactTokensOut: SSTORE yapan treasury okumasi gecti");
+
+        vm.prank(BUYER);
+        (bool ok2,) =
+            address(c).call{value: 10e18}(abi.encodeWithSelector(BondingCurve.buyExactQuoteIn.selector, uint256(0)));
+        assertFalse(ok2, "buyExactQuoteIn: SSTORE yapan treasury okumasi gecti");
+
+        vm.prank(BUYER);
+        (bool ok3,) = address(c).call(abi.encodeWithSelector(BondingCurve.sellExactTokensIn.selector, 1e18, uint256(0)));
+        assertFalse(ok3, "sellExactTokensIn: SSTORE yapan treasury okumasi gecti");
+
+        assertEq(f.writes(), 0, "yazim STATICCALL altinda gerceklesti");
+
+        // KONTROL.
+        f.protocolTreasury();
+        assertEq(f.writes(), 1, "kontrol grubu yazamadi -- test hicbir sey olcmuyor");
+    }
+
+    /// F1'IN CEKIRDEGI: ROTASYON CANLI BIR CURVE'E ULASIR.
+    ///
+    /// `protocolTreasury` bir immutable KOPYA olsaydi bu test yazilamazdi --
+    /// ve `FeeEscrow` kisit (4)'un Faz 1c'ye biraktigi borc odenmemis kalirdi:
+    /// Arc treasury'yi bloklarsa ticaret calismaya devam eder, `owed[bloklu]`
+    /// buyur, `claim` revert eder ve HICBIR yol yeniden yonlendirmez.
+    ///
+    /// Ayrica ikinci yari: BIRIKMIS alacak TASINMAZ. `owed[eski]` eski adresin
+    /// talebi olarak aynen durur.
+    function test_rotatingTheTreasuryRedirectsTheFeesOfALiveCurve() public {
+        address newTreasury = address(0xBEEF);
+
+        vm.deal(BUYER, 100_000e18);
+        vm.prank(BUYER);
+        curve.buyExactQuoteIn{value: 100e18}(0);
+
+        uint256 owedOld = escrow.owed(TREASURY);
+        assertGt(owedOld, 0, "ilk islem eski treasury'ye yazmadi");
+        assertEq(escrow.owed(newTreasury), 0);
+
+        // ROTASYON (bu test kontrati curve'un factory'sidir).
+        protocolTreasury = newTreasury;
+        assertEq(curve.protocolTreasury(), newTreasury, "curve rotasyonu gormedi");
+
+        vm.prank(BUYER);
+        curve.buyExactQuoteIn{value: 100e18}(0);
+
+        assertGt(escrow.owed(newTreasury), 0, "yeni treasury'ye yazilmadi");
+        assertEq(escrow.owed(TREASURY), owedOld, "birikmis alacak tasindi");
+
+        // UC GIRIS NOKTASININ UCU DE AYRI AYRI YURUNUR. Kaynak tarafinda iki
+        // cagri yeri var (`_settleBuy` iki alim yolunca PAYLASILIR,
+        // `sellExactTokensIn` kendi satirini tasir), ama "iki alim yolu ayni
+        // fonksiyondan gecer" tam olarak sonradan yanlislanan turden ORTUK bir
+        // gerekcedir -- bu depoda on kez olustu. Bu yuzden hucre giris noktasi
+        // basina yurunur, cagri yeri basina degil.
+        uint256 owedAfterQuoteIn = escrow.owed(newTreasury);
+        vm.prank(BUYER);
+        curve.buyExactTokensOut{value: 100e18}(1_000e18, type(uint256).max);
+        assertGt(escrow.owed(newTreasury), owedAfterQuoteIn, "buyExactTokensOut rotasyonu gormedi");
+
+        uint256 owedAfterExactOut = escrow.owed(newTreasury);
+        vm.startPrank(BUYER);
+        token.approve(address(curve), type(uint256).max);
+        curve.sellExactTokensIn(1_000e18, 0);
+        vm.stopPrank();
+
+        assertGt(escrow.owed(newTreasury), owedAfterExactOut, "satis yolu rotasyonu gormedi");
+        assertEq(escrow.owed(TREASURY), owedOld, "bir yol eski adrese yazdi");
     }
 
     function testFuzz_buyThenSellBackNeverProfits(uint256 tokensOut) public {

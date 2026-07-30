@@ -56,6 +56,15 @@ import {IFeeEscrow} from "./interfaces/IFeeEscrow.sol";
 ///      karsilik Faz 1c'dedir: protokol ucret ALICI ADRESI dondurulebilir
 ///      olmalidir, boylece protokol payi yeni bir adrese yonlendirilebilir
 ///      (bloklanan adreste birikmis bakiye yine de kurtarilamaz).
+///
+///      DURUMU: ODENDI (Faz 1c2). `LaunchFactory.protocolTreasury` artik
+///      IMMUTABLE DEGILDIR ve `setProtocolTreasury` ile dondurulebilir;
+///      `BondingCurve.protocolTreasury()` onu HER YATIRIMDA factory'den okur,
+///      dolayisiyla rotasyon YALNIZCA gelecek launch'lara degil ZATEN CANLI
+///      curve'lere de ulasir -- bu cumlenin tamamiyla odenmesi icin gereken
+///      sey tam olarak buydu. Kisitlarin geri kalani AYNEN GECERLIDIR:
+///      birikmis `owed[bloklu]` hala kurtarilamaz, ve bu kontrata hala owner,
+///      yeniden atama ve kurtarma yolu EKLENMEMISTIR.
 /// @dev `IFeeEscrow`'u UYGULAR. Bag suslemede degil, derleyicidedir:
 ///      `deposit`'in imzasi degistiginde `BondingCurve`'un beklentisiyle
 ///      ayrisma derleme hatasi olur, sessiz bir calisma zamani sapmasi degil.

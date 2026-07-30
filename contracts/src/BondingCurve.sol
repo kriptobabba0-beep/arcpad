@@ -16,6 +16,35 @@ interface ICurveBoundToken {
     function curve() external view returns (address);
 }
 
+/// @notice Curve'un factory'sinden OKUDUGU iki uye. Ikisi de calisma aninda
+///         okunur, kopyalanmaz: rotasyon boylece CANLI curve'lere de ulasir.
+///
+/// @dev YEREL, ve `LaunchFactory` import EDILMEZ. Sebebi CREATE2 kurgusudur:
+///      curve'un derleme birimi factory'ye bagimli hale gelirse Task 3'un
+///      kirdigi dongusel bagimlilik geri gelir. `ICurveBoundToken` ile ayni
+///      disiplin.
+///
+/// @dev `view` TASIYICIDIR, susleme degil: solc `view` icin STATICCALL uretir
+///      ve STATICCALL altinda her yazim revert eder -- YENIDEN GIRISI KAPATAN
+///      SEY BUDUR. `bind`'in NatSpec'i ayni seyi ayni kelimelerle soyluyor ve
+///      orada olculdu. Bu iki uyeden BIRINI non-`view` yapmak tek kelimelik,
+///      gorunur hicbir etkisi olmayan ve reentrancy kapanisini SESSIZCE
+///      kaldiran bir degisikliktir; `BondingCurve.t.sol` her ikisi icin de
+///      yazim sayaci + kontrol grubu ile olcer.
+///
+/// @dev CURVE FACTORY'SINE KOSULSUZ GUVENIR. Iki uye de bir yetkinin
+///      ciktisidir (bkz. `LaunchFactory` governance bolumu) ve curve onlari
+///      dogrulamaz: `protocolTreasury` sifir olmadigini factory'nin
+///      constructor'i ve setter'i garanti eder, `graduationTarget` icin ise
+///      `graduate()` sifir kontrolunu KENDISI yapar. Bir factory'nin bu iki
+///      uyeyi yeniden adlandirmasi ya da non-`view` yapmasi, deploy ettigi HER
+///      curve'u kirar -- curve'un bytecode'u selector'leri ve STATICCALL'u
+///      icerir.
+interface ILaunchFactory {
+    function graduationTarget() external view returns (address);
+    function protocolTreasury() external view returns (address);
+}
+
 /// @title BondingCurve
 /// @notice Bir launch'in tum ticaret hayati: sanal rezervli sabit carpim,
 ///         curve'un DISINDA alinan ucret, ve tek yonlu tamamlanma.
@@ -41,6 +70,35 @@ interface ICurveBoundToken {
 ///      birlesik `125` sabiti TANIMLANMAZ -- ileri yonde kullanilabilecek bir
 ///      literal birakilmaz. Toplam yalnizca `correctedNetQuoteIn`'in ICINDE,
 ///      inclusive ayrisimin paydasi olarak gecer.
+///
+/// @dev HAYAT DONGUSU UC DURUMDUR: `!complete` -> `complete` -> `graduated`.
+///      Spec 5.4'un dort fazli `Rescued` diyagrami BU KONTRATTA YOKTUR ve bu
+///      bilincli bir spec sapmasidir: o diyagram graduation'in tamamlayici
+///      alimin ICINDE atomik oldugunu ve dolayisiyla kurtarilamaz sekilde
+///      basarisiz olabilecegini varsayiyordu. Ayrildiginda `pushGraduation()`
+///      tam olarak hedefin kendi izinsiz girisidir ve `Rescued`in bir karsiligi
+///      kalmaz.
+///
+/// @dev BU YUZEYDE OLMAYAN VE OLMAMASI GEREKEN SEYLER -- listenin kendisi
+///      1.1 kadar tasiyicidir, cunku buraya giren her sey KALICIDIR:
+///      owner/onlyOwner yok, sweep/rescueTokens/emergencyWithdraw yok, pause
+///      yok, `graduated`i temizleyen HICBIR yol yok; `graduateTo(address)` yok
+///      (cagiranin sectigi hedef, fazladan adimla hirsizliktir); curve'de
+///      `setGraduationTarget` yok (launch basina bir guven karari hicbir
+///      trader'in denetleyemeyecegi seydir); `onGraduation(...)` callback'i yok
+///      (izinsizligi bir seviye yukaridan bedavaya aliyoruz, karsiliginda Faz
+///      2'nin selector'unu sonsuza kadar gommeye gerek yok); `sqrtPriceX96`,
+///      `TickMath`, karekok yok (kapanis fiyati mevcut iki getter'dan TAM
+///      okunur: `virtualQuoteReserves / virtualTokenReserves`, ve `graduate()`
+///      ikisini de mutasyona ugratmaz); `pool`/`poolId`/`poolKey` yok; artigin
+///      (`N - S - D`) ya da bagislarin sweep'i yok; graduation aninda rezerv
+///      sifirlamasi yok (tamamlanma sonrasi okuma zaten ulasilamaz, ve
+///      sifirlanmamis `realQuoteReserves` bir dogrulayicinin havuzla
+///      karsilastirabilecegi TEK zincir kaydidir); `receive()`/`fallback()`
+///      yok; `nonReentrant` yok (kati CEI'nin guard'i gereksiz kildigi bu
+///      kontratin merkezi iddiasidir -- bir guard eklemek sirayi
+///      guvenmediginizi soylerdi, ve spec 9'un tablosu `ReentrancyGuard`
+///      listelese de curve bilerek uymaz).
 ///
 /// @dev KURULUM IKI ADIMLIDIR. Constructor token adresini ALMAZ; `bind` ile
 ///      yalnizca factory, yalnizca bir kez yazar. Gerekcesi Task 3'un CREATE2
@@ -101,10 +159,14 @@ contract BondingCurve {
     address public immutable creator;
 
     /// @notice Ucretlerin yatirildigi pull-based defter.
+    /// @dev IMMUTABLE KALIR, `protocolTreasury`nin aksine, ve asimetri
+    ///      bilinclidir: escrow BIRIKMIS alacaklari tutar. Onu dondurmek her
+    ///      curve'un gecmis ucretlerini yeni bir deftere degil, ESKI defterde
+    ///      talep edilebilir halde birakir -- yani rotasyon alacagi tasimaz,
+    ///      yalnizca defteri catallar. Treasury'de boyle bir sey yoktur:
+    ///      `owed[eski]` eski adresin talebi olarak aynen durur, rotasyon
+    ///      YALNIZCA gelecekteki yatirimlarin alicisini degistirir.
     address public immutable escrow;
-
-    /// @notice Protokol payinin alicisi.
-    address public immutable protocolTreasury;
 
     /// @notice Havuz tohum arzi `D = S(T-S)/T`. Her launch icin ayni sayidir;
     ///         `Completed` ile birlikte yayinlanir ki Faz 2 yeniden
@@ -125,6 +187,32 @@ contract BondingCurve {
 
     /// @notice Tek yonlu kapi. Curve'de bunu geri alan bir yol yoktur.
     bool public complete;
+
+    /// @notice TERMINAL bayrak: `D` token ve `R` quote graduation hedefine
+    ///         geri alinamaz sekilde teslim edildi; curve bir daha hicbir
+    ///         varlik hareket ettirmez.
+    ///
+    /// @dev `complete`IN HEMEN ARDINDAN DECLARE EDILMEK ZORUNDA ve bu bir uslup
+    ///      tercihi degil: boylece `complete` ile AYNI SLOT'a paketlenir
+    ///      (olculdu: slot 5, offset 1), graduation zaten sifir olmayan bir
+    ///      slota tek bir SSTORE yapar ve kontrat YENI SLOT KAZANMAZ. Deploy
+    ///      edildikten sonra bu duzen her curve icin sonsuza kadar sabittir;
+    ///      araya ya da oncesine bir alan eklemek onu sessizce kaydirir.
+    ///      `BondingCurve.t.sol` slot ve offset'i derleme ciktisindan okuyup
+    ///      pinler.
+    ///
+    /// @dev BAYRAK OLMAK ZORUNDA, cikarsanamaz. `complete` bunu TASIYAMAZ
+    ///      (graduation'dan once de true'dur) ve HICBIR BAKIYE tasiyamaz:
+    ///      Arc'ta ucuncu bir taraf curve'un iki bakiyesini de curve'de hicbir
+    ///      kod calistirmadan artirabilir (bkz. `graduate()`), yani "bakiye
+    ///      sifir" terminal olmanin gostergesi DEGILDIR. Solana portunda bu
+    ///      hata sessizce dogrudur; burada degildir.
+    ///
+    /// @dev MONOTON: temizleyen bir yol YOKTUR -- owner yok, rescue yok,
+    ///      reinitialiser yok. Ve `graduated => complete`, cunku
+    ///      `graduate()`in ILK korumasi `!complete`tir. Tersi TUTMAZ ve
+    ///      tutmamalidir.
+    bool public graduated;
 
     // ---------------------------------------------------------------
     // Olaylar
@@ -150,6 +238,28 @@ contract BondingCurve {
 
     /// @notice Satis arzi tukendi; curve kapandi.
     event Completed(address indexed token, uint256 realQuoteReserves, uint256 poolSeedSupply);
+
+    /// @notice Curve terminal duruma gecti: `baseAmount` token ve
+    ///         `quoteAmount` quote graduation hedefine odendi.
+    ///
+    /// @dev BU OLAY OLMADAN Faz 3'un indexer'i bir curve'un terminal oldugunu
+    ///      ancak olay semasi HENUZ VAR OLMAYAN bir Faz 2 kontratini izleyerek
+    ///      ogrenebilirdi -- yani bitmis katmandan yazilmamis katmana bir
+    ///      bagimlilik. Bu yuzeyin varlik sebebi tam olarak o bagimliligi
+    ///      onlemektir.
+    ///
+    /// @dev `to` INDEKSLIDIR cunku hedef yeniden isaretlenebilir (factory'nin
+    ///      3 gunluk gecikmeli setter'i): "bu havuzu hangi hedef tohumladi"
+    ///      indexer'in soracagi bir sorudur.
+    ///
+    /// @dev ISIM CARPISMASI UYARISI -- KAYDA GECIRILIYOR. Spec 5.6 adim 7
+    ///      havuz/locker katmaninda da bir `Graduated` olayindan soz eder. Iki
+    ///      kontratin FARKLI sekilli iki `Graduated` yayinlamasi indexer icin
+    ///      bir tuzaktir: topic0 ayrisir, dolayisiyla birine gore yazilmis bir
+    ///      filtre otekini SESSIZCE bos dondurur. Faz 2'nin olayi
+    ///      `PoolSeeded` adini almalidir; bu satir o kararin kaydidir ve
+    ///      `Surface.t.sol` topic0 esitsizligini ayrica olcer.
+    event Graduated(address indexed token, address indexed to, uint256 baseAmount, uint256 quoteAmount);
 
     // ---------------------------------------------------------------
     // Hatalar
@@ -179,7 +289,6 @@ contract BondingCurve {
     error TokenTransferFailed();
     error ZeroToken();
     error ZeroEscrow();
-    error ZeroTreasury();
     error ZeroVirtualTokenReserves();
     error ZeroVirtualQuoteReserves();
     error ZeroSaleSupply();
@@ -193,16 +302,67 @@ contract BondingCurve {
     error AlreadyBound();
     error NotBound();
 
+    /// @dev `CurveComplete()`TEN AYRI BIR HATA VE AYRI BIR SELECTOR, ve bu bir
+    ///      yeniden kullanim reddi: ikisi ayni yuklemenin TERS yonleridir
+    ///      (biri "tamamlandi, ticaret yok", oteki "henuz tamamlanmadi,
+    ///      graduation yok"). Deponun `ZeroAmount` carpismasindan dogan kurali
+    ///      revert verisinin HANGI KATMANIN, HANGI YONDE reddettigini
+    ///      soylemesidir.
+    error NotComplete();
+
+    /// @dev IKINCI CAGRI SESSIZ BIR NO-OP DEGIL REVERT'TIR (D5), pump.fun'in
+    ///      tersine. GEREKCE DUZELTILDI (inceleme, olculdu): "EVM'de cagiran
+    ///      zorunlu olarak bir kontrattir" YANLISTIR -- hedef bir EOA olabilir
+    ///      ve o EOA `graduate()`i dogrudan cagirip `R` ile `D`yi alir
+    ///      (olculdu). Kalan ve DAHA GUCLU gerekce sudur: bes basarisizlik
+    ///      modunun BESI DE AYRI SELECTOR tasir, dolayisiyla cagiran -- kontrat
+    ///      da olsa EOA da olsa -- "zaten mezun oldu"yu baska hicbir
+    ///      basarisizlikla karistiramaz. Sessiz bir `(0, 0)` ise BOS bir
+    ///      curve'un gercek graduation'indan ayirt EDILEMEZ ve dogal devami
+    ///      (havuzu `R/D` fiyatindan acmak) sifira bolerdi.
+    /// @dev FAZ 2 YUKUMLULUGU: toplu bir keeper girisi (`graduateMany([...])`)
+    ///      her curve'u `try/catch` ile sarmak ZORUNDADIR, aksi halde zaten
+    ///      mezun olmus tek bir curve butun partiyi revert ettirir.
+    error AlreadyGraduated();
+
+    /// @dev SIRASI TASIYICIDIR: cagiran kontrolunden ONCE gelir. Sonra gelse
+    ///      yalnizca `msg.sender == address(0)` iken ulasilabilir olurdu; once
+    ///      gelince Faz 2 var olmadigi surece herkesin gorecegi hata BUDUR --
+    ///      yani bu kontratin uretecegi en olasi gercek revert.
+    /// @dev DURUST NOT: TASIYICI DEGILDIR. Olculdu -- OZ'un `ERC20.transfer`i
+    ///      `address(0)`a revert eder ve spec 3.3 Arc'ta sifir adrese native
+    ///      gonderimin yasak oldugunu kaydeder. Bu kontrol olmasa koruma
+    ///      TAMAMEN bir bagimliligin ve bir zincir ozelliginin icinde ORTUK
+    ///      kalirdi -- deponun adi konmus "kimsenin yazmadigi bir sebeple gecen
+    ///      test" hatasi. Kontrol onu ACIK yapar.
+    error GraduationTargetUnset();
+
+    /// @dev D4: `graduate()`i YALNIZCA cozulmus hedef cagirabilir.
+    ///      Izinsizlik hedefin KENDI girisine tasinir (pump.fun'in ozelligi
+    ///      orada birebir yeniden uretilir), cunku deger transferi alicinin
+    ///      kodunu CURVE'UN cagri cercevesinde calistirir -- `FeeEscrow` kisit
+    ///      (2)'nin escrow'un icinden duzeltilemeyen hazirdi. Bu kontrol
+    ///      ayrica UCUNCU BIR TARAFIN kurtarilamaz duruma (hedef kabul eder ama
+    ///      havuzu tohumlayamaz) girmeye ZORLAMASINI imkansiz kilar.
+    error NotGraduationTarget();
+
+    /// @dev `PayoutFailed()` (satici odemesi) ve `RefundFailed()`ten AYRI, ayni
+    ///      katman-kimligi gerekcesiyle. "Reddeden bir havuz bir launch'i
+    ///      strand EDEMEZ" ozelligini CIKARSANABILIR degil GOZLENEBILIR yapan
+    ///      sey budur.
+    error GraduationPayoutFailed();
+
+    /// @dev PROTOKOL TREASURY ARGUMANI YOKTUR ve olmamalidir; `protocolTreasury()`
+    ///      her yatirimda factory'den okunur. Gerekcesi asagida, o
+    ///      fonksiyonun basinda.
     constructor(
         address creator_,
         address escrow_,
-        address protocolTreasury_,
         uint256 virtualTokenReserves_,
         uint256 virtualQuoteReserves_,
         uint256 saleSupply_
     ) {
         if (escrow_ == address(0)) revert ZeroEscrow();
-        if (protocolTreasury_ == address(0)) revert ZeroTreasury();
         if (virtualTokenReserves_ == 0) revert ZeroVirtualTokenReserves();
         if (virtualQuoteReserves_ == 0) revert ZeroVirtualQuoteReserves();
         if (saleSupply_ == 0) revert ZeroSaleSupply();
@@ -220,7 +380,6 @@ contract BondingCurve {
         factory = msg.sender;
         creator = creator_;
         escrow = escrow_;
-        protocolTreasury = protocolTreasury_;
 
         INITIAL_VIRTUAL_TOKEN_RESERVES = virtualTokenReserves_;
         INITIAL_VIRTUAL_QUOTE_RESERVES = virtualQuoteReserves_;
@@ -230,6 +389,69 @@ contract BondingCurve {
         virtualTokenReserves = virtualTokenReserves_;
         virtualQuoteReserves = virtualQuoteReserves_;
         realTokenReserves = saleSupply_;
+    }
+
+    // ---------------------------------------------------------------
+    // Protokol payinin alicisi -- KOPYA DEGIL, CANLI OKUMA
+    // ---------------------------------------------------------------
+
+    /// @notice Protokol payinin alicisi; her yatirimda FACTORY'DEN okunur.
+    ///
+    /// @dev NICIN IMMUTABLE BIR KOPYA DEGIL. `FeeEscrow` kisit (4) sunu
+    ///      soyluyor: bloklanmis bir alicinin bakiyesi kalici olarak donar, ve
+    ///      "operasyonel karsilik: protokol ucret ALICI ADRESI dondurulebilir
+    ///      olmalidir". Kopya tutan hal o karsiligi TASIMIYORDU ve iki
+    ///      basarisizligi vardi:
+    ///        (1) Arc treasury'yi bloklarsa ticaret calismaya DEVAM eder
+    ///            (alacak pull-based'dir), `owed[treasury]` sinirsiz buyur,
+    ///            `claim` revert eder ve HICBIR yol yeniden yonlendirmez --
+    ///            ne gelecek launch'lar icin, ne CANLI curve'ler icin. Tek
+    ///            care yeni bir factory'dir, o da canli curve'lerin
+    ///            gelirinden vazgecmek demektir.
+    ///        (2) Olculdu: `protocolTreasury == escrow` yapistirma hatasi tek
+    ///            bir 100 USDC alimda 938_271_604_938_271_605 wei'yi kalici
+    ///            olarak talep edilemez yapiyordu (escrow'un `receive()`i
+    ///            yoktur, `claim(escrow)` `TransferFailed()` ile doner).
+    ///      Factory tarafinda tek satirlik esitsizlik korumasi (2)'yi kapatir;
+    ///      (1) icin gereken sey ROTASYONUN CANLI CURVE'LERE ULASMASIDIR ve o
+    ///      ancak burada, okuma aninda cozulerek saglanir. Desen yeni degil:
+    ///      D2 `graduationTarget` icin ayni seyi yapar.
+    ///
+    /// @dev MALIYET, DURUSTCE VE OLCULEREK. Sicak yola islem basina BIR
+    ///      STATICCALL ekler. Gercek factory ile kurulan bir curve'de,
+    ///      okumanin derleme zamani bir sabitle degistirildigi ikizine karsi
+    ///      olculdu:
+    ///        buyExactTokensOut  SOGUK  191.880 vs 186.366  ->  +5.514  (+%2,96)
+    ///        buyExactTokensOut  SICAK   45.178 vs  44.164  ->  +1.014  (+%2,30)
+    ///        sellExactTokensIn  SICAK   38.138 vs  37.124  ->  +1.014  (+%2,73)
+    ///      Soguk bedelin ayrisimi: 2.600 (adres erisimi, solc'un EXTCODESIZE
+    ///      kontrolu dahil) + 2.100 (factory'nin `protocolTreasury` SLOT'unun
+    ///      SOGUK SLOAD'u -- dondurulebilir olmasi onu immutable olmaktan
+    ///      cikardigi icin) + ~814 (cagri, dispatch, decode). Bir islemin ILK
+    ///      ticareti her zaman soguk bedeli oder.
+    ///      KARSILIGINDA ALINAN: canli curve'lerin gelirinin kurtarilabilir
+    ///      olmasi. Arc'in ~0,01 USD'lik islem maliyetinde %3 ~ 0,0003 USD'dir;
+    ///      alternatif ise bloklanmis bir treasury'de o curve'un GELECEKTEKI
+    ///      TUM protokol payini kaybetmektir. Takas nettir ve tersi degildir.
+    /// @dev `graduate()` bu okumayi YAPMAZ (D7: graduation ucret almaz), yani
+    ///      terminal yol bu maliyeti hic odemez: olculdu, 37.613 gaz, F1
+    ///      oncesiyle BIT BIT AYNI.
+    ///
+    /// @dev `view` VE STATICCALL BURADA DA TASIYICIDIR. Bu cagri ticaretin
+    ///      ORTASINDA yapilir; non-`view` bir arayuz beyani solc'a CALL
+    ///      urettirir ve kotu niyetli bir factory curve'e geri girebilirdi.
+    ///      Defter o noktada zaten yazilmistir (kati CEI), yani zarar sinirli
+    ///      olurdu -- ama kapanis ORTUK olurdu, olculmus degil.
+    ///
+    /// @dev SIFIR KONTROLU BURADA DEGIL, FACTORY'DE. `LaunchFactory` hem
+    ///      constructor'da hem setter'da `!= address(0)` ve `!= escrow`
+    ///      garanti eder. Buraya bir kontrol koymak, gercek factory ile
+    ///      ULASILAMAZ bir dal -- yani mutasyonla oldurulemeyen olu kod --
+    ///      olurdu. Kodsuz ya da bu uyeyi tasimayan bir "factory" ile deploy
+    ///      edilmis bir curve'de HER ticaret revert eder: fail-closed, ve
+    ///      boyle bir curve `isCanonical` altinda zaten sahtedir.
+    function protocolTreasury() public view returns (address) {
+        return ILaunchFactory(factory).protocolTreasury();
     }
 
     /// @notice Token adresini bir kez yazar.
@@ -455,11 +677,181 @@ contract BondingCurve {
         // dogrulamaz, ve dondugunde sessizce basarisiz olan bir token
         // korumasiz halde arzi bedava dagitirdi.
         if (!IERC20(token_).transferFrom(msg.sender, address(this), tokensIn)) revert TokenTransferFailed();
-        IFeeEscrow(escrow).deposit{value: protocolFee}(protocolTreasury);
+        // ALICI YATIRIM ANINDA COZULUR, kurulumda degil (bkz.
+        // `protocolTreasury()`). Okuma dis cagri bolumunun ICINDE durur:
+        // defterin tamami ondan once yazilmistir, yani CEI'nin LAFZI da
+        // korunur -- `bind`'inki gibi bir sapma yok.
+        IFeeEscrow(escrow).deposit{value: protocolFee}(protocolTreasury());
         if (creatorFee != 0) IFeeEscrow(escrow).deposit{value: creatorFee}(creator);
 
         (bool ok,) = msg.sender.call{value: netOut}("");
         if (!ok) revert PayoutFailed();
+    }
+
+    // ---------------------------------------------------------------
+    // Graduation -- curve'un TEK cikis yolu
+    // ---------------------------------------------------------------
+
+    /// @notice Tamamlanmis curve'un havuz tohumunu (`D` token) ve topladigi
+    ///         quote'u (`R`) graduation hedefine oder ve terminal duruma gecer.
+    /// @return baseAmount Odenen token: `poolSeedSupply`, IMMUTABLE.
+    /// @return quoteAmount Odenen quote: `realQuoteReserves`, DEFTERDEN.
+    ///
+    /// @dev D1 -- TAMAMLAYICI ALIMIN ICINDE DEGIL, AYRI BIR CAGRI. Katlanmis
+    ///      halin olculen sonucu (inceleme, `BondingCurveFolded`): reddeden bir
+    ///      hedefle `S - 1` token alan alim BASARIR, arzin son 1 wei'sini alan
+    ///      alim SONSUZA KADAR revert eder ve satislar CALISMAYA DEVAM EDER.
+    ///      Yani bricklenen sey TICARET degil TAMAMLANMADIR: satis arzinin son
+    ///      dilimi kalici olarak alinamaz hale gelir ve curve terminal duruma
+    ///      hic ulasamaz. Ayrildiginda ayni basarisizlik bir YENIDEN DENEMEDIR.
+    ///      (Bu cumle inceleme sonrasi duzeltilmistir; tasarimin ilk hali
+    ///      "ticaret kalici olarak bricklenir" diyordu ve o OLCULEREK fazla
+    ///      genis bulundu.)
+    ///
+    /// @dev D2 -- HEDEF CAGRI ANINDA COZULUR, launch aninda degil. Uc secenegin
+    ///      yalnizca bu olani Faz 1'in Faz 2'den ONCE deploy edilip launch
+    ///      etmesine izin verir, ve digerlerinin aksine curve'e ne bir slot ne
+    ///      bir constructor argumani ekler. DAHA GUCLU GEREKCE (inceleme):
+    ///      TAMAMLANMA ANINDA cozulseydi, hedef atanmadan once tamamlanan her
+    ///      curve `address(0)`i latch eder ve KALICI OLARAK strand olurdu --
+    ///      yani D3'un en kotu durumu, erken tamamlanan her launch icin
+    ///      yapisal garanti haline gelirdi.
+    ///      TAKAS KAYDA GECIRILIYOR: cagri aninda okumak, ZATEN TAMAMLANMIS
+    ///      curve'lerin de yeniden yonlendirilebilmesi demektir, dolayisiyla
+    ///      D3'un gecikmesi bir YARISTIR (bekleyen graduation'lari degisiklik
+    ///      inmeden once bosaltmak). Tamamlanma aninda cozmek onlari bagisik
+    ///      yapardi ama karsiliginda kalici strand sinifini geri getirirdi.
+    ///
+    /// @dev D4 -- YALNIZCA COZULMUS HEDEF CAGIRABILIR; izinsizlik hedefin kendi
+    ///      girisine tasinir. Ucu de olculdu: deger transferi alicinin kodunu
+    ///      curve'un cercevesinde calistirir (`FeeEscrow` kisit (2)); tek bir
+    ///      hedef her launch'a hizmet ettigi icin push edilen bir odemede hedef
+    ///      HANGI launch'in odedigini bakiye farkindan cikarmak zorunda kalirdi
+    ///      -- Arc'ta bakiye disaridan degisebildigi icin guvenilmez bir olcum;
+    ///      ve callback alternatifi Faz 2'nin selector'unu bu bytecode'a sonsuza
+    ///      kadar gomerdi.
+    ///      LIVENESS'I KOTULESTIRMEZ, IYILESTIRIR (olculdu): kurtarilamayan tek
+    ///      durum "hedef kabul eder ama havuzu tohumlayamaz"tir ve IZINSIZ bir
+    ///      `graduate()` o duruma herhangi bir ucuncu tarafin ZORLAMASINA izin
+    ///      verirdi. Geri kalan her bozuk-hedef yolu ya oldugu gibi yeniden
+    ///      denenebilir ya da factory'de hedefi yeniden isaretleyerek cozulur.
+    ///
+    /// @dev D6 -- MIKTARLAR IMMUTABLE VE DEFTERDEN, HICBIR BAKIYEDEN DEGIL.
+    ///      pump.fun havuzu curve'un KALAN TUM token bakiyesiyle tohumlar;
+    ///      arcpad `D`yi kullanir ve bu bilincli bir sapmadir. Sebep fiyat
+    ///      farkinin buyuklugu DEGILDIR (olculdu: `N - S` secimi havuzu
+    ///      `P_final`in 67.611 ppb altinda acar, cikarilabilir arbitraj
+    ///      graduation basina ~1,4e-5 USDC -- ekonomik olarak pump.fun'in
+    ///      secimi savunulabilir). Sebep EPISTEMIKTIR: Arc'ta ucuncu bir taraf
+    ///      curve'un IKI bakiyesini de curve'de hicbir kod calistirmadan
+    ///      artirabilir (canli olcum, `FeeEscrow` kisit (1): 6 decimal ERC-20
+    ///      gorunumunden yapilan `transfer` native bakiyeyi artirdi ve
+    ///      `receive()` HIC calismadi). Bakiye okuyan bir hal, spec 10
+    ///      invariant 6'yi "BAGIS OLMADIGI SURECE" gecerli bir iddiaya
+    ///      cevirirdi -- kimsenin uygulayamayacagi bir on kosul ve hicbir
+    ///      testin kazara ihlal etmeyecegi bir sessizlik.
+    ///      Olculdu: +7 ether native ve +1000e18 token bagisi ile bile donen
+    ///      degerler tam olarak `(D, R)`dir ve bagislar curve'de kalici olarak
+    ///      kilitlenir.
+    ///
+    /// @dev D7 -- GRADUATION UCRETI YOK, "simdilik sifir" degil YAPISAL SIFIR.
+    ///      Ucret yalnizca `R`den alinabilir, cunku `D` immutable'dir; `R - f`
+    ///      degismemis bir `D`ye karsi havuzu `P_final`in `f/R` altinda acar.
+    ///      Olceklendi: pump.fun'in 0,015 SOL'u kendi raise'inin 176,5 ppm'i,
+    ///      arcpad'in yasakladigi `N - S` sureksizligi 67,6 ppm, 2 USDC'lik bir
+    ///      ucret 164,5 ppm -- yani bir migration ucreti, spec'in ZATEN
+    ///      yasakladigi kusurun 2,6 KATIDIR. Arc'ta rent yoktur, dolayisiyla
+    ///      upstream'in ucretinin odedigi seyin karsiligi da yoktur.
+    ///
+    /// @dev SIRA BAGLAYICIDIR ve tam olarak UC dis cagri vardir:
+    ///        1. DOGRULA   `!complete`               -> NotComplete
+    ///                     `graduated`               -> AlreadyGraduated
+    ///                     STATICCALL graduationTarget()   <-- dis #1, YAZAMAZ
+    ///                     `target == 0`             -> GraduationTargetUnset
+    ///                     `msg.sender != target`    -> NotGraduationTarget
+    ///        2. DEFTER    `graduated = true`              <-- tek SSTORE
+    ///        3. OLAY      `Graduated(...)`
+    ///        4. CAGRILAR  token transferi                 <-- dis #2
+    ///                     native odeme                    <-- dis #3
+    ///      1. adimdaki okumanin yazimdan once olmasi CEI'nin LAFZINDAN bir
+    ///      sapmadir ve `bind`'in ICERDIGI sapmanin aynisidir; guvenli olmasi
+    ///      VARSAYIM DEGIL OLCUMDUR: `graduationTarget()`i SSTORE yapan bir
+    ///      factory `view` arayuz uzerinden cagrildiginda `graduate()` revert
+    ///      eder ve yazim sayaci 0 kalir; AYNI fonksiyon statik olmayan bir
+    ///      cagriyla 1'e cikar (kontrol grubu -- o olmadan test "herhangi bir
+    ///      sebeple revert eden" bir kontratta da gecerdi).
+    ///
+    /// @dev BAYRAK ODEMEDEN ONCE YAZILIR VE BU ATOMIKLIK SAYESINDE GUVENLIDIR.
+    ///      Odeme basarisiz olursa islem revert eder ve SSTORE de her seyle
+    ///      birlikte geri alinir: olculdu -- `receive()`i revert eden bir
+    ///      hedefte `GraduationPayoutFailed()` doner, `graduated()` hala
+    ///      `false`, token transferi geri alinmis ve curve `R`yi tutuyor;
+    ///      hedef onarildiktan sonra ayni cagri BASARIR ve ayni `(D, R)`yi
+    ///      dondurur. Yani ATOMIKLIK YENIDEN DENENEBILIRLIGI SAGLAR ve CEI
+    ///      reentrancy guvenligini BEDAVA verir. Bayragi cagrilarin ARKASINA
+    ///      almak (pump.fun'in Solana sirasi) hedefin `receive()`inden yapilan
+    ///      geri girisin BASARMASINA ve hedefin `2D`/`2R` almasina yol acar;
+    ///      testler revert'i degil MIKTARLARI iddia eder.
+    ///
+    /// @dev UC TICARET GIRIS NOKTASI `graduated` KONTROLU ICERMEZ ve icermemeli.
+    ///      Cikarim zinciri: `graduated => complete` (1. koruma),
+    ///      `complete` => geri alinmaz (mevcut invariant), `complete` => uc
+    ///      giris noktasinin UCU DE `CurveComplete()` ile revert eder (mevcut,
+    ///      giris noktasi BASINA olculur), `complete` => bound. Eklenecek bir
+    ///      `graduated` kontrolu mutasyonla OLDURULEMEZ olu kod olurdu. Ama
+    ///      zincir bir ON KOSULDUR ve bu depoda on kosullar pinlenir: her halka
+    ///      icin graduation cercevesinden, giris noktasi basina ve REVERT
+    ///      VERISI uzerinde iddia edilir -- "revert etti" demek yetmez, cunku
+    ///      alim yollarinda `complete` korumasini silmek davranisi degistirmez.
+    ///
+    /// @dev IKI YENIDEN GIRIS PENCERESI DAHA VARDIR VE IKISI DE ULASILABILIR
+    ///      (olculdu, inceleme):
+    ///        (a) CAPRAZ CURVE: hedefin `receive()`i, curve A'nin odemesi
+    ///            icinde curve B'nin `graduate()`ini cagirir; `msg.sender`
+    ///            hedefin KENDISI oldugu icin kontrol gecer ve iki curve tek
+    ///            islemde mezun olur (hedef `R1+R2` ve `D1+D2` ile kapatir).
+    ///            Ucuncu bir tarafca somurulemez; Faz 2 yukumlulugu (2)'nin --
+    ///            "hedefin `receive()`i CIPLAK bir kabul olmalidir" -- somut
+    ///            icerigi tam olarak budur.
+    ///        (b) TAMAMLAYICI ALIMIN ICINDE: hedef ayni zamanda tamamlayici
+    ///            islemin alicisiysa, `_settleBuy`'un iadesi onun `receive()`ini
+    ///            `complete = true` OLDUKTAN SONRA calistirir, dolayisiyla
+    ///            `graduate()` bir ticaretin cercevesinden basarir. Zararsizdir
+    ///            (cift harcama yok, bitis durumu olagan graduation sonrasi
+    ///            durumdur) -- ama D1'in ayrimi bir SOZLESMEDIR, kodun
+    ///            zorladigi bir invariant DEGIL.
+    ///
+    /// @dev BAZ BACAGINDA `TokenTransferFailed()` YENIDEN KULLANILIR ve bu
+    ///      BILINCLIDIR (inceleme bunu isaretledi, kayit burasidir): `LaunchToken`
+    ///      OZ ERC20'dur, basarisizlikta revert eder ve asla `false` DONMEZ --
+    ///      yani `!ok` dali bu token ile ULASILAMAZ ve ayri bir hata adi
+    ///      mutasyonla ayirt edilemeyecek bir selector daha eklemekten baska bir
+    ///      sey yapmazdi. Quote bacagi FARKLIDIR: orada `!ok` gercekten
+    ///      ulasilabilir, bu yuzden orada ayri bir hata (`GraduationPayoutFailed`)
+    ///      vardir.
+    function graduate() external returns (uint256 baseAmount, uint256 quoteAmount) {
+        // --- 1. DOGRULA ---
+        if (!complete) revert NotComplete();
+        if (graduated) revert AlreadyGraduated();
+
+        address target = ILaunchFactory(factory).graduationTarget();
+        if (target == address(0)) revert GraduationTargetUnset();
+        if (msg.sender != target) revert NotGraduationTarget();
+
+        // DEFTERDEN VE IMMUTABLE'DAN, HICBIR BAKIYEDEN DEGIL.
+        baseAmount = poolSeedSupply;
+        quoteAmount = realQuoteReserves;
+
+        // --- 2. DEFTERI YAZ (her dis cagridan ONCE) ---
+        graduated = true;
+
+        // --- 3. OLAY ---
+        emit Graduated(token, target, baseAmount, quoteAmount);
+
+        // --- 4. DIS CAGRILAR ---
+        if (!IERC20(token).transfer(target, baseAmount)) revert TokenTransferFailed();
+        (bool ok,) = target.call{value: quoteAmount}("");
+        if (!ok) revert GraduationPayoutFailed();
     }
 
     // ---------------------------------------------------------------
@@ -509,7 +901,10 @@ contract BondingCurve {
         // tavana yuvarlar), ama `creatorFee` creator sifirken sifirdir -- bu
         // yuzden kosullu. Kosulu kaldirmak, `FeeEscrow.deposit` sifir tutarda
         // revert ettigi icin HER islemi kirardi.
-        IFeeEscrow(escrow).deposit{value: protocolFee}(protocolTreasury);
+        //
+        // ALICI YATIRIM ANINDA COZULUR; satis yolundaki ayni satirin notu
+        // gecerlidir.
+        IFeeEscrow(escrow).deposit{value: protocolFee}(protocolTreasury());
         if (creatorFee != 0) IFeeEscrow(escrow).deposit{value: creatorFee}(creator);
 
         // Iade duz `call` ile yapilir ve BASARISIZLIGINDA REVERT EDER. Arc'ta

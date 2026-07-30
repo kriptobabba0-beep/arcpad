@@ -165,8 +165,35 @@ contract LaunchFactory {
     /// @notice Ucretlerin yatirildigi pull-based defter.
     address public immutable escrow;
 
-    /// @notice Protokol payinin alicisi.
-    address public immutable protocolTreasury;
+    /// @notice IKI DONDURULEBILIR UYENIN YETKILISI: graduation hedefi ve
+    ///         protokol treasury'si. Baska hicbir yetkisi YOKTUR -- launch
+    ///         edemez, duraklatamaz, bir curve'e dokunamaz.
+    ///
+    /// @dev IMMUTABLE, ve bu bilincli: bir `setGovernor` bu factory'nin en
+    ///      tehlikeli uyesi olurdu (tek yanlis atama D3'u sonsuza kadar
+    ///      oldururdu) ve anahtar KAYBI durumunda hicbir sey de kurtarmazdi --
+    ///      rotasyon icin de anahtar gerekir. Dolayisiyla governor'in bir
+    ///      cok-imzali (Safe) olmasi BEKLENIR ve anahtar rotasyonu orada, bir
+    ///      katman yukarida yasar. Bedeli kayda gecirilir: governance bir
+    ///      DAO'ya ancak Safe'in imzacilari degistirilerek devredilebilir,
+    ///      factory'de bir devir yolu yoktur.
+    address public immutable governor;
+
+    /// @notice Protokol payinin alicisi. IMMUTABLE DEGILDIR.
+    ///
+    /// @dev `FeeEscrow` kisit (4) bunu Faz 1c'ye YAZILI BIR BORC olarak
+    ///      birakmisti: "protokol ucret ALICI ADRESI dondurulebilir olmalidir,
+    ///      boylece protokol payi yeni bir adrese yonlendirilebilir". Kopya
+    ///      tutan hal o borcu odemiyordu; `BondingCurve.protocolTreasury()`
+    ///      artik bunu HER YATIRIMDA buradan okur, dolayisiyla rotasyon
+    ///      CANLI curve'lere de ulasir -- borcun tamami ancak boyle odenir.
+    ///
+    /// @dev BIRIKMIS ALACAK TASINMAZ. `owed[eski]` escrow'da eski adresin
+    ///      talebi olarak aynen kalir; rotasyon yalnizca BUNDAN SONRAKI
+    ///      yatirimlarin alicisini degistirir. Bloklanmis bir adreste birikmis
+    ///      bakiye hala kurtarilamaz (kisit (4) bunu zaten soyluyor) --
+    ///      rotasyonun kapattigi sey KANAMANIN DEVAMIDIR.
+    address public protocolTreasury;
 
     /// @notice Sanal token rezervi `T`; her curve'e aynen gecirilir.
     uint256 public immutable VIRTUAL_TOKEN_RESERVES;
@@ -180,6 +207,45 @@ contract LaunchFactory {
 
     /// @notice Uretilen launch sayisi. Salt'in nonce'u da budur.
     uint256 public launchCount;
+
+    // ---------------------------------------------------------------
+    // Graduation hedefi -- YENIDEN ISARETLENEBILIR, KAMUYA ACIK GECIKMEYLE
+    // ---------------------------------------------------------------
+
+    /// @notice Bir hedef onerisinin inebilmesi icin gecmesi gereken sure.
+    ///
+    /// @dev UC GUN, ve gecikmenin OLDUGU yer ile OLMADIGI yer arasindaki
+    ///      asimetri kasithdir; bkz. `setProtocolTreasury`. Buradaki gecikmenin
+    ///      korudugu sey somuttur: hedef bir launch'in TUM raise'ini alir, ve
+    ///      `graduate()` cagri aninda okuma yaptigi icin bir yeniden isaretleme
+    ///      ZATEN TAMAMLANMIS curve'lerin odemesini de yeni adrese yonlendirir.
+    ///      Uc gunluk kamuya acik pencerede herkes o curve'leri mevcut hedefe
+    ///      bosaltabilir (`graduate()` izinsizdir hedefin girisinde). Degisiklik
+    ///      indikten SONRA tamamlanan curve'ler icin bir care YOKTUR -- bu
+    ///      kayda gecirilir, cozulmez: yetki gercektir ve `BondingCurve`in
+    ///      "kimse bir launch'in varliklarini hareket ettiremez" vaadi CURVE
+    ///      seviyesindedir, factory seviyesinde degil.
+    uint256 public constant GRADUATION_TARGET_DELAY = 3 days;
+
+    /// @notice `BondingCurve.graduate()`i cagirabilecek TEK adres, ve odemeyi
+    ///         alan adres. Atanmadan once `address(0)`dir ve o halde her
+    ///         `graduate()` cagrisi `GraduationTargetUnset()` ile doner.
+    ///
+    /// @dev CURVE'UN BYTECODE'U BU UYENIN SELECTOR'UNU (0xa4b20f13) VE BIR
+    ///      STATICCALL'U ICERIR. Deploy edilmis bir factory icin degistirilemez
+    ///      olmasi tam olarak istenen seydir: bu uyeyi yeniden adlandiran ya da
+    ///      non-`view` yapan bir factory, deploy ettigi HER curve'un
+    ///      graduation'ini kirar. `Surface.t.sol` hem imzayi hem mutabiliteyi
+    ///      pinler.
+    address public graduationTarget;
+
+    /// @notice Onerilmis ama HENUZ INMEMIS hedef, ve inecegi an.
+    /// @dev IKISI DE PUBLIC OLMAK ZORUNDA: gecikmenin tek degeri KAMUYA ACIK
+    ///      olmasidir. Neyin bekledigi ve ne zaman inecegi zincirden
+    ///      okunamiyorsa, "bekleyen graduation'lari once bosalt" caresi
+    ///      uygulanamaz -- yani gecikme guvenlik degil sadece yavaslik olurdu.
+    address public pendingGraduationTarget;
+    uint256 public pendingGraduationTargetEta;
 
     // ---------------------------------------------------------------
     // Olaylar ve hatalar
@@ -197,6 +263,19 @@ contract LaunchFactory {
         string uri,
         bytes32 salt
     );
+
+    /// @notice Bir hedef onerildi ve `eta`da inebilir hale gelecek.
+    /// @dev GECIKMENIN KAMUYA ACIK YARISI. Bir indexer/keeper yalnizca bunu
+    ///      izleyerek "uc gun icinde bosaltilmasi gereken curve'ler" listesini
+    ///      kurabilir.
+    event GraduationTargetProposed(address indexed target, uint256 eta);
+
+    /// @notice Hedef degisti.
+    event GraduationTargetChanged(address indexed previous, address indexed current);
+
+    /// @notice Protokol payinin alicisi degisti. GECIKMESIZDIR; bkz.
+    ///         `setProtocolTreasury`.
+    event ProtocolTreasuryChanged(address indexed previous, address indexed current);
 
     error EmptyName();
     error EmptySymbol();
@@ -260,6 +339,53 @@ contract LaunchFactory {
     ///      reddettigini de soyler.
     error ZeroEscrowAddress();
     error ZeroTreasuryAddress();
+    error ZeroGovernorAddress();
+
+    /// @dev `protocolTreasury == escrow`. OLCULDU VE BLOKLAMA LISTESI
+    ///      GEREKTIRMEZ: iki adres argumani KOMSUDUR
+    ///      (`new LaunchFactory(escrow_, protocolTreasury_, ...)`), yani
+    ///      escrow'u ikisine de yapistirmak gercek bir operator hatasidir ve
+    ///      eski tek koruma (`!= address(0)`) onu gecirirdi. Sonuc: factory
+    ///      kurulur, `launch` basarir, `isCanonical` true doner, HER islem
+    ///      basarir -- ve protokol payinin %100'u sonsuza kadar talep edilemez
+    ///      hale gelir, cunku `FeeEscrow`un `receive()`i yoktur ve
+    ///      `claim(escrow)` `TransferFailed()` ile doner. Tek bir 100 USDC
+    ///      alimda olculen kayip: 938_271_604_938_271_605 wei.
+    ///
+    /// @dev NICIN ESITSIZLIK, NICIN KOD KONTROLU DEGIL. Bir Safe treasury
+    ///      `receive()`i olan bir KONTRATTIR ve kabul edilmek ZORUNDADIR;
+    ///      `protocolTreasury_.code.length == 0` seklinde bir koruma onu
+    ///      dislardi ve escrow'daki alacagin pull-based olmasi sayesinde EOA
+    ///      treasury'nin ticareti kirmamasi ozelligini de bozardi. Esitsizlik
+    ///      ikisini de bozmadan tek gercek terminal durumu eler.
+    ///      `protocolTreasury_ == address(this)` de ayni sinifta olurdu ama
+    ///      factory'nin adresi constructor icinde henuz kimsenin YAPISTIRABILECEGI
+    ///      bir sey degildir (CREATE2 ile onceden bilinebilir ama boyle bir
+    ///      operator hatasi yoktur), dolayisiyla eklenmedi.
+    error TreasuryIsTheEscrow();
+
+    /// @dev Yalnizca `governor`.
+    error NotGovernor();
+
+    /// @dev Sifir hedef ONERILEMEZ. Bir "hedefi geri al" yolu bilerek yoktur:
+    ///      graduation'i durdurmak bir pause'dur ve bu sistemde pause yoktur.
+    error ZeroGraduationTarget();
+
+    /// @dev `governor == escrow`. `TreasuryIsTheEscrow` ile AYNI SINIF ve ayni
+    ///      gerekce: uc adres argumaninin ucu de komsudur ve escrow HICBIR
+    ///      cagri yapamaz, dolayisiyla governor'a yapistirilmis bir escrow
+    ///      governance'i sonsuza kadar oldurur -- hicbir hedef atanamaz (yani
+    ///      HICBIR curve mezun olamaz) ve treasury dondurulemez. Deploy aninda
+    ///      BILINEBILIR oldugu icin burada elenir.
+    ///      `governor == protocolTreasury` KABUL EDILIR ve edilmelidir: ayni
+    ///      Safe pekala ikisi de olabilir.
+    error GovernorIsTheEscrow();
+
+    /// @dev Bekleyen bir oneri yok.
+    error NoPendingGraduationTarget();
+
+    /// @dev Uc gun gecmedi.
+    error GraduationTargetDelayNotElapsed();
 
     /// @dev `escrow` KODSUZ bir adres. Sifir kontrolunden AYRIDIR ve ondan
     ///      SONRA gelir, cunku `address(0)` ikisini birden ihlal eder ve hangi
@@ -298,7 +424,10 @@ contract LaunchFactory {
     ///      Task 4'un yuzey testi ULASILABILIR kumeyi pinlemelidir:
     ///      {EmptyName, EmptySymbol, DegenerateProfile, EscrowHasNoCode,
     ///       GraduationRaiseTooSmall, SaleAndSeedExceedSupply,
-    ///       SaleAndSeedStrandSupply, ZeroEscrowAddress, ZeroTreasuryAddress}.
+    ///       SaleAndSeedStrandSupply, ZeroEscrowAddress, ZeroTreasuryAddress,
+    ///       ZeroGovernorAddress, TreasuryIsTheEscrow, GovernorIsTheEscrow,
+    ///       NotGovernor, ZeroGraduationTarget, NoPendingGraduationTarget,
+    ///       GraduationTargetDelayNotElapsed}.
 
     // ---------------------------------------------------------------
     // Kurulum
@@ -364,9 +493,21 @@ contract LaunchFactory {
     ///      bir factory zincirde sessizce durur ve ilk creator'in islemini
     ///      patlatir. Deploy basina bir kez odenen bir kontrolun, kullanici
     ///      basina odenen bir hataya donusmesi icin sebep yok.
+    /// @dev UC ADRES ARGUMANI KOMSUDUR ve her birinin "rolunu tasiyamaz"
+    ///      hucresi ayri ayri yurunur -- Faz 1c'nin final incelemesi bu satiri
+    ///      bir GRID olarak cizip treasury kolonunu BOS bulmustu (F1). Kolonlar
+    ///      ve hucreleri:
+    ///        escrow    : sifir (`ZeroEscrowAddress`), kodsuz (`EscrowHasNoCode`)
+    ///        treasury  : sifir (`ZeroTreasuryAddress`), escrow (`TreasuryIsTheEscrow`)
+    ///        governor  : sifir (`ZeroGovernorAddress`), escrow (`GovernorIsTheEscrow`)
+    ///      Treasury ve governor icin KOD KONTROLU YOKTUR ve olmamalidir: EOA
+    ///      bir treasury ile ticaret sorunsuz calisir (alacak pull-based'dir,
+    ///      olculdu) ve EOA bir governor testnet'te mesrudur. Fazla siki bir
+    ///      koruma bir Safe'i de dislardi.
     constructor(
         address escrow_,
         address protocolTreasury_,
+        address governor_,
         uint256 virtualTokenReserves_,
         uint256 virtualQuoteReserves_,
         uint256 saleSupply_
@@ -374,6 +515,9 @@ contract LaunchFactory {
         if (escrow_ == address(0)) revert ZeroEscrowAddress();
         if (escrow_.code.length == 0) revert EscrowHasNoCode();
         if (protocolTreasury_ == address(0)) revert ZeroTreasuryAddress();
+        if (protocolTreasury_ == escrow_) revert TreasuryIsTheEscrow();
+        if (governor_ == address(0)) revert ZeroGovernorAddress();
+        if (governor_ == escrow_) revert GovernorIsTheEscrow();
 
         if (saleSupply_ >= virtualTokenReserves_) revert DegenerateProfile();
 
@@ -397,6 +541,7 @@ contract LaunchFactory {
 
         escrow = escrow_;
         protocolTreasury = protocolTreasury_;
+        governor = governor_;
         VIRTUAL_TOKEN_RESERVES = virtualTokenReserves_;
         VIRTUAL_QUOTE_RESERVES = virtualQuoteReserves_;
         SALE_SUPPLY = saleSupply_;
@@ -428,9 +573,14 @@ contract LaunchFactory {
 
         bytes32 salt = keccak256(abi.encode(msg.sender, name_, symbol_, uri_, launchCount++));
 
+        // CURVE'UN CONSTRUCTOR ARGUMANLARINDA `protocolTreasury` YOKTUR ve
+        // olmamasi TASIYICIDIR: bir mutable degeri initcode'a koymak, ilk
+        // rotasyondan sonra `_curveAddress`in HER onceki curve icin yanlis
+        // adres uretmesi demek olurdu -- `isCanonical` sessizce false donerdi.
+        // Curve onu `protocolTreasury()` ile buradan okur.
         curve = address(
             new BondingCurve{salt: salt}(
-                msg.sender, escrow, protocolTreasury, VIRTUAL_TOKEN_RESERVES, VIRTUAL_QUOTE_RESERVES, SALE_SUPPLY
+                msg.sender, escrow, VIRTUAL_TOKEN_RESERVES, VIRTUAL_QUOTE_RESERVES, SALE_SUPPLY
             )
         );
 
@@ -464,6 +614,112 @@ contract LaunchFactory {
         emit Launched(token, curve, msg.sender, name_, symbol_, uri_, salt);
 
         BondingCurve(curve).bind(token);
+    }
+
+    // ---------------------------------------------------------------
+    // Governance -- IKI DONDURULEBILIR UYE
+    // ---------------------------------------------------------------
+
+    /// @notice Yeni bir graduation hedefi onerir; `GRADUATION_TARGET_DELAY`
+    ///         sonra inebilir.
+    ///
+    /// @dev D3 ONERILEN DEGIL ZORUNLUDUR ve uc bagimsiz sebebi vardir:
+    ///        (1) D4 yalnizca hedefin `graduate()`i cagirmasina izin verir,
+    ///            dolayisiyla girisi revert eden, kabul edip tohumlayamayan ya
+    ///            da Arc tarafindan bloklanan bir hedef, tamamlanmis her
+    ///            curve'u mezun edilemez birakir. BASKA CIKIS YOKTUR.
+    ///        (2) Arc'in HICBIR YERINDE Uniswap V4 yoktur -- ne mainnet'te (ki
+    ///            yok), ne testnet'te; dort kanonik `PoolManager` adresi de
+    ///            5042002 zincirinde kodsuzdur. Yani ilk hedef kendi
+    ///            deploy ettigimiz bir sey olacak ve mainnet'ten once EN AZ BIR
+    ///            KEZ, muhtemelen birkac kez degisecektir. Tek seferlik bir
+    ///            latch riskli degil, GELISTIRME YOLUYLA BAGDASMAZ olurdu.
+    ///        (3) Arc'in calisma zamani bloklama listesinin bir KONTRAT adresine
+    ///            uygulanip uygulanamayacagi belirlenemedi. Bu ucuncu sebebin
+    ///            artik hicbir yuk tasimasi gerekmiyor -- ilk ikisi yeterlidir.
+    ///
+    /// @dev BEKLEYEN ONERININ UZERINE YAZMAK bilerek MUMKUNDUR ve ayri bir
+    ///      "iptal" uyesi YOKTUR: yanlis bir oneriyi geri almak dogrusunu
+    ///      (ya da mevcut hedefi) yeniden onermektir, ve her oneri sureyi
+    ///      bastan baslatir. Bir `cancel` uyesi ayni sonucu veren ikinci bir
+    ///      yol olurdu.
+    function proposeGraduationTarget(address target_) external {
+        if (msg.sender != governor) revert NotGovernor();
+        if (target_ == address(0)) revert ZeroGraduationTarget();
+
+        pendingGraduationTarget = target_;
+        uint256 eta = block.timestamp + GRADUATION_TARGET_DELAY;
+        pendingGraduationTargetEta = eta;
+
+        emit GraduationTargetProposed(target_, eta);
+    }
+
+    /// @notice Suresi gelmis oneriyi indirir.
+    ///
+    /// @dev IZINSIZDIR ve bu bilincli: governor onerirken YETKISINI ZATEN
+    ///      KULLANMISTIR, ikinci adim yalnizca surenin gectiginin
+    ///      dogrulanmasidir. Izinsiz olmasi, governor'in ikinci islemi
+    ///      yapamamasinin bir liveness bagimliligi olmasini engeller.
+    ///
+    /// @dev SIRA: once "bekleyen var mi", sonra "sure gecti mi". Tersi olsaydi
+    ///      hicbir oneri yokken `block.timestamp < 0` yanlis oldugu icin cagri
+    ///      basarir ve hedefi `address(0)`a CEVIRIRDI -- yani bos durum
+    ///      graduation'i kapatan bir yola donusurdu.
+    ///
+    /// @dev SENTINEL `pendingGraduationTarget == address(0)`DIR, `eta == 0`
+    ///      DEGIL, ve secim iki sebepten:
+    ///        (1) Sifir bir hedef ONERILEMEZ (`ZeroGraduationTarget`), yani
+    ///            adres sentinel'i yanlis pozitif veremez -- bekleyen bir oneri
+    ///            varken bu alan asla sifir olamaz.
+    ///        (2) `eta == 0` bir TIMESTAMP TUREVINDE KATI ESITLIKTIR ve
+    ///            slither'in `incorrect-equality` dedektorunu (MEDIUM)
+    ///            tetikler; olculdu, `make slither --fail-medium` kirmizi
+    ///            oluyordu. Ayni ozellik adres uzerinden ifade edilince bulgu
+    ///            kaybolur ve ifade de daha dogrudan olur.
+    function applyGraduationTarget() external {
+        address next = pendingGraduationTarget;
+        if (next == address(0)) revert NoPendingGraduationTarget();
+        if (block.timestamp < pendingGraduationTargetEta) revert GraduationTargetDelayNotElapsed();
+
+        address previous = graduationTarget;
+
+        graduationTarget = next;
+        pendingGraduationTarget = address(0);
+        pendingGraduationTargetEta = 0;
+
+        emit GraduationTargetChanged(previous, next);
+    }
+
+    /// @notice Protokol payinin alicisini dondurur. ANINDA gecerli olur.
+    ///
+    /// @dev NICIN GECIKME YOK -- ASIMETRI KASITLI VE GEREKCESI SUDUR: bir
+    ///      gecikmenin `graduationTarget` tarafinda somut bir caresi vardir
+    ///      (uc gun icinde tamamlanmis curve'leri mevcut hedefe bosaltmak).
+    ///      Treasury tarafinda O CARENIN KARSILIGI YOKTUR: rotasyon birikmis
+    ///      `owed[eski]`ye DOKUNMAZ -- eski adres onu aynen talep etmeye devam
+    ///      eder -- yani kamunun "once bosalt" diye yapacagi bir sey yoktur.
+    ///      Buna karsilik gecikmenin BEDELI somuttur: kisit (4)'un bloklama
+    ///      senaryosunda gecen her gun, hicbir zaman talep edilemeyecek
+    ///      `owed[bloklanmis]` olarak birikir. Yani gecikme burada hicbir seyi
+    ///      korumaz ve olcelebilir bir zarar verir.
+    ///      Yetkinin buyuklugu de farklidir: bu setter protokolun KENDI
+    ///      GELECEK gelirinin alicisini degistirir; hedef setter'i ise bir
+    ///      launch'in TUM raise'ini yonlendirir.
+    ///
+    /// @dev KORUMALAR CONSTRUCTOR'DAKININ AYNISI, ve ayni olmalari zorunludur:
+    ///      bir setter constructor'in korumalarini gevsetirse koruma yok
+    ///      demektir. Curve tarafinda BIR KEZ DAHA kontrol edilmez, cunku
+    ///      `BondingCurve` bu iki uyeyi dogrulamaz (bkz. `ILaunchFactory`);
+    ///      sifir olmama garantisinin TEK yeri burasidir.
+    function setProtocolTreasury(address protocolTreasury_) external {
+        if (msg.sender != governor) revert NotGovernor();
+        if (protocolTreasury_ == address(0)) revert ZeroTreasuryAddress();
+        if (protocolTreasury_ == escrow) revert TreasuryIsTheEscrow();
+
+        address previous = protocolTreasury;
+        protocolTreasury = protocolTreasury_;
+
+        emit ProtocolTreasuryChanged(previous, protocolTreasury_);
     }
 
     // ---------------------------------------------------------------
@@ -525,15 +781,15 @@ contract LaunchFactory {
     // ---------------------------------------------------------------
 
     /// @dev Curve'un initcode'u token'i ICERMEZ; dongunun kirildigi yer burasi.
+    /// @dev Arguman listesi `launch`'takiyle BIRE BIR ayni olmak zorundadir; bir
+    ///      MUTABLE degerin buraya girmesi ise ayrica yasaktir (bkz. `launch`).
     function _curveAddress(bytes32 salt, address creator_) private view returns (address) {
         return _create2(
             salt,
             keccak256(
                 abi.encodePacked(
                     type(BondingCurve).creationCode,
-                    abi.encode(
-                        creator_, escrow, protocolTreasury, VIRTUAL_TOKEN_RESERVES, VIRTUAL_QUOTE_RESERVES, SALE_SUPPLY
-                    )
+                    abi.encode(creator_, escrow, VIRTUAL_TOKEN_RESERVES, VIRTUAL_QUOTE_RESERVES, SALE_SUPPLY)
                 )
             )
         );
