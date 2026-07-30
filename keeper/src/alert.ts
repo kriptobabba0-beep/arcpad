@@ -1,3 +1,5 @@
+import { appendFileSync } from 'node:fs'
+
 /**
  * ALARM VE CANLILIK KANARYASI.
  *
@@ -50,13 +52,42 @@ export type AlertSink = (event: AlertEvent) => void
  * ayristirma hatasiyla sessizlesmesi, korunmaya calisilan seyin ta kendisidir.
  */
 export const consoleSink: AlertSink = (event) => {
-  if (event.kind === 'heartbeat') {
-    console.log(`HEARTBEAT keeper.graduationWindow at=${new Date(event.at).toISOString()}`)
-    return
-  }
-  const line = `${event.level === 'page' ? 'PAGE' : 'OK'} keeper.graduationWindow at=${new Date(event.at).toISOString()} ${event.message}`
-  if (event.level === 'page') console.error(line)
+  const line = renderEvent(event)
+  if (event.kind === 'alert' && event.level === 'page') console.error(line)
   else console.log(line)
+}
+
+/** `render`, hem `consoleSink`in hem `fileSink`in TEK bicimlendiricisidir. */
+export function renderEvent(event: AlertEvent): string {
+  if (event.kind === 'heartbeat') {
+    return `HEARTBEAT keeper.graduationWindow at=${new Date(event.at).toISOString()}`
+  }
+  return `${event.level === 'page' ? 'PAGE' : 'OK'} keeper.graduationWindow at=${new Date(event.at).toISOString()} ${event.message}`
+}
+
+/**
+ * TATBIKATIN OKUDUGU DOSYAYI YAZAN SEY.
+ *
+ * Bir onceki hal `KEEPER_ALERT_LOG`u OKUYORDU ama HICBIR SEY YAZMIYORDU:
+ * `consoleSink` `PAGE`i stderr'e, `OK`/`HEARTBEAT`i stdout'a ayirir ve ikisini
+ * birlestiren belgelenmis bir komut yoktu -- bariz yanlis olan (`> alerts.log`)
+ * ise tam olarak tatbikatin aradigi `PAGE` satirlarini dusururdu. Yani haftalik
+ * is ASLA GECEMEZDI, ve kalici kirmizi bir kapi, bosuna yesil olan kadar
+ * guvenilir sekilde susturulur.
+ *
+ * Bu lavabo tek bir akisa, tek bir dosyaya, `renderEvent`in TEK bicimiyle
+ * yazar. Boruyu birlestirme isi operatorden alinir.
+ */
+export function fileSink(path: string): AlertSink {
+  return (event) => {
+    appendFileSync(path, `${renderEvent(event)}\n`, 'utf8')
+  }
+}
+
+export function multiSink(...sinks: readonly AlertSink[]): AlertSink {
+  return (event) => {
+    for (const sink of sinks) sink(event)
+  }
 }
 
 export function alert(
@@ -73,10 +104,59 @@ export function heartbeat(sink: AlertSink = consoleSink, now: () => number = Dat
 }
 
 // ---------------------------------------------------------------
+// Tekrar bastirma
+// ---------------------------------------------------------------
+
+export interface AlertThrottle {
+  /** Bu anahtar SIMDI yayilmali mi. */
+  shouldEmit(key: string, atMs: number): boolean
+  /** Bu poll'da AKTIF olmayan her anahtari unut, ki tekrar olustugunda ANINDA sayfa cikarsin. */
+  sweep(activeKeys: Iterable<string>): void
+}
+
+export const DEFAULT_REPEAT_AFTER_MS = 3_600_000
+
+/**
+ * ILK SAYFA ASLA BASTIRILMAZ; tekrari bastirilir.
+ *
+ * Olculdu: `ARC_START_BLOCK` ilk launch'in ilerisine ayarlanmis bir keeper her
+ * poll'da sayfa cikarir ve HIC kalp atisi vermez -- bes saniyelik varsayilan
+ * aralikta gunde ~35.000 sayfa, tek bir yapilandirma hatasindan. 35.000 sayfa
+ * alan bir rota, pager'i kapatan bir rotadir. `parseGovernanceAllowlist` zaten
+ * bu gerekceyle doldurulmamis bir dosyayi reddediyor; ayni gerekce alarm
+ * yolunun kendisine uygulanmamisti.
+ *
+ * ANAHTAR DURUMDAN TURETILIR, MESAJDAN DEGIL. Mesaj zaman damgasi tasir ve
+ * hicbir zaman tekrar etmez; anahtar (bulgular + ilgili adresler) ise durum
+ * degismedikce aynidir. Dolayisiyla FARKLI bir dusman hedef ANINDA yeni bir
+ * sayfa cikarir -- bastirilan tek sey "ayni sey hala boyle".
+ */
+export function createThrottle(config?: { repeatAfterMs?: number | undefined }): AlertThrottle {
+  const repeatAfterMs = config?.repeatAfterMs ?? DEFAULT_REPEAT_AFTER_MS
+  const lastEmitted = new Map<string, number>()
+
+  return {
+    shouldEmit(key: string, atMs: number): boolean {
+      const previous = lastEmitted.get(key)
+      if (previous !== undefined && atMs - previous < repeatAfterMs) return false
+      lastEmitted.set(key, atMs)
+      return true
+    },
+    sweep(activeKeys: Iterable<string>): void {
+      const active = new Set(activeKeys)
+      for (const key of [...lastEmitted.keys()]) {
+        if (!active.has(key)) lastEmitted.delete(key)
+      }
+    },
+  }
+}
+
+// ---------------------------------------------------------------
 // Canlilik
 // ---------------------------------------------------------------
 
-export type LivenessCode = 'watcher-heartbeat-missed' | 'chain-head-stale'
+export type LivenessCode =
+  'watcher-heartbeat-missed' | 'chain-head-stale' | 'chain-time-skewed' | 'chain-time-frozen'
 
 export type LivenessFinding = { code: LivenessCode; message: string }
 
@@ -86,6 +166,10 @@ export interface LivenessConfig {
   missedBeatsBeforePage?: number
   /** Kac poll araligi boyunca blok numarasi ayni kalirsa bayat sayilir. Varsayilan 2. */
   staleHeadIntervals?: number
+  /** Zincir saatiyle yerel saat arasinda tolere edilen fark. Varsayilan 15 dakika. */
+  clockSkewToleranceMs?: number
+  /** Zincir saatinin hic ilerlemedigi tolere edilen sure. Varsayilan 10 poll araligi, en az 60 sn. */
+  chainTimeFrozenMs?: number
 }
 
 export interface Liveness {
@@ -93,11 +177,31 @@ export interface Liveness {
   pollSucceeded(atMs: number): void
   /** Her okunan zincir basligi. Ayni numara TEKRAR gorulurse sayac SIFIRLANMAZ. */
   observeHead(blockNumber: bigint, atMs: number): void
+  /** Her okunan blok ZAMAN DAMGASI. Blok numarasindan AYRI izlenir; bkz. asagisi. */
+  observeChainTime(chainSeconds: bigint, atMs: number): void
   check(atMs: number): LivenessFinding[]
 }
 
 /**
- * Iki sayac, ve ikisi de DOGUSTAN KURULUDUR.
+ * DORT SAYAC, VE HEPSI DOGUSTAN KURULUDUR.
+ *
+ * UCUNCU VE DORDUNCU SONRADAN EKLENDI, ve gerekcesi olculdu. Ilk hal iki
+ * dedektor tasiyordu ve IKISI DE `blockNumber`a bakiyordu. Pencere aritmetigi
+ * ise YALNIZCA `timestamp`e bakar. Dolayisiyla blok numarasi normal ilerlerken
+ * zaman damgasi one kaymis bir baslik su durumu uretiyordu:
+ *
+ *     phase=expired, pages=[], heartbeats akiyor, iki dedektor de sessiz.
+ *
+ * `phase === 'expired'` dusman bir hedef icin TEK sessiz daldir, ve ona zincirin
+ * DOGRULANMAMIS iki sayisiyla varilir. Bu, deponun kendi adlandirdigi hata
+ * seklinin ta kendisidir: bir ozellik bir giris noktasinda kapatilir ve
+ * digerinde de kapali sanilir. Saati izleyen sey, blogu izleyen seyden AYRI
+ * olmak ZORUNDADIR.
+ *
+ * `chain-time-frozen` BILEREK TOLERANSLIDIR (varsayilan 10 poll araligi):
+ * Arc'in dokumani blok zaman damgalarinin ARTMAYABILECEGINI soyler, yani kisa
+ * sureli duraklamalar NORMALDIR ve sayfa cikarmamalidir. Ileri/geri KAYMA
+ * (`chain-time-skewed`) ise normal degildir ve toleransi cok daha dardir.
  *
  * "Ilk basarili poll'a kadar kanaryayi kurma" tasarimi CAZIPTIR ve YANLISTIR:
  * hic basarili poll yapamayan bir izleyici -- yani ILK ANDAN ITIBAREN bozuk
@@ -114,10 +218,15 @@ export interface Liveness {
 export function createLiveness(config: LivenessConfig, startedAtMs: number): Liveness {
   const missedBeats = config.missedBeatsBeforePage ?? 2
   const staleIntervals = config.staleHeadIntervals ?? 2
+  const skewToleranceMs = config.clockSkewToleranceMs ?? 900_000
+  const frozenBudgetMs = config.chainTimeFrozenMs ?? Math.max(60_000, 10 * config.pollIntervalMs)
 
   let lastPollOkAt = startedAtMs
   let lastHeadChangeAt = startedAtMs
   let lastHead: bigint | null = null
+  let lastChainTimeChangeAt = startedAtMs
+  let lastChainSeconds: bigint | null = null
+  let lastSkewMs: number | null = null
 
   return {
     pollSucceeded(atMs: number): void {
@@ -127,6 +236,14 @@ export function createLiveness(config: LivenessConfig, startedAtMs: number): Liv
       if (lastHead === null || blockNumber !== lastHead) {
         lastHead = blockNumber
         lastHeadChangeAt = atMs
+      }
+    },
+    observeChainTime(chainSeconds: bigint, atMs: number): void {
+      // KAYMA HER GOZLEMDE OLCULUR; DONMUSLUK ise yalnizca DEGISIMDE sifirlanir.
+      lastSkewMs = Number(chainSeconds * 1000n - BigInt(Math.trunc(atMs)))
+      if (lastChainSeconds === null || chainSeconds !== lastChainSeconds) {
+        lastChainSeconds = chainSeconds
+        lastChainTimeChangeAt = atMs
       }
     },
     check(atMs: number): LivenessFinding[] {
@@ -147,6 +264,27 @@ export function createLiveness(config: LivenessConfig, startedAtMs: number): Liv
         findings.push({
           code: 'chain-head-stale',
           message: `chain head stuck at block ${lastHead === null ? 'none-observed' : lastHead.toString()} for ${headAge}ms (budget ${headBudget}ms); the RPC is serving a frozen view and the window clock cannot advance`,
+        })
+      }
+
+      // KAYMA. Pencere aritmetiginin TAMAMI zincir saatinden turer, yani kaymis
+      // bir saat kontrolu SESSIZCE devre disi birakabilir: yeterince ileri
+      // kaymis bir zaman damgasi, taze bir dusman oneriyi `expired` gosterir ve
+      // `expired` dusman bir hedef icin tek sessiz daldir.
+      if (lastSkewMs !== null && Math.abs(lastSkewMs) > skewToleranceMs) {
+        findings.push({
+          code: 'chain-time-skewed',
+          message: `chain time is ${lastSkewMs > 0 ? 'ahead of' : 'behind'} local time by ${Math.abs(lastSkewMs)}ms (tolerance ${skewToleranceMs}ms); the window phase is computed from chain time, so it cannot be trusted while this holds`,
+        })
+      }
+
+      // DONMUS ZAMAN, TOLERANSLI. Arc'in dokumani blok zaman damgalarinin
+      // artmayabilecegini soyler; kisa duraklamalar NORMALDIR.
+      const chainTimeAge = atMs - lastChainTimeChangeAt
+      if (chainTimeAge >= frozenBudgetMs) {
+        findings.push({
+          code: 'chain-time-frozen',
+          message: `chain timestamp stuck at ${lastChainSeconds === null ? 'none-observed' : lastChainSeconds.toString()} for ${chainTimeAge}ms (budget ${frozenBudgetMs}ms, deliberately loose because Arc documents that block timestamps may not increase); the window clock has stopped`,
         })
       }
 

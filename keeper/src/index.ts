@@ -1,7 +1,16 @@
 import 'dotenv/config'
 import { ARC_TESTNET_CHAIN_ID, assertArcChain, createArcClient } from '@arcpad/shared'
 import type { Address } from 'viem'
-import { alert, consoleSink, createLiveness, heartbeat } from './alert'
+import {
+  alert,
+  consoleSink,
+  createLiveness,
+  createThrottle,
+  DEFAULT_REPEAT_AFTER_MS,
+  fileSink,
+  heartbeat,
+  multiSink,
+} from './alert'
 import { viemChainReader } from './chainReader'
 import { loadKeeperConfig, loadWatcherConfig } from './config'
 import { fileCursorStore, runWatcher } from './watch/graduationWindow'
@@ -15,12 +24,23 @@ async function main(): Promise<void> {
   const reader = viemChainReader(client)
   const store = fileCursorStore(watcher.cursorPath)
   const liveness = createLiveness({ pollIntervalMs: config.pollIntervalMs }, Date.now())
+  const throttle = createThrottle({ repeatAfterMs: watcher.alertRepeatMs })
+
+  // LAVABOYU KEEPER'IN KENDISI YAZAR. `KEEPER_ALERT_LOG` ayarliysa her olay --
+  // `PAGE`, `OK` ve `HEARTBEAT` -- TEK bir dosyaya, tek bir akisa gider.
+  // Onceki halde tatbikat bu dosyayi OKUYORDU ama hicbir sey YAZMIYORDU, ve
+  // operatorun akla gelen ilk komutu (`> alerts.log`) tam olarak `PAGE`
+  // satirlarini dusururdu -- cunku `consoleSink` onlari stderr'e ayirir.
+  const sink =
+    watcher.alertLogPath === undefined
+      ? consoleSink
+      : multiSink(consoleSink, fileSink(watcher.alertLogPath))
 
   console.log(
     `keeper ready chainId=${ARC_TESTNET_CHAIN_ID} pollIntervalMs=${config.pollIntervalMs} dryRun=${config.dryRun}`,
   )
   console.log(
-    `watching graduation window factory=${watcher.factory} startBlock=${watcher.startBlock} chainKey=${watcher.chainKey} allowedTargets=${watcher.allowlist.graduationTargets.length} cursor=${watcher.cursorPath}`,
+    `watching graduation window factory=${watcher.factory} startBlock=${watcher.startBlock} chainKey=${watcher.chainKey} allowedTargets=${watcher.allowlist.graduationTargets.length} cursor=${watcher.cursorPath} alertLog=${watcher.alertLogPath ?? 'stdout+stderr only'} repeatAfterMs=${watcher.alertRepeatMs ?? DEFAULT_REPEAT_AFTER_MS}`,
   )
 
   let stopped = false
@@ -37,14 +57,17 @@ async function main(): Promise<void> {
       startBlock: watcher.startBlock,
       allowlist: watcher.allowlist,
       alert: (level, message) => {
-        alert(level, message, consoleSink)
+        alert(level, message, sink)
       },
       heartbeat: () => {
-        heartbeat(consoleSink)
+        // KALP ATISI ASLA BASTIRILMAZ. Harici olu-adam anahtari onu SAYAR;
+        // seyrelttigimiz an, o anahtarin esigi anlamsizlasir.
+        heartbeat(sink)
       },
       liveness,
       store,
       chunk: watcher.logScanChunk,
+      throttle,
     })
     if (!stopped) setTimeout(() => void poll(), config.pollIntervalMs)
   }
@@ -52,10 +75,19 @@ async function main(): Promise<void> {
   // KANARYA POLL DONGUSUNDEN AYRI BIR ZAMANLAYICIDA. Poll icinde kosaydi,
   // poll'un takilmasi kanaryayi da yanina alirdi -- yani tam olarak yakalamasi
   // istenen ariza onu susturur, ve mekanizma BOSALIRDI.
+  //
+  // Kanarya AYNI throttle'i kullanir: kalici bir ariza saatte bir tekrarlanir,
+  // her poll'da degil. Ilk sayfa yine ANINDA cikar.
+  const canaryThrottle = createThrottle({ repeatAfterMs: watcher.alertRepeatMs })
   const canary = setInterval(() => {
-    for (const finding of liveness.check(Date.now())) {
-      alert('page', `${finding.code}: ${finding.message}`, consoleSink)
+    const now = Date.now()
+    const findings = liveness.check(now)
+    for (const finding of findings) {
+      if (canaryThrottle.shouldEmit(finding.code, now)) {
+        alert('page', `${finding.code}: ${finding.message}`, sink)
+      }
     }
+    canaryThrottle.sweep(findings.map((finding) => finding.code))
   }, config.pollIntervalMs)
 
   const stop = (): void => {

@@ -72,16 +72,41 @@ jobs:
             echo "value=expiry" >> "$GITHUB_OUTPUT"
           fi
 
-      # `observe` alarm lavabosunu OKUR, SIMULE ETMEZ. Keeper'in kendi
-      # ciktisini yazdigi dosya ne ise KEEPER_ALERT_LOG odur; CI'da bu, keeper
-      # host'undan cekilmis satirlardir.
+      # LAVABOYU GERCEKTEN TASIYAN ADIM.
+      #
+      # Onceki hal bu adimin VAR OLDUGUNU yorumda soyluyor ama yazmiyordu:
+      # `observe` fazi `KEEPER_ALERT_LOG`u okuyordu, hicbir sey onu bu runner'a
+      # getirmiyordu, ve `fileAlertSink` okunamayan dosyaya `[]` dondugu icin is
+      # KAPALI DUSUYOR ama ASLA GECEMIYORDU. Kalici kirmizi bir haftalik is, bosu
+      # bosuna yesil olan kadar guvenilir sekilde susturulur -- ayni vakumlu-kapi
+      # arizasinin diger yonu.
+      #
+      # Keeper artik lavabosunu KENDI yazar (`KEEPER_ALERT_LOG`, bkz.
+      # keeper/src/alert.ts `fileSink`). Geriye tek bir yapilandirma kaliyor:
+      # o dosyanin nereden okunacagi. Eksikse is ADIYLA duser.
+      - name: Fetch the keeper's alert sink
+        if: steps.phase.outputs.value == 'observe'
+        env:
+          SINK_URL: ${{ vars.KEEPER_ALERT_LOG_URL }}
+        run: |
+          if [ -z "$SINK_URL" ]; then
+            echo "::error::KEEPER_ALERT_LOG_URL is unset. The keeper writes its sink to"
+            echo "::error::\$KEEPER_ALERT_LOG (see docs/runbooks/graduation-window.md section 7);"
+            echo "::error::publish that file and set the repository variable to its URL."
+            echo "::error::Failing rather than reading an empty file and calling it a pass."
+            exit 1
+          fi
+          curl --fail --silent --show-error --max-time 30 "$SINK_URL" -o "$RUNNER_TEMP/alerts.log"
+          echo "KEEPER_ALERT_LOG=$RUNNER_TEMP/alerts.log" >> "$GITHUB_ENV"
+          echo "pulled $(wc -l < "$RUNNER_TEMP/alerts.log") sink lines"
+
+      # `observe` alarm lavabosunu OKUR, SIMULE ETMEZ.
       - name: Drill
         env:
           ARC_RPC_URL: ${{ secrets.ARC_RPC_URL }}
           ARC_FACTORY_ADDRESS: ${{ vars.ARC_FACTORY_ADDRESS }}
           ARC_START_BLOCK: ${{ vars.ARC_START_BLOCK }}
           KEEPER_CHAIN_KEY: ${{ vars.KEEPER_CHAIN_KEY }}
-          KEEPER_ALERT_LOG: ${{ vars.KEEPER_ALERT_LOG }}
           KEEPER_DRILL_TARGET: "0x000000000000000000000000000000000000dEaD"
           KEEPER_DRILL_CALLER: ${{ vars.KEEPER_DRILL_CALLER }}
         run: pnpm --filter @arcpad/keeper drill ${{ steps.phase.outputs.value }}

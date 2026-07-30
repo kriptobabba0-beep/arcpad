@@ -9,9 +9,13 @@ import {
   type AlertLevel,
   consoleSink,
   createLiveness,
+  createThrottle,
+  fileSink,
+  heartbeat as emitHeartbeat,
+  multiSink,
 } from '../src/alert'
 import { parseGovernanceAllowlist } from '../src/config'
-import { drillExpiry, drillObserve } from '../src/drill'
+import { drillExpiry, drillObserve, fileAlertSink } from '../src/drill'
 import {
   type Allowlist,
   type ChainReader,
@@ -24,6 +28,7 @@ import {
   LogScanError,
   readWindowState,
   runWatcher,
+  scanFactoryLogs,
   type WindowState,
   ZERO_ADDRESS,
 } from '../src/watch/graduationWindow'
@@ -45,6 +50,12 @@ const CURVE_C = addr('c0c')
 
 /** 2026-06-01T00:26:40Z. Gercekci bir unix zamani; ISO ciktisi okunabilir olsun diye. */
 const NOW = 1_780_000_000n
+/**
+ * Sentetik zincirin saatiyle AYNI ANI gosteren yerel saat. Testlerin
+ * varsayilani KAYMASIZ olmalidir; kaymayi test eden testler bunu acikca ezer.
+ */
+const NOW_MS = Number(NOW) * 1000
+const localClock = (seconds: bigint) => (): number => Number(seconds) * 1000
 const DELAY = 259_200n // 3 days -- SOZLESMEDEN OKUNUR, burada yalnizca fixture degeri
 
 type CurveFixture = { complete: boolean; graduated: boolean; realQuoteReserves: bigint }
@@ -60,6 +71,10 @@ type Fixture = {
   /** Belirtilmezse `launched.length`. Ayri verilebilmesi log/slot ayrismasini test etmek icindir. */
   launchCount?: bigint
   launched?: Array<{ block: bigint; curve: Address }>
+  /** Governance olay gecmisi -- slotlarin unuttugu yari. */
+  governanceLogs?: Array<{ block: bigint; eventName: string; args: Record<string, unknown> }>
+  /** Yerel duvar saati; zincir saati kaymasini test etmek icin. */
+  nowMs?: () => number
   curves?: Record<string, CurveFixture>
   /** Log taramasinin RPC hatasi atmasi. */
   failLogs?: boolean
@@ -119,9 +134,9 @@ function syntheticChain(fixture: Fixture = {}): SyntheticChain {
       return Promise.reject(new Error(`no fixture for ${call.functionName}`))
     },
     getLogs(query) {
-      const event = query.event as { name?: string }
+      const names = (query.events as Array<{ name?: string }>).map((e) => e.name ?? '?')
       logQueries.push({
-        event: event.name ?? '?',
+        event: names.join('+'),
         fromBlock: query.fromBlock,
         toBlock: query.toBlock,
       })
@@ -129,11 +144,14 @@ function syntheticChain(fixture: Fixture = {}): SyntheticChain {
         return Promise.reject(new Error('query returned more than 10000 results'))
       }
       if (fixture.dropLogs) return Promise.resolve([])
-      return Promise.resolve(
-        launched
-          .filter((entry) => entry.block >= query.fromBlock && entry.block <= query.toBlock)
-          .map((entry) => ({ args: { curve: entry.curve } })),
-      )
+      const inRange = <T extends { block: bigint }>(entry: T): boolean =>
+        entry.block >= query.fromBlock && entry.block <= query.toBlock
+      return Promise.resolve([
+        ...launched.filter(inRange).map((entry) => ({ args: { curve: entry.curve } })),
+        ...(fixture.governanceLogs ?? [])
+          .filter(inRange)
+          .map((entry) => ({ eventName: entry.eventName, args: entry.args })),
+      ])
     },
   }
 }
@@ -180,6 +198,9 @@ function watch(fixture: Fixture, allowlist: Allowlist = ALLOW_GOOD, store?: Curs
     allowlist,
     alert: sink.alert,
     heartbeat: sink.heartbeat,
+    // Varsayilan olarak yerel saat zincir saatiyle AYNI: kayma testleri bunu
+    // acikca ezer, geri kalan hicbir test kazara `chain-time-skewed` almaz.
+    nowMs: fixture.nowMs ?? localClock(fixture.timestamp ?? NOW),
     ...(store === undefined ? {} : { store }),
   }
   return { client, sink, run: () => runWatcher(deps) }
@@ -246,7 +267,7 @@ describe('readWindowState', () => {
       protocolTreasury: TREASURY,
       launched: [{ block: 5n, curve: CURVE_A }],
     })
-    const state = await readWindowState(client, FACTORY)
+    const state = await readWindowState(client, FACTORY, { nowMs: localClock(NOW) })
     expect(state).toEqual<WindowState>({
       pendingTarget: EVIL_TARGET,
       pendingEta: NOW + 100n,
@@ -259,6 +280,7 @@ describe('readWindowState', () => {
       delaySeconds: DELAY,
       blockNumber: 1_000n,
       launchCount: 1n,
+      trust: { trusted: true, reasons: [] },
     })
   })
 
@@ -267,7 +289,7 @@ describe('readWindowState', () => {
   // oneri inisten once, hedef inisten sonra.
   it('her okumayi tek bir blok numarasina sabitler', async () => {
     const client = syntheticChain({ blockNumber: 4_242n })
-    await readWindowState(client, FACTORY)
+    await readWindowState(client, FACTORY, { nowMs: localClock(NOW) })
     expect(client.readBlocks.length).toBe(6)
     expect(new Set(client.readBlocks)).toEqual(new Set([4_242n]))
   })
@@ -282,7 +304,9 @@ describe('readWindowState', () => {
           : client.readContract(call),
       getLogs: (q) => client.getLogs(q),
     }
-    await expect(readWindowState(broken, FACTORY)).rejects.toThrow(/pendingGraduationTargetEta/)
+    await expect(readWindowState(broken, FACTORY, { nowMs: localClock(NOW) })).rejects.toThrow(
+      /pendingGraduationTargetEta/,
+    )
   })
 })
 
@@ -303,6 +327,7 @@ function stateOf(overrides: Partial<WindowState> = {}): WindowState {
     delaySeconds: DELAY,
     blockNumber: 1_000n,
     launchCount: 0n,
+    trust: { trusted: true, reasons: [] },
   }
   const merged = { ...base, ...overrides }
   const w = computeWindow(
@@ -518,7 +543,7 @@ describe('knownCurves', () => {
       ],
     })
     await expect(knownCurves(client, FACTORY, 1n)).resolves.toEqual([CURVE_A, CURVE_B].sort())
-    expect(client.logQueries.every((q) => q.event === 'Launched')).toBe(true)
+    expect(client.logQueries.every((q) => q.event.startsWith('Launched+'))).toBe(true)
   })
 
   it('araligi sayfalar ve son blogu KAPSAR', async () => {
@@ -552,17 +577,36 @@ describe('knownCurves', () => {
 
     const first = syntheticChain({ blockNumber: 20n, launched: [{ block: 4n, curve: CURVE_A }] })
     await knownCurves(first, FACTORY, 1n, { store, chunk: 100n })
-    expect(store.read()).toEqual({ lastScannedBlock: 20n, curves: [CURVE_A] })
+    expect(store.read()).toEqual({
+      lastScannedBlock: 20n,
+      curves: [CURVE_A],
+      history: { proposedTargets: [], landedTargets: [], treasuries: [] },
+    })
 
     const second = syntheticChain({ blockNumber: 40n, launched: [{ block: 33n, curve: CURVE_B }] })
     const found = await knownCurves(second, FACTORY, 1n, { store, chunk: 100n })
-    expect(second.logQueries).toEqual([{ event: 'Launched', fromBlock: 21n, toBlock: 40n }])
+    expect(second.logQueries).toEqual([
+      {
+        event: 'Launched+GraduationTargetProposed+GraduationTargetChanged+ProtocolTreasuryChanged',
+        fromBlock: 21n,
+        toBlock: 40n,
+      },
+    ])
     expect(found).toEqual([CURVE_A, CURVE_B].sort())
   })
 
   it('imlec basligin ILERISINDEYSE durur -- reorg ya da yanlis zincir', async () => {
     const path = join(tempDir(), '.cursor')
-    writeFileSync(path, JSON.stringify({ lastScannedBlock: '9999', curves: [] }), 'utf8')
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 2,
+        lastScannedBlock: '9999',
+        curves: [],
+        history: { proposedTargets: [], landedTargets: [], treasuries: [] },
+      }),
+      'utf8',
+    )
     const client = syntheticChain({ blockNumber: 20n })
     await expect(
       knownCurves(client, FACTORY, 1n, { store: fileCursorStore(path) }),
@@ -657,6 +701,7 @@ describe('runWatcher: SESSIZLIK ISPATI', () => {
         allowlist: ALLOW_GOOD,
         alert: sink.alert,
         heartbeat: sink.heartbeat,
+        nowMs: localClock(NOW),
       })
     }
     expect(sink.pages()).toEqual([])
@@ -834,31 +879,32 @@ describe('kirilma 2: izleyici poll etmeyi birakti', () => {
   const POLL = 5_000
 
   it('kanarya DOGUSTAN kurulu: hic basarili poll yapmadan iki aralik gecerse sayfa', () => {
-    const liveness = createLiveness({ pollIntervalMs: POLL }, 0)
-    expect(liveness.check(POLL)).toEqual([])
-    const findings = liveness.check(2 * POLL)
+    const liveness = createLiveness({ pollIntervalMs: POLL }, NOW_MS)
+    expect(liveness.check(NOW_MS + POLL)).toEqual([])
+    const findings = liveness.check(NOW_MS + 2 * POLL)
     expect(findings.map((f) => f.code)).toEqual(['watcher-heartbeat-missed', 'chain-head-stale'])
   })
 
   it('poll ediliyorken sessiz, DURDUGUNDA iki aralik sonra sayfa', () => {
-    const liveness = createLiveness({ pollIntervalMs: POLL }, 0)
+    const liveness = createLiveness({ pollIntervalMs: POLL }, NOW_MS)
     for (let t = 0; t <= 60_000; t += POLL) {
-      liveness.observeHead(BigInt(t / POLL), t)
-      liveness.pollSucceeded(t)
-      expect(liveness.check(t), `t=${t}`).toEqual([])
+      liveness.observeHead(BigInt(t / POLL), NOW_MS + t)
+      liveness.observeChainTime(NOW + BigInt(t / 1000), NOW_MS + t)
+      liveness.pollSucceeded(NOW_MS + t)
+      expect(liveness.check(NOW_MS + t), `t=${t}`).toEqual([])
     }
     // Burada durur.
-    expect(liveness.check(60_000 + POLL)).toEqual([])
-    const findings = liveness.check(60_000 + 2 * POLL)
+    expect(liveness.check(NOW_MS + 60_000 + POLL)).toEqual([])
+    const findings = liveness.check(NOW_MS + 60_000 + 2 * POLL)
     expect(findings.map((f) => f.code)).toEqual(['watcher-heartbeat-missed', 'chain-head-stale'])
     expect(findings[0]?.message).toContain('the watcher is not watching')
   })
 
   it('yarim poll kalp atisi vermez, yani kanarya onu da yakalar', async () => {
-    const liveness = createLiveness({ pollIntervalMs: POLL }, 0)
+    const liveness = createLiveness({ pollIntervalMs: POLL }, NOW_MS)
     const client = syntheticChain({ blockNumber: 50n, failLogs: true })
     const sink = recorder()
-    for (let t = 0; t <= 3 * POLL; t += POLL) {
+    for (let t = NOW_MS; t <= NOW_MS + 3 * POLL; t += POLL) {
       await runWatcher({
         client,
         factory: FACTORY,
@@ -871,7 +917,9 @@ describe('kirilma 2: izleyici poll etmeyi birakti', () => {
       })
     }
     expect(sink.beats()).toBe(0)
-    expect(liveness.check(3 * POLL).map((f) => f.code)).toContain('watcher-heartbeat-missed')
+    expect(liveness.check(NOW_MS + 3 * POLL).map((f) => f.code)).toContain(
+      'watcher-heartbeat-missed',
+    )
   })
 })
 
@@ -879,12 +927,13 @@ describe('kirilma 3: RPC bayat blok besliyor', () => {
   const POLL = 5_000
 
   it('ayni blok numarasi tekrar tekrar gorulurse sayac SIFIRLANMAZ', () => {
-    const liveness = createLiveness({ pollIntervalMs: POLL }, 0)
+    const liveness = createLiveness({ pollIntervalMs: POLL }, NOW_MS)
     for (let t = 0; t <= 2 * POLL; t += POLL) {
-      liveness.observeHead(777n, t)
-      liveness.pollSucceeded(t)
+      liveness.observeHead(777n, NOW_MS + t)
+      liveness.observeChainTime(NOW + BigInt(t / 1000), NOW_MS + t)
+      liveness.pollSucceeded(NOW_MS + t)
     }
-    const findings = liveness.check(2 * POLL)
+    const findings = liveness.check(NOW_MS + 2 * POLL)
     expect(findings.map((f) => f.code)).toEqual(['chain-head-stale'])
     expect(findings[0]?.message).toContain('block 777')
     // Kalp atisi SAGLAM -- yani bu ariza SADECE bayat-blok dedektoruyle
@@ -893,20 +942,21 @@ describe('kirilma 3: RPC bayat blok besliyor', () => {
   })
 
   it('blok ilerledigi surece sessiz', () => {
-    const liveness = createLiveness({ pollIntervalMs: POLL }, 0)
+    const liveness = createLiveness({ pollIntervalMs: POLL }, NOW_MS)
     for (let t = 0; t <= 10 * POLL; t += POLL) {
-      liveness.observeHead(BigInt(t / POLL), t)
-      liveness.pollSucceeded(t)
-      expect(liveness.check(t), `t=${t}`).toEqual([])
+      liveness.observeHead(BigInt(t / POLL), NOW_MS + t)
+      liveness.observeChainTime(NOW + BigInt(t / 1000), NOW_MS + t)
+      liveness.pollSucceeded(NOW_MS + t)
+      expect(liveness.check(NOW_MS + t), `t=${t}`).toEqual([])
     }
   })
 
   it('bayat blok gercek bir poll dongusunde yakalanir: pencere saati donar', async () => {
-    const liveness = createLiveness({ pollIntervalMs: POLL }, 0)
+    const liveness = createLiveness({ pollIntervalMs: POLL }, NOW_MS)
     // Blok ve zaman damgasi sabit -- RPC dondurulmus bir goruntu servis ediyor.
     const client = syntheticChain({ blockNumber: 900n, timestamp: NOW })
     const sink = recorder()
-    for (let t = 0; t <= 2 * POLL; t += POLL) {
+    for (let t = NOW_MS; t <= NOW_MS + 2 * POLL; t += POLL) {
       await runWatcher({
         client,
         factory: FACTORY,
@@ -921,8 +971,10 @@ describe('kirilma 3: RPC bayat blok besliyor', () => {
     // Zincir yolu "saglikli" gorunur: sayfa yok, her poll kalp atisi verdi.
     expect(sink.pages()).toEqual([])
     expect(sink.beats()).toBe(3)
-    // Kanarya yine de yakalar.
-    expect(liveness.check(2 * POLL).map((f) => f.code)).toEqual(['chain-head-stale'])
+    // Kanarya yine de yakalar.  HENUZ CIKMAZ: butcesi
+    // bilerek genistir (10 aralik), cunku Arc'ta zaman damgasinin artmamasi
+    // NORMALDIR. Iki dedektor ayni arizaya FARKLI hizlarda tepki verir.
+    expect(liveness.check(NOW_MS + 2 * POLL).map((f) => f.code)).toEqual(['chain-head-stale'])
   })
 })
 
@@ -1135,5 +1187,530 @@ describe('drill: expiry', () => {
     const outcome = await drillExpiry({ simulateApply: () => Promise.resolve({ reverted: false }) })
     expect(outcome.ok).toBe(false)
     expect(outcome.detail).toContain('still armed')
+  })
+})
+
+// ---------------------------------------------------------------
+// 10. ZINCIR SAATINE DUYULAN GUVEN  (inceleme: Important 1)
+// ---------------------------------------------------------------
+//
+// `phase === 'expired'` dusman bir hedef icin TEK sessiz daldir ve ona zincirin
+// verdigi IKI dogrulanmamis sayiyla varilir. Bu bolum o iki sayiyi da kirar.
+
+describe('guven: zincir saati ve gecikme', () => {
+  it('one kaymis bir zaman damgasi TAZE bir oneriyi expired gostermez -- sayfa cikar', async () => {
+    // Blok numarasi NORMAL ilerliyor, zaman damgasi bir yil ileride.
+    const { sink, run } = watch({
+      pendingTarget: EVIL_TARGET,
+      pendingEta: NOW + 100n,
+      timestamp: NOW + 31_536_000n,
+      nowMs: localClock(NOW),
+    })
+    await run()
+    expect(sink.pages().length).toBe(1)
+    const page = sink.pages()[0] as string
+    expect(page).toContain('WINDOW INPUTS CANNOT BE TRUSTED')
+    expect(page).toContain('ahead of local time')
+    expect(page).toContain(EVIL_TARGET)
+  })
+
+  // AYNI DURUM, KAYMASIZ SAAT -> SESSIZ. Tespit "her zaman acik" degil.
+  it('ayni oneri gercekten suresi gecmisse ve saat duzgunse SAYFA CIKMAZ', async () => {
+    const { sink, run } = watch({
+      pendingTarget: EVIL_TARGET,
+      pendingEta: NOW - DELAY - 1n,
+      nowMs: localClock(NOW),
+    })
+    await run()
+    expect(sink.pages()).toEqual([])
+    expect(sink.oks().length).toBe(1)
+  })
+
+  it('geriye kaymis saat de guvenilmezdir', () => {
+    const state = stateOf({
+      pendingTarget: EVIL_TARGET,
+      pendingEta: NOW - DELAY - 1n,
+      trust: { trusted: false, reasons: ['chain time is behind local time'] },
+    })
+    expect(state.phase).toBe('expired')
+    const c = classify(state, ALLOW_GOOD)
+    expect(c.level).toBe('page')
+    expect(c.findings).toContain('window-inputs-untrusted')
+    expect(c.findings).toContain('pending-target-not-allowlisted')
+    expect(c.findings).not.toContain('pending-target-not-allowlisted-expired')
+  })
+
+  it('GRADUATION_TARGET_DELAY 0 dondurulurse pencere coker ve bu YAKALANIR', async () => {
+    const { sink, run } = watch({
+      pendingTarget: EVIL_TARGET,
+      pendingEta: NOW - 1n,
+      delay: 0n,
+      nowMs: localClock(NOW),
+    })
+    await run()
+    expect(sink.pages().length).toBe(1)
+    expect(sink.pages()[0]).toContain('below the 3600s floor')
+    expect(sink.pages()[0]).toContain(EVIL_TARGET)
+  })
+
+  it('gercek 3 gunluk gecikme tabani ASMAZ, yani sessizligi bozmaz', async () => {
+    const { sink, run } = watch({ nowMs: localClock(NOW) })
+    await run()
+    expect(sink.pages()).toEqual([])
+    expect(sink.beats()).toBe(1)
+  })
+
+  it('readWindowState kaymayi ve tabani ALANI ADIYLA raporlar', async () => {
+    const client = syntheticChain({ delay: 60n, timestamp: NOW + 10_000n })
+    const state = await readWindowState(client, FACTORY, { nowMs: localClock(NOW) })
+    expect(state.trust.trusted).toBe(false)
+    expect(state.trust.reasons.length).toBe(2)
+    expect(state.trust.reasons[0]).toContain('GRADUATION_TARGET_DELAY')
+    expect(state.trust.reasons[1]).toContain('chain time')
+  })
+
+  it('tolerans icindeki kucuk kayma guveni BOZMAZ', async () => {
+    const client = syntheticChain({ timestamp: NOW + 60n })
+    const state = await readWindowState(client, FACTORY, { nowMs: localClock(NOW) })
+    expect(state.trust.trusted).toBe(true)
+  })
+})
+
+describe('kirilma 4: RPC saati kaymis (kanarya tarafi)', () => {
+  const POLL = 5_000
+
+  it('blok ilerlerken saat kayarsa chain-time-skewed cikar, blok dedektoru sessiz kalir', () => {
+    const liveness = createLiveness({ pollIntervalMs: POLL }, NOW_MS)
+    for (let t = 0; t <= 2 * POLL; t += POLL) {
+      liveness.observeHead(BigInt(t / POLL), NOW_MS + t)
+      // Zincir saati bir yil ileride ve ILERLIYOR: donmus degil, KAYMIS.
+      liveness.observeChainTime(NOW + 31_536_000n + BigInt(t / 1000), NOW_MS + t)
+      liveness.pollSucceeded(NOW_MS + t)
+    }
+    const codes = liveness.check(NOW_MS + 2 * POLL).map((f) => f.code)
+    expect(codes).toEqual(['chain-time-skewed'])
+  })
+
+  it('donmus zincir saati TOLERANSLIDIR -- kisa duraklama sayfa cikarmaz', () => {
+    const liveness = createLiveness({ pollIntervalMs: POLL }, NOW_MS)
+    // Arc'in dokumani zaman damgalarinin artmayabilecegini soyler.
+    for (let t = 0; t <= 5 * POLL; t += POLL) {
+      liveness.observeHead(BigInt(t / POLL), NOW_MS + t)
+      liveness.observeChainTime(NOW, NOW_MS + t)
+      liveness.pollSucceeded(NOW_MS + t)
+    }
+    expect(liveness.check(NOW_MS + 5 * POLL)).toEqual([])
+  })
+
+  it('yeterince uzun donarsa chain-time-frozen cikar', () => {
+    const liveness = createLiveness({ pollIntervalMs: POLL }, NOW_MS)
+    for (let t = 0; t <= 12 * POLL; t += POLL) {
+      liveness.observeHead(BigInt(t / POLL), NOW_MS + t)
+      liveness.observeChainTime(NOW, NOW_MS + t)
+      liveness.pollSucceeded(NOW_MS + t)
+    }
+    expect(liveness.check(NOW_MS + 12 * POLL).map((f) => f.code)).toEqual(['chain-time-frozen'])
+  })
+
+  it('runWatcher zincir saatini kanaryaya GERCEKTEN besler', async () => {
+    const liveness = createLiveness({ pollIntervalMs: POLL }, NOW_MS)
+    const client = syntheticChain({ timestamp: NOW + 31_536_000n })
+    const sink = recorder()
+    await runWatcher({
+      client,
+      factory: FACTORY,
+      startBlock: 1n,
+      allowlist: ALLOW_GOOD,
+      alert: sink.alert,
+      heartbeat: sink.heartbeat,
+      liveness,
+      nowMs: localClock(NOW),
+    })
+    expect(liveness.check(NOW_MS).map((f) => f.code)).toContain('chain-time-skewed')
+  })
+})
+
+// ---------------------------------------------------------------
+// 11. ASLA REJECT ETMEZ  (inceleme: Important 4)
+// ---------------------------------------------------------------
+
+describe('runWatcher: ASLA REJECT ETMEZ', () => {
+  // `renderTime` bir onceki halde `new Date(Number(s) * 1000).toISOString()`i
+  // korumasiz cagiriyordu; `classify` her `try`in DISINDA oldugu icin poll
+  // SIFIR alarmla dusuyor ve `index.ts`teki dongu KALICI oluyordu.
+  const ABSURD_ETA = 10n ** 18n
+
+  it('temsil edilemeyecek kadar buyuk bir eta renderTime"i PATLATMAZ', () => {
+    const c = classify(stateOf({ pendingTarget: EVIL_TARGET, pendingEta: ABSURD_ETA }), ALLOW_GOOD)
+    expect(c.level).toBe('page')
+    expect(c.reason).toContain('out-of-range')
+  })
+
+  it('boyle bir eta ile poll reject ETMEZ ve SESSIZ de kalmaz', async () => {
+    const { sink, run } = watch({
+      pendingTarget: EVIL_TARGET,
+      pendingEta: ABSURD_ETA,
+      nowMs: localClock(NOW),
+    })
+    await expect(run()).resolves.toBeUndefined()
+    expect(sink.pages().length).toBe(1)
+    expect(sink.pages()[0]).toContain(EVIL_TARGET)
+  })
+
+  // YEDEK KATMAN: `classify` BASKA bir sebeple patlarsa da poll bir sayfa
+  // birakmali. `renderTime` duzeltmesi bunu gereksiz kilmaz -- bir sonraki
+  // bicimlendirici ayni sekilde patlayabilir.
+  it('classify her sekilde patlarsa poll yine sayfa cikarir ve reject etmez', async () => {
+    const client = syntheticChain({ pendingTarget: EVIL_TARGET, pendingEta: NOW + 1n })
+    const sink = recorder()
+    const exploding: Allowlist = {
+      treasuries: [TREASURY],
+      get graduationTargets(): Address[] {
+        throw new Error('boom from inside classify')
+      },
+    }
+    await expect(
+      runWatcher({
+        client,
+        factory: FACTORY,
+        startBlock: 1n,
+        allowlist: exploding,
+        alert: sink.alert,
+        heartbeat: sink.heartbeat,
+        nowMs: localClock(NOW),
+      }),
+    ).resolves.toBeUndefined()
+    expect(sink.pages().length).toBe(1)
+    expect(sink.pages()[0]).toContain('classify-threw')
+    expect(sink.pages()[0]).toContain(EVIL_TARGET)
+    expect(sink.beats()).toBe(0)
+  })
+})
+
+// ---------------------------------------------------------------
+// 12. GECMIS YARISI -- governance loglari  (inceleme: Important 2)
+// ---------------------------------------------------------------
+
+describe('governance gecmisi', () => {
+  const proposedLog = (block: bigint, target: Address) => ({
+    block,
+    eventName: 'GraduationTargetProposed',
+    args: { target, eta: 0n },
+  })
+  const changedLog = (block: bigint, current: Address) => ({
+    block,
+    eventName: 'GraduationTargetChanged',
+    args: { previous: ZERO_ADDRESS, current },
+  })
+  const treasuryLog = (block: bigint, current: Address) => ({
+    block,
+    eventName: 'ProtocolTreasuryChanged',
+    args: { previous: TREASURY, current },
+  })
+
+  // INCELEMENIN SOMUT KOR NOKTASI: dusman hedef onerildi, indi, sonra mesru
+  // bir oneriyle degistirildi. SLOTLAR TERTEMIZ. Ilk turda izleyici bunu
+  // `quiet` siniflandiriyordu.
+  it('inmis-sonra-degistirilmis dusman hedef, SLOTLAR TEMIZKEN bile yakalanir', async () => {
+    const { sink, run } = watch({
+      blockNumber: 100n,
+      currentTarget: GOOD_TARGET,
+      governanceLogs: [
+        proposedLog(10n, EVIL_TARGET),
+        changedLog(20n, EVIL_TARGET),
+        proposedLog(30n, GOOD_TARGET),
+        changedLog(40n, GOOD_TARGET),
+      ],
+      nowMs: localClock(NOW),
+    })
+    await run()
+    expect(sink.pages().length).toBe(1)
+    const page = sink.pages()[0] as string
+    expect(page).toContain('GraduationTargetChanged shows the pointer WAS held by')
+    expect(page).toContain(EVIL_TARGET)
+    expect(page).toContain('CURRENT target reads clean')
+  })
+
+  // Ve TERSI: yalnizca mesru hedefler gecmiste -> SESSIZ.
+  it('gecmiste yalnizca izin listesindeki hedefler varsa SESSIZ', async () => {
+    const { sink, run } = watch({
+      blockNumber: 100n,
+      currentTarget: GOOD_TARGET,
+      governanceLogs: [proposedLog(10n, GOOD_TARGET), changedLog(20n, GOOD_TARGET)],
+      nowMs: localClock(NOW),
+    })
+    await run()
+    expect(sink.pages()).toEqual([])
+    expect(sink.oks()).toEqual([])
+    expect(sink.beats()).toBe(1)
+  })
+
+  it('inmemis dusman oneri gecmiste NOTICE"tir, sayfa degil -- gun-0 ayak izi', async () => {
+    const { sink, run } = watch({
+      blockNumber: 100n,
+      governanceLogs: [proposedLog(10n, EVIL_TARGET)],
+      nowMs: localClock(NOW),
+    })
+    await run()
+    expect(sink.pages()).toEqual([])
+    expect(sink.oks().length).toBe(1)
+    expect(sink.oks()[0]).toContain('proposed and never landed')
+  })
+
+  it('gecmisteki hazine degisimi, simdi temiz okunsa bile sayfa cikarir', async () => {
+    const { sink, run } = watch({
+      blockNumber: 100n,
+      protocolTreasury: TREASURY,
+      governanceLogs: [treasuryLog(10n, EVIL_TREASURY), treasuryLog(20n, TREASURY)],
+      nowMs: localClock(NOW),
+    })
+    await run()
+    expect(sink.pages().length).toBe(1)
+    expect(sink.pages()[0]).toContain('ProtocolTreasuryChanged shows the fee recipient WAS')
+    expect(sink.pages()[0]).toContain('remain claimable by it')
+  })
+
+  it('halihazirda slotta gorunen adres IKI KEZ raporlanmaz', () => {
+    const c = classify(stateOf({ currentTarget: EVIL_TARGET }), ALLOW_GOOD, undefined, {
+      proposedTargets: [EVIL_TARGET],
+      landedTargets: [EVIL_TARGET],
+      treasuries: [],
+    })
+    expect(c.findings).toEqual(['graduation-target-off-allowlist', 'no-pending-target'])
+  })
+
+  it('gecmis imlece yazilir, yani yeniden baslatma KOR KALMAZ', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'arcpad-hist-'))
+    try {
+      const store = fileCursorStore(join(dir, '.cursor'))
+      const first = syntheticChain({
+        blockNumber: 50n,
+        governanceLogs: [changedLog(10n, EVIL_TARGET)],
+      })
+      await scanFactoryLogs(first, FACTORY, 1n, { store, chunk: 1_000n })
+      expect(store.read()?.history.landedTargets).toEqual([EVIL_TARGET])
+
+      // Yeniden baslatma: yalnizca YENI bloklari tarar, ama gecmisi KORUR.
+      const second = syntheticChain({ blockNumber: 60n })
+      const scan = await scanFactoryLogs(second, FACTORY, 1n, { store, chunk: 1_000n })
+      expect(second.logQueries[0]?.fromBlock).toBe(51n)
+      expect(scan.history.landedTargets).toEqual([EVIL_TARGET])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('ESKI SEKILDEKI imlec yok sayilir ve bastan taranir -- gecmis "bos" sanilmaz', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'arcpad-v1-'))
+    try {
+      const path = join(dir, '.cursor')
+      writeFileSync(path, JSON.stringify({ lastScannedBlock: '500', curves: [CURVE_A] }), 'utf8')
+      expect(fileCursorStore(path).read()).toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ---------------------------------------------------------------
+// 13. TEKRAR BASTIRMA  (inceleme: Important 3)
+// ---------------------------------------------------------------
+
+describe('alarm tekrari', () => {
+  it('ilk sayfa ASLA bastirilmaz, tekrari bastirilir', () => {
+    const throttle = createThrottle({ repeatAfterMs: 60_000 })
+    expect(throttle.shouldEmit('k', 0)).toBe(true)
+    expect(throttle.shouldEmit('k', 1_000)).toBe(false)
+    expect(throttle.shouldEmit('k', 59_999)).toBe(false)
+    expect(throttle.shouldEmit('k', 60_000)).toBe(true)
+  })
+
+  it('FARKLI bir anahtar ANINDA cikar', () => {
+    const throttle = createThrottle({ repeatAfterMs: 60_000 })
+    expect(throttle.shouldEmit('a', 0)).toBe(true)
+    expect(throttle.shouldEmit('b', 0)).toBe(true)
+  })
+
+  it('bulgu kaybolup geri gelirse yeniden ANINDA cikar', () => {
+    const throttle = createThrottle({ repeatAfterMs: 60_000 })
+    expect(throttle.shouldEmit('a', 0)).toBe(true)
+    throttle.sweep([])
+    expect(throttle.shouldEmit('a', 1)).toBe(true)
+  })
+
+  // OLCULEN ARIZA: startBlock ilk launch'in ilerisinde -> her poll sayfa, sifir
+  // kalp atisi. Bes saniyelik aralikta gunde ~35.000 sayfa.
+  it('kalici bir yanlis yapilandirma 20 poll"da 20 degil 1 sayfa cikarir', async () => {
+    const client = syntheticChain({ blockNumber: 50n, dropLogs: true, launchCount: 3n })
+    const sink = recorder()
+    const throttle = createThrottle({ repeatAfterMs: 3_600_000 })
+    for (let i = 0; i < 20; i += 1) {
+      await runWatcher({
+        client,
+        factory: FACTORY,
+        startBlock: 1n,
+        allowlist: ALLOW_GOOD,
+        alert: sink.alert,
+        heartbeat: sink.heartbeat,
+        nowMs: () => NOW_MS + i * 5_000,
+        throttle,
+      })
+    }
+    expect(sink.pages().length).toBe(1)
+    // Ama KALP ATISI hic bastirilmaz: harici olu-adam anahtari onu sayar.
+    expect(sink.beats()).toBe(0)
+  })
+
+  it('throttle YOKSA her poll yayar -- bastirma opt-in"dir', async () => {
+    const client = syntheticChain({ blockNumber: 50n, dropLogs: true, launchCount: 3n })
+    const sink = recorder()
+    for (let i = 0; i < 3; i += 1) {
+      await runWatcher({
+        client,
+        factory: FACTORY,
+        startBlock: 1n,
+        allowlist: ALLOW_GOOD,
+        alert: sink.alert,
+        heartbeat: sink.heartbeat,
+        nowMs: localClock(NOW),
+      })
+    }
+    expect(sink.pages().length).toBe(3)
+  })
+
+  it('DURUM DEGISIRSE bastirma devreye girmez: yeni hedef yeni sayfadir', async () => {
+    const sink = recorder()
+    const throttle = createThrottle({ repeatAfterMs: 3_600_000 })
+    for (const target of [EVIL_TARGET, addr('bee5')]) {
+      await runWatcher({
+        client: syntheticChain({ pendingTarget: target, pendingEta: NOW + 100n }),
+        factory: FACTORY,
+        startBlock: 1n,
+        allowlist: ALLOW_GOOD,
+        alert: sink.alert,
+        heartbeat: sink.heartbeat,
+        nowMs: localClock(NOW),
+        throttle,
+      })
+    }
+    expect(sink.pages().length).toBe(2)
+  })
+})
+
+// ---------------------------------------------------------------
+// 14. FAZLA SAYMA  (inceleme: Minor 1)
+// ---------------------------------------------------------------
+
+describe('imlec fazla sayarsa mesaj TERSINI soylemez', () => {
+  it('log > slot ise OVER-reporting der ve caresi olarak imleci silmeyi soyler', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'arcpad-over-'))
+    try {
+      const path = join(dir, '.cursor')
+      writeFileSync(
+        path,
+        JSON.stringify({
+          version: 2,
+          lastScannedBlock: '40',
+          curves: [CURVE_A, CURVE_B],
+          history: { proposedTargets: [], landedTargets: [], treasuries: [] },
+        }),
+        'utf8',
+      )
+      // Zincir yalnizca BIR launch biliyor; imlec ikisini tutuyor (reorg).
+      const { sink, run } = watch(
+        { blockNumber: 50n, launchCount: 1n, nowMs: localClock(NOW) },
+        ALLOW_GOOD,
+        fileCursorStore(path),
+      )
+      await run()
+      const page = sink.pages().find((p) => p.includes('log-scan-incomplete'))
+      expect(page).toBeDefined()
+      expect(page).toContain('OVER-reporting')
+      expect(page).toContain('delete the cursor file')
+      expect(page).not.toContain('LOWER BOUND')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('log < slot ise hala UNDER-reporting ve LOWER BOUND der', async () => {
+    const { sink, run } = watch({
+      blockNumber: 50n,
+      dropLogs: true,
+      launchCount: 2n,
+      nowMs: localClock(NOW),
+    })
+    await run()
+    const page = sink.pages().find((p) => p.includes('log-scan-incomplete'))
+    expect(page).toContain('UNDER-reporting')
+    expect(page).toContain('LOWER BOUND')
+  })
+})
+
+// ---------------------------------------------------------------
+// 15. ALARM BORUSU UCTAN UCA  (inceleme: Important 5)
+// ---------------------------------------------------------------
+
+describe('KEEPER_ALERT_LOG borusu', () => {
+  // Ilk turda tatbikat bu dosyayi OKUYORDU ama hicbir sey YAZMIYORDU. Bu test
+  // iki ucu GERCEKTEN birlestirir: keeper'in lavabosu yazar, tatbikatin
+  // lavabo sorgusu okur, ve `drillObserve` karar verir.
+  it('fileSink yazar, fileAlertSink okur, drillObserve gecer', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'arcpad-sink-'))
+    try {
+      const path = join(dir, 'alerts.log')
+      const sink = multiSink(fileSink(path))
+      emitAlert('ok', 'nothing to see here', sink)
+      emitHeartbeat(sink)
+      emitAlert('page', `pendingGraduationTarget is ${EVIL_TARGET}, NOT on the allowlist`, sink)
+
+      const lines = readFileSync(path, 'utf8').trim().split('\n')
+      expect(lines.length).toBe(3)
+      expect(lines.filter((l) => l.startsWith('HEARTBEAT ')).length).toBe(1)
+      expect(lines.filter((l) => l.startsWith('PAGE ')).length).toBe(1)
+
+      await expect(
+        drillObserve({
+          sink: fileAlertSink(path),
+          target: EVIL_TARGET,
+          waitMs: 0,
+          sleep: () => Promise.resolve(),
+        }),
+      ).resolves.toMatchObject({ ok: true })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  // AYNI BORU, SAYFA YOKKEN -> tatbikat DUSER. Boru "her zaman gecer" degil.
+  it('lavaboda yalnizca OK ve HEARTBEAT varsa tatbikat DUSER', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'arcpad-sink2-'))
+    try {
+      const path = join(dir, 'alerts.log')
+      const sink = fileSink(path)
+      emitHeartbeat(sink)
+      emitAlert('ok', 'all quiet', sink)
+      await expect(
+        drillObserve({
+          sink: fileAlertSink(path),
+          target: EVIL_TARGET,
+          waitMs: 0,
+          sleep: () => Promise.resolve(),
+        }),
+      ).resolves.toMatchObject({ ok: false })
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('dosya hic yoksa tatbikat DUSER, gecmez', async () => {
+    await expect(
+      drillObserve({
+        sink: fileAlertSink(join(tmpdir(), 'arcpad-does-not-exist-9f3a1', 'alerts.log')),
+        target: EVIL_TARGET,
+        waitMs: 0,
+        sleep: () => Promise.resolve(),
+      }),
+    ).resolves.toMatchObject({ ok: false })
   })
 })

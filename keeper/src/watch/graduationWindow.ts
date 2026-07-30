@@ -3,6 +3,7 @@ import { formatUsdc } from '@arcpad/shared'
 import { type Address, getAddress, isAddress } from 'viem'
 import {
   type AlertLevel,
+  type AlertThrottle,
   type Liveness,
   maxSeverity,
   type Severity,
@@ -161,23 +162,46 @@ export const CURVE_WATCH_ABI = [
     inputs: [],
     outputs: [{ type: 'uint256' }],
   },
-  {
-    type: 'event',
-    name: 'Completed',
-    inputs: [
-      { name: 'token', type: 'address', indexed: true },
-      { name: 'realQuoteReserves', type: 'uint256', indexed: false },
-      { name: 'poolSeedSupply', type: 'uint256', indexed: false },
-    ],
-  },
+  // `Completed` OLAYI BILEREK BURADA DEGILDIR ve yoklugu bir eksiklik degil bir
+  // karardir. Gorev tanimi Adim 1'de onu sayar; ama izleyici zaten BILINEN HER
+  // CURVE'UN `complete()` SLOTUNU HER POLL OKUR (bkz. `exposure`), ve slot
+  // logdan KESINLIKLE DAHA GUNCELDIR: log gecmisi verir, slot bugunu. Bu tek
+  // olay icin ikisi CAKISIR -- log'un slotun bilmedigi hicbir seyi yoktur,
+  // cunku `complete` bir kez true olur ve asla geri donmez. Governance
+  // olaylarinda durum TERSIDIR (asagi bkz.) ve orada loglar GERCEKTEN
+  // sorgulanir. Olu bir ABI girdisi birakmak, bir sonraki okuyucuya canli
+  // sanacagi bir sey birakmak olurdu; o yuzden silindi.
 ] as const
 
-const LAUNCHED_EVENT = FACTORY_WATCH_ABI.find(
-  (
-    entry,
-  ): entry is Extract<(typeof FACTORY_WATCH_ABI)[number], { type: 'event'; name: 'Launched' }> =>
-    entry.type === 'event' && entry.name === 'Launched',
-)
+function eventNamed(abi: readonly unknown[], name: string): unknown {
+  const found = (abi as ReadonlyArray<{ type?: string; name?: string }>).find(
+    (entry) => entry.type === 'event' && entry.name === name,
+  )
+  if (found === undefined) throw new Error(`event ${name} missing from the watch ABI`)
+  return found
+}
+
+const LAUNCHED_EVENT = eventNamed(FACTORY_WATCH_ABI, 'Launched')
+
+/**
+ * GECMIS YARISI. Slotlar mevcut durum hakkinda yalan soyleyemez ama BIR
+ * ONERININ YAPILIP UZERINE YAZILDIGINI DE SOYLEYEMEZ -- ve gorev tanimindaki
+ * "hem slot hem log" gerekcesinin tam olarak bu yarisi ilk turda eksikti.
+ *
+ * Somut kor nokta olculdu: dusman bir hedef onerilir, iner, uc gun sonra
+ * mesru bir oneriyle degistirilir. Sonrasinda `graduationTarget` izin
+ * listesindedir ve `pendingGraduationTarget` sifirdir -- SLOTLAR TERTEMIZ
+ * OKUNUR ve izleyici `quiet` siniflandirir. Olan biteni tasiyan tek yerel
+ * kayit `GraduationTargetChanged`tir. Yeniden baslatma da ayni sekilde kordur,
+ * cunku butun durum slottan turetilir.
+ */
+const GOVERNANCE_EVENTS = [
+  eventNamed(FACTORY_WATCH_ABI, 'GraduationTargetProposed'),
+  eventNamed(FACTORY_WATCH_ABI, 'GraduationTargetChanged'),
+  eventNamed(FACTORY_WATCH_ABI, 'ProtocolTreasuryChanged'),
+] as const
+
+const SCAN_EVENTS = [LAUNCHED_EVENT, ...GOVERNANCE_EVENTS] as const
 
 // ---------------------------------------------------------------
 // Zincir okuyucusu -- DAR ARAYUZ, viem'in kendisi degil
@@ -199,19 +223,22 @@ export interface ReadCall {
   blockNumber: bigint
 }
 
+/** `events` COGULDUR: tek bir taramada dort olay birden cekilir. */
 export interface LogQuery {
   address: Address
-  event: unknown
+  events: readonly unknown[]
   fromBlock: bigint
   toBlock: bigint
 }
+
+export type ObservedLog = { eventName?: string; args?: Record<string, unknown> }
 
 export type HeadBlock = { number: bigint; timestamp: bigint }
 
 export interface ChainReader {
   getBlock(): Promise<HeadBlock>
   readContract(call: ReadCall): Promise<unknown>
-  getLogs(query: LogQuery): Promise<ReadonlyArray<{ args?: Record<string, unknown> }>>
+  getLogs(query: LogQuery): Promise<ReadonlyArray<ObservedLog>>
 }
 
 // ---------------------------------------------------------------
@@ -221,9 +248,20 @@ export interface ChainReader {
 export type WindowPhase = 'none' | 'armed' | 'open' | 'expired'
 
 /**
- * `delaySeconds`, `blockNumber`, `launchCount` ve `protocolTreasury` alanlari
- * gorev tanimindaki dorde EKLENMISTIR; hicbiri kaldirilmadi. Gerekceleri
- * `readWindowState`in NatSpec'inde ve `runWatcher`da.
+ * PENCERE GIRDILERININ GUVENILIRLIGI.
+ *
+ * `phase === 'expired'`, dusman bir hedef icin TEK sessiz daldir ve ona
+ * zincirin verdigi iki sayiyla varilir: `head.timestamp` ve
+ * `GRADUATION_TARGET_DELAY()`. Ikisi de dogrulanmadan kullanildiginda,
+ * pencereyi KISALTAN her hata sessizlik uretir. Bu bayrak o iki sayinin
+ * denetimidir ve `classify` onu gordugunde `expired` indirimini REDDEDER.
+ */
+export type WindowTrust = { trusted: boolean; reasons: string[] }
+
+/**
+ * `delaySeconds`, `blockNumber`, `launchCount`, `protocolTreasury` ve `trust`
+ * alanlari gorev tanimindaki dorde EKLENMISTIR; hicbiri kaldirilmadi.
+ * Gerekceleri `readWindowState`in NatSpec'inde ve `runWatcher`da.
  */
 export type WindowState = {
   pendingTarget: Address
@@ -237,7 +275,22 @@ export type WindowState = {
   delaySeconds: bigint
   blockNumber: bigint
   launchCount: bigint
+  trust: WindowTrust
 }
+
+/**
+ * ICINDE HAREKET EDILEMEYEN BIR PENCERE, PENCERE DEGILDIR.
+ *
+ * Taban runbook'un kendi sayisindan okunur, secilmez: rota'nin kabul suresi
+ * 30 dakikadir, uzerine imza toplama payi. Bir saatin altindaki her gecikme,
+ * ilan suresi olarak islevsizdir -- ve `delaySeconds === 0` ozel olarak
+ * OLUMCULDUR, cunku `expiresAt === opensAt` yapar ve her oneri bir saniye
+ * sonra `expired`, yani SESSIZ olur.
+ */
+export const MIN_ACTIONABLE_DELAY_SECONDS = 3_600n
+
+/** Zincir saatiyle yerel saat arasinda tolere edilen fark. */
+export const DEFAULT_CLOCK_SKEW_TOLERANCE_SECONDS = 900n
 
 /**
  * Pencere aritmetigi, TEK YERDE ve zincirden okunan gecikmeyle.
@@ -282,8 +335,23 @@ export function computeWindow(
  * `graduationTarget` inisten SONRA okunur ve izleyici hem bekleyen bir oneri
  * hem de degismemis bir hedef gorur. Multicall3 yerine blok sabitlemeyi
  * seciyoruz cunku ek bir kontrat bagimliligi getirmez.
+ *
+ * OKUNAN IKI SAYI AYRICA DENETLENIR. `assertArcChain` zincir kimligini korur;
+ * SAATI hicbir sey korumuyordu. Tamamen dusman bir RPC zaten her seyi
+ * yalanlayabilir (dogrudan iyi hedefi dondurebilir), yani mesele saldirgan
+ * kabiliyeti degil: MASUM kayma -- suruklenmis bir testnet node'u, bir
+ * fork/replay ucu, yanlis kurulmus bir saat -- tek kontrolu sessizce devre disi
+ * birakabiliyordu, hem de kalp atisi akmaya devam ederken.
  */
-export async function readWindowState(client: ChainReader, factory: Address): Promise<WindowState> {
+export async function readWindowState(
+  client: ChainReader,
+  factory: Address,
+  opts?: {
+    nowMs?: () => number
+    skewToleranceSeconds?: bigint
+    minDelaySeconds?: bigint
+  },
+): Promise<WindowState> {
   const head = await client.getBlock()
   const at = head.number
 
@@ -313,11 +381,28 @@ export async function readWindowState(client: ChainReader, factory: Address): Pr
     nowSeconds,
   )
 
+  const minDelay = opts?.minDelaySeconds ?? MIN_ACTIONABLE_DELAY_SECONDS
+  const tolerance = opts?.skewToleranceSeconds ?? DEFAULT_CLOCK_SKEW_TOLERANCE_SECONDS
+  const wallSeconds = BigInt(Math.trunc((opts?.nowMs ?? Date.now)() / 1000))
+  const skew = nowSeconds - wallSeconds
+  const reasons: string[] = []
+  if (delaySeconds < minDelay) {
+    reasons.push(
+      `GRADUATION_TARGET_DELAY() reported ${delaySeconds}s, below the ${minDelay}s floor -- a window nobody can act inside is not a window, and 0 makes every proposal expire one second after it opens`,
+    )
+  }
+  if (skew > tolerance || -skew > tolerance) {
+    reasons.push(
+      `chain time ${nowSeconds} is ${skew > 0n ? skew : -skew}s ${skew > 0n ? 'ahead of' : 'behind'} local time ${wallSeconds} (tolerance ${tolerance}s) -- the phase is computed from chain time`,
+    )
+  }
+
   return {
     pendingTarget,
     pendingEta,
     currentTarget: asAddress(currentRaw, 'graduationTarget'),
     protocolTreasury: asAddress(treasuryRaw, 'protocolTreasury'),
+    trust: { trusted: reasons.length === 0, reasons },
     nowSeconds,
     opensAt,
     expiresAt,
@@ -344,6 +429,10 @@ export type FindingCode =
   | 'pending-target-not-allowlisted-expired'
   | 'graduation-target-off-allowlist'
   | 'protocol-treasury-off-allowlist'
+  | 'window-inputs-untrusted'
+  | 'historic-target-landed-off-allowlist'
+  | 'historic-proposal-off-allowlist'
+  | 'historic-treasury-off-allowlist'
 
 export type Classification = {
   level: AlertLevel
@@ -357,6 +446,13 @@ export type Classification = {
    * (gecmemeli).
    */
   quiet: boolean
+  /**
+   * TEKRAR BASTIRMA ANAHTARI. DURUMDAN turer, MESAJDAN degil: mesaj zaman
+   * damgasi tasir ve asla tekrar etmez, yani mesaja gore dedup HICBIR SEYI
+   * bastirmazdi. Anahtar bulgulari ve ilgili adresleri tasir, boylece FARKLI
+   * bir dusman hedef ANINDA yeni bir sayfa cikarir.
+   */
+  key: string
 }
 
 /** `exposure()` gorev tanimindaki iki alani dondurur; `complete` runWatcher'in ekidir. */
@@ -379,6 +475,7 @@ export function classify(
   state: WindowState,
   allowlist: Allowlist,
   exposure?: ExposureReport,
+  history?: GovernanceHistory,
 ): Classification {
   const findings: FindingCode[] = []
   const parts: string[] = []
@@ -386,6 +483,16 @@ export function classify(
 
   const exposureText = renderExposure(exposure)
   const windowText = `opensAt=${renderTime(state.opensAt)} expiresAt=${renderTime(state.expiresAt)} phase=${state.phase} chainNow=${renderTime(state.nowSeconds)}`
+
+  // (0) GIRDILERE GUVENILIYOR MU. Once bakilir cunku (2)'nin SESSIZ dalini
+  //     kapatan sey budur.
+  if (!state.trust.trusted) {
+    findings.push('window-inputs-untrusted')
+    severity = maxSeverity(severity, 'page')
+    parts.push(
+      `WINDOW INPUTS CANNOT BE TRUSTED, so the expiry downgrade is refused and every non-allowlisted target below pages regardless of phase: ${state.trust.reasons.join('; ')}`,
+    )
+  }
 
   // (1) INMIS DEGISIKLIK. Once bakilir cunku en yuksek siddeti tasir ve
   //     runbook'ta AYRI bir dala gider: bosaltacak pencere KALMAMISTIR.
@@ -409,11 +516,18 @@ export function classify(
     parts.push(
       `pendingGraduationTarget is ${state.pendingTarget}, which IS on the allowlist. ${windowText} ${exposureText}`,
     )
-  } else if (state.phase === 'expired') {
+  } else if (state.phase === 'expired' && state.trust.trusted) {
     // SURESI GECMIS ONERI ATILDIR: `applyGraduationTarget` artik
     // `GraduationTargetProposalExpired()` ile reddeder, yani inemez. Sayfa
     // CIKARMAZ -- ama sessizce de gecilmez: ayni governor yeniden onerebilir
     // ve bu, ele gecirilmis bir governor'in kaydidir.
+    //
+    // `state.trust.trusted` KOSULU ZORUNLUDUR ve olculerek eklendi: bu, dusman
+    // bir hedefin sayfa cikarmadigi TEK daldir, ve ona zincirin dogrulanmamis
+    // saatiyle varilir. One kaymis bir zaman damgasi TAZE bir oneriyi buraya
+    // dusuruyordu -- sifir sayfa, kalp atisi akiyor, iki blok dedektoru de
+    // sessiz. Guvenilmeyen bir saatte indirimi reddetmek, yanlislikla
+    // sayfa cikarmayi yanlislikla susmaya TERCIH ETMEKTIR.
     findings.push('pending-target-not-allowlisted-expired')
     severity = maxSeverity(severity, 'notice')
     parts.push(
@@ -439,6 +553,49 @@ export function classify(
     )
   }
 
+  // (4) GECMIS. Slotlar bugunu soyler; loglar OLAN BITENI. Buradaki adresler
+  //     su an hicbir slotta GORUNMEYENLERDIR -- gorunenleri (1) ve (3) zaten
+  //     rapor etti, iki kez saymanin anlami yok.
+  if (history !== undefined) {
+    const landed = offAllowlist(history.landedTargets, allowlist.graduationTargets, [
+      state.currentTarget,
+    ])
+    if (landed.length > 0) {
+      findings.push('historic-target-landed-off-allowlist')
+      severity = maxSeverity(severity, 'page')
+      parts.push(
+        `GraduationTargetChanged shows the pointer WAS held by ${landed.join(', ')}, none of which are on the allowlist, even though the CURRENT target reads clean. Any curve that completed while it was held could have been graduated to it. The slots cannot show this; only the log can.`,
+      )
+    }
+
+    // `currentTarget` DE ELENIR: (1) onu zaten rapor etti. Elenmeseydi ayni
+    // adres hem "su an isaretli" hem "gecmiste onerilmis" diye iki kez
+    // gorunurdu ve sayfa kendini tekrar ederdi.
+    const proposed = offAllowlist(history.proposedTargets, allowlist.graduationTargets, [
+      state.pendingTarget,
+      state.currentTarget,
+      ...landed,
+    ])
+    if (proposed.length > 0) {
+      findings.push('historic-proposal-off-allowlist')
+      severity = maxSeverity(severity, 'notice')
+      parts.push(
+        `GraduationTargetProposed shows ${proposed.join(', ')} was proposed and never landed (overwritten or expired). Inert now, but it is the day-0 attack's footprint and the slots have already forgotten it.`,
+      )
+    }
+
+    const treasuries = offAllowlist(history.treasuries, allowlist.treasuries, [
+      state.protocolTreasury,
+    ])
+    if (treasuries.length > 0) {
+      findings.push('historic-treasury-off-allowlist')
+      severity = maxSeverity(severity, 'page')
+      parts.push(
+        `ProtocolTreasuryChanged shows the fee recipient WAS ${treasuries.join(', ')}, not on the allowlist, though it reads clean now. Fees accrued during that period remain claimable by it.`,
+      )
+    }
+  }
+
   const quiet = severity === 'none'
   return {
     level: severityToLevel(severity),
@@ -448,7 +605,28 @@ export function classify(
       : `${parts.join(' | ')} [block=${state.blockNumber} factoryDelay=${state.delaySeconds}s]`,
     findings,
     quiet,
+    key: [
+      'classify',
+      severity,
+      ...findings,
+      state.pendingTarget,
+      state.currentTarget,
+      state.protocolTreasury,
+    ].join('|'),
   }
+}
+
+/** `pool` icinde izin listesinde OLMAYAN ve `alreadyReported` icinde bulunmayanlar. */
+function offAllowlist(
+  pool: readonly Address[],
+  allowed: readonly Address[],
+  alreadyReported: readonly Address[],
+): Address[] {
+  const skip = new Set(alreadyReported.map((entry) => entry.toLowerCase()))
+  return pool.filter(
+    (entry) =>
+      entry !== ZERO_ADDRESS && !isAllowed(entry, allowed) && !skip.has(entry.toLowerCase()),
+  )
 }
 
 function isAllowed(candidate: Address, allowed: readonly Address[]): boolean {
@@ -464,9 +642,24 @@ function renderExposure(exposure: ExposureReport | undefined): string {
   return `exposure=${exposure.count} completed-but-ungraduated curve(s), ${formatUsdc(exposure.totalQuoteWei)} USDC (${exposure.totalQuoteWei} wei, ${bound})`
 }
 
-/** ISO-8601, UTC. Locale'e dusen bir bicimlendirici bir sayfada okunamaz. */
+/** ECMA-262: `Date` -8.64e15..8.64e15 ms disini temsil edemez. */
+const MAX_RENDERABLE_SECONDS = 8_640_000_000_000n
+
+/**
+ * ISO-8601, UTC. Locale'e dusen bir bicimlendirici bir sayfada okunamaz.
+ *
+ * ARALIK DISI GIRDI FIRLATMAZ. Onceki hal `new Date(...).toISOString()`i
+ * korumasiz cagiriyordu ve `RangeError: Invalid time value` atiyordu; cagiran
+ * `classify` her `try`in DISINDA oldugu icin o poll SIFIR alarm yayiyor,
+ * `index.ts`te ise dongu KALICI olarak oluyordu -- yani bir bicimlendirme
+ * ayrintisi, izleyicinin bagisik olmasi gereken tam o arizayi uretiyordu.
+ * Zincirden gelen bir sayinin bir bicimlendiriciyi patlatabilmesi tek basina
+ * yeterli sebeptir; `runWatcher`daki `try` bu duzeltmenin YEDEGIDIR, YERINE
+ * GECMEZ.
+ */
 function renderTime(seconds: bigint): string {
   if (seconds === 0n) return '0(unset)'
+  if (seconds < 0n || seconds > MAX_RENDERABLE_SECONDS) return `${seconds}(out-of-range)`
   return `${seconds}(${new Date(Number(seconds) * 1000).toISOString()})`
 }
 
@@ -487,12 +680,29 @@ export class LogScanError extends Error {
   }
 }
 
-export type Cursor = { lastScannedBlock: bigint; curves: Address[] }
+/** Governance olaylarindan kurulan GECMIS. Bkz. `GOVERNANCE_EVENTS`. */
+export type GovernanceHistory = {
+  proposedTargets: Address[]
+  landedTargets: Address[]
+  treasuries: Address[]
+}
+
+export type Cursor = { lastScannedBlock: bigint; curves: Address[]; history: GovernanceHistory }
 
 export interface CursorStore {
   read(): Cursor | null
   write(cursor: Cursor): void
 }
+
+/**
+ * SURUM ALANI VARDIR VE GEREKLIDIR. Imlec artik governance gecmisini de tasir;
+ * eski sekildeki bir dosyayi "gecmis bos" diye okumak, YENIDEN BASLATMANIN
+ * gercek bir uzlasmayi UNUTMASI demek olurdu. Tanimadigi surumu YOK sayar
+ * (null doner, bastan tarar) -- tam bir yeniden tarama ucuzdur, eksik bir
+ * gecmis degil. Gecerli JSON ama imlec hic degilse yine de FIRLATIR: "tahmin
+ * etme" kurali korunur.
+ */
+const CURSOR_VERSION = 2
 
 /** Yeniden baslatma genesis'ten yeniden taramasin diye. `keeper/.cursor`. */
 export function fileCursorStore(path: string): CursorStore {
@@ -504,23 +714,47 @@ export function fileCursorStore(path: string): CursorStore {
       } catch {
         return null
       }
-      const parsed = JSON.parse(raw) as { lastScannedBlock?: unknown; curves?: unknown }
-      if (typeof parsed.lastScannedBlock !== 'string' || !Array.isArray(parsed.curves)) {
+      const parsed = JSON.parse(raw) as Record<string, unknown>
+      if (typeof parsed['lastScannedBlock'] !== 'string' || !Array.isArray(parsed['curves'])) {
         throw new Error(`${path} is not a keeper cursor; refusing to guess`)
       }
+      if (parsed['version'] !== CURSOR_VERSION) return null
+      const history = parsed['history'] as Record<string, unknown> | undefined
+      if (typeof history !== 'object' || history === null) return null
       return {
-        lastScannedBlock: BigInt(parsed.lastScannedBlock),
-        curves: parsed.curves.map((entry, i) => asAddress(entry, `${path}.curves[${i}]`)),
+        lastScannedBlock: BigInt(parsed['lastScannedBlock']),
+        curves: (parsed['curves'] as unknown[]).map((entry, i) =>
+          asAddress(entry, `${path}.curves[${i}]`),
+        ),
+        history: {
+          proposedTargets: readAddressList(history['proposedTargets'], `${path}.proposedTargets`),
+          landedTargets: readAddressList(history['landedTargets'], `${path}.landedTargets`),
+          treasuries: readAddressList(history['treasuries'], `${path}.treasuries`),
+        },
       }
     },
     write(cursor: Cursor): void {
       writeFileSync(
         path,
-        `${JSON.stringify({ lastScannedBlock: cursor.lastScannedBlock.toString(), curves: cursor.curves }, null, 2)}\n`,
+        `${JSON.stringify(
+          {
+            version: CURSOR_VERSION,
+            lastScannedBlock: cursor.lastScannedBlock.toString(),
+            curves: cursor.curves,
+            history: cursor.history,
+          },
+          null,
+          2,
+        )}\n`,
         'utf8',
       )
     },
   }
+}
+
+function readAddressList(value: unknown, field: string): Address[] {
+  if (!Array.isArray(value)) return []
+  return value.map((entry, i) => asAddress(entry, `${field}[${i}]`))
 }
 
 export const DEFAULT_LOG_SCAN_CHUNK = 10_000n
@@ -541,8 +775,21 @@ export async function knownCurves(
   startBlock: bigint,
   opts?: { store?: CursorStore; head?: bigint; chunk?: bigint },
 ): Promise<Address[]> {
-  if (LAUNCHED_EVENT === undefined) throw new Error('Launched event missing from FACTORY_WATCH_ABI')
+  return (await scanFactoryLogs(client, factory, startBlock, opts)).curves
+}
 
+/**
+ * TEK GECISTE DORT OLAY: `Launched` + uc governance olayi.
+ *
+ * Ayni blok araliklari zaten yuruniyor; ayri bir tarama ikinci bir imlec,
+ * ikinci bir hata yolu ve iki taramanin AYRISABILECEGI bir pencere yaratirdi.
+ */
+export async function scanFactoryLogs(
+  client: ChainReader,
+  factory: Address,
+  startBlock: bigint,
+  opts?: { store?: CursorStore; head?: bigint; chunk?: bigint },
+): Promise<{ curves: Address[]; history: GovernanceHistory }> {
   const head = opts?.head ?? (await client.getBlock()).number
   const chunk = opts?.chunk ?? DEFAULT_LOG_SCAN_CHUNK
   if (chunk <= 0n) throw new Error(`log scan chunk must be positive, got ${chunk}`)
@@ -562,16 +809,20 @@ export async function knownCurves(
   }
 
   const seen = new Set<Address>(cursor?.curves ?? [])
+  const proposed = new Set<Address>(cursor?.history.proposedTargets ?? [])
+  const landed = new Set<Address>(cursor?.history.landedTargets ?? [])
+  const treasuries = new Set<Address>(cursor?.history.treasuries ?? [])
+
   let from = cursor === null ? startBlock : cursor.lastScannedBlock + 1n
   if (from < startBlock) from = startBlock
 
   while (from <= head) {
     const to = from + chunk - 1n > head ? head : from + chunk - 1n
-    let logs: ReadonlyArray<{ args?: Record<string, unknown> }>
+    let logs: ReadonlyArray<ObservedLog>
     try {
       logs = await client.getLogs({
         address: factory,
-        event: LAUNCHED_EVENT,
+        events: SCAN_EVENTS,
         fromBlock: from,
         toBlock: to,
       })
@@ -582,18 +833,45 @@ export async function knownCurves(
       throw new LogScanError(from, to, cause)
     }
     for (const log of logs) {
-      const curve = log.args?.['curve']
-      if (curve === undefined) {
-        throw new LogScanError(from, to, new Error('a Launched log carried no `curve` argument'))
+      const take = (field: string, into: Set<Address>, label: string): void => {
+        const value = log.args?.[field]
+        if (value === undefined) {
+          throw new LogScanError(from, to, new Error(`a ${label} log carried no \`${field}\``))
+        }
+        into.add(asAddress(value, `${label}.${field}`))
       }
-      seen.add(asAddress(curve, 'Launched.curve'))
+      switch (log.eventName) {
+        case 'GraduationTargetProposed':
+          take('target', proposed, 'GraduationTargetProposed')
+          break
+        case 'GraduationTargetChanged':
+          take('current', landed, 'GraduationTargetChanged')
+          break
+        case 'ProtocolTreasuryChanged':
+          take('current', treasuries, 'ProtocolTreasuryChanged')
+          break
+        // `eventName` YOKSA `Launched` VARSAYILIR ve bu bilincli: tek-olayli
+        // eski sekli konusan bir okuyucu (ve testlerdeki sade sahteler) hala
+        // curve kumesini besler. Governance olaylari adlarini ZORUNLU kilar --
+        // adsiz bir log onlara sessizce yazilamaz.
+        default:
+          take('curve', seen, 'Launched')
+      }
     }
     from = to + 1n
   }
 
-  const curves = [...seen].sort((a, b) => (a.toLowerCase() < b.toLowerCase() ? -1 : 1))
-  store?.write({ lastScannedBlock: head, curves })
-  return curves
+  const sorted = (set: Set<Address>): Address[] =>
+    [...set].sort((a, b) => (a.toLowerCase() < b.toLowerCase() ? -1 : 1))
+
+  const curves = sorted(seen)
+  const history: GovernanceHistory = {
+    proposedTargets: sorted(proposed),
+    landedTargets: sorted(landed),
+    treasuries: sorted(treasuries),
+  }
+  store?.write({ lastScannedBlock: head, curves, history })
+  return { curves, history }
 }
 
 /**
@@ -645,6 +923,8 @@ export interface WatcherDeps {
   store?: CursorStore
   chunk?: bigint
   nowMs?: () => number
+  /** Bkz. `createThrottle`. Verilmezse HER bulgu HER poll yayilir. */
+  throttle?: AlertThrottle
 }
 
 /**
@@ -666,21 +946,31 @@ export interface WatcherDeps {
 export async function runWatcher(deps: WatcherDeps): Promise<void> {
   const nowMs = deps.nowMs ?? Date.now
   const at = nowMs()
+  const activeKeys = new Set<string>()
+
+  const emit = (level: AlertLevel, key: string, message: string): void => {
+    activeKeys.add(key)
+    if (deps.throttle === undefined || deps.throttle.shouldEmit(key, at)) deps.alert(level, message)
+  }
 
   let state: WindowState
   try {
-    state = await readWindowState(deps.client, deps.factory)
+    state = await readWindowState(deps.client, deps.factory, { nowMs })
   } catch (error) {
-    deps.alert(
+    emit(
       'page',
+      'watcher-state-read-failed',
       `watcher-state-read-failed: the factory's storage-backed getters could not be read, so the graduation window is UNKNOWN this poll: ${describe(error)}`,
     )
+    deps.throttle?.sweep(activeKeys)
     return
   }
 
   deps.liveness?.observeHead(state.blockNumber, at)
+  deps.liveness?.observeChainTime(state.nowSeconds, at)
 
   let curves: Address[] = []
+  let history: GovernanceHistory | undefined
   let scanOk = true
   try {
     const scanOpts: { store?: CursorStore; head: bigint; chunk?: bigint } = {
@@ -688,12 +978,15 @@ export async function runWatcher(deps: WatcherDeps): Promise<void> {
     }
     if (deps.store !== undefined) scanOpts.store = deps.store
     if (deps.chunk !== undefined) scanOpts.chunk = deps.chunk
-    curves = await knownCurves(deps.client, deps.factory, deps.startBlock, scanOpts)
+    const scan = await scanFactoryLogs(deps.client, deps.factory, deps.startBlock, scanOpts)
+    curves = scan.curves
+    history = scan.history
   } catch (error) {
     scanOk = false
-    deps.alert(
+    emit(
       'page',
-      `log-scan-failed: the Launched scan threw rather than returning a short list, so the exposure below is NOT a number: ${describe(error)}`,
+      'log-scan-failed',
+      `log-scan-failed: the factory log scan threw rather than returning a short list, so the exposure below is NOT a number and the governance history is UNKNOWN: ${describe(error)}`,
     )
   }
 
@@ -702,11 +995,21 @@ export async function runWatcher(deps: WatcherDeps): Promise<void> {
   // yani slot log sayisinin TAM bir kehanetidir. Bir log akisinin sessizce
   // dusmesinin baska hicbir yerel tespiti yoktur -- "hicbir launch olmamis"
   // ile "loglar gelmiyor" yalnizca burada ayrisir.
-  const countMatches = scanOk && BigInt(curves.length) === state.launchCount
+  //
+  // KARSILASTIRMA IKI YONLUDUR VE MESAJ DA OYLE. Onceki hal her uyusmazliga
+  // "under-reporting / LOWER BOUND" diyordu; fazla-sayma yonunde bu TERSTIR ve
+  // caresi de farklidir. Fazla sayma reorg'a ugramis bir `Launched`in imlecte
+  // KALMASIYLA olur -- imlec yalnizca ekler, silmez -- ya da `startBlock`
+  // yanlissa. Ikisinin de caresi `keeper/.cursor` dosyasini SILMEKTIR ve mesaj
+  // bunu SOYLER, cunku bu durum yapiskan: her poll sayfa, sifir kalp atisi.
+  const scanned = BigInt(curves.length)
+  const countMatches = scanOk && scanned === state.launchCount
   if (scanOk && !countMatches) {
-    deps.alert(
+    const over = scanned > state.launchCount
+    emit(
       'page',
-      `log-scan-incomplete: the Launched scan returned ${curves.length} curve(s) but the factory's launchCount slot says ${state.launchCount} at block ${state.blockNumber}. The log path is under-reporting; every exposure number below is a LOWER BOUND.`,
+      `log-scan-${over ? 'over' : 'under'}-reporting`,
+      `log-scan-incomplete: the Launched scan returned ${curves.length} curve(s) but the factory's launchCount slot says ${state.launchCount} at block ${state.blockNumber}. The log path is ${over ? 'OVER-reporting -- the cursor is holding a curve the chain no longer has (a reorged-out Launched, or a startBlock that does not match this chain). Remedy: stop the keeper and delete the cursor file so the scan rebuilds from startBlock' : 'UNDER-reporting -- every exposure number below is a LOWER BOUND'}.`,
     )
   }
 
@@ -723,22 +1026,49 @@ export async function runWatcher(deps: WatcherDeps): Promise<void> {
     try {
       measured = await exposure(deps.client, curves, state.blockNumber)
     } catch (error) {
-      deps.alert('page', `exposure-read-failed: a curve could not be read: ${describe(error)}`)
+      emit(
+        'page',
+        'exposure-read-failed',
+        `exposure-read-failed: a curve could not be read: ${describe(error)}`,
+      )
     }
   }
 
   const report: ExposureReport | undefined =
     measured === undefined ? undefined : { ...measured, complete: countMatches }
 
-  const classification = classify(state, deps.allowlist, report)
-  if (!classification.quiet) deps.alert(classification.level, classification.reason)
+  // SINIFLANDIRMA DA KORUMA ALTINDA, ve bu bir kemer-ve-askidan ibaret degil.
+  //
+  // Onceki hal `classify`i her `try`in DISINDA cagiriyordu ve fonksiyonun
+  // "ASLA REJECT ETMEZ" sozu bu yuzden YANLISTI: `renderTime` icindeki
+  // `new Date(...).toISOString()` `RangeError` atiyor, poll SIFIR alarmla
+  // dusuyor, ve `index.ts`te yeniden zamanlama `await`ten SONRA oldugu icin
+  // DONGU KALICI OLARAK OLUYORDU. Yani bir bicimlendirme ayrintisi, izleyicinin
+  // bagisik olmasi gereken tam o arizayi uretiyordu. `renderTime` ayrica
+  // duzeltildi; bu `try` onun YEDEGI, YERINE GECENI DEGIL -- bir sonraki
+  // bicimlendirici de ayni sekilde patlayabilir ve o zaman da bir sayfa cikmali.
+  let classified = false
+  try {
+    const classification = classify(state, deps.allowlist, report, history)
+    if (!classification.quiet) emit(classification.level, classification.key, classification.reason)
+    classified = true
+  } catch (error) {
+    emit(
+      'page',
+      'classify-threw',
+      `classify-threw: the window could not be classified, so the raw state is reported instead -- pendingTarget=${state.pendingTarget} pendingEta=${state.pendingEta} currentTarget=${state.currentTarget} protocolTreasury=${state.protocolTreasury} chainNow=${state.nowSeconds} delay=${state.delaySeconds} block=${state.blockNumber}: ${describe(error)}`,
+    )
+  }
 
-  // KALP ATISI YALNIZCA HER SEY YURUDUYSE. Yarim bir poll'a atis vermek,
-  // kanaryayi bosaltirdi.
-  if (scanOk && countMatches && measured !== undefined) {
+  // KALP ATISI YALNIZCA HER SEY YURUDUYSE -- SINIFLANDIRMA DAHIL. Yarim bir
+  // poll'a atis vermek, kanaryayi bosaltirdi; ve siniflandiramamis bir poll
+  // "tamamlanmis" degildir, cunku bu fonksiyonun BUTUN isi odur.
+  if (scanOk && countMatches && measured !== undefined && classified) {
     deps.heartbeat()
     deps.liveness?.pollSucceeded(at)
   }
+
+  deps.throttle?.sweep(activeKeys)
 }
 
 function describe(error: unknown): string {

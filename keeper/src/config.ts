@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { ARC_TESTNET_CHAIN_ID, loadAddressBook } from '@arcpad/shared'
 import { type Address, getAddress, isAddress } from 'viem'
 import { type Allowlist, ZERO_ADDRESS } from './watch/graduationWindow'
 
@@ -57,6 +58,10 @@ export interface WatcherConfig {
   cursorPath: string
   logScanChunk: bigint
   allowlist: Allowlist
+  /** Ayarliysa keeper her olayi buraya da yazar; tatbikatin `observe` fazi bunu okur. */
+  alertLogPath: string | undefined
+  /** Ayni bulgunun tekrar yayilma araligi. Bkz. `createThrottle`. */
+  alertRepeatMs: number | undefined
 }
 
 const DEFAULT_LOG_SCAN_CHUNK = 10_000n
@@ -67,10 +72,54 @@ export const DEFAULT_GOVERNANCE_PATH = fileURLToPath(
   new URL('../../contracts/deploy/expected-governance.json', import.meta.url),
 )
 
-export function loadWatcherConfig(env: NodeJS.ProcessEnv): WatcherConfig {
-  const factory = requireAddressEnv(env, 'ARC_FACTORY_ADDRESS')
-  const startBlock = requireBigintEnv(env, 'ARC_START_BLOCK')
-  const chainKey = env['KEEPER_CHAIN_KEY'] ?? 'arc-testnet'
+/**
+ * DEFTER KAYNAKTIR, ENV YALNIZCA CAPRAZ KONTROLDUR.
+ *
+ * Onceki hal `ARC_START_BLOCK`i ham env'den okuyordu. Olculen sonucu: ilk
+ * launch'in ILERISINE ayarlanmis bir startBlock her poll'da
+ * `log-scan-under-reporting` sayfasi cikarir ve HIC kalp atisi vermez, yani
+ * kanarya da uzerine biner -- bes saniyelik varsayilan aralikta gunde ~35.000
+ * sayfa, ve pencere siniflandirmasinin kendisi kusursuz calisirken.
+ *
+ * Iki ayri duzeltme gerekiyordu ve ikisi de yapildi: burada DEGERIN kaynagi
+ * insan eliyle yazilan env olmaktan cikip URETILEN deftere baglandi
+ * (`contracts/deploy/addresses.<chainId>.json`), alarm tarafinda ise tekrar
+ * bastirma eklendi (`createThrottle`).
+ *
+ * `chainKey` DE DEFTERDEN GELIR. Elle ayarlanabilir olmasi, izin listesinin
+ * defterin isaret ettiginden BASKA bir governance kaydindan okunabilmesi
+ * demekti -- yani izleyici yanlis Safe'i mesru sayabilirdi.
+ *
+ * NEDEN `assertEnvMatchesBook` DOGRUDAN CAGRILMIYOR: o fonksiyon
+ * `NEXT_PUBLIC_ARC_CHAIN_ID`, `NEXT_PUBLIC_ARCPAD_FACTORY`,
+ * `NEXT_PUBLIC_ARCPAD_ESCROW` ve `ARC_ESCROW_ADDRESS`i de ZORUNLU tutar. Bunlar
+ * web'in build-time degiskenleridir; keeper hicbirini kullanmaz. Cagirmak,
+ * izleyicinin web env'i olmadan BASLAMAMASI demek olurdu -- ve bu gorevin
+ * tamami "factory hicbir an izlenmeden canli olmasin" uzerine kurulu, yani
+ * izleyiciyi web'in yapilandirmasina bagimli kilmak yanlis yonde bir kilitleme
+ * olurdu. Bunun yerine defter KAYNAK yapildi (env'i dogrulamaktan daha
+ * gucludur: yanlis bir deger artik yalnizca reddedilmiyor, hic kullanilmiyor)
+ * ve keeper'in GERCEKTEN kullandigi iki degisken icin ayni iddia burada,
+ * ALANI ADIYLA yapiliyor.
+ */
+export function loadWatcherConfig(env: NodeJS.ProcessEnv, bookDir?: string): WatcherConfig {
+  const chainId =
+    env['ARC_CHAIN_ID'] === undefined ? ARC_TESTNET_CHAIN_ID : Number(env['ARC_CHAIN_ID'])
+  if (!Number.isSafeInteger(chainId)) {
+    throw new Error(`ARC_CHAIN_ID must be an integer, got "${env['ARC_CHAIN_ID'] ?? ''}"`)
+  }
+
+  const book = bookDir === undefined ? loadAddressBook(chainId) : loadAddressBook(chainId, bookDir)
+  const factory = book.launchFactory
+  const startBlock = book.startBlock
+  const chainKey = book.chainKey
+
+  // Env AYARLIYSA defterle AYNI olmak zorundadir. Ayarli degilse sorun yok:
+  // deger zaten defterden geldi.
+  assertEnvAgrees(env, 'ARC_FACTORY_ADDRESS', factory)
+  assertEnvAgrees(env, 'ARC_START_BLOCK', startBlock.toString())
+  assertEnvAgrees(env, 'KEEPER_CHAIN_KEY', chainKey)
+
   const governancePath = env['KEEPER_GOVERNANCE_FILE'] ?? DEFAULT_GOVERNANCE_PATH
   const cursorPath = env['KEEPER_CURSOR_FILE'] ?? DEFAULT_CURSOR_PATH
 
@@ -90,6 +139,15 @@ export function loadWatcherConfig(env: NodeJS.ProcessEnv): WatcherConfig {
     throw new Error(`cannot read the governance allowlist at ${governancePath}`)
   }
 
+  const rawRepeat = env['KEEPER_ALERT_REPEAT_MS']
+  let alertRepeatMs: number | undefined
+  if (rawRepeat !== undefined && rawRepeat !== '') {
+    alertRepeatMs = Number(rawRepeat)
+    if (!Number.isInteger(alertRepeatMs) || alertRepeatMs < 0) {
+      throw new Error(`KEEPER_ALERT_REPEAT_MS must be a non-negative integer, got "${rawRepeat}"`)
+    }
+  }
+
   return {
     factory,
     startBlock,
@@ -98,6 +156,8 @@ export function loadWatcherConfig(env: NodeJS.ProcessEnv): WatcherConfig {
     cursorPath,
     logScanChunk,
     allowlist: parseGovernanceAllowlist(JSON.parse(raw) as unknown, chainKey),
+    alertLogPath: env['KEEPER_ALERT_LOG'] === '' ? undefined : env['KEEPER_ALERT_LOG'],
+    alertRepeatMs,
   }
 }
 
@@ -164,16 +224,16 @@ function coerceAddress(value: unknown, field: string): Address {
   return getAddress(value)
 }
 
-function requireAddressEnv(env: NodeJS.ProcessEnv, name: string): Address {
-  const value = env[name]
-  if (!value) throw new Error(`${name} is not set (see .env.example)`)
-  if (!isAddress(value, { strict: false })) throw new Error(`${name} is "${value}", not an address`)
-  return getAddress(value)
-}
-
-function requireBigintEnv(env: NodeJS.ProcessEnv, name: string): bigint {
-  const value = env[name]
-  if (!value) throw new Error(`${name} is not set (see .env.example)`)
-  if (!/^\d+$/.test(value)) throw new Error(`${name} must be a decimal integer, got "${value}"`)
-  return BigInt(value)
+/** Ayarlanmamis env sorun degil; YANLIS ayarlanmis env, ALANI ADIYLA, durdurur. */
+function assertEnvAgrees(env: NodeJS.ProcessEnv, name: string, expected: string): void {
+  const actual = env[name]
+  if (actual === undefined || actual === '') return
+  const same = isAddress(expected, { strict: false })
+    ? isAddress(actual, { strict: false }) && getAddress(actual) === getAddress(expected)
+    : actual === expected
+  if (!same) {
+    throw new Error(
+      `${name} is "${actual}" but the address book says "${expected}". The book is the source; fix the env or regenerate the book.`,
+    )
+  }
 }

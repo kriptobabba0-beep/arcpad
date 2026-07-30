@@ -1,6 +1,12 @@
 import type { Abi, AbiEvent } from 'viem'
 import type { createArcClient } from '@arcpad/shared'
-import type { ChainReader, HeadBlock, LogQuery, ReadCall } from './watch/graduationWindow'
+import type {
+  ChainReader,
+  HeadBlock,
+  LogQuery,
+  ObservedLog,
+  ReadCall,
+} from './watch/graduationWindow'
 
 type ArcClient = ReturnType<typeof createArcClient>
 
@@ -31,14 +37,14 @@ export function viemChainReader(client: ArcClient): ChainReader {
         blockNumber: call.blockNumber,
       })
     },
-    async getLogs(query: LogQuery): Promise<ReadonlyArray<{ args?: Record<string, unknown> }>> {
+    async getLogs(query: LogQuery): Promise<ReadonlyArray<ObservedLog>> {
       const logs = await client.getLogs({
         address: query.address,
-        event: query.event as AbiEvent,
+        events: query.events as AbiEvent[],
         fromBlock: query.fromBlock,
         toBlock: query.toBlock,
       })
-      return logs as ReadonlyArray<{ args?: Record<string, unknown> }>
+      return logs as ReadonlyArray<ObservedLog>
     },
   }
 }
