@@ -1,0 +1,31 @@
+# arcpad curve profiles -- spec SS5.3.
+#
+# THE NUMBERS LIVE HERE. The chain -> profile-name binding does NOT, and must
+# never move into this file: if it did, an operator editing one data file could
+# put production numbers on a testnet chain without a code review, which is the
+# exact bypass the assertion exists to prevent. The binding is in
+# script/Profiles.sol, compiled and mutation-tested.
+#
+# Values are decimal STRINGS, not TOML integers. TOML integers are i64
+# (max 9_223_372_036_854_775_807) and T = 1.073e27 does not fit.
+#
+# keccak256(abi.encode(T, V, S)) is pinned per profile in script/Profiles.sol.
+# An edit here that is not matched there fails the deploy with
+# ProfileDigestMismatch, naming both digests.
+
+[profiles.testnet]
+# T = 1_073_000_000e18
+virtualTokenReserves = "1073000000000000000000000000"
+# V = 4_292e15. THIS IS THE ONLY FIELD THAT DIFFERS BETWEEN THE TWO PROFILES,
+# and it differs by exactly 1000x. Both of LaunchFactory's V-dependent floors
+# sit exactly on this value, so nothing on the contract side can catch a slip
+# here -- only the digest can.
+virtualQuoteReserves = "4292000000000000000"
+# S = 793_100_000e18
+saleSupply = "793100000000000000000000000"
+
+[profiles.production]
+virtualTokenReserves = "1073000000000000000000000000"
+# V = 4_292e18
+virtualQuoteReserves = "4292000000000000000000"
+saleSupply = "793100000000000000000000000"

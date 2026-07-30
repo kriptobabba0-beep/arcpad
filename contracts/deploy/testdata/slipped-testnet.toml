@@ -1,0 +1,7 @@
+# NOT A DEPLOYABLE PROFILE. Fixture for test_aSlippedExponentIsRejectedByTheDigest.
+# Every one of LaunchFactory's seven guards accepts this triple. Only the digest
+# does not.
+[profiles.testnet]
+virtualTokenReserves = "1073000000000000000000000000"
+virtualQuoteReserves = "4292000000000000000000"
+saleSupply = "793100000000000000000000000"

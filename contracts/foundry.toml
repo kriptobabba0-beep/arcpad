@@ -37,7 +37,17 @@ auto_detect_remappings = true
 # ILK `fs_permissions` girisi (Faz 1d'nin deploy script'i en olasi aday) yuzey
 # testini sessizce kirardi. Bu satir tam olarak onu engeller ve hicbir sey
 # genisletmez: `access = "read"` ortuk iznin zaten verdigi seviyedir.
-fs_permissions = [{ access = "read", path = "./out" }]
+#
+# FAZ 1D EKI. `./deploy` girisi deploy script'inin profil dosyasini okumasi
+# icindir. `./out` AYNEN KALIR ve kalmasi ZORUNLUDUR: yukaridaki olcum,
+# `fs_permissions` bir kez tanimlandiginda ortuk artifact izninin kalktigini
+# soyluyor. `./out`u default'tan dusurmek Surface.t.sol'u GURULTULU bicimde
+# kirar; ama YALNIZCA [profile.ci]'den dusurmek sadece CI'da kirar -- liste
+# MIRAS DEGIL, DEGISTIRME semantigiyle calisir. Iki liste de kendi kendine
+# yeterli tutulur ve test/script/Profiles.t.sol UCUNU birden olcer: `out/`
+# okunabilir, `deploy/` okunabilir, `src/` HALA REDDEDILIR. Ucuncusu, iznin
+# GENISLEMEDIGINI olcen tek iddiadir.
+fs_permissions = [{ access = "read", path = "./out" }, { access = "read", path = "./deploy" }]
 
 [profile.default.fuzz]
 runs = 256
@@ -74,7 +84,13 @@ auto_detect_remappings = true
 # boylece dogrulanmis oldu). Dolayisiyla ileride [profile.ci]'ye baska bir
 # amacla eklenecek tek bir giris, default'tan gelen `./out` iznini yalnizca CI'da
 # dusururdu. Her profilin listesi kendi kendine yeterli tutuluyor.
-fs_permissions = [{ access = "read", path = "./out" }]
+#
+# FAZ 1D EKI. `./deploy` BURAYA DA yazilir; default'tan MIRAS ALINMAZ, cunku bu
+# profil kendi listesini tanimlar ve tanimlayan bir profil default'unkini
+# TAMAMEN degistirir. `./deploy`u yalnizca default'a eklemek, Profiles.t.sol'u
+# `FOUNDRY_PROFILE=ci` altinda kirardi -- P9 mutantinin olctugu tuzagin aynisi,
+# yonu ters cevrilmis hali.
+fs_permissions = [{ access = "read", path = "./out" }, { access = "read", path = "./deploy" }]
 
 [profile.ci.fuzz]
 runs = 5000
