@@ -85,10 +85,11 @@ contract DeployTest is Test {
     uint256 internal constant ARC_TESTNET = 5042002;
     uint256 internal constant LOCAL_REHEARSAL = 31337;
 
-    uint256 internal constant T = 1_073_000_000e18;
-    uint256 internal constant V_TESTNET = 4_292e15;
-    uint256 internal constant V_PRODUCTION = 4_292e18;
-    uint256 internal constant S = 793_100_000e18;
+    // T / V / S icin BURADA sabit YOKTUR ve bu bilincli: bu dosyadaki her
+    // sayisal iddia literali YERINDE yazar (bkz.
+    // test_theDeployedFactoryHoldsTheResolvedProfile). Adlandirilmis bir sabit
+    // okunakli gorunur ama iddiayi bir DOLAYLILIK ardina saklar; ucluyu
+    // pinlemek Profiles.t.sol'un isidir, burasinin degil.
 
     Deploy internal script;
 
