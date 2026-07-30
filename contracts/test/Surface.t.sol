@@ -20,13 +20,16 @@ import {FeeEscrow} from "../src/FeeEscrow.sol";
 /// @dev BU DOSYA "IMZA SAYAN" HALINDEN BIR TUR DAHA ILERI GOTURULDU, cunku ilk
 ///      hali AYNI HATANIN BIR KATMAN ASAGISINI yapiyordu: `methodIdentifiers`
 ///      anahtarlari imzayi tasir ama MUTABILITE'yi, DONUS TIPINI, hata
-///      ARITESINI ve olaylarin KIMLIGINI tasimaz. Olculdu: `claim(address)
-///      external` -> `external payable`, `sellExactTokensIn` -> `payable`,
-///      `claim` -> `returns (uint256)`, `Trade`in `indexed trader`ini indekssiz
-///      yapmak, `Deposited`i `FeeCredited` diye yeniden adlandirmak, `Claimed`e
-///      ucuncu bir parametre eklemek ve `TokenTransferFailed()` ->
-///      `TokenTransferFailed(address)` -- YEDISI DE paketin tamamini yesil
-///      birakiyordu.
+///      ARITESINI ve olaylarin KIMLIGINI tasimaz. INCELEMEDE OLCULDU (bu
+///      dosyanin imza-yalnizca halinde): `claim(address) external` ->
+///      `external payable`, `sellExactTokensIn` -> `payable`, `claim` ->
+///      `returns (uint256)`, ayni imzali bir `public` mapping getter'i,
+///      `Trade`in `indexed trader`ini indekssiz yapmak, `Deposited`i
+///      `FeeCredited` diye yeniden adlandirmak, `Claimed`e ucuncu bir parametre
+///      eklemek ve `TokenTransferFailed()` -> `TokenTransferFailed(address)` --
+///      SEKIZI DE paketin tamamini yesil birakiyordu.
+///      SEKIZI DE ARTIK OLUYOR ve her biri YALNIZCA asagidaki pinlerden birine
+///      dusuyor; olcumler task-4-report.md §S-tur-2'de.
 ///
 /// @dev BES AYRI PIN, cunku tek basina hicbiri yetmiyor:
 ///
