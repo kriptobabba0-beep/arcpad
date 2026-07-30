@@ -138,6 +138,14 @@ function selectorOf(bytes memory err) pure returns (bytes4) {
     return bytes4(err[0]) | (bytes4(err[1]) >> 8) | (bytes4(err[2]) >> 16) | (bytes4(err[3]) >> 24);
 }
 
+/// KODU OLAN ama defter OLMAYAN "escrow". `LaunchFactory`'nin deploy aninda
+/// reddettigi sekil; burada REDDEDILMEDEN once ne olurdu, o olculuyor.
+contract NotALedgerEscrow {
+    function unrelated() external pure returns (uint256) {
+        return 1;
+    }
+}
+
 /// GRADUATION HEDEFI. `receive()` CIPLAK BIR KABULDUR ve bu Faz 2'nin
 /// yukumlulugu (2)'sidir: odeme hedefin KENDI durum makinesi ucus halindeyken,
 /// curve'un cagri cercevesinde calisir.
@@ -1460,6 +1468,54 @@ contract BondingCurveTest is Test {
             // {0, 1} kumesindedir -- asla negatif, asla 2 ve uzeri.
             assertLe(gross - spent, 1, "slack outside {0, 1}");
         }
+    }
+
+    /// FACTORY'NIN DEFTER YOKLAMASININ ENGELLEDIGI TERMINAL DURUM, OLCULEREK.
+    ///
+    /// `EscrowHasNoCode` bir adres SEKLINI eler; gitmek istedigi durumu degil.
+    /// Kodu OLAN ama defter olmayan bir escrow ile curve kurulur, `bind`
+    /// basarir, arzin %100'u curve'e girer -- ve HER ticaret giris noktasi
+    /// sonsuza kadar revert eder, cunku her islem
+    /// `IFeeEscrow(escrow).deposit{value: ...}` cagirir. Curve'un cikis yolu
+    /// yoktur: tamamlanamaz, dolayisiyla mezun da olamaz.
+    ///
+    /// Bu test o durumu CURVE seviyesinde gosterir (bu dosyada factory rolunu
+    /// test kontrati oynar, yani yoklama yoktur); `LaunchFactory.t.sol`
+    /// yoklamanin ayni adresi deploy aninda reddettigini gosterir. Ikisi
+    /// birlikte "koruma neyi engelliyor" sorusunu cevaplar -- yalnizca ikincisi
+    /// yazilsaydi korumanin bedeli olculmus, DEGERI olculmemis olurdu.
+    function test_aCodedButWrongTypeEscrowStrandsTheWholeSupplyInACurveWithNoExit() public {
+        NotALedgerEscrow wrong = new NotALedgerEscrow();
+        BondingCurve stuck = new BondingCurve(CREATOR, address(wrong), T, V, S);
+        LaunchToken t = new LaunchToken("Arc Coin", "ARC", "ipfs://cid", CREATOR, address(stuck), bytes32(0));
+        stuck.bind(address(t));
+
+        // Kurulum SORUNSUZ gorunur.
+        assertEq(stuck.token(), address(t));
+        assertEq(t.balanceOf(address(stuck)), N, "arzin tamami curve'de");
+
+        // ...ve UC GIRIS NOKTASININ UCU DE sonsuza kadar reddeder.
+        vm.deal(BUYER, 1_000e18);
+        vm.prank(BUYER);
+        (bool ok1,) = address(stuck).call{value: 10e18}(
+            abi.encodeWithSelector(BondingCurve.buyExactTokensOut.selector, 1e18, type(uint256).max)
+        );
+        assertFalse(ok1, "buyExactTokensOut kodsuz-olmayan yanlis escrow ile gecti");
+
+        vm.prank(BUYER);
+        (bool ok2,) =
+            address(stuck).call{value: 10e18}(abi.encodeWithSelector(BondingCurve.buyExactQuoteIn.selector, uint256(0)));
+        assertFalse(ok2, "buyExactQuoteIn gecti");
+
+        // Satis yolu da: once token gerekir, ama alim yapilamadigi icin kimsede
+        // token yoktur -- yani satis yolu ULASILAMAZ, curve olu dogmustur.
+        assertEq(t.balanceOf(BUYER), 0, "hicbir alim gerceklesemedi");
+        assertEq(stuck.realTokenReserves(), S, "rezerv hic kipirdamadi");
+        assertFalse(stuck.complete(), "curve TAMAMLANAMAZ");
+
+        // Mint'in %100'u cikisi olmayan bir curve'de.
+        assertEq(t.balanceOf(address(stuck)), N);
+        assertEq(t.totalSupply(), N);
     }
 
     // ---------------------------------------------------------------

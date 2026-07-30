@@ -2,6 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {BondingCurve} from "./BondingCurve.sol";
+import {IFeeEscrow} from "./interfaces/IFeeEscrow.sol";
 import {LaunchToken, LAUNCH_TOKEN_TOTAL_SUPPLY} from "./LaunchToken.sol";
 import {CurveMath} from "./libraries/CurveMath.sol";
 
@@ -427,7 +428,70 @@ contract LaunchFactory {
     ///      `FeeEscrow` oldugunun kaniti DEGIL -- `bind`'in bakiye korumasiyla
     ///      ayni sinifta. Yakaladigi sey gercekci operator hatasidir (EOA
     ///      adresi, yanlis yapistirilmis adres).
+    ///
+    ///      YETMEDIGI OLCULDU, ve eksik kalan hucre `EscrowIsNotAFeeEscrow`
+    ///      ile kapatildi: KODU OLAN ama YANLIS TURDE bir adres bu kontrolden
+    ///      GECER ve tam olarak ayni terminal duruma goturur.
     error EscrowHasNoCode();
+
+    /// @dev `escrow` KODLU ama BIR DEFTER GIBI CEVAP VERMIYOR.
+    ///
+    /// @dev NICIN `EscrowHasNoCode` YETMIYOR -- OLCULDU. Kodu olan ama yanlis
+    ///      turde bir escrow ile: factory deploy olur, `launch` BASARIR, `bind`
+    ///      BASARIR, `isCanonical` **true** doner -- yani indexer onu gercek bir
+    ///      launch olarak listeler -- ve sonra HER alim sonsuza kadar revert
+    ///      eder, cunku `BondingCurve` her islemde
+    ///      `IFeeEscrow(escrow).deposit{value: ...}` cagirir. Mint'in %100'u
+    ///      (`1e27`) cikisi olmayan bir curve'de kalir. Bu, kod kontrolunun
+    ///      ENGELLEMEK ICIN YAZILDIGI durumun ta kendisidir, yalnizca bir adres
+    ///      SEKLI oteden ulasilmis halidir -- ve kod UZUNLUGUNA bakan bir
+    ///      kontrol onu GOREMEZ. Bu depoda "bir ozelligin bir giris noktasinda
+    ///      kapatilmasi hepsinde kapatilmis gibi okunur" hatasinin bir baska
+    ///      ornegi; kapatildigi yer, bir oncekini kapatmak icin yazilmis kodun
+    ///      icidir.
+    ///
+    /// @dev YOKLAMA VE NICIN UC SEKILDE DE FAIL-CLOSED. Constructor
+    ///      `IFeeEscrow(escrow_).owed(address(0))` cagirir ve SIFIR bekler:
+    ///        (a) uye YOKSA -- cagri fallback'e duser ya da revert eder; ikisi
+    ///            de `catch`e girer;
+    ///        (b) uye REVERT ederse -- `catch`;
+    ///        (c) YAPISAL OLARAK IMKANSIZ bir cevap donerse (sifirdan farkli)
+    ///            -- acik kontrol.
+    ///      Ucu de AYNI selector'u uretir; `try/catch` tam olarak bunun icin
+    ///      var, cunku (a) ve (b) aksi halde CAGRILANIN revert verisini
+    ///      yukari tasirdi ve hangi katmanin reddettigi kaybolurdu.
+    ///
+    /// @dev NICIN `owed(address(0))`, NICIN `totalOwed()` DEGIL. Bir yoklamanin
+    ///      ise yaramasi icin cevabin ONCEDEN BILINMESI gerekir. `totalOwed()`
+    ///      icin boyle bir cevap YOKTUR -- her deger mesrudur -- ve
+    ///      `totalOwed() == 0` beklemek ZATEN KULLANIMDA olan bir escrow'u
+    ///      reddederdi (treasury'ye kod kontrolu koymakla ayni sinifta bir
+    ///      fazla-kisitlama). `owed[address(0)]` ise HER ZAMAN sifirdir ve bu
+    ///      bir varsayim degil `deposit`'in `ZeroRecipient()` korumasinin
+    ///      SONUCUDUR: o anahtara yatirim yapilamaz, dolayisiyla yazilamaz.
+    ///      Escrow'un omrunun hangi aninda bakildigindan bagimsizdir.
+    ///
+    /// @dev VEKIL (PROXY) ARKASINDAKI MESRU BIR ESCROW REDDEDILMEZ: yoklama
+    ///      DAVRANISI olcer, kod uzunlugunu ya da kod hash'ini degil.
+    ///      `delegatecall` ile bir `FeeEscrow` uygulamasina giden bir vekil
+    ///      sifir doner ve gecer -- testte olculuyor.
+    ///
+    /// @dev ACIK HUCRE, DURUSTCE: dolgun bir `fallback` ile 32 bayt sifir
+    ///      donduren bir kontrat bu yoklamayi GECER. Kapatmak icin kod hash'i
+    ///      ya da ERC-165 gerekirdi; ikisi de vekilleri ve yukseltmeleri
+    ///      disarida birakir. Yakalanan sey GERCEKCI OPERATOR HATASIDIR (yanlis
+    ///      yapistirilmis bir kontrat adresi: token, curve, factory, Safe --
+    ///      hicbirinin `owed(address)` selector'u yoktur ve hicbiri boyle bir
+    ///      fallback tasimaz), dusman bir deploy DEGIL. Zaten escrow'u secen
+    ///      taraf protokolun kendisidir.
+    ///
+    /// @dev GAZ TAVANI YOK VE SEBEBI `isCanonical`INKINDEN FARKLI. Orada
+    ///      cagrilan sey SALDIRGANIN sectigi bir token'dir, dolayisiyla her
+    ///      zincir ustu cagiran hem `try/catch` hem acik bir gaz tavani
+    ///      kullanmak zorundadir. Burada cagrilan adresi DEPLOY EDEN secer, ve
+    ///      cagri deploy basina BIR KEZ, kendi islemimizde yapilir: ucuncu bir
+    ///      tarafin bu bedeli birine odettirme yolu yoktur.
+    error EscrowIsNotAFeeEscrow();
 
     /// @dev DERLENEN ABI'DE IKI KUTUPHANE HATASI DAHA GORUNUR --
     ///      `CurveMath.InsufficientTokenReserve()` ve `CurveMath.ZeroReserve()`
@@ -441,7 +505,8 @@ contract LaunchFactory {
     ///      {EmptyName, EmptySymbol, DegenerateProfile, EscrowHasNoCode,
     ///       GraduationRaiseTooSmall, SaleAndSeedExceedSupply,
     ///       SaleAndSeedStrandSupply, ZeroEscrowAddress, ZeroTreasuryAddress,
-    ///       ZeroGovernorAddress, TreasuryIsTheEscrow, GovernorIsTheEscrow,
+    ///       EscrowIsNotAFeeEscrow, ZeroGovernorAddress, TreasuryIsTheEscrow,
+    ///       GovernorIsTheEscrow,
     ///       NotGovernor, ZeroGraduationTarget, NoPendingGraduationTarget,
     ///       GraduationTargetDelayNotElapsed, GraduationTargetProposalExpired}.
 
@@ -530,6 +595,14 @@ contract LaunchFactory {
     ) {
         if (escrow_ == address(0)) revert ZeroEscrowAddress();
         if (escrow_.code.length == 0) revert EscrowHasNoCode();
+        // KOD VARLIGI YETMEZ, DEFTER GIBI CEVAP VERMESI DE GEREKIR. Uc
+        // basarisizlik sekli de (uye yok / uye revert ediyor / imkansiz cevap)
+        // AYNI selector'e duser; bkz. `EscrowIsNotAFeeEscrow`.
+        try IFeeEscrow(escrow_).owed(address(0)) returns (uint256 owedToZeroAddress) {
+            if (owedToZeroAddress != 0) revert EscrowIsNotAFeeEscrow();
+        } catch {
+            revert EscrowIsNotAFeeEscrow();
+        }
         if (protocolTreasury_ == address(0)) revert ZeroTreasuryAddress();
         if (protocolTreasury_ == escrow_) revert TreasuryIsTheEscrow();
         if (governor_ == address(0)) revert ZeroGovernorAddress();
@@ -622,11 +695,17 @@ contract LaunchFactory {
         // (`vm.recordLogs()` sirayi dogrudan gorur) ve o noktada ucuz bir
         // koruma yazilabilir -- yazilmalidir da.
         //
-        // Bugunku tek isaret slither'in `reentrancy-events` LOW bulgusudur ve
-        // `make slither --fail-medium` onu kirmizi yapmaz; bir regresyon
-        // yalnizca bulgu sayisinin 8'den 9'a cikmasi olarak gorunur. Raporda
-        // ACIK HUCRE olarak yaziliyor: uydurma bir assertion, kapali olmayan
-        // bir hucreyi kapali gosterirdi.
+        // DUZELTME (olculdu): bu siranin slither'da BIR ISARETI DE YOKTUR.
+        // Onceki hali "tek isaret `reentrancy-events` LOW bulgusudur ve bir
+        // regresyon bulgu sayisinin 8'den 9'a cikmasi olarak gorunur" diyordu;
+        // ikisi de yanlisti. Temiz bir agacta slither'in TEK `reentrancy-events`
+        // bulgusu `FeeEscrow.claim`e aittir (olay dis cagridan SONRA yayilir),
+        // `LaunchFactory.launch`a DEGIL -- ve olmamasi beklenir: buradaki emit,
+        // dedektorun dis cagri saydigi tek sey olan `bind`den ONCE gelir, iki
+        // `new` ise CREATE'tir. Yani bu sira slither tarafindan hic
+        // gozlenmiyor; "bulgu sayisi" ile izlenebilecegi fikri de gecersiz.
+        // Hucre RAPORDA DEGIL BURADA acik yaziliyor: uydurma bir assertion,
+        // kapali olmayan bir hucreyi kapali gosterirdi.
         emit Launched(token, curve, msg.sender, name_, symbol_, uri_, salt);
 
         BondingCurve(curve).bind(token);

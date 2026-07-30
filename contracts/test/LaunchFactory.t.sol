@@ -54,6 +54,62 @@ contract Forger {
     }
 }
 
+/// KODU OLAN ama defter OLMAYAN adres: `owed(address)` selector'u yok ve
+/// fallback'i de yok. En gercekci operator hatasinin sekli budur -- yanlis
+/// yapistirilmis bir kontrat adresi (token, curve, factory, Safe...).
+contract NotALedger {
+    function unrelated() external pure returns (uint256) {
+        return 1;
+    }
+}
+
+/// Uyeyi TASIYAN ama REVERT EDEN defter.
+contract RevertingLedger {
+    function owed(address) external pure returns (uint256) {
+        revert("no ledger here");
+    }
+}
+
+/// Uyeyi tasiyan ama YAPISAL OLARAK IMKANSIZ cevap donduren defter:
+/// `owed[address(0)]` bir `FeeEscrow`da ASLA sifirdan farkli olamaz, cunku
+/// `deposit` sifir aliciyi `ZeroRecipient()` ile reddeder.
+contract LyingLedger {
+    function owed(address) external pure returns (uint256) {
+        return 1;
+    }
+}
+
+/// ACIK HUCRE: dolgun bir fallback ile 32 bayt SIFIR donduren kontrat.
+/// Yoklamayi GECER. Kayitli ve bilincli; bkz. `EscrowIsNotAFeeEscrow` NatSpec'i.
+contract PermissiveFallback {
+    fallback(bytes calldata) external payable returns (bytes memory) {
+        return abi.encode(uint256(0));
+    }
+}
+
+/// MESRU BIR ESCROW'UN VEKILI. `delegatecall` ile gercek uygulamaya gider,
+/// dolayisiyla yoklamaya SIFIR doner ve KABUL EDILMELIDIR -- yoklama davranisi
+/// olcer, kod hash'ini degil.
+contract EscrowProxy {
+    address internal immutable IMPLEMENTATION;
+
+    constructor(address implementation_) {
+        IMPLEMENTATION = implementation_;
+    }
+
+    fallback() external payable {
+        address impl = IMPLEMENTATION;
+        assembly {
+            calldatacopy(0, 0, calldatasize())
+            let ok := delegatecall(gas(), impl, 0, calldatasize(), 0, 0)
+            returndatacopy(0, 0, returndatasize())
+            switch ok
+            case 0 { revert(0, returndatasize()) }
+            default { return(0, returndatasize()) }
+        }
+    }
+}
+
 /// Graduation hedefi. `receive()` ciplak bir kabuldur.
 contract Seeder {
     function pull(BondingCurve curve) external returns (uint256, uint256) {
@@ -1191,6 +1247,163 @@ contract LaunchFactoryTest is Test {
         vm.prank(BUYER);
         BondingCurve(curve).buyExactQuoteIn{value: 1e18}(0);
         assertGt(LaunchToken(token).balanceOf(BUYER), 0);
+    }
+
+    /// KOD VARLIGI YETMEZ. `EscrowHasNoCode` bir adres SEKLINI eliyor, gitmek
+    /// istedigi durumu degil: KODU OLAN ama yanlis turde bir escrow ile
+    /// factory deploy olur, `launch` BASARIR, `isCanonical` **true** doner --
+    /// yani indexer onu gercek bir launch olarak listeler -- ve sonra her alim
+    /// sonsuza kadar revert eder, mint'in %100'u cikisi olmayan bir curve'de
+    /// kalir. Tam olarak kod kontrolunun ENGELLEMEK ICIN yazildigi durum, bir
+    /// adres sekli oteden.
+    ///
+    /// UC BASARISIZLIK SEKLI DE AYNI SELECTOR'U URETMELI -- `try/catch`in
+    /// varlik sebebi budur; onsuz (a) ve (b) CAGRILANIN revert verisini yukari
+    /// tasir ve hangi katmanin reddettigi kaybolurdu.
+    function test_constructorRejectsACodedButWrongTypeEscrow() public {
+        // MOCK'LAR ONCE DEPLOY EDILIR. Arguman icindeki bir `new`, `vm`in
+        // "sonraki cagri"sidir ve beklentiyi KENDISI tuketir -- ilk hali
+        // boyleydi ve test "revert etmedi" diye dusuyordu.
+        address noMember = address(new NotALedger());
+        address reverting = address(new RevertingLedger());
+        address lying = address(new LyingLedger());
+        address someToken = address(new LaunchToken("Arc Coin", "ARC", "ipfs://cid", ALICE, address(this), bytes32(0)));
+
+        // (a) uye YOK (ve fallback de yok)
+        vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
+        new LaunchFactory(noMember, TREASURY, GOVERNOR, T, V, S);
+
+        // (b) uye REVERT ediyor
+        vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
+        new LaunchFactory(reverting, TREASURY, GOVERNOR, T, V, S);
+
+        // (c) YAPISAL OLARAK IMKANSIZ cevap
+        vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
+        new LaunchFactory(lying, TREASURY, GOVERNOR, T, V, S);
+
+        // ...ve gercekci operator hatasinin kendisi: baska bir arcpad
+        // kontratini yapistirmak.
+        vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
+        new LaunchFactory(someToken, TREASURY, GOVERNOR, T, V, S);
+    }
+
+    /// YOKLAMA FAZLA KISITLAMIYOR -- iki kabul tanigi.
+    ///
+    /// (1) ZATEN KULLANIMDA olan bir escrow gecer. Bu, `totalOwed() == 0`
+    ///     seklinde bir yoklamanin NEDEN yanlis olacagini sabitler: her deger
+    ///     mesrudur, dolayisiyla onceden bilinen bir cevap degildir.
+    ///     `owed[address(0)]` ise `deposit`'in `ZeroRecipient()` korumasi
+    ///     yuzunden HER ZAMAN sifirdir.
+    /// (2) VEKIL arkasindaki mesru bir escrow gecer -- yoklama davranisi olcer,
+    ///     kod hash'i ya da kod uzunlugu degil.
+    function test_theLedgerProbeAcceptsAUsedEscrowAndAProxiedOne() public {
+        // (1) escrow'a gercek bir alacak yaz.
+        escrow.deposit{value: 1 ether}(ALICE);
+        assertGt(escrow.totalOwed(), 0, "on kosul: escrow KULLANIMDA olmali");
+        assertGt(escrow.owed(ALICE), 0);
+        assertEq(escrow.owed(address(0)), 0, "sifir alici anahtari yazilamaz");
+
+        LaunchFactory used = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S);
+        assertEq(used.escrow(), address(escrow));
+
+        // (2) vekil.
+        EscrowProxy proxy = new EscrowProxy(address(new FeeEscrow()));
+        LaunchFactory proxied = new LaunchFactory(address(proxy), TREASURY, GOVERNOR, T, V, S);
+        assertEq(proxied.escrow(), address(proxy));
+
+        // ...ve vekilli factory gercekten ticaret yapar: yoklama kozmetik
+        // degil, calisan bir escrow'u kabul ettigi olculuyor.
+        vm.prank(ALICE);
+        (, address curve) = proxied.launch("Arc Coin", "ARC", "ipfs://cid");
+        vm.prank(BUYER);
+        BondingCurve(curve).buyExactQuoteIn{value: 1e18}(0);
+        assertGt(FeeEscrow(address(proxy)).owed(TREASURY), 0, "vekilli escrow ucreti yazmadi");
+    }
+
+    /// YOKLANAN ANAHTARIN OZELLIGI, TEK BIR ADRESLE DEGIL FUZZ ILE.
+    ///
+    /// Iddia sudur: escrow'un KIME alacak yazdigi, factory'nin onu kabul
+    /// etmesini DEGISTIRMEMELIDIR. Bu, `owed(address(0))` disinda herhangi bir
+    /// anahtari yoklayan her hali eler -- `owed(address(1))`, `owed(TREASURY)`,
+    /// `owed(msg.sender)`... -- cunku o anahtarlarin hepsi mesru olarak
+    /// yazilabilir ve yazildiklarinda saglikli bir escrow REDDEDILIRDI.
+    /// `address(0)` tek istisnadir ve istisna olmasi `deposit`'in
+    /// `ZeroRecipient()` korumasindan gelir; asagidaki ikinci iddia o sebebi
+    /// dogrudan pinler.
+    ///
+    /// AILENIN DETERMINISTIK YARISI. Asagidaki fuzz iddiasi DOGRU ama YETMEZ ve
+    /// bu OLCULDU: `owed(address(1))` yoklayan mutant (P4) 256 kosuluk fuzz'i
+    /// SAG GECTI, cunku fuzzer'in 2^160 adres icinden tam olarak `address(1)`i
+    /// secmesi gerekiyordu. Rastgeleligin kapatmadigi yeri isimlendirilmis bir
+    /// kume kapatir: bir yoklamanin makul olarak secebilecegi HER anahtara
+    /// alacak yazilir ve escrow yine de KABUL EDILMELIDIR.
+    ///
+    /// Bu, "bir mutanti kovalamak" degil AILEYI adlandirmaktir: listedeki her
+    /// adres, birinin `owed(address(0))` yerine yazmayi dusunebilecegi bir
+    /// anahtardir.
+    function test_theLedgerProbeIgnoresCreditAtEveryPlausibleProbeKey() public {
+        address[9] memory keys =
+            [address(1), address(2), address(0xdead), TREASURY, GOVERNOR, ALICE, BOB, address(escrow), address(this)];
+
+        vm.deal(address(this), 100 ether);
+        for (uint256 i = 0; i < keys.length; i++) {
+            escrow.deposit{value: 1 ether}(keys[i]);
+            assertGt(escrow.owed(keys[i]), 0, "on kosul: her anahtara alacak yazilmali");
+        }
+
+        LaunchFactory f = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S);
+        assertEq(f.escrow(), address(escrow), "escrow makul bir anahtarda alacagi oldugu icin reddedildi");
+
+        // ...ve YAZILAMAYAN tek anahtar hala sifir. Yoklamanin dayandigi sey
+        // budur ve listedeki hicbir adres bu ozelligi tasimaz.
+        assertEq(escrow.owed(address(0)), 0, "yazilamayan tek anahtar");
+    }
+
+    /// Tek bir adresle yazilmis hali yalnizca o adresi yoklayan mutanti
+    /// oldururdu; ozellik olarak yazilmis hali AILEYI oldurur.
+    function testFuzz_theLedgerProbeIgnoresWhichRecipientsHaveCredit(address recipient, uint96 amount) public {
+        vm.assume(recipient != address(0));
+        amount = uint96(bound(amount, 1, 1_000e18));
+        // `vm.deal` bakiyeyi ATAR, eklemez -- ikinci `deposit` icin de yer
+        // birakilmali, aksi halde o cagri OutOfFunds ile duser ve
+        // `vm.expectRevert` sahte bir hata verir (olculdu).
+        vm.deal(address(this), uint256(amount) + 1 ether);
+        escrow.deposit{value: amount}(recipient);
+        assertGt(escrow.owed(recipient), 0, "on kosul: alacak yazilmali");
+
+        LaunchFactory f = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S);
+        assertEq(f.escrow(), address(escrow), "escrow bir aliciya alacak yazdigi icin reddedildi");
+
+        // VE SEBEBIN KENDISI: sifir alici anahtari YAZILAMAZ, dolayisiyla
+        // `owed[address(0)]` her zaman sifirdir. Yoklamanin dayandigi degismez
+        // budur ve varsayim degil, escrow'un kendi korumasinin sonucudur.
+        vm.expectRevert(FeeEscrow.ZeroRecipient.selector);
+        escrow.deposit{value: 1}(address(0));
+        assertEq(escrow.owed(address(0)), 0);
+    }
+
+    /// ACIK HUCRE, CALISTIRILABILIR HALDE. Dolgun bir fallback ile 32 bayt
+    /// sifir donduren bir kontrat yoklamayi GECER. Kapatmak icin kod hash'i ya
+    /// da ERC-165 gerekirdi ve ikisi de vekilleri/yukseltmeleri disarida
+    /// birakirdi. Bu test o siniri OLCUYOR; kapali olmayan bir hucreyi kapali
+    /// gostermemek icin buradadir.
+    function test_theLedgerProbeDoesNotSeeAPermissiveFallback() public {
+        PermissiveFallback wrong = new PermissiveFallback();
+        LaunchFactory accepted = new LaunchFactory(address(wrong), TREASURY, GOVERNOR, T, V, S);
+        assertEq(accepted.escrow(), address(wrong), "acik hucre kapandiysa bu testi guncelle");
+
+        // VE KACIRILANIN SONUCU OLCULUYOR. Bu sekil FAIL-CLOSED DEGILDIR:
+        // ticaret CALISIR, ucret "escrow"a girer ve SESSIZCE KAYBOLUR --
+        // fallback her cagriya sifir dondugu icin hicbir alacak yazilmaz ve
+        // `claim` yolu yoktur. Kodsuz/yanlis-tur escrow'da bedel BRICKLENMIS
+        // BIR CURVE'DIR (gorunur), burada KAYIP UCRETTIR (gorunmez). Ikisi
+        // arasindaki fark, bu hucreyi acik birakmanin gercek maliyetidir.
+        vm.prank(ALICE);
+        (, address curve) = accepted.launch("Arc Coin", "ARC", "ipfs://cid");
+        vm.prank(BUYER);
+        BondingCurve(curve).buyExactQuoteIn{value: 1e18}(0);
+        assertGt(address(wrong).balance, 0, "ucret sahte escrow'a girmedi");
+        assertEq(FeeEscrow(address(wrong)).owed(TREASURY), 0, "sahte defter alacak yazmiyor");
     }
 
     /// SIRA TANIGI: `address(0)` hem sifir hem kodsuzdur. Sifir kontrolu ONCE

@@ -20,4 +20,18 @@ interface IFeeEscrow {
     /// @dev Sifir tutarda `ZeroAmount()`, sifir alicida `ZeroRecipient()` ile
     ///      revert eder; sifir paylari atlamak CAGIRANIN yukumlulugudur.
     function deposit(address recipient) external payable;
+
+    /// @notice Alici basina cekilebilir bakiye.
+    /// @dev BURADA OLMASININ SEBEBI CAGRILIYOR OLMASIDIR, dosyanin kendi
+    ///      kuralina uygun olarak: `LaunchFactory`'nin constructor'i escrow'un
+    ///      GERCEKTEN bir defter olup olmadigini bu uye uzerinden yoklar
+    ///      (bkz. `EscrowIsNotAFeeEscrow`). `claim` hala YOKTUR cunku onu hala
+    ///      kimse cagirmaz.
+    /// @dev YOKLAMANIN DAYANDIGI DEGISMEZ: `owed[address(0)]` HER ZAMAN
+    ///      SIFIRDIR ve bu bir varsayim degil, `deposit`'in kendi
+    ///      `ZeroRecipient()` korumasinin sonucudur -- sifir aliciya yatirim
+    ///      YAPILAMAZ, dolayisiyla o anahtar hicbir zaman yazilamaz. Escrow'un
+    ///      omrunun HANGI aninda bakildigindan bagimsiz olarak gecerlidir; bu
+    ///      yuzden zaten KULLANIMDA olan bir escrow'u reddetmez.
+    function owed(address recipient) external view returns (uint256);
 }
