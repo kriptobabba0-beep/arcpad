@@ -1,7 +1,13 @@
 import { unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { MIGRATIONS_DIR, migrationFiles, runMigrations } from '../src/migrate'
+import {
+  MIGRATIONS_DIR,
+  migrationFiles,
+  readInventory,
+  runMigrations,
+  schemaInventory,
+} from '../src/migrate'
 import { snapshot } from '../src/snapshot'
 import { dropSchema, pool } from './setup'
 
@@ -59,13 +65,10 @@ describe('runMigrations', () => {
     const files = await migrationFiles()
     await expect(runMigrations(pool, [...files, 'zzz_missing.sql'])).rejects.toThrow()
 
-    const { rows } = await pool.query<{ n: number }>(
-      'SELECT count(*)::int n FROM schema_migrations',
-    )
-    expect(rows[0]?.n).toBe(0)
-    // Defter tablosu HAYATTA -- islemin DISINDA olusturuldugu icin. Yukaridaki
-    // sorgunun "relation does not exist" ile patlamamasi bunun kanitidir.
-    // Ama migration'larin urettigi tablolar YOK OLMALI:
+    // DEFTERIN KENDISI DE YOK. Defter artik islemin ICINDE olusuyor (bir sert
+    // durus arkasinda tablo birakmasin diye), yani basarisiz bir ILK kosudan
+    // geriye HICBIR SEY kalmaz -- "sifir satir"dan daha guclu bir ifade.
+    await expect(pool.query('SELECT 1 FROM schema_migrations')).rejects.toThrow(/schema_migrations/)
     await expect(pool.query('SELECT 1 FROM launches')).rejects.toThrow(/launches/)
   })
 
@@ -81,10 +84,9 @@ describe('runMigrations', () => {
       expect(files).toContain(broken)
       await expect(runMigrations(pool, files)).rejects.toThrow(/nonexistent_type/)
 
-      const { rows } = await pool.query<{ n: number }>(
-        'SELECT count(*)::int n FROM schema_migrations',
+      await expect(pool.query('SELECT 1 FROM schema_migrations')).rejects.toThrow(
+        /schema_migrations/,
       )
-      expect(rows[0]?.n).toBe(0)
       await expect(pool.query('SELECT 1 FROM launches')).rejects.toThrow(/launches/)
     } finally {
       await unlink(join(MIGRATIONS_DIR, broken))
@@ -306,6 +308,163 @@ describe('runMigrations', () => {
     expect((err as Error).message).toContain('token_stats')
   })
 
+  // ---------------------------------------------------------------
+  // PARMAK IZININ ICERIGI. Yukaridaki testler muhafizin MANTIGINI olcuyor;
+  // bunlar ICERIGINI olcuyor.
+  //
+  // Gozden geciren `schemaInventory`nin bes mutasyonunu -- kisitlari
+  // dusurmek, indeksleri dusurmek, `attnotnull`i dusurmek, SUTUN TIPINI
+  // dusurmek -- uyguladi ve BESI DE bu dosyanin 22 testinden sagsalim gecti.
+  // Yani erisimi VARSAYILAN bir ozellik, tam da o ariza kipini kapatmak icin
+  // yazilmis kodun icinde. Asagidaki her test bir ALANI hedefler: o alani
+  // envanterden cikarmak testi OLDURUR.
+  // ---------------------------------------------------------------
+  const fieldCases: [string, string, string][] = [
+    // [alan, semayi degistiren DDL, hata mesajinda gorunmesi gereken]
+    ['col: tip', 'ALTER TABLE token_stats ALTER COLUMN trade_count TYPE bigint', 'trade_count'],
+    [
+      'col: NOT NULL',
+      'ALTER TABLE token_stats ALTER COLUMN market_cap_wei DROP NOT NULL',
+      'market_cap_wei',
+    ],
+    [
+      'col: uretim',
+      'ALTER TABLE trades ADD COLUMN gen_seq bigint GENERATED ALWAYS AS (event_seq + 1) STORED',
+      'gen_seq',
+    ],
+    [
+      'def: DEFAULT',
+      'ALTER TABLE token_stats ALTER COLUMN trade_count SET DEFAULT 7',
+      'trade_count',
+    ],
+    [
+      'con: CHECK',
+      'ALTER TABLE token_stats DROP CONSTRAINT token_stats_trade_count_check',
+      'trade_count',
+    ],
+    ['con: FK', 'ALTER TABLE trades DROP CONSTRAINT trades_token_fkey', 'trades_token_fkey'],
+    ['idx: indeks', 'DROP INDEX trades_token_seq_idx', 'trades_token_seq_idx'],
+    [
+      'trg: tetikleyici',
+      `CREATE FUNCTION scale_down() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN NEW.quote_amount_wei := NEW.quote_amount_wei / 1000000000000; RETURN NEW; END $$;
+       CREATE TRIGGER t_scale BEFORE INSERT ON trades FOR EACH ROW EXECUTE FUNCTION scale_down()`,
+      't_scale',
+    ],
+    [
+      'fun: fonksiyon govdesi',
+      `CREATE OR REPLACE FUNCTION creator_at(p_token text, p_seq bigint) RETURNS text
+       LANGUAGE sql STABLE AS $$ SELECT 'wrong' $$`,
+      'creator_at',
+    ],
+  ]
+
+  for (const [field, ddl, needle] of fieldCases) {
+    it(`parmak izi ALANI "${field}" degisince kirilir`, async () => {
+      await runMigrations(pool)
+      for (const stmt of ddl.split(/;\s*(?=CREATE|ALTER|DROP)/)) await pool.query(stmt)
+      const err = await runMigrations(pool).catch((e: Error) => e)
+      expect(err, field).toBeInstanceOf(Error)
+      expect((err as Error).message, field).toMatch(/sema, migration'larin urettiginden FARKLI/)
+      expect((err as Error).message, field).toContain(needle)
+    })
+  }
+
+  it('parmak izi ALANI "col: uretim bayragi" TEK BASINA bilgi tasir', async () => {
+    // MUTASYON MATRISI BU TESTI GEREKTIRDI. `attgenerated`i envanterden
+    // cikaran mutant SAGSALIM GECIYORDU: `gen_seq` testi YENI BIR SUTUNU
+    // goruyordu, sutunun URETILMIS olmasini degil. Yani o alanin kapsami
+    // olculmemisti -- duzeltmenin icinde ayni ariza kipi.
+    //
+    // Alani izole etmenin tek yolu: ad AYNI, tip AYNI, ve `pg_attrdef`
+    // ifadesi de AYNI olsun; tek fark `attgenerated` olsun. `DEFAULT (expr)`
+    // ile `GENERATED ALWAYS AS (expr) STORED` tam olarak budur -- ve anlamlari
+    // TAMAMEN farklidir (biri yazilmazsa doldurulur, oteki HER ZAMAN hesaplanir
+    // ve yazilamaz).
+    await runMigrations(pool)
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('ALTER TABLE trades ADD COLUMN probe_seq bigint DEFAULT (1 + 1)')
+      const withDefault = await schemaInventory(client)
+      await client.query('ALTER TABLE trades DROP COLUMN probe_seq')
+      await client.query(
+        'ALTER TABLE trades ADD COLUMN probe_seq bigint GENERATED ALWAYS AS (1 + 1) STORED',
+      )
+      const withGenerated = await schemaInventory(client)
+
+      // `col` satirlari ad ve tip bakimindan ayni; `def` satirlari ayni ifade.
+      const defLine = (inv: string[]) => inv.filter((l) => l.includes('trades.probe_seq'))
+      expect(defLine(withDefault).some((l) => l.startsWith('def '))).toBe(true)
+      expect(defLine(withGenerated).some((l) => l.startsWith('def '))).toBe(true)
+      // Ama envanterler AYRI -- farki tasiyan tek sey uretim bayragi.
+      expect(withGenerated).not.toEqual(withDefault)
+    } finally {
+      await client.query('ROLLBACK')
+      client.release()
+    }
+  })
+
+  it('TETIKLEYICI ORNEGI: 1e12 kucultmesi yapan bir trigger gorunmez DEGIL', async () => {
+    // Bu, iki savunmanin da bakmadigi tek kapiydi: adlandirma kapisi bir
+    // tetikleyici gormez, ve parmak izi de gormuyordu. Sonuc, bu paketin var
+    // olma sebebi olan 1e12 hatasinin sessizce eklenebilmesiydi.
+    await runMigrations(pool)
+    await pool.query(`CREATE FUNCTION scale_down() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN NEW.quote_amount_wei := NEW.quote_amount_wei / 1000000000000; RETURN NEW; END $$`)
+    await pool.query(`CREATE TRIGGER t_scale BEFORE INSERT ON trades
+      FOR EACH ROW EXECUTE FUNCTION scale_down()`)
+    const err = await runMigrations(pool).catch((e: Error) => e)
+    expect((err as Error).message).toContain('t_scale')
+    expect((err as Error).message).toContain('scale_down')
+  })
+
+  it('parmak izi `search_path`ten BAGIMSIZDIR', async () => {
+    // `conrelid::regclass::text` `search_path`e baglidir: ayni sema farkli bir
+    // ozet uretiyordu (olculdu: 235 satirin 88'i). Yanlis bir SERT DURUS,
+    // kacirandan daha kotudur -- basilan cozum `dropdb`.
+    await runMigrations(pool)
+    const a = await readInventory(pool)
+    await pool.query("SET search_path TO ''")
+    const b = await readInventory(pool)
+    await pool.query('SET search_path TO public')
+    const c = await readInventory(pool)
+    expect(b).toEqual(a)
+    expect(c).toEqual(a)
+    // Ve muhafiz de bu durumda YANLIS ALARM vermez.
+    await pool.query("SET search_path TO ''")
+    await expect(runMigrations(pool)).resolves.toEqual([])
+    await pool.query('SET search_path TO public')
+  })
+
+  it('BOS defter + DOLU sema sert durustur', async () => {
+    // Olculen eski davranis: bos defter + dusurulmus `creator_history` +
+    // catismayan bir bekleyen dosya = `ok=true`, tablo hala yok, VE parmak izi
+    // uzerine yazilarak sapma yeniden kutsaniyordu.
+    await runMigrations(pool)
+    await pool.query('DROP TABLE creator_history CASCADE')
+    await pool.query('DELETE FROM schema_migrations')
+    await pool.query('DELETE FROM schema_state')
+    const err = await runMigrations(pool).catch((e: Error) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toMatch(/defter BOS ama sema bos DEGIL/)
+    // Ve sapma YENIDEN KUTSANMADI.
+    await expect(pool.query('SELECT 1 FROM creator_history')).rejects.toThrow(/creator_history/)
+  })
+
+  it('SERT DURUS arkasinda tablo BIRAKMAZ', async () => {
+    // Onceki hali defter ve durum tablolarini karsilastirmadan ONCE
+    // olusturuyordu, yani reddedilen bir kosu bile iz birakiyordu.
+    await dropSchema()
+    await pool.query('CREATE TABLE stray (x int PRIMARY KEY)')
+    await expect(runMigrations(pool)).rejects.toThrow(/defter BOS ama sema bos DEGIL/)
+    const { rows } = await pool.query<{ n: number }>(`
+      SELECT count(*)::int n FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+      WHERE c.relkind = 'r' AND c.relname IN ('schema_migrations', 'schema_state')`)
+    expect(rows[0]?.n).toBe(0)
+  })
+
   it('uyusmazlik varsa HICBIR DDL calismaz', async () => {
     // Karsilastirma her seyden ONCE yapilir. Ledger bozukken bekleyen bir
     // dosya da varsa, o dosya UYGULANMAMALI.
@@ -326,15 +485,20 @@ describe('runMigrations', () => {
     }
   })
 
-  it('TEMIZ OLMAYAN bir veritabaninda da calisir (test tesadufen bos degil)', async () => {
-    // "Bos oldugu icin gecen migration" bu projenin isimlendirdigi ariza
-    // kiplerinden biri. Burada semada ALAKASIZ bir tablo varken kosuluyor:
-    // gecmesi artik bosluga bagli degil.
+  it('TEMIZ OLMAYAN bir veritabani da SERT DURUSTUR (kural degisti)', async () => {
+    // Bu test eskiden alakasiz bir tablo varken migration'larin GECMESINI
+    // istiyordu -- "bos oldugu icin gecen migration" ariza kipine karsi.
+    // Yeni kural onu kapsiyor ve DAHA GENIS: bos bir defter yalnizca bos bir
+    // semayla tutarlidir. Gerekce, gozden gecirenin olctugu sey: bos defter +
+    // dusurulmus bir tablo + catismayan bir bekleyen dosya sessizce geciyor ve
+    // sapmayi YENIDEN KUTSUYORDU. Alakasiz bir tabloyu gecirip bizim
+    // tablomuzu gecirmemek icin, dosyalarin ne yarattigini SQL'den cikarmak
+    // gerekirdi; o kirilgan, ve hukum zaten "bilinmeyen durum sert durustur".
+    //
+    // "Bos oldugu icin gecti" endisesini karsilayan sey artik KISMEN
+    // uygulanmis veritabani testi: orada sema DOLU ve migration'lar calisiyor.
     await pool.query('CREATE TABLE unrelated_table (x int PRIMARY KEY)')
-    await expect(runMigrations(pool)).resolves.toEqual(EXPECTED)
-    await expect(runMigrations(pool)).resolves.toEqual([])
-    const { rows } = await pool.query<{ n: number }>('SELECT count(*)::int n FROM unrelated_table')
-    expect(rows[0]?.n).toBe(0)
+    await expect(runMigrations(pool)).rejects.toThrow(/defter BOS ama sema bos DEGIL/)
   })
 })
 

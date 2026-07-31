@@ -15,15 +15,15 @@ export async function migrationFiles(): Promise<string[]> {
 }
 
 const CREATE_LEDGER = `
-  CREATE TABLE IF NOT EXISTS schema_migrations (
+  CREATE TABLE IF NOT EXISTS public.schema_migrations (
     filename      text PRIMARY KEY,
     applied_at    timestamptz NOT NULL DEFAULT now(),
     checksum_hex  text
   )`
 
-// Defteri, sutunu SONRADAN eklenmis eski bir veritabaninda da onarir. Islemin
-// DISINDA, `CREATE_LEDGER` ile ayni gerekceyle.
-const ADD_CHECKSUM = `ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum_hex text`
+// Defteri, sutunu SONRADAN eklenmis eski bir veritabaninda da onarir. Defter
+// zaten varsa okumadan ONCE, yoksa olusturmayla birlikte calisir.
+const ADD_CHECKSUM = `ALTER TABLE public.schema_migrations ADD COLUMN IF NOT EXISTS checksum_hex text`
 
 /**
  * Uygulanan migration'larin URETTIGI semanin kaydi.
@@ -36,42 +36,137 @@ const ADD_CHECKSUM = `ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS che
  * meselesi muhafizin tesadufi bir seye dayanmamasiydi.
  */
 const CREATE_STATE = `
-  CREATE TABLE IF NOT EXISTS schema_state (
+  CREATE TABLE IF NOT EXISTS public.schema_state (
     id               smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
     fingerprint_hex  text NOT NULL CHECK (fingerprint_hex ~ '^[0-9a-f]{64}$'),
     inventory_json   text NOT NULL,
     updated_at       timestamptz NOT NULL DEFAULT now()
   )`
 
+const NON_SYSTEM_SCHEMA = `
+  n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg\\_%'`
+
 /**
- * Semanin karsilastirilabilir tam envanteri: her iliski, her sutun, her kisit,
- * her indeks. Satirlar DAHIL DEGILDIR -- bu yapinin parmak izidir.
+ * Semanin karsilastirilabilir envanteri. Satirlar DAHIL DEGILDIR -- bu, YAPININ
+ * parmak izidir.
+ *
+ * KAPSAM ACIKCA YAZILI, cunku bir onceki hali kapsamini IDDIA ediyordu ve
+ * hicbir test onu OLCMUYORDU. Gozden geciren bu fonksiyonun bes ayri
+ * mutasyonunu -- kisitlari dusurmek, indeksleri dusurmek, `attnotnull`i
+ * dusurmek, SUTUN TIPINI dusurmek -- uyguladi ve BESI DE `migrate.test.ts`in
+ * 22 testinin TAMAMINDAN sagsalim gecti. Yani "failure mode 4"un (erisimi
+ * olculmemis ozellik) dorduncu kez, ve tam da onu kapatmak icin yazilmis
+ * kodun ICINDE tekrarlanmasiydi. Artik her alan icin bir test var: o alani
+ * envanterden cikarmak en az bir testi OLDURUR.
+ *
+ * ICERIR (deger DEGISTIREBILEN her sey):
+ *   col  sutun: sema.tablo.sutun | tip(+typmod) | NOT NULL | uretim ifadesi
+ *   def  DEFAULT ve GENERATED ifadeleri
+ *   con  kisitlar (CHECK / FK / UNIQUE / PK), tanimiyla
+ *   idx  indeksler, tanimiyla
+ *   trg  TETIKLEYICILER, tanimiyla
+ *   fun  FONKSIYONLAR, govdesinin ozetiyle
+ *
+ * ICERMEZ, ve bu bir SINIRDIR, kusur degil:
+ *   GRANT/REVOKE ve RLS politikalari -- kimin GORDUGUNU degistirir, degerin
+ *   NE OLDUGUNU degil; tehdit modeli farklidir ve bu muhafiz deger butunlugu
+ *   icindir. Collation ve extension surumleri -- siralamayi etkiler,
+ *   saklanan degeri degil. Event trigger'lar -- veritabani genelidir, sema
+ *   nesnesi degil.
+ *
+ * TETIKLEYICILER NEDEN ICERIDE: `BEFORE INSERT ... quote_amount_wei / 1e12`
+ * yapan bir tetikleyici, hem adlandirma kapisina hem de eski parmak izine
+ * TAMAMEN gorunmezdi -- yani bu paketin var olma sebebi olan 1e12 hatasi, iki
+ * savunmanin da bakmadigi tek kapidan girebiliyordu. Fonksiyonlar ayni
+ * gerekceyle iceride: tetikleyici govdesi bir fonksiyondur.
+ *
+ * `regclass` KULLANILMAZ: `conrelid::regclass::text` `search_path`e baglidir ve
+ * ayni sema farkli bir ozet uretebilirdi (olculdu: 235 satirin 88'i degisiyor).
+ * Yanlis bir SERT DURUS, kacirandan daha kotudur -- basilan cozum `dropdb`.
  */
 export async function schemaInventory(db: Queryable): Promise<string[]> {
+  // SEARCH_PATH SABITLENIR. Kendi birlestirmelerimizi sema-nitelemek YETMEDI:
+  // `pg_get_constraintdef`, `pg_get_expr`, `indexdef` ve `pg_get_triggerdef`in
+  // KENDI ciktilari da `search_path`e gore degisir (`text` mi
+  // `pg_catalog.text` mi). Olculdu: `SET search_path TO ''` ile 251 satirin
+  // buyuk kismi degisiyordu. Cagiran bir islem icinde oldugu icin `SET LOCAL`
+  // yalnizca o islemi etkiler ve havuzu KIRLETMEZ -- `pg` `release()`te oturum
+  // durumunu sifirlamadigi icin bu ayrim onemli.
+  await db.query(`SET LOCAL search_path = pg_catalog, public`)
   const columns = await db.query<{ line: string }>(`
     SELECT n.nspname || '.' || c.relname || '.' || a.attname || '|' ||
-           format_type(a.atttypid, a.atttypmod) || '|' || a.attnotnull::text AS line
+           format_type(a.atttypid, a.atttypmod) || '|' ||
+           a.attnotnull::text || '|' || COALESCE(a.attgenerated::text, '') AS line
     FROM pg_class c
     JOIN pg_namespace n ON n.oid = c.relnamespace
     JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-    WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
-      AND n.nspname NOT LIKE 'pg\\_%'
-      AND c.relkind = ANY ('{r,p,v,m,f}')`)
+    WHERE ${NON_SYSTEM_SCHEMA} AND c.relkind = ANY ('{r,p,v,m,f}')`)
+  const defaults = await db.query<{ line: string }>(`
+    SELECT n.nspname || '.' || c.relname || '.' || a.attname || '|' ||
+           pg_get_expr(d.adbin, d.adrelid) AS line
+    FROM pg_attrdef d
+    JOIN pg_class c ON c.oid = d.adrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_attribute a ON a.attrelid = d.adrelid AND a.attnum = d.adnum
+    WHERE ${NON_SYSTEM_SCHEMA}`)
   const constraints = await db.query<{ line: string }>(`
-    SELECT conrelid::regclass::text || '|' || conname || '|' || pg_get_constraintdef(oid) AS line
-    FROM pg_constraint WHERE connamespace = 'public'::regnamespace`)
+    SELECT n.nspname || '.' || c.relname || '|' || k.conname || '|' ||
+           pg_get_constraintdef(k.oid) AS line
+    FROM pg_constraint k
+    JOIN pg_class c ON c.oid = k.conrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE ${NON_SYSTEM_SCHEMA}`)
   const indexes = await db.query<{ line: string }>(`
     SELECT schemaname || '.' || tablename || '|' || indexname || '|' || indexdef AS line
-    FROM pg_indexes WHERE schemaname NOT IN ('pg_catalog', 'information_schema')`)
+    FROM pg_indexes WHERE schemaname NOT IN ('pg_catalog', 'information_schema')
+      AND schemaname NOT LIKE 'pg\\_%'`)
+  const triggers = await db.query<{ line: string }>(`
+    SELECT n.nspname || '.' || c.relname || '|' || t.tgname || '|' ||
+           pg_get_triggerdef(t.oid) AS line
+    FROM pg_trigger t
+    JOIN pg_class c ON c.oid = t.tgrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE ${NON_SYSTEM_SCHEMA} AND NOT t.tgisinternal`)
+  const functions = await db.query<{ line: string }>(`
+    SELECT n.nspname || '.' || p.proname || '(' ||
+           pg_get_function_identity_arguments(p.oid) || ')|' ||
+           md5(COALESCE(p.prosrc, '')) || '|' || p.provolatile::text AS line
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid = p.pronamespace
+    WHERE ${NON_SYSTEM_SCHEMA}`)
   return [
     ...columns.rows.map((r) => `col ${r.line}`),
+    ...defaults.rows.map((r) => `def ${r.line}`),
     ...constraints.rows.map((r) => `con ${r.line}`),
     ...indexes.rows.map((r) => `idx ${r.line}`),
+    ...triggers.rows.map((r) => `trg ${r.line}`),
+    ...functions.rows.map((r) => `fun ${r.line}`),
   ].sort()
 }
 
 function sha256Hex(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex')
+}
+
+/** Envanteri kendi islemi icinde okur (bkz. `schemaInventory`'nin SET LOCAL'i). */
+export async function readInventory(pool: Pool): Promise<string[]> {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    return await schemaInventory(client)
+  } finally {
+    await client.query('ROLLBACK')
+    client.release()
+  }
+}
+
+/** Var mi? DDL calistirmadan sorar. */
+async function relationExists(db: Queryable, name: string): Promise<boolean> {
+  const { rows } = await db.query<{ oid: string | null }>(
+    `SELECT to_regclass('public.' || quote_ident($1))::text AS oid`,
+    [name],
+  )
+  return rows[0]?.oid != null
 }
 
 /**
@@ -164,11 +259,12 @@ export function ledgerProblems(
  *
  * IKI TASARIM KARARI VE GEREKCELERI:
  *
- * 1. `schema_migrations` ISLEMIN DISINDA olusturulur. Icinde olusturulsaydi,
- *    bir migration patladiginda geri alma tablonun KENDISINI de silerdi ve
- *    "hicbiri uygulanmadi" iddiasi dogrulanamaz olurdu -- `SELECT count(*)`
- *    "relation does not exist" ile patlardi, yani testin gectigi sey baska bir
- *    sey olurdu.
+ * 1. `schema_migrations` ve `schema_state` ISLEMIN ICINDE olusturulur ve
+ *    varliklari `to_regclass` ile SORULUR. Onceki hali onlari en basta
+ *    `CREATE TABLE IF NOT EXISTS` ile kuruyordu, yani REDDEDILEN bir kosu bile
+ *    arkasinda tablo birakiyordu -- "hicbir DDL calismaz" sozu harfiyen dogru
+ *    degildi. Simdi basarisiz bir ILK kosudan geriye hicbir sey kalmaz, ki bu
+ *    "defter var ama bos"tan daha guclu bir ifadedir.
  *
  * 2. Bekleyen dosyalar SIRAYLA okunup HEMEN uygulanir. Var olmayan bir dosya
  *    BEGIN'den once patlasaydi, `schema_migrations`'in bos kalmasi geri almayi
@@ -182,14 +278,34 @@ export function ledgerProblems(
 export async function runMigrations(pool: Pool, files?: string[]): Promise<string[]> {
   const list = files ?? (await migrationFiles())
 
-  await pool.query(CREATE_LEDGER)
-  await pool.query(ADD_CHECKSUM)
-  await pool.query(CREATE_STATE)
+  // AYNI ANDA IKI KOSU. Kilit olmadan iki surec ayni migration'i uygulamaya
+  // calisiyor ve ikincisi `pg_type_typname_nsp_index` ihlali gibi ham bir
+  // hatayla oluyordu -- okuyana hicbir sey anlatmayan bir mesaj.
+  await pool.query('SELECT pg_advisory_lock($1)', [ADVISORY_LOCK_KEY])
+  try {
+    return await runLocked(pool, list)
+  } finally {
+    await pool.query('SELECT pg_advisory_unlock($1)', [ADVISORY_LOCK_KEY])
+  }
+}
 
-  const { rows } = await pool.query<{ filename: string; checksum_hex: string | null }>(
-    'SELECT filename, checksum_hex FROM schema_migrations',
-  )
-  const applied = new Map(rows.map((r) => [r.filename, r.checksum_hex]))
+/** `@arcpad/db` migration kilidi; sabit ve keyfi. */
+const ADVISORY_LOCK_KEY = '7723941155003001'
+
+async function runLocked(pool: Pool, list: string[]): Promise<string[]> {
+  // HICBIR DDL, KARSILASTIRMADAN ONCE CALISMAZ. Onceki hali defter ve durum
+  // tablolarini bastan `CREATE TABLE IF NOT EXISTS` ile kuruyordu, yani sert
+  // durusla biten bir kosu bile arkasinda tablo birakiyordu. Varlik `to_regclass`
+  // ile SORULUYOR; olusturma, gercekten yazacagimiz ana ertelendi.
+  const ledgerExists = await relationExists(pool, 'schema_migrations')
+  const applied = new Map<string, string | null>()
+  if (ledgerExists) {
+    await pool.query(ADD_CHECKSUM)
+    const { rows } = await pool.query<{ filename: string; checksum_hex: string | null }>(
+      'SELECT filename, checksum_hex FROM public.schema_migrations',
+    )
+    for (const r of rows) applied.set(r.filename, r.checksum_hex)
+  }
 
   // Diskteki icerikler. HERHANGI BIR DDL'DEN ONCE okunur, cunku asagidaki
   // karsilastirma da her seyden once yapilmali.
@@ -207,15 +323,49 @@ export async function runMigrations(pool: Pool, files?: string[]): Promise<strin
 
   const problems = ledgerProblems(applied, list, onDisk)
 
+  // Envanter KENDI ISLEMINDE okunur: `SET LOCAL search_path` ancak bir islem
+  // icinde etkilidir, ve islem havuzdaki baglantiyi kalici olarak
+  // degistirmemeyi garanti eder.
+  const current = await readInventory(pool)
+
+  // BOS DEFTER, DOLU SEMA. Kontrol `applied.size > 0` ile korunuyordu, yani
+  // defter bosken HIC calismiyordu. Olculen sonuc: bos defter + dusurulmus
+  // `creator_history` + catismayan bir bekleyen dosya = `ok=true`, tablo hala
+  // yok, VE parmak izi uzerine yazilarak sapma yeniden kutsanmis oluyordu.
+  // C-1'in sekli, C-1'in duzeltmesinin icinde. Ayni hukum: BILINMEYEN DURUM
+  // SERT DURUSTUR.
+  //
+  // Bos bir defter yalnizca BOS bir semayla tutarlidir. Kendi defter/durum
+  // tablolarimiz sayilmaz -- onlari biz kuruyoruz.
+  if (applied.size === 0) {
+    const OURS = new Set(['schema_migrations', 'schema_state'])
+    const strays = [
+      ...new Set(
+        current
+          .filter((l) => l.startsWith('col '))
+          .map((l) => l.slice(4).split('|')[0]!.split('.').slice(0, 2).join('.'))
+          .filter((rel) => !OURS.has(rel.replace(/^public\./, ''))),
+      ),
+    ].sort()
+    if (strays.length > 0) {
+      problems.push(
+        `defter BOS ama sema bos DEGIL (${strays.slice(0, 8).join(', ')}` +
+          `${strays.length > 8 ? ` ... (+${strays.length - 8})` : ''}). ` +
+          `Bu iliskilerin nereden geldigi bilinemez.`,
+      )
+    }
+  }
+
   // SEMANIN KENDISI DEFTERE UYUYOR MU? Dosyalar uzerindeki karsilastirma
   // tamdi, sema uzerindeki degildi.
   if (applied.size > 0) {
-    const { rows: stateRows } = await pool.query<{
-      fingerprint_hex: string
-      inventory_json: string
-    }>('SELECT fingerprint_hex, inventory_json FROM schema_state WHERE id = 1')
+    const stateExists = await relationExists(pool, 'schema_state')
+    const { rows: stateRows } = stateExists
+      ? await pool.query<{ fingerprint_hex: string; inventory_json: string }>(
+          'SELECT fingerprint_hex, inventory_json FROM public.schema_state WHERE id = 1',
+        )
+      : { rows: [] as { fingerprint_hex: string; inventory_json: string }[] }
     const state = stateRows[0]
-    const current = await schemaInventory(pool)
     const currentHex = sha256Hex(current.join('\n'))
     if (state === undefined) {
       problems.push(
@@ -249,31 +399,36 @@ export async function runMigrations(pool: Pool, files?: string[]): Promise<strin
   }
 
   const pending = list.filter((f) => !applied.has(f))
-  if (pending.length === 0) {
-    // Defter dolu ama parmak izi henuz yoksa (bu surumun ilk kosusu), semayi
-    // OLDUGU GIBI kaydet. Bu bir "benimseme" DEGILDIR: yukaridaki kontrol
-    // parmak izi eksikken zaten HATA verir, yani buraya ancak `applied` bos
-    // oldugunda -- yani kaydedilecek bir sema olmadiginda -- gelinir.
-    return []
-  }
+  // Buraya STABIL DURUMDA da gelinir (alti dosya uygulanmis, bekleyen yok) --
+  // onceki yorum "yalnizca `applied` bos oldugunda" diyordu ve BU YANLISTI.
+  // Yapilacak bir sey yok: butun kontroller yukarida gecti.
+  if (pending.length === 0) return []
 
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
+    // Migration govdeleri niteliksiz ad kullanir; `search_path` bozuksa
+    // uygulama deterministik olmaz. Islem boyunca sabitleniyor.
+    await client.query('SET LOCAL search_path = public, pg_catalog')
+    // Defter ve durum tablolari ANCAK BURADA olusur: bir sert durus artik
+    // arkasinda hicbir sey birakmaz.
+    await client.query(CREATE_LEDGER)
+    await client.query(ADD_CHECKSUM)
+    await client.query(CREATE_STATE)
     for (const filename of pending) {
       const path = isAbsolute(filename) ? filename : join(MIGRATIONS_DIR, filename)
       const sql = await readFile(path, 'utf8')
       await client.query(sql)
-      await client.query('INSERT INTO schema_migrations (filename, checksum_hex) VALUES ($1, $2)', [
-        filename,
-        sha256Hex(sql),
-      ])
+      await client.query(
+        'INSERT INTO public.schema_migrations (filename, checksum_hex) VALUES ($1, $2)',
+        [filename, sha256Hex(sql)],
+      )
     }
     // Parmak izi ISLEMIN ICINDE yazilir: migration'lar uygulandi ama kayit
     // yazilamadi diye bir ara durum olmamali.
     const inventory = await schemaInventory(client)
     await client.query(
-      `INSERT INTO schema_state (id, fingerprint_hex, inventory_json, updated_at)
+      `INSERT INTO public.schema_state (id, fingerprint_hex, inventory_json, updated_at)
        VALUES (1, $1, $2, now())
        ON CONFLICT (id) DO UPDATE
          SET fingerprint_hex = EXCLUDED.fingerprint_hex,

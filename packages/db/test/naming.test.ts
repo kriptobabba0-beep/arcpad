@@ -42,11 +42,32 @@ import { pool, resetSchema } from './setup'
  * -- guvenlik kazanci olmadan daha kotu bir sema. Yani gozden gecirenin uc
  * probe'undan IKISI kusur, ucuncusu degil.
  * ------------------------------------------------------------------
+ * KAPININ SINIRI -- NE YAPAR, NE YAPMAZ.
+ *
+ * Bu kapi 1e12'lik gorunum hatasini IMKANSIZ KILMAZ; onu BILDIRILMIS kilar.
+ * Bir sutunun adi hangi gorunumu tasidigini SOYLEMEK zorundadir; o adin
+ * DOGRU olup olmadigina kapi bakamaz. Iki somut kacis, ikisi de olculdu ve
+ * ikisi de bu sinirin icinde:
+ *
+ *   - `quote_number bigint GENERATED ALWAYS AS (quote_amount_wei / 1e12)
+ *     STORED` -- bildirilmis bir sonek tasir (`_number`), yani kapidan gecer.
+ *     Gercek bir 1e12 kucultmesidir. Kapinin verdigi sey sudur: birinin
+ *     `_number` diye ADLANDIRMAYI secmis olmasi ve bunun kod incelemesinde
+ *     gorunmesi.
+ *   - `id bigint` cok satirli bir tabloda -- `id` muafiyeti `CHECK (id = 1)`
+ *     tekil satir gerekcesine DAYANIR, ama kapi o CHECK'i HIC OKUMAZ. Muafiyet
+ *     adin kendisine verilmistir.
+ *
+ * Bu ikisini kapatmak, ifadeleri ve kisitlari yorumlamak demek olurdu; kapi
+ * bunu yapmaz. Ama parmak izi (`schemaInventory`) uretim ifadelerini ve
+ * tetikleyicileri ICERIR, yani boyle bir sutunun SONRADAN sessizce eklenmesi
+ * yakalanir -- iki savunma ayni deligi degil, birbirinin komsusunu kapatir.
+ * ------------------------------------------------------------------
  */
 
 /** Bildirilmis sonekler. Hicbiri para gorunumu BILDIRMEZ; para `_wei`/`_tok`tur. */
 const NON_MONEY_SUFFIX =
-  /(_ppm|_bps|_seq|_at|_time|_count|_id|_block|_number|_index|_hash|_hex|_addr|_json)$/
+  /(_ppm|_bps|_seq|_at|_time|_count|_id|_block|_number|_index|_hash|_hex|_addr)$/
 const MONEY_SUFFIX = /(_wei|_tok)$/
 const FORBIDDEN = /(_usdc|_uusdc|_micro|_e6)$/
 
@@ -110,6 +131,17 @@ const EXEMPT_NON_AMOUNT = new Set([
   'complete',
   'is_buy',
   'filename',
+  // `schema_state.inventory_json` -- envanterin JSON metni. TAM AD olarak ve
+  // YALNIZCA amount-olmayan tipler icin muaf.
+  //
+  // ILK DENEMEDE `_json` bir SONEK olarak eklenmisti ve bu YANLISTI: `_json`
+  // bir KAP adidir, bir MIKTAR TURU degil -- serialize edilmis bir deger
+  // istedigi kadar USDC tutari tasiyabilir. Dahasi `NON_MONEY_SUFFIX`i
+  // `undeclaredInteger` de okudugu icin sonek metinle sinirli kalmiyordu;
+  // olculdu: `fee_json bigint`, `amount_json bigint`, `balance_json integer`
+  // UCU DE hicbir kovaya dusmuyordu. Bu commit'te tip-kapsamli muafiyet
+  // makinesi kuruldu ve sonra kendi yeni adim icin kapsamsiz yol secildi.
+  'inventory_json',
 ])
 
 /**
@@ -745,6 +777,52 @@ describe('adlandirma kapisi', () => {
       await client.query('ROLLBACK')
       client.release()
     }
+  })
+
+  it('`_json` bir SONEK DEGILDIR: kap adi, miktar turu degil', async () => {
+    // `_json` bir sonek olarak kabul edilmisti ve olculdu ki `NON_MONEY_SUFFIX`i
+    // `undeclaredInteger` de okudugu icin metinle sinirli kalmiyordu. Ucu de
+    // ESKIDEN hicbir kovaya dusmuyordu.
+    for (const [col, type] of [
+      ['fee_json', 'bigint'],
+      ['amount_json', 'bigint'],
+      ['balance_json', 'integer'],
+    ] as const) {
+      await withColumn(`CREATE TABLE probe_j (${col} ${type})`, (g) => {
+        expect(g.undeclaredInteger, col).toEqual([{ table_name: 'probe_j', column_name: col }])
+        expect(g.unsuffixed, col).toEqual([{ table_name: 'probe_j', column_name: col }])
+      })
+    }
+  })
+
+  it('`inventory_json` TAM AD olarak muaftir ve gecer', async () => {
+    // Muafiyet tip-kapsamlidir: metin olarak gecer, tamsayi olarak GECMEZ.
+    const g = await gate(pool)
+    expect(g.unsuffixed).toEqual([])
+    expect(g.inventory).toContain('public:r:schema_state.inventory_json')
+    await withColumn('CREATE TABLE probe_inv (inventory_json bigint)', (h) => {
+      expect(h.undeclaredInteger).toEqual([
+        { table_name: 'probe_inv', column_name: 'inventory_json' },
+      ])
+    })
+  })
+
+  it('SINIR, ACIKCA: GENERATED bir 1e12 kucultmesi bildirilmis adla GECER', async () => {
+    // Kapinin ne YAPMADIGINI kayda geciriyor. Gercek bir gorunum hatasi, ama
+    // `_number` bildirilmis bir sonek oldugu icin kapi onu gecirir. Kapinin
+    // verdigi sey, birinin o adi SECMIS olmasidir.
+    await withColumn(
+      `ALTER TABLE trades ADD COLUMN quote_number bigint
+       GENERATED ALWAYS AS ((quote_amount_wei / 1000000000000)::bigint) STORED`,
+      (g) => {
+        expect(g.undeclaredInteger).toEqual([])
+        expect(g.unsuffixed).toEqual([])
+        expect(g.moneyNamedInteger).toEqual([])
+        // Ama KUME onu gorur -- yani sonradan sessizce eklenemez.
+        expect(g.inventory).toContain('public:r:trades.quote_number')
+        expect(g.inventory).not.toEqual(EXPECTED_INVENTORY)
+      },
+    )
   })
 
   it('MUAF bir AD, hala kendi tipinde muaftir (kapi fazla siki degil)', async () => {
