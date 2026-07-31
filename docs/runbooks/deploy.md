@@ -1,11 +1,14 @@
-# Runbook — arcpad governance ceremony (Arc testnet, chain 5042002)
+# Runbook — arcpad deploy and governance ceremony (Arc testnet, chain 5042002)
 
 **This file is written to be executed at 2 a.m. by someone who did not write it.** Every command is
 copy-pasteable. Nothing here is derived at run time; if a value is missing, stop rather than invent one.
 
-The deploy section (Task 6) is **not** in this file yet.
+Two procedures live here: **§A the governance ceremony** (signing a Safe transaction) and **§B the deploy**
+(putting `FeeEscrow` and `LaunchFactory` on chain). They are independent; do the one you came for.
 
 ---
+
+## §A — The governance ceremony
 
 ## 0. What exists, and why you cannot route around it
 
@@ -13,7 +16,12 @@ The deploy section (Task 6) is **not** in this file yet.
 |---|---|---|
 | Governor Safe | `0x970534698e4592932F31892759147f79EB0D2C22` | 2-of-3, SafeL2 v1.4.1 |
 | Treasury Safe | `0xebBeCfDA308EA307e173C6eC19a9C48F53d4B10c` | 2-of-3, same owner set (testnet only) |
-| Owners | `0x0a95f5F562183089f661577bc6B63D7A829cec88`<br>`0x0D646a725DAdc8ADcF209ac999B219EF2a69ad21`<br>`0xf5447724A9BEa99635c0456049169eaCa84EE65B` | **listed in ascending order — this order matters, see §3** |
+| Owners, **declared order** | `0x0a95f5F562183089f661577bc6B63D7A829cec88`<br>`0xf5447724A9BEa99635c0456049169eaCa84EE65B`<br>`0x0D646a725DAdc8ADcF209ac999B219EF2a69ad21` | This is the order in `expected-governance.json` and the order `getOwners()` returns. **It is NOT ascending, and it must NEVER be re-sorted** — it sits inside the Safe initializer, so changing it changes the Safe addresses and therefore the factory address. |
+| Owners, **ascending signing order** | `0x0a95f5F5…`<br>`0x0D646a72…`<br>`0xf5447724…` | A signature *bundle* must be in **this** order. It is a different order from the one above, and that is the trap. **You do not have to produce it by hand — see §4.** |
+
+> **The two orders are different and confusing them is a real, measured failure.** The declared order fixes
+> the addresses; the ascending order is only for assembling signatures. Every tool in this repo now prints
+> **both**, labelled.
 
 Once `LaunchFactory` is deployed, the governor Safe is the **only** way to reach
 `proposeGraduationTarget` and `setProtocolTreasury`. There is no admin key, no pause, and no recovery path
@@ -94,24 +102,25 @@ Each signature is 65 bytes (132 hex characters after `0x`). You need **2 of 3**.
 
 ---
 
-## 4. Assemble the bundle — ordered by owner address, ascending
+## 4. Assemble the bundle — let the tool sort it
 
-Concatenate the 65-byte signatures with **no separator and no repeated `0x`**, sorted by the *signing owner's
-address*, ascending:
+**Do not sort by hand.** `assembleBundle` recovers the signer from each signature, checks it really is an
+owner, rejects duplicates, and sorts ascending for you:
 
-```
-0x0a95f5F5…   <-- first
-0x0D646a72…   <-- second
-0xf5447724…   <-- third
+```bash
+forge script script/Governance.s.sol:Governance   --sig "executeFromGovernorSorted(address,bytes,bytes[])"   <FACTORY> <INNER_CALLDATA> "[<SIG_A>,<SIG_B>]"   --root contracts --rpc-url "$ARC_RPC_URL" --account arcpad-deployer --broadcast
 ```
 
-So a bundle signed by owners 1 and 2 is `<sig-of-0x0a95><sig-of-0x0D64 without its 0x>`.
+The signatures may be given in **any** order. If one of them was not produced by an owner you get
+`NotAnOwner(<recovered address>)` — which names the problem, instead of Safe's `GS026`, which has three
+possible causes and cannot tell you which one you hit.
+
+If you must assemble it manually anyway, concatenate the 65-byte signatures with no separator and no repeated
+`0x`, sorted by the **signing owner's address ascending** (§0, second owner row):
 
 ```bash
 BUNDLE="${SIG_A}${SIG_B:2}"
 ```
-
----
 
 ## 5. Execute
 
@@ -199,3 +208,112 @@ Both failure modes above were reproduced in the same session before the successf
 - Arc has published no mainnet chain id, and `Profiles.sol` deliberately does not register one.
   `nameForChain` reverts `UnregisteredChain` for everything except 5042002 and 31337, so a mainnet deploy
   requires a reviewed commit that adds it — which is the review that would notice a wrong profile.
+
+---
+
+# §B — The deploy (Task 6)
+
+Puts `FeeEscrow` and `LaunchFactory` on chain at their **reserved, already-computed** addresses. Read §0
+first: the governor Safe must exist before this runs, because it is a constructor argument.
+
+## B1. The addresses this will produce, and why they are already known
+
+| | Address |
+|---|---|
+| `FeeEscrow` | `0xEEd4431eAD3E27F16D97f677A9C4c1a963DF8dC6` |
+| `LaunchFactory` | `0x0d75a4fFb8CD6dB4237557E9519591b94d6Ab439` |
+
+Both are CREATE2 through the canonical deterministic deployer `0x4e59b44847b379578588920cA78FbF26c0B4956C`,
+so they are fixed before any transaction is sent. Re-derive them yourself if you want:
+
+```bash
+cast create2 --deployer 0x4e59b44847b379578588920cA78FbF26c0B4956C \
+  --salt <SALT> --init-code-hash <INITCODE_HASH>
+```
+
+The escrow address is **chain-independent** (no constructor arguments). The factory address is **not**: it
+commits to `(escrow, treasury, governor, T, V, S)`, so changing any Safe address or any profile number
+changes it.
+
+## B2. Dry run — this asserts everything and deploys nothing
+
+```bash
+forge script script/Deploy.s.sol:Deploy --sig "plan()" \
+  --root contracts --rpc-url "$ARC_RPC_URL" --sender <DEPLOYER_ADDRESS>
+```
+
+`plan()` is `view`. There is no `vm.broadcast` on that path; it cannot send a transaction.
+
+It must print `chainId 5042002`, `PROFILE testnet`, `V 4292000000000000000`, both initcode hashes, and the
+two addresses in B1. **Compare them against B1 by eye before continuing.** Then it runs, before printing:
+
+- chain → profile, and the profile digest (`ProfileDigestMismatch` if `profiles.toml` was edited alone)
+- the governance digest (`GovernanceDigestMismatch` if `expected-governance.json` was edited alone)
+- the initcode ↔ plan pre-flight (`InitcodeDoesNotEncodeThePlan(<field>)`)
+- the CREATE2 deployer's **codehash** (`Create2DeployerNotCanonical`)
+- both Safes probed live as ≥2-of-3 (`NotAMultisig`, `MultisigThresholdTooLow`, `MultisigTooFewOwners`)
+- deployer balance ≥ 0.5 USDC (`InsufficientDeployerBalance`)
+- both target addresses unoccupied (`AlreadyDeployed`)
+
+If any of those fires, **stop and read the error name** — every one of them is specific.
+
+## B3. Broadcast
+
+```bash
+forge script script/Deploy.s.sol:Deploy --sig "run()" \
+  --root contracts --rpc-url "$ARC_RPC_URL" --account arcpad-deployer --broadcast
+```
+
+`run()` re-runs every assertion from B2 through the **same** `_resolve()` — there is no path that skips
+them — then sends two transactions to `0x4e59b448…`, then reads the deployed factory back and compares its
+immutables against the plan (`ProfileNotAsDeployed`, `GovernanceNotAsDeployed`).
+
+`forge script` simulates the whole script before sending, so a failed read-back aborts with nothing
+broadcast.
+
+> **A second run reverts `AlreadyDeployed("FeeEscrow", …)` rather than minting a second universe.** That is
+> the intended behaviour, not a problem. If you see it, the deploy already happened — go to B4.
+
+## B4. Verify on chain — do not trust the script's read-back
+
+```bash
+cast code 0xEEd4431eAD3E27F16D97f677A9C4c1a963DF8dC6 --rpc-url "$ARC_RPC_URL" | head -c 20
+cast code 0x0d75a4fFb8CD6dB4237557E9519591b94d6Ab439 --rpc-url "$ARC_RPC_URL" | head -c 20
+
+F=0x0d75a4fFb8CD6dB4237557E9519591b94d6Ab439
+cast call $F "escrow()(address)"                 --rpc-url "$ARC_RPC_URL"   # 0xEEd4431e…
+cast call $F "governor()(address)"               --rpc-url "$ARC_RPC_URL"   # 0x97053469…
+cast call $F "protocolTreasury()(address)"       --rpc-url "$ARC_RPC_URL"   # 0xebBeCfDA…
+cast call $F "VIRTUAL_TOKEN_RESERVES()(uint256)" --rpc-url "$ARC_RPC_URL"   # 1073000000000000000000000000
+cast call $F "VIRTUAL_QUOTE_RESERVES()(uint256)" --rpc-url "$ARC_RPC_URL"   # 4292000000000000000
+cast call $F "SALE_SUPPLY()(uint256)"            --rpc-url "$ARC_RPC_URL"   # 793100000000000000000000000
+cast call $F "graduationTarget()(address)"       --rpc-url "$ARC_RPC_URL"   # 0x0 — nothing set yet
+cast call $F "launchCount()(uint256)"            --rpc-url "$ARC_RPC_URL"   # 0
+```
+
+`V` is the one to look at twice: `4292000000000000000` is **4292e15**, the testnet magnitude.
+`4292000000000000000000` would be production — 1000× — and every guard in the contract accepts it.
+
+## B5. Write the address book
+
+```bash
+pnpm addressbook --chain 5042002
+```
+
+It reads the broadcast receipt plus live `eth_call`s, re-derives both addresses from their initcode hashes,
+and refuses to write a book its own loader would reject. It prints the `NEXT_PUBLIC_*` / `ARC_*` block for
+`.env`.
+
+`--smoke-token` is required for `totalSupply`, which is read off a token the deployment actually minted
+rather than copied from a constant — so B5 comes after Task 7's smoke launch, not before it.
+
+## B6. If something is wrong after broadcast
+
+There is no upgrade path and no admin key. The factory is immutable except for `protocolTreasury` and
+`graduationTarget`, both governor-only:
+
+- **wrong treasury** → recoverable: `setProtocolTreasury` via §A, and it reaches live curves because
+  `BondingCurve` reads `protocolTreasury()` at deposit time.
+- **wrong profile numbers, wrong governor, or wrong escrow** → **not recoverable.** They are immutable and
+  address-committing. The only remedy is a new salt and abandoning these addresses. This is why B2 exists and
+  why the read-back in B3 is not optional.

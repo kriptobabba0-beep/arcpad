@@ -136,6 +136,9 @@ contract Governance is Script {
 
     error SafeDeploymentMissing(string what, address at);
     error SafeTxHashDiverged(bytes32 local, bytes32 onchain);
+    error SignatureNotSixtyFiveBytes(uint256 index, uint256 length);
+    error NotAnOwner(address recovered);
+    error DuplicateSigner(address signer);
     error NoOwnersDeclared(string chainKey);
     error SafeAddressDiverged(string role, address predicted, address actual);
     error SafesCollide(address both);
@@ -229,10 +232,8 @@ contract Governance is Script {
     ///      dosyadan BASKA bir owner kumesiyle Safe uretmek mumkun olurdu ve
     ///      adresin o dosyaya baglanmasinin anlami kalmazdi.
     function _owners() private view returns (address[] memory owners) {
-        string memory key = Profiles.chainKeyFor(block.chainid);
-        string memory json = vm.readFile(Profiles.GOVERNANCE_PATH);
-        owners = vm.parseJsonAddressArray(json, string.concat(".", key, ".owners"));
-        if (owners.length < 3) revert NoOwnersDeclared(key);
+        owners = Profiles.ownersForChain(block.chainid);
+        if (owners.length < 3) revert NoOwnersDeclared(Profiles.chainKeyFor(block.chainid));
     }
 
     function _assertSafeDeploymentPresent() private view {
@@ -297,10 +298,97 @@ contract Governance is Script {
         _printTx("setProtocolTreasury", factory, next, safeTxHash, nonce, txData);
     }
 
+    /// @notice Imzalari SIRALAR ve demeti kurar. Operatorun eline artan sirali
+    ///         bir liste vermesi GEREKMEZ.
+    ///
+    /// @dev BU FONKSIYON BIR INCELEME BULGUSUNUN CEVABIDIR. Artan sira "ne
+    ///      insa geregi ne de sans eseri" saglaniyordu -- bir insanin bir kez
+    ///      elle sirladigi bir tablodan geliyordu. Daha kotusu: `getOwners()`
+    ///      ARTAN SIRADA DONMEZ (Safe onlari bagli listede tutar), ve
+    ///      `expected-governance.json` da artan sirada DEGILDIR (olamaz da --
+    ///      o sira Safe adresini belirler). Yani operator ARACIN BASTIGI
+    ///      sirayi kopyalarsa uc olasi 2-of-3 ciftinden biri AZALAN bir demet
+    ///      uretir, `GS026` alir, ve sirayi dogru yaptigina inanir.
+    ///
+    ///      Cozum siralamayi INSANIN KAFASINDAN KODA tasimaktir: her imzadan
+    ///      imzalayan KURTARILIR, adrese gore artan siralanir, sonra
+    ///      birlestirilir. Owner kumesi degisirse de dogru kalir.
+    ///
+    ///      Kurtarilan adres bir owner degilse DURUR: `GS026`yi Safe'ten
+    ///      almak yerine `NotAnOwner` ile ADIYLA soyleriz, cunku `GS026`nin
+    ///      uc ayri sebebi vardir ve operator hangisi oldugunu bilemez.
+    function assembleBundle(bytes32 safeTxHash, bytes[] memory signatures) public view returns (bytes memory bundle) {
+        address[] memory owners = ISafe(_governorSafe()).getOwners();
+        uint256 n = signatures.length;
+        address[] memory signers = new address[](n);
+
+        for (uint256 i = 0; i < n; ++i) {
+            if (signatures[i].length != 65) revert SignatureNotSixtyFiveBytes(i, signatures[i].length);
+            signers[i] = _recover(safeTxHash, signatures[i]);
+
+            bool isOwner;
+            for (uint256 j = 0; j < owners.length; ++j) {
+                if (owners[j] == signers[i]) {
+                    isOwner = true;
+                    break;
+                }
+            }
+            if (!isOwner) revert NotAnOwner(signers[i]);
+            for (uint256 j = 0; j < i; ++j) {
+                if (signers[j] == signers[i]) revert DuplicateSigner(signers[i]);
+            }
+        }
+
+        // Insertion sort on (signer, signature), ascending by signer.
+        for (uint256 i = 1; i < n; ++i) {
+            address s = signers[i];
+            bytes memory sig = signatures[i];
+            uint256 j = i;
+            while (j > 0 && uint160(signers[j - 1]) > uint160(s)) {
+                signers[j] = signers[j - 1];
+                signatures[j] = signatures[j - 1];
+                --j;
+            }
+            signers[j] = s;
+            signatures[j] = sig;
+        }
+
+        for (uint256 i = 0; i < n; ++i) {
+            bundle = bytes.concat(bundle, signatures[i]);
+        }
+
+        console2.log("=== signature bundle, ASCENDING BY OWNER (sorted here, not by you) ===");
+        for (uint256 i = 0; i < n; ++i) {
+            console2.log("  signer", i, signers[i]);
+        }
+        console2.log("bundle", vm.toString(bundle));
+    }
+
+    /// @notice Imzalari siralayip DOGRUDAN yurutur. Torenin onerilen yolu.
+    function executeFromGovernorSorted(address to, bytes memory txData, bytes[] memory signatures) public {
+        (bytes32 h,) = _safeTxHash(_governorSafe(), to, txData);
+        executeFromGovernor(to, txData, assembleBundle(h, signatures));
+    }
+
+    function _recover(bytes32 hash, bytes memory sig) private pure returns (address) {
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly {
+            r := mload(add(sig, 0x20))
+            s := mload(add(sig, 0x40))
+            v := byte(0, mload(add(sig, 0x60)))
+        }
+        address signer = ecrecover(hash, v, r, s);
+        require(signer != address(0), "signature does not recover; was --no-hash used?");
+        return signer;
+    }
+
     /// @notice Imza demetini governor Safe'e gonderir.
     /// @param signatures 65 baytlik imzalarin bitisik hali, OWNER ADRESINE
     ///        GORE ARTAN SIRADA. Safe bunu zorunlu kilar: sirasiz bir demet
-    ///        `GS026` ile doner.
+    ///        `GS026` ile doner. Elle kurmak yerine `assembleBundle` /
+    ///        `executeFromGovernorSorted` kullanin.
     function executeFromGovernor(address to, bytes memory txData, bytes memory signatures) public {
         address safe = _governorSafe();
         vm.startBroadcast();
@@ -408,6 +496,26 @@ contract Governance is Script {
         return DeployLib.predict(salt, initcode);
     }
 
+    /// @dev IKI SIRA VARDIR VE KARISTIRILMALARI TAM OLARAK BULDUGUMUZ HATADIR.
+    ///      BEYAN EDILEN sira Safe adresini belirler ve ASLA degistirilmez;
+    ///      ARTAN sira yalnizca imza demetini kurmak icindir. Ikisi de
+    ///      basilir, ve hangisinin ne ise yaradigi yazar.
+    function _ascending(address[] memory input) private pure returns (address[] memory out) {
+        out = new address[](input.length);
+        for (uint256 i = 0; i < input.length; ++i) {
+            out[i] = input[i];
+        }
+        for (uint256 i = 1; i < out.length; ++i) {
+            address v = out[i];
+            uint256 j = i;
+            while (j > 0 && uint160(out[j - 1]) > uint160(v)) {
+                out[j] = out[j - 1];
+                --j;
+            }
+            out[j] = v;
+        }
+    }
+
     function _printTx(
         string memory what,
         address to,
@@ -432,8 +540,14 @@ contract Governance is Script {
         console2.log(banner);
         console2.log("threshold           ", SAFE_THRESHOLD);
         console2.log("owners              ", owners.length);
+        console2.log("-- DECLARED ORDER (this is what determines the Safe address; NEVER re-sort it)");
         for (uint256 i = 0; i < owners.length; ++i) {
             console2.log("  owner", i, owners[i]);
+        }
+        console2.log("-- ASCENDING SIGNING ORDER (this is the order a signature bundle must use)");
+        address[] memory sorted = _ascending(owners);
+        for (uint256 i = 0; i < sorted.length; ++i) {
+            console2.log("  sign ", i, sorted[i]);
         }
         console2.log("singleton (SafeL2)  ", SAFE_L2_SINGLETON);
         console2.log("proxy factory       ", SAFE_PROXY_FACTORY);

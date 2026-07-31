@@ -173,13 +173,17 @@ contract ProfilesTest is Test {
 
     /// TOTOLOJI KIRICI: digest dosyadan degil ELLE YAZILMIS ciftten turetilir.
     function test_theGovernanceDigestIsTheHashOfTheHandWrittenPair() public pure {
+        address[] memory arcOwners = new address[](3);
+        arcOwners[0] = 0x0a95f5F562183089f661577bc6B63D7A829cec88;
+        arcOwners[1] = 0xf5447724A9BEa99635c0456049169eaCa84EE65B;
+        arcOwners[2] = 0x0D646a725DAdc8ADcF209ac999B219EF2a69ad21;
         assertEq(
-            keccak256(abi.encode(ARC_GOVERNOR_SAFE, ARC_TREASURY_SAFE)),
+            keccak256(abi.encode(ARC_GOVERNOR_SAFE, ARC_TREASURY_SAFE, arcOwners)),
             Profiles.ARC_TESTNET_GOVERNANCE_DIGEST,
             "arc-testnet"
         );
         assertEq(
-            keccak256(abi.encode(REHEARSAL_GOVERNOR, REHEARSAL_TREASURY)),
+            keccak256(abi.encode(REHEARSAL_GOVERNOR, REHEARSAL_TREASURY, new address[](0))),
             Profiles.LOCAL_REHEARSAL_GOVERNANCE_DIGEST,
             "local-rehearsal"
         );
@@ -193,7 +197,7 @@ contract ProfilesTest is Test {
                 Profiles.GovernanceDigestMismatch.selector,
                 "local-rehearsal",
                 Profiles.LOCAL_REHEARSAL_GOVERNANCE_DIGEST,
-                keccak256(abi.encode(TAMPERED_GOVERNOR, REHEARSAL_TREASURY))
+                keccak256(abi.encode(TAMPERED_GOVERNOR, REHEARSAL_TREASURY, new address[](0)))
             )
         );
         this.readGovernanceFrom("deploy/testdata/tampered-governance.json", "local-rehearsal");
@@ -254,7 +258,11 @@ contract ProfilesTest is Test {
         return Profiles.readFrom(p, n);
     }
 
-    function readGovernanceFrom(string calldata p, string calldata k) external view returns (address, address) {
+    function readGovernanceFrom(string calldata p, string calldata k)
+        external
+        view
+        returns (address, address, address[] memory)
+    {
         return Profiles.readGovernanceFrom(p, k);
     }
 

@@ -113,7 +113,23 @@ library Profiles {
     ///      seyin AYNISIYLA kapatir: dosyayi degistirmek DERLENEN bir sabiti de
     ///      degistirmeyi, yani INCELENMIS bir commit'i gerektirir.
     ///
-    ///      keccak256(abi.encode(governor, treasury)).
+    ///      keccak256(abi.encode(governor, treasury, owners)).
+    ///
+    /// @dev `owners` DA ICERIDEDIR VE BU BIR INCELEME BULGUSUDUR. Ilk hal
+    ///      yalnizca `(governor, treasury)`yi baglıyordu; ama Task 4 ayni
+    ///      dosyaya UCUNCU bir adres-belirleyici alan ekledi. `owners`
+    ///      Safe'in initializer'ina girer, initializer salt'a girer, salt
+    ///      Safe ADRESINE girer -- ve Safe adresi factory'nin constructor
+    ///      argumanidir. Yani owner dizisini degistirmek (SIRASINI degistirmek
+    ///      dahil) factory adresini ve transitif olarak Arc'ta uretilecek her
+    ///      adresi degistirir. Baglanmamis birakmak, digest'in kapattigi
+    ///      yolu ucuncu bir alan icin acik birakmakti.
+    ///
+    ///      SIRA DA BAGLANIR VE BU KASITLIDIR: `abi.encode` diziyi sirasiyla
+    ///      kodlar, yani JSON'daki owner sirasini degistirmek digest'i
+    ///      degistirir. Dogru davranis budur -- o sira Safe adresinin ta
+    ///      kendisini belirler, dolayisiyla "zararsiz bir yeniden siralama"
+    ///      diye bir sey YOKTUR.
     ///
     ///        arc-testnet : governor 0x9705…2C22, treasury 0xebBe…B10c.
     ///          Task 4'te CANLI OLARAK deploy edilen iki Safe (2-of-3, SafeL2
@@ -125,10 +141,10 @@ library Profiles {
     ///          DERLENEN bir sabiti de degistirmeyi, yani incelenmis bir
     ///          commit'i gerektirdi.
     bytes32 internal constant ARC_TESTNET_GOVERNANCE_DIGEST =
-        0x00280904e53954edb8d84701d76d127dcdb861cafb039b5e0093ae0234f74375;
+        0xb6e2e4ecdaf85e412134db6b712d40f865ad41530e34d39899cb217c84ef7231;
     ///        local-rehearsal : (0x...0601, 0x...7EA5)
     bytes32 internal constant LOCAL_REHEARSAL_GOVERNANCE_DIGEST =
-        0x53ba4ecc78a97624249985e3dd16ece64902e4efc1b151cf0b314764f8d5539a;
+        0xe6f2c135e35a3802236d62ccc1e86fd7ddf7fafc066cb2dc036b4d63ad9a1892;
 
     error UnregisteredChain(uint256 chainId);
     error UnknownProfileName(string name);
@@ -195,20 +211,28 @@ library Profiles {
     function readGovernanceFrom(string memory jsonPath, string memory chainKey)
         internal
         view
-        returns (address governor, address treasury)
+        returns (address governor, address treasury, address[] memory owners)
     {
         string memory json = vm.readFile(jsonPath);
         governor = vm.parseJsonAddress(json, string.concat(".", chainKey, ".governor"));
         treasury = vm.parseJsonAddress(json, string.concat(".", chainKey, ".treasury"));
+        owners = vm.parseJsonAddressArray(json, string.concat(".", chainKey, ".owners"));
 
         bytes32 expected = governanceDigestFor(chainKey);
-        bytes32 actual = keccak256(abi.encode(governor, treasury));
+        bytes32 actual = keccak256(abi.encode(governor, treasury, owners));
         if (actual != expected) revert GovernanceDigestMismatch(chainKey, expected, actual);
     }
 
     /// @notice POLITIKA: bu zincire ait governance.
     function governanceForChain(uint256 chainId) internal view returns (address governor, address treasury) {
-        return readGovernanceFrom(GOVERNANCE_PATH, chainKeyFor(chainId));
+        (governor, treasury,) = readGovernanceFrom(GOVERNANCE_PATH, chainKeyFor(chainId));
+    }
+
+    /// @notice Bu zincirin BEYAN EDILEN owner kumesi, BEYAN EDILEN SIRASIYLA.
+    /// @dev SIRA KORUNUR. Bu dizi Safe'in initializer'ina oldugu gibi girer;
+    ///      siralamak Safe adresini -- ve onunla factory adresini -- degistirir.
+    function ownersForChain(uint256 chainId) internal view returns (address[] memory owners) {
+        (,, owners) = readGovernanceFrom(GOVERNANCE_PATH, chainKeyFor(chainId));
     }
 
     /// @dev Ondalik STRING olarak okunur; TOML tamsayilari i64'tur ve
