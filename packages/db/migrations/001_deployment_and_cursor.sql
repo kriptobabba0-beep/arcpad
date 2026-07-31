@@ -49,7 +49,37 @@ CREATE TABLE deployment (
 
 -- Imlec. `deployment`'tan AYRI, cunku biri kurulum digeri ilerleme.
 CREATE TABLE sync_state (
-  id           smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
-  last_block   bigint      NOT NULL,
-  updated_at   timestamptz NOT NULL DEFAULT now()
+  id               smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  last_block       bigint      NOT NULL,
+  -- `last_block`'un HASH'I. Bir sonraki turun ilk blogunun `parentHash`'i
+  -- buna esit olmak ZORUNDA; degilse uzerine insa ettigimiz zincir
+  -- degismistir.
+  --
+  -- NICIN VAR -- ve BU BIR ONARIM DEGIL, BIR IDDIADIR:
+  --
+  -- Keeper, zincirdeki `launchCount()` slotunu biriktirdigi `Launched`
+  -- loglariyla karsilastiriyor. Reorg'la disari dusmus bir bloktan kalan bir
+  -- kayit o kumeyi FAZLA saydirir, ve keeper bunu bulundugu yerden
+  -- ENGELLEYEMEZ. Engelleme, verinin kuruldugu yere -- buraya -- aittir ve
+  -- `Launched`a degil HER olay tipine uygulanmalidir; bu yuzden muhafiz
+  -- olaylara degil BLOKLARA takilidir.
+  --
+  -- Arc'ta ~350ms deterministik finality var ve reorg OLMADIGI belgeli;
+  -- ustelik ingest yalnizca `finalized` etiketinden okuyor (bkz.
+  -- indexer/src/cursor.ts `finalizedHead`). Yani bu satirin yakalayacagi sey
+  -- ZATEN OLMAMALI. Buna ragmen SESSIZ bir varsayim birakmak bu projenin
+  -- tekrar tekrar dustugu ariza kipidir, ve varsayim bos degil: OLCULDU ki
+  -- `finalized` iki okuma arasinda GERIYE dusebiliyor ve `latest`in ONUNDE
+  -- gorulebiliyor -- yani "finalized" gorunumu dugumden dugume tutarli DEGIL.
+  --
+  -- Secim bilincli: KENDINI ONARAN bir geri sarma (belirli bir derinligin
+  -- ustundeki satirlari sil, imleci geri al) YAZILMADI. Reorg uretmeyen bir
+  -- zincirde o kodu HICBIR SEY egzersiz etmez -- yani bu projenin adini
+  -- koydugu "hicbir seyin calistirmadigi kod yolu" olurdu, ve daha kotusu,
+  -- GUVENILIRDI. Onun yerine bag kontrolu bir HATA firlatir ve ingest DURUR.
+  -- Duran bir indexer operator tarafindan kurtarilabilir; sessizce yanlis bir
+  -- veritabani kurtarilamaz. Ve iddianin kendisi BUGUN test edilebilir:
+  -- bagi bozup muhafizin patladigini gostermek bir RPC gerektirmez.
+  last_block_hash  text NOT NULL CHECK (last_block_hash ~ '^0x[0-9a-f]{64}$'),
+  updated_at       timestamptz NOT NULL DEFAULT now()
 );

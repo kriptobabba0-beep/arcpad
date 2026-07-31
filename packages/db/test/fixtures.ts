@@ -237,3 +237,12 @@ export const RANGE: readonly IngestEvent[] = [
 ]
 
 export const RANGE_TO = BLOCK + 3n
+
+/**
+ * Blok numarasindan deterministik bir blok hash'i. `sync_state.last_block_hash`
+ * NOT NULL oldugu icin her imlec yazimi bir hash ister; testlerin ayni blok
+ * icin ayni hash'i vermesi, imlecin idempotency iddiasini bozmaz.
+ */
+export function hashFor(block: bigint): string {
+  return `0x${block.toString(16).padStart(64, '0')}`
+}

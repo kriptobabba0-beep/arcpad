@@ -75,3 +75,66 @@ export async function finalizedHead(client: PublicClient): Promise<bigint> {
   const block = await client.getBlock({ blockTag: 'finalized' })
   return block.number
 }
+
+/**
+ * Uzerine insa ettigimiz zincir degisti. Ingest DURUR.
+ *
+ * Ayri bir sinif, cunku cagiran bunu diger hatalardan AYIRT ETMEK zorunda:
+ * gecici bir RPC hatasi yeniden denenir, bu denenmez.
+ */
+export class ReorgDetected extends Error {
+  constructor(
+    readonly cursor: bigint,
+    readonly expectedParentHash: string,
+    readonly actualParentHash: string,
+  ) {
+    super(
+      `ReorgDetected: blok ${cursor + 1n}'in parentHash'i ${actualParentHash}, ` +
+        `ama imlecin ${cursor} numarali blogu icin ${expectedParentHash} kaydedilmisti. ` +
+        `Uzerine insa edilen zincir degismis; ingest durdu.`,
+    )
+    this.name = 'ReorgDetected'
+  }
+}
+
+/**
+ * ZINCIR BAGI MUHAFIZI -- reorg'la disari dusmus bir kaydin tutulmasini
+ * onleyen sey.
+ *
+ * BU BIR ONARIM DEGIL, BIR IDDIADIR. Gerekce tam olarak yazili:
+ *
+ *  - Keeper `launchCount()` slotunu biriktirdigi `Launched` loglariyla
+ *    karsilastiriyor; reorg'la dusmus bir kayit o kumeyi FAZLA saydirir ve
+ *    keeper bunu bulundugu yerden ENGELLEYEMEZ. Engelleme verinin kuruldugu
+ *    yere ait, ve `Launched`a degil HER olay tipine uygulanmali -- bu yuzden
+ *    muhafiz olaylara degil BLOKLARA takili.
+ *  - Arc'ta ~350ms deterministik finality var, reorg olmadigi belgeli, ve
+ *    `finalizedHead` yalnizca `finalized` etiketinden okuyor. Yani burada
+ *    yakalanacak sey ZATEN OLMAMALI.
+ *  - Ama varsayim bos degil: OLCULDU ki `finalized` `latest`in ONUNDE
+ *    gorulebiliyor ve iki okuma arasinda GERIYE dusebiliyor. "finalized"
+ *    gorunumu dugumden dugume tutarli DEGIL, ve o gorunum degisirse ingest
+ *    farkli bir zincirin uzerine yazmaya devam eder.
+ *  - KENDINI ONARAN bir geri sarma BILEREK YAZILMADI: reorg uretmeyen bir
+ *    zincirde onu hicbir sey egzersiz etmez -- "hicbir seyin calistirmadigi
+ *    kod yolu" -- ve guvenilir gorunurdu. Duran bir indexer kurtarilabilir;
+ *    sessizce yanlis bir veritabani kurtarilamaz.
+ *
+ * Maliyet TUR BASINA SABIT: araligin ilk blogunun basligindaki `parentHash`,
+ * imlecin blogu icin sakladigimiz hash'e esit olmali. Reorg bir SONEKI
+ * yeniden yazdigi icin, imlecten daha derin bir degisiklik de imlecin
+ * blogunu degistirir ve ayni tek karsilastirmayla yakalanir.
+ *
+ * @param cursorHash imlecin blogu icin kaydedilen hash; ilk kosuda `null`.
+ */
+export function assertContinuous(
+  cursor: bigint,
+  cursorHash: string | null,
+  firstBlockParentHash: string,
+): void {
+  // ILK KOSU: uzerine insa edilmis bir sey yok, karsilastirilacak sey de yok.
+  if (cursorHash === null) return
+  const expected = cursorHash.toLowerCase()
+  const actual = firstBlockParentHash.toLowerCase()
+  if (expected !== actual) throw new ReorgDetected(cursor, expected, actual)
+}

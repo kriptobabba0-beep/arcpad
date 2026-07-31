@@ -442,14 +442,37 @@ export async function applyFeeEvent(db: Queryable, e: FeeLedgerEvent): Promise<n
  * degisir ve "ikinci gecis bir no-op" iddiasi dokum esitligiyle
  * ISPATLANAMAZDI), ve geriye dusmus bir head imleci geri cekemez.
  */
-export async function setCursor(db: Queryable, lastBlock: bigint): Promise<number> {
+export async function setCursor(
+  db: Queryable,
+  lastBlock: bigint,
+  lastBlockHash: string,
+): Promise<number> {
   const { rowCount } = await db.query(
-    `INSERT INTO sync_state (id, last_block) VALUES (1, $1)
-     ON CONFLICT (id) DO UPDATE SET last_block = EXCLUDED.last_block, updated_at = now()
+    `INSERT INTO sync_state (id, last_block, last_block_hash) VALUES (1, $1, $2)
+     ON CONFLICT (id) DO UPDATE
+       SET last_block = EXCLUDED.last_block,
+           last_block_hash = EXCLUDED.last_block_hash,
+           updated_at = now()
      WHERE EXCLUDED.last_block > sync_state.last_block`,
-    [lastBlock.toString()],
+    [lastBlock.toString(), lowerHash32(lastBlockHash)],
   )
   return rowCount ?? 0
+}
+
+/**
+ * Imlec ve uzerine insa ettigimiz blogun hash'i. Ingest dongusu her turun
+ * BASINDA bunu okur ve `assertContinuous` ile bir sonraki araligin ilk
+ * blogunun `parentHash`'ine karsi tutar.
+ */
+export async function getCursor(
+  db: Queryable,
+): Promise<{ lastBlock: bigint; lastBlockHash: string } | null> {
+  const { rows } = await db.query<{ last_block: string; last_block_hash: string }>(
+    'SELECT last_block, last_block_hash FROM sync_state WHERE id = 1',
+  )
+  const row = rows[0]
+  if (row === undefined) return null
+  return { lastBlock: BigInt(row.last_block), lastBlockHash: row.last_block_hash }
 }
 
 export async function applyEvent(db: Queryable, e: IngestEvent): Promise<number> {
@@ -476,6 +499,7 @@ export async function replayRange(
   pool: Pool,
   events: readonly IngestEvent[],
   to: bigint,
+  toHash: string,
 ): Promise<ReplayResult> {
   return withTransaction(pool, async (tx: PoolClient) => {
     const r: ReplayResult = {
@@ -495,7 +519,7 @@ export async function replayRange(
       else if (e.kind === 'transfer') r.transfers += n
       else r.fees += n
     }
-    r.cursorMoved = await setCursor(tx, to)
+    r.cursorMoved = await setCursor(tx, to, toHash)
     r.total = r.launches + r.trades + r.completed + r.transfers + r.fees + r.cursorMoved
     return r
   })

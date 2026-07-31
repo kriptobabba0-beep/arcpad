@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { applyTrade, applyTransfer, replayRange, setCursor } from '../src/apply'
+import { applyTrade, applyTransfer, getCursor, replayRange, setCursor } from '../src/apply'
 import { putDeployment } from '../src/deployment'
 import { snapshot } from '../src/snapshot'
 import { pool, resetSchema } from './setup'
@@ -10,12 +10,28 @@ import {
   CURVE,
   DEPLOYMENT,
   hash32,
+  hashFor,
   RANGE,
   RANGE_TO,
   SELL_TRANSFER,
   TOKEN,
 } from './fixtures'
 import { toSeq } from '../src/seq'
+
+interface PgError extends Error {
+  code?: string
+  constraint?: string
+  column?: string
+}
+
+async function failure(fn: () => Promise<unknown>): Promise<PgError> {
+  try {
+    await fn()
+  } catch (error) {
+    return error as PgError
+  }
+  throw new Error('beklenen hata olusmadi')
+}
 
 describe('exactly-once ingestion', () => {
   beforeEach(async () => {
@@ -29,7 +45,7 @@ describe('exactly-once ingestion', () => {
   // sayaclarla hem de veritabaninin TAM DOKUMUYLE gosteriliyor.
   // ---------------------------------------------------------------
   it('ayni araligi iki kez oynatmak ikinci seferde hicbir sey yazmaz', async () => {
-    const first = await replayRange(pool, RANGE, RANGE_TO)
+    const first = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
     expect(first).toEqual({
       launches: 1,
       trades: 3,
@@ -42,7 +58,7 @@ describe('exactly-once ingestion', () => {
 
     const after = await snapshot(pool)
 
-    const second = await replayRange(pool, RANGE, RANGE_TO)
+    const second = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
     expect(second).toEqual({
       launches: 0,
       trades: 0,
@@ -60,10 +76,10 @@ describe('exactly-once ingestion', () => {
   })
 
   it('UCUNCU oynatim da bir no-op (idempotency bir kereye mahsus degil)', async () => {
-    await replayRange(pool, RANGE, RANGE_TO)
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
     const after = await snapshot(pool)
-    await replayRange(pool, RANGE, RANGE_TO)
-    const third = await replayRange(pool, RANGE, RANGE_TO)
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
+    const third = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
     expect(third.total).toBe(0)
     expect(await snapshot(pool)).toEqual(after)
   })
@@ -73,14 +89,15 @@ describe('exactly-once ingestion', () => {
     // veriyor. Gercek ingest araligi bloklara boler ve bir tur ortasinda
     // yeniden baslayabilir. Ayni olaylar 12 ayri islemde uygulanip ayni
     // dokumun cikmasi bunu kapatiyor.
-    const whole = await replayRange(pool, RANGE, RANGE_TO)
+    const whole = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
     expect(whole.total).toBe(13)
     const oneShot = await stableSnapshot()
 
     await resetSchema()
     await putDeployment(pool, DEPLOYMENT)
     let written = 0
-    for (const e of RANGE) written += (await replayRange(pool, [e], RANGE_TO)).total
+    for (const e of RANGE)
+      written += (await replayRange(pool, [e], RANGE_TO, hashFor(RANGE_TO))).total
     // Imlec YALNIZCA ilk parcada hareket eder; sonraki 11 kez ayni degere
     // yazmak bir no-op'tur.
     expect(written).toBe(13)
@@ -92,23 +109,23 @@ describe('exactly-once ingestion', () => {
     // Bir yeniden baslatma imleci geriye alirsa (ya da bir tur iki kez
     // islenirse) araliklar ortusur. Ilk yedi olay, sonra HEPSI.
     const head = RANGE.slice(0, 7)
-    const a = await replayRange(pool, head, RANGE_TO - 2n)
+    const a = await replayRange(pool, head, RANGE_TO - 2n, hashFor(RANGE_TO - 2n))
     expect(a.total).toBe(8) // 7 olay + imlec
 
-    const b = await replayRange(pool, RANGE, RANGE_TO)
+    const b = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
     // Yalnizca yeni bes olay + imlec.
     expect(b.total).toBe(6)
 
     await resetSchema()
     await putDeployment(pool, DEPLOYMENT)
-    const clean = await replayRange(pool, RANGE, RANGE_TO)
+    const clean = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
     expect(clean.total).toBe(13)
     const cleanSnap = await stableSnapshot()
 
     await resetSchema()
     await putDeployment(pool, DEPLOYMENT)
-    await replayRange(pool, head, RANGE_TO - 2n)
-    await replayRange(pool, RANGE, RANGE_TO)
+    await replayRange(pool, head, RANGE_TO - 2n, hashFor(RANGE_TO - 2n))
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
     // Ustuste binen iki gecis, tek temiz gecisle AYNI veritabanini birakir.
     expect(await stableSnapshot()).toEqual(cleanSnap)
   })
@@ -117,7 +134,7 @@ describe('exactly-once ingestion', () => {
   // ARTIMLI GUNCELLEMENIN neden ayri bir kanit istedigi
   // ---------------------------------------------------------------
   it('holders DELTA tasir: ikinci uygulama bakiyeyi ikiye KATLAMAZ', async () => {
-    await replayRange(pool, RANGE, RANGE_TO)
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
     const before = await balance(ALICE)
     expect(before).toBeGreaterThan(0n)
 
@@ -131,7 +148,7 @@ describe('exactly-once ingestion', () => {
     // NEGATIF KONTROL. Yukaridaki testin gectigi sebep "defter satiri zaten
     // vardi" olmali. Defter satirini kaldirinca AYNI cagri bu kez YAZMALI --
     // yoksa idempotency baska, adi konmamis bir sebepten geliyor demektir.
-    await replayRange(pool, RANGE, RANGE_TO)
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
     const before = await balance(ALICE)
 
     await pool.query('DELETE FROM token_transfers WHERE event_seq = $1', [
@@ -144,14 +161,14 @@ describe('exactly-once ingestion', () => {
   })
 
   it('fee_balances de artimlidir ve ayni sekilde korunur', async () => {
-    await replayRange(pool, RANGE, RANGE_TO)
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
     const { rows } = await pool.query<{ deposited_total_wei: string; claimable_wei: string }>(
       'SELECT deposited_total_wei, claimable_wei FROM fee_balances ORDER BY recipient',
     )
     expect(rows).toHaveLength(2)
     const before = JSON.stringify(rows)
 
-    await replayRange(pool, RANGE, RANGE_TO)
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
     const { rows: after } = await pool.query(
       'SELECT deposited_total_wei, claimable_wei FROM fee_balances ORDER BY recipient',
     )
@@ -162,7 +179,7 @@ describe('exactly-once ingestion', () => {
   // SIRA MUHAFIZI: `ins` DEGIL, `last_seq` isini yapiyor mu?
   // ---------------------------------------------------------------
   it('hic gorulmemis ESKI bir trade YENI curve durumunu ezmez', async () => {
-    await replayRange(pool, RANGE, RANGE_TO)
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
     const stateBefore = await curveState()
 
     // Daha ONCEKI bir blokta, HENUZ YAZILMAMIS bir islem. `ins` onu KABUL
@@ -192,12 +209,67 @@ describe('exactly-once ingestion', () => {
   })
 
   it('imlec geri gitmez', async () => {
-    await replayRange(pool, RANGE, RANGE_TO)
-    expect(await setCursor(pool, RANGE_TO - 100n)).toBe(0)
-    expect(await setCursor(pool, RANGE_TO)).toBe(0)
-    expect(await setCursor(pool, RANGE_TO + 1n)).toBe(1)
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
+    expect(await setCursor(pool, RANGE_TO - 100n, hashFor(RANGE_TO - 100n))).toBe(0)
+    expect(await setCursor(pool, RANGE_TO, hashFor(RANGE_TO))).toBe(0)
+    expect(await setCursor(pool, RANGE_TO + 1n, hashFor(RANGE_TO + 1n))).toBe(1)
     const { rows } = await pool.query<{ last_block: string }>('SELECT last_block FROM sync_state')
     expect(rows[0]?.last_block).toBe((RANGE_TO + 1n).toString())
+  })
+
+  // ---------------------------------------------------------------
+  // REORG TUTULMASI: imlec BLOK HASH'INI de tasir.
+  //
+  // Keeper `launchCount()`u biriktirdigi `Launched` loglariyla
+  // karsilastiriyor; reorg'la disari dusmus bir kayit o kumeyi FAZLA
+  // saydirir. Muhafiz `indexer/src/cursor.ts`teki `assertContinuous`, ve
+  // besledigi deger BURADA saklanir.
+  // ---------------------------------------------------------------
+  it('imlec blok hash ini de tasir ve ileri giderken onu gunceller', async () => {
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
+    expect(await getCursor(pool)).toEqual({
+      lastBlock: RANGE_TO,
+      lastBlockHash: hashFor(RANGE_TO),
+    })
+
+    // Imlec ilerlerse hash da ilerler -- ikisi ATOMIK olarak birlikte yazilir,
+    // yoksa muhafiz bir tur boyunca ESKI zincire karsi kontrol yapardi.
+    expect(await setCursor(pool, RANGE_TO + 5n, hashFor(RANGE_TO + 5n))).toBe(1)
+    expect(await getCursor(pool)).toEqual({
+      lastBlock: RANGE_TO + 5n,
+      lastBlockHash: hashFor(RANGE_TO + 5n),
+    })
+
+    // Geri giden bir yazim hic olmaz, yani hash de geri gitmez.
+    expect(await setCursor(pool, RANGE_TO, hashFor(RANGE_TO))).toBe(0)
+    expect((await getCursor(pool))?.lastBlockHash).toBe(hashFor(RANGE_TO + 5n))
+  })
+
+  it('imlec hash siz yazilamaz ve bicimi zorlanir', async () => {
+    // Muhafizin besleyicisi NOT NULL: hash'siz bir imlec, bir sonraki turda
+    // karsilastiracak bir sey OLMAMASI demektir ve o sessiz bir bosluktur.
+    const e1 = await failure(() =>
+      pool.query('INSERT INTO sync_state (id, last_block) VALUES (1, 5)'),
+    )
+    expect(e1.code).toBe('23502')
+    expect(e1.column).toBe('last_block_hash')
+
+    const e2 = await failure(() => setCursor(pool, 5n, '0xnothex'))
+    expect(e2).toBeInstanceOf(RangeError)
+
+    const e3 = await failure(() =>
+      pool.query('INSERT INTO sync_state (id, last_block, last_block_hash) VALUES (1, 5, $1)', [
+        '0xABCDEF',
+      ]),
+    )
+    expect(e3.code).toBe('23514')
+    expect(e3.constraint).toBe('sync_state_last_block_hash_check')
+  })
+
+  it('cursor okumasi bos veritabaninda null doner (ilk kosu)', async () => {
+    // `assertContinuous`in `null` dali -- yani "uzerine insa edilmis bir sey
+    // yok" durumu -- gercekten ulasilabilir; testte uydurulmus degil.
+    expect(await getCursor(pool)).toBeNull()
   })
 
   it('aralik ya butunuyle girer ya da hic girmez', async () => {
@@ -210,7 +282,7 @@ describe('exactly-once ingestion', () => {
     // UPDATE'tir ve eslesmeyen WHERE sifir satir gunceller. Testin cakmasi
     // bunu gosterdi.
     const poisoned = [...RANGE, { ...SELL_TRANSFER, eventSeq: toSeq(99_000_000n, 0), token: BOB }]
-    await expect(replayRange(pool, poisoned, RANGE_TO)).rejects.toThrow(
+    await expect(replayRange(pool, poisoned, RANGE_TO, hashFor(RANGE_TO))).rejects.toThrow(
       /token_transfers_token_fkey/,
     )
 

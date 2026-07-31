@@ -4,7 +4,7 @@ import { replayRange } from '../src/apply'
 import type { PoolClient } from '../src/pool'
 import { toSeq } from '../src/seq'
 import { pool, resetSchema } from './setup'
-import { addr, ALICE, CURVE, DEPLOYMENT, hash32, RANGE, RANGE_TO, TOKEN } from './fixtures'
+import { addr, ALICE, CURVE, DEPLOYMENT, hash32, hashFor, RANGE, RANGE_TO, TOKEN } from './fixtures'
 
 interface PgError extends Error {
   code?: string
@@ -24,7 +24,7 @@ describe('kisitlar gercekten bagli mi', () => {
   beforeAll(async () => {
     await resetSchema()
     await putDeployment(pool, DEPLOYMENT)
-    await replayRange(pool, RANGE, RANGE_TO)
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
     // Elle inceleme tablosunun da bir tohum satiri olsun ki asagidaki tarama
     // onu de kapsayabilsin.
     await pool.query(

@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { PublicClient } from 'viem'
-import { ARC_GETLOGS_MAX_RANGE, finalizedHead, nextRange } from '../src/cursor'
+import {
+  ARC_GETLOGS_MAX_RANGE,
+  assertContinuous,
+  finalizedHead,
+  nextRange,
+  ReorgDetected,
+} from '../src/cursor'
 
 describe('nextRange', () => {
   it('imlec head ile ayniysa islenecek bir sey yoktur', () => {
@@ -147,6 +153,73 @@ describe('nextRange', () => {
     expect(seen[0]).toBe(1n)
     expect(seen[4999]).toBe(5000n)
     expect(new Set(seen).size).toBe(5000)
+  })
+})
+
+describe('assertContinuous -- reorg tutulmasini onleyen muhafiz', () => {
+  const H = (n: number) => `0x${n.toString(16).padStart(64, '0')}`
+
+  it('ilk kosuda karsilastiracak bir sey yoktur', () => {
+    expect(() => assertContinuous(0n, null, H(0xdead))).not.toThrow()
+  })
+
+  it('bag saglamsa gecer', () => {
+    expect(() => assertContinuous(100n, H(0xaa), H(0xaa))).not.toThrow()
+  })
+
+  it('buyuk/kucuk harf farki bir reorg DEGILDIR', () => {
+    // RPC'ler hash'i checksum'siz ama buyuk harfli dondurebilir; bunu reorg
+    // saymak her turu durdururdu.
+    expect(() => assertContinuous(100n, H(0xab), H(0xab).toUpperCase())).not.toThrow()
+  })
+
+  it('bag kopmussa DURUR ve hangi bloktan bahsettigini soyler', () => {
+    let caught: unknown
+    try {
+      assertContinuous(54_325_469n, H(0xaa), H(0xbb))
+    } catch (error) {
+      caught = error
+    }
+    expect(caught).toBeInstanceOf(ReorgDetected)
+    const e = caught as ReorgDetected
+    // Ayirt edilebilir bir tip: gecici bir RPC hatasi yeniden denenir, bu
+    // denenmez.
+    expect(e.name).toBe('ReorgDetected')
+    expect(e.cursor).toBe(54_325_469n)
+    expect(e.expectedParentHash).toBe(H(0xaa))
+    expect(e.actualParentHash).toBe(H(0xbb))
+    // Mesaj, bakan kisiye SONRAKI blogun numarasini verir.
+    expect(e.message).toContain('54325470')
+  })
+
+  it('KENDINI ONARMAZ -- bu bir iddia, bir geri sarma degil', () => {
+    // Muhafizin sozlesmesi: ya sessizce gecer ya da firlatir. Ucuncu bir
+    // davranisi -- imleci geri almak, satir silmek -- YOKTUR ve olmamalidir:
+    // reorg uretmeyen bir zincirde o yolu hicbir sey egzersiz etmez.
+    expect(assertContinuous(1n, H(1), H(1))).toBeUndefined()
+    expect(() => assertContinuous(1n, H(1), H(2))).toThrow(ReorgDetected)
+  })
+
+  // Tek nokta degil AILE: imlecten farkli derinliklerde kopan baglar.
+  it('bagin koptugu HER durumda durur, saglam oldugu HER durumda gecer', () => {
+    let broken = 0
+    let intact = 0
+    for (let c = 0n; c < 40n; c++) {
+      for (let stored = 0; stored < 5; stored++) {
+        for (let seen = 0; seen < 5; seen++) {
+          const call = () => assertContinuous(c, H(stored), H(seen))
+          if (stored === seen) {
+            intact++
+            expect(call).not.toThrow()
+          } else {
+            broken++
+            expect(call).toThrow(ReorgDetected)
+          }
+        }
+      }
+    }
+    expect(intact).toBe(200)
+    expect(broken).toBe(800)
   })
 })
 

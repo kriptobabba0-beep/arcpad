@@ -7,6 +7,7 @@ export {
   applyTransfer,
   type CompletedEvent,
   type FeeLedgerEvent,
+  getCursor,
   type IngestEvent,
   type LaunchEvent,
   replayRange,
