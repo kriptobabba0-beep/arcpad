@@ -1,0 +1,23 @@
+{
+  "chainId": 5042002,
+  "chainKey": "arc-testnet",
+  "profile": "testnet",
+  "virtualTokenReserves": "1073000000000000000000000000",
+  "virtualQuoteReserves": "4292000000000000000",
+  "saleSupply": "793100000000000000000000000",
+  "totalSupply": "1000000000000000000000000000",
+  "launchFactory": "0x0d75a4fFb8CD6dB4237557E9519591b94d6Ab439",
+  "feeEscrow": "0xEEd4431eAD3E27F16D97f677A9C4c1a963DF8dC6",
+  "governor": "0x970534698e4592932F31892759147f79EB0D2C22",
+  "protocolTreasury": "0xebBeCfDA308EA307e173C6eC19a9C48F53d4B10c",
+  "graduationTarget": "0x0000000000000000000000000000000000000000",
+  "feeEscrowBlock": "54661437",
+  "launchFactoryBlock": "54661438",
+  "startBlock": "54661437",
+  "deployTx": "0xbbba50682cac23f6b9f8dc842eb6e92e47fe9f7a602329c86f7b4926619186e9",
+  "escrowInitcodeHash": "0xd99a4f910483ee8e40e4898fee5ef732462b55888427cd00c89697b0bff435e8",
+  "factoryInitcodeHash": "0xf3a52a425a912f1fc8942d9ef3c165ddfc06fc8966fe2ea00ffde726dd7c6405",
+  "commit": "14954dc995f455708f0157c297cc95688a730004",
+  "smokeToken": "0x1bd93613a7BC470a739D9615cdc65e535d958fab",
+  "smokeCurve": "0x7938BE340A14A12f94a83AEa246d9d2566324c9C"
+}

@@ -91,6 +91,7 @@ type Receipt = { escrow: Deployed; factory: Deployed }
 type ForgeTx = {
   hash: Hex
   transactionType: string
+  contractAddress?: string | null
   transaction: { to?: string | null; input?: Hex; data?: Hex }
   additionalContracts?: Array<{ transactionType: string; address: string; initCode?: Hex }>
 }
@@ -138,11 +139,25 @@ export function readBroadcast(path: string): Receipt {
     const initcodeHash = keccak256(initcode)
     const derived = getCreate2Address({ from: CREATE2_FACTORY, salt, bytecodeHash: initcodeHash })
 
-    const created = tx.additionalContracts?.find((c) => c.transactionType === 'CREATE2')
-    if (!created) throw new Error(`broadcast: no CREATE2 result recorded for ${tx.hash}`)
-    if (getAddress(created.address) !== derived) {
+    // FORGE IKI SEKILDEN BIRINI YAZAR VE BUNU OLCEREK OGRENDIK. Sentetik
+    // fixture `transactionType: "CALL"` + `additionalContracts[0].address`
+    // varsayiyordu; GERCEK yayin makbuzu `transactionType: "CREATE2"` yazar,
+    // yaratilan adresi `transactions[].contractAddress`e koyar ve
+    // `additionalContracts`i BOS birakir. Fixture gercekten daha comertti --
+    // tam olarak bu deponun tekrar tekrar yakaladigi sinif -- ve jenerator
+    // ilk gercek makbuzda "no CREATE2 result recorded" ile durdu.
+    //
+    // ASIL DOGRULAMA ZATEN TURETMEDIR: CREATE2 deterministiktir, yani
+    // `derived` makbuzun ne dedigine BAGLI DEGILDIR. Makbuzun kaydettigi adres
+    // bir CAPRAZ KONTROLDUR; varsa uyusmak ZORUNDADIR, yoksa turetme tek
+    // basina yeterlidir ve zincir okumalari (escrow/governor/...) yanlis bir
+    // adreste zaten patlar.
+    const recorded =
+      tx.contractAddress ??
+      tx.additionalContracts?.find((c) => c.transactionType === 'CREATE2')?.address
+    if (recorded !== undefined && recorded !== null && getAddress(recorded) !== derived) {
       throw new Error(
-        `broadcast: receipt says ${getAddress(created.address)} was created, but ` +
+        `broadcast: receipt says ${getAddress(recorded)} was created, but ` +
           `CREATE2(${CREATE2_FACTORY}, ${salt}, ${initcodeHash}) derives ${derived}`,
       )
     }
@@ -256,18 +271,34 @@ async function readFromChain(
   token: Address | null,
 ): Promise<ChainReads> {
   const client = createPublicClient({ transport: http(rpcUrl) })
-  const read = <T>(functionName: string) =>
-    client.readContract({ address: factory, abi: FACTORY_ABI, functionName }) as Promise<T>
+  // ARC TESTNET RPC'SI DAR BIR HIZ SINIRI UYGULUYOR ve bu olculdu: once
+  // `Promise.all` ile yedi es zamanli okuma, sonra ARDISIK okumalar bile
+  // "request limit reached" ile dondu. Okumalar arasina kucuk bir bekleme
+  // konuyor. Bu betik deployment basina BIR KEZ calisir; birkac saniye
+  // hicbir sey degil, yarim yazilmis bir adres defteri ise her seydir.
+  const pause = () => new Promise((r) => setTimeout(r, 1500))
+  const read = async <T>(functionName: string): Promise<T> => {
+    const out = (await client.readContract({
+      address: factory,
+      abi: FACTORY_ABI,
+      functionName,
+    })) as T
+    await pause()
+    return out
+  }
 
-  const [escrow, governor, protocolTreasury, graduationTarget, t, v, s] = await Promise.all([
-    read<Address>('escrow'),
-    read<Address>('governor'),
-    read<Address>('protocolTreasury'),
-    read<Address>('graduationTarget'),
-    read<bigint>('VIRTUAL_TOKEN_RESERVES'),
-    read<bigint>('VIRTUAL_QUOTE_RESERVES'),
-    read<bigint>('SALE_SUPPLY'),
-  ])
+  // SIRAYLA, `Promise.all` ILE DEGIL. Yedi okumayi ayni anda gondermek Arc
+  // testnet RPC'sinde "request limit reached" ile doner (olculdu: jenerator
+  // ilk gercek kosuda VIRTUAL_QUOTE_RESERVES uzerinde durdu). Bu betik saniyede
+  // bir kez degil, deployment basina bir kez calisir; paralellik hicbir sey
+  // kazandirmiyor, tek bir hiz sinirina carpmak ise her seyi kaybettiriyor.
+  const escrow = await read<Address>('escrow')
+  const governor = await read<Address>('governor')
+  const protocolTreasury = await read<Address>('protocolTreasury')
+  const graduationTarget = await read<Address>('graduationTarget')
+  const t = await read<bigint>('VIRTUAL_TOKEN_RESERVES')
+  const v = await read<bigint>('VIRTUAL_QUOTE_RESERVES')
+  const s = await read<bigint>('SALE_SUPPLY')
 
   // `totalSupply` bir SABITTEN KOPYALANMAZ; deployment'in gercekten mint
   // ettigi bir token'dan okunur. Boyle bir token henuz yoksa (Task 7 oncesi)
