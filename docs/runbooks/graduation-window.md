@@ -53,6 +53,8 @@ The watcher polls every `KEEPER_POLL_INTERVAL_MS` (default 5s) and reads **both 
 
 **The mismatch has two directions and the page names which one you have.** `UNDER-reporting` means the log path is missing launches and every exposure figure is a **LOWER BOUND**. `OVER-reporting` means the cursor is holding a curve the chain no longer has — a reorged-out `Launched`, or a `startBlock` that does not belong to this chain. The cursor only ever adds, so that state is **sticky**: it pages every poll and never emits a heartbeat until someone clears it. The remedy is in §6.
 
+> **The watcher DETECTS reorg-driven over-count; it does not PREVENT it, and that is deliberate.** Removing a reorged-out entry needs per-curve block numbers and a confirmation depth — i.e. a small reorg-aware indexer. Phase 3 replaces this cursor with a `@arcpad/db` query, and reorg handling belongs there once, for every event type, rather than being built twice and deleted here. What the keeper owes you in the meantime is that the condition is **loud, correctly labelled, and self-describing** — which the `OVER-reporting` page is. It is never silent, and it never under-states the amount at risk.
+
 ### The window arithmetic is only as good as the clock
 
 Both `phase` and `expiresAt` come from **chain time** and from the delay the factory reports. Neither is taken on trust:

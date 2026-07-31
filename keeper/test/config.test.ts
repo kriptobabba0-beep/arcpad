@@ -108,6 +108,18 @@ describe('loadWatcherConfig', () => {
     expect(config.alertRepeatMs).toBe(900_000)
   })
 
+  // Uretimde varsayilan (contracts/deploy) dogru olandir. Bu knob staging
+  // defterlerine karsi kosmak ve izleyiciyi GERCEK bir surec olarak sahte bir
+  // zincire karsi kirabilmek icin var -- loop-level tatbikat onu kullanir.
+  it('defter dizini env uzerinden verilebilir, ve arguman env i EZER', () => {
+    expect(loadWatcherConfig({ ...base, KEEPER_ADDRESS_BOOK_DIR: BOOK_DIR }).startBlock).toBe(1n)
+    expect(() => loadWatcherConfig({ ...base, KEEPER_ADDRESS_BOOK_DIR: 'nope' })).toThrow(/file/)
+    // Arguman verildiginde env yok sayilir.
+    expect(loadWatcherConfig({ ...base, KEEPER_ADDRESS_BOOK_DIR: 'nope' }, BOOK_DIR).chainKey).toBe(
+      'local-rehearsal',
+    )
+  })
+
   it('bozuk tekrar araligi reddedilir', () => {
     expect(() => loadWatcherConfig({ ...base, KEEPER_ALERT_REPEAT_MS: 'soon' }, BOOK_DIR)).toThrow(
       /KEEPER_ALERT_REPEAT_MS/,

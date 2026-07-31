@@ -109,7 +109,13 @@ export function loadWatcherConfig(env: NodeJS.ProcessEnv, bookDir?: string): Wat
     throw new Error(`ARC_CHAIN_ID must be an integer, got "${env['ARC_CHAIN_ID'] ?? ''}"`)
   }
 
-  const book = bookDir === undefined ? loadAddressBook(chainId) : loadAddressBook(chainId, bookDir)
+  // Defterin dizini env'den de verilebilir. Uretimde varsayilan
+  // (`contracts/deploy`) dogru olandir; bu knob staging defterlerine karsi
+  // kosmak ve izleyiciyi GERCEK bir surec olarak sahte bir zincire karsi
+  // kirabilmek icindir -- bkz. docs/runbooks/graduation-window.md, tatbikat.
+  // Argumanla verilen dizin env'i EZER, cunku onu yalnizca testler gecer.
+  const dir = bookDir ?? env['KEEPER_ADDRESS_BOOK_DIR']
+  const book = dir === undefined ? loadAddressBook(chainId) : loadAddressBook(chainId, dir)
   const factory = book.launchFactory
   const startBlock = book.startBlock
   const chainKey = book.chainKey
