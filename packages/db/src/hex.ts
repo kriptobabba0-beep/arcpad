@@ -75,3 +75,37 @@ const REPLACEMENT = '\uFFFD'
 export function pgSafeText(value: string): string {
   return value.replace(PG_TEXT_HOSTILE, REPLACEMENT)
 }
+
+/**
+ * UTF-8 baytlarinin `0x` onaltilik gosterimi -- `launches.{name,symbol,uri}_hex`
+ * sutunlarinin TypeScript tarafi.
+ *
+ * NICIN VAR: `pgSafeText` COKA-BIR bir eslemedir. Zincirdeki AYRI iki isim,
+ * `a<U+0000>b` ve `a<U+FFFD>b`, ayni gosterim metnine duser. Token adresi
+ * CREATE2 ile HAM baytlardan turetildigi ve `LaunchFactory.isCanonical` tam
+ * olarak o turetmeyi yeniden hesapladigi icin, yalnizca gosterim metnini
+ * saklayan bir veritabani dusman metinli bir launch'un canonicity'sini BIR
+ * DAHA dogrulayamaz. Ham baytlar ayri bir sutunda durur ve dogrulama
+ * veritabanina bakarak yapilabilir kalir.
+ *
+ * DIKKAT -- BU FONKSIYON SON CARE: gecerli UTF-8 tasiyan bir dizge icin
+ * zincirdeki baytlari TAM olarak yeniden uretir, ama zincirdeki bayt dizisi
+ * GECERSIZ UTF-8 ise cozucu onu coktan U+FFFD yapmistir ve buradan geri
+ * alinamaz. Tek dogru kaynak logun COZULMEMIS `data` alanidir; `LaunchEvent`
+ * bu yuzden hex alanlarini ZORUNLU tutar ve turetmeyi cagirana birakir.
+ */
+export function toHexBytes(value: string): string {
+  let out = '0x'
+  for (const b of new TextEncoder().encode(value)) out += b.toString(16).padStart(2, '0')
+  return out
+}
+
+/** `toHexBytes`'in tersi. Gecersiz UTF-8 baytlari U+FFFD olur (kayipli, bilerek). */
+export function fromHexBytes(hex: string): string {
+  if (!/^0x([0-9a-f]{2})*$/.test(hex)) throw new RangeError(`fromHexBytes: hex degil: ${hex}`)
+  const body = hex.slice(2)
+  const bytes = new Uint8Array(body.length / 2)
+  for (let i = 0; i < bytes.length; i++)
+    bytes[i] = Number.parseInt(body.slice(i * 2, i * 2 + 2), 16)
+  return new TextDecoder().decode(bytes)
+}

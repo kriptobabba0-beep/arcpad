@@ -4,8 +4,17 @@
 -- `SELECT count(*)` ile DOGRULANAMAZDI -- sorgu "relation does not exist" ile
 -- patlardi ve testin gectigi sey baska bir sey olurdu).
 CREATE TABLE IF NOT EXISTS schema_migrations (
-  filename    text PRIMARY KEY,
-  applied_at  timestamptz NOT NULL DEFAULT now()
+  filename      text PRIMARY KEY,
+  applied_at    timestamptz NOT NULL DEFAULT now(),
+  -- Uygulandigi ANDAKI dosya iceriginin sha256'si. `runMigrations` uygulanmis
+  -- bir dosyanin icerigi DEGISTIYSE calismayi reddeder.
+  --
+  -- NICIN VAR: bu dosyalar bir kez uygulandiktan sonra duzenlenebiliyor ve
+  -- duzenleme SESSIZ kaliyordu -- defterde ad var, icerik baska. Bir gozden
+  -- gecirenin kendi kumesinde 002'nin eski halini uygulamis olmasi yeterliydi:
+  -- sonraki kosu hicbir sey yapmadan yesil doner ve o veritabani semanin
+  -- ESKI halini tasimaya devam eder. Ozet, bunu gurultulu bir hataya cevirir.
+  checksum_hex  text
 );
 
 -- Bu veritabaninin HANGI dagitimi indexledigi. Tekil satir.

@@ -28,9 +28,17 @@ describe('kisitlar gercekten bagli mi', () => {
     // Elle inceleme tablosunun da bir tohum satiri olsun ki asagidaki tarama
     // onu de kapsayabilsin.
     await pool.query(
-      `INSERT INTO rejected_launches (created_seq, token, curve, reason, expected, raw)
-       VALUES ($1, $2, $3, 'not_canonical', $4, '{"topics":[]}'::jsonb)`,
-      [toSeq(54_000_001n, 0).toString(), addr(0xbad), addr(0xbad1), addr(0x900d)],
+      `INSERT INTO rejected_launches
+         (created_seq, token, curve, reason, expected, raw_addr, raw_topics_hex, raw_data_hex)
+       VALUES ($1, $2, $3, 'not_canonical', $4, $5, $6, '0x')`,
+      [
+        toSeq(54_000_001n, 0).toString(),
+        addr(0xbad),
+        addr(0xbad1),
+        addr(0x900d),
+        addr(0xfac),
+        hash32(0x70b1),
+      ],
     )
   })
 
@@ -71,6 +79,8 @@ describe('kisitlar gercekten bagli mi', () => {
       'launches.curve',
       'launches.launch_creator',
       'launches.token',
+      'rejected_launches.expected',
+      'rejected_launches.raw_addr',
       'token_transfers.from_addr',
       'token_transfers.to_addr',
       'trades.trader',
@@ -122,52 +132,240 @@ describe('kisitlar gercekten bagli mi', () => {
       client.release()
     }
     // Tarama gercekten butun aileyi gezdi.
-    expect(checked).toHaveLength(15)
+    expect(checked).toHaveLength(17)
   })
 
   it('adres tasiyan HER sutun ya desenle ya yabanci anahtarla korunur', async () => {
     // Yukaridaki tarama YALNIZCA desenli sutunlari gorur. Adres tasiyip deseni
     // OLMAYAN sutunlar da var (`trades.token`, `curve_state.token`, ...); onlar
-    // `launches(token)`a yabanci anahtardir ve bicim garantisini oradan
-    // DEVRALIR. Bu test o devri acikca kayda geciriyor -- yoksa "desenli
-    // sutunlarin hepsi tarandi" ifadesi "adreslerin hepsi korundu" gibi
-    // okunurdu.
-    const { rows } = await pool.query<{ rel: string; col: string; kind: string }>(`
-      WITH cols AS (
-        SELECT c.relname AS rel, a.attname AS col, a.attnum, c.oid AS reloid
-        FROM pg_class c
-        JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
-        JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
-        WHERE c.relkind = 'r'
-          AND (a.attname IN ('token','curve','trader','holder','recipient','creator',
-                             'launch_creator','from_addr','to_addr','factory','escrow',
-                             'protocol_treasury'))
-      )
-      SELECT rel, col,
-        CASE
-          WHEN EXISTS (SELECT 1 FROM pg_constraint k
-                       WHERE k.conrelid = cols.reloid AND k.contype = 'c'
-                         AND cols.attnum = ANY(k.conkey)
-                         AND pg_get_constraintdef(k.oid) LIKE '%[0-9a-f]{40}%')
-            THEN 'pattern'
-          WHEN EXISTS (SELECT 1 FROM pg_constraint k
-                       WHERE k.conrelid = cols.reloid AND k.contype = 'f'
-                         AND cols.attnum = ANY(k.conkey))
-            THEN 'fkey'
-          ELSE 'UNGUARDED'
-        END AS kind
-      FROM cols ORDER BY rel, col`)
+    // `launches`'a yabanci anahtardir ve bicim garantisini oradan DEVRALIR.
+    //
+    // ADAYLAR ARTIK ELLE YAZILMIS BIR AD LISTESINDEN GELMIYOR. Onceki hali
+    // `a.attname IN ('token','curve',...)` idi ve `fee_recipient` ya da
+    // `graduation_target` gibi YENI bir adres sutunu her iki adres testine de
+    // GORUNMEZ olurdu -- yani "adreslerin hepsi korundu" ifadesinin erisimi
+    // varsayimdi. Simdi aday kumesi VERIDEN olculuyor: tohumlanmis
+    // veritabanindaki her metin sutunu okunur ve butun NULL-olmayan degerleri
+    // adres desenine uyan her sutun, adini kim koymus olursa olsun, adaydir.
+    const { rows: textCols } = await pool.query<{ rel: string; col: string }>(`
+      SELECT c.relname AS rel, a.attname AS col
+      FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+      JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+      WHERE c.relkind = 'r' AND a.atttypid = 'text'::regtype
+      ORDER BY 1, 2`)
+    expect(textCols.length).toBeGreaterThan(0)
 
-    const unguarded = rows.filter((r) => r.kind === 'UNGUARDED')
-    // `rejected_launches` TEK ISTISNADIR ve bilerek oyle: reddedilmis bir
-    // launch'un adresleri tanim geregi guvenilmezdir; onlara `launches`in
-    // desenini dayatmak kaydin var olma amacini -- elle inceleme -- yok
-    // ederdi. Istisna BURADA, ISMIYLE duruyor; sessiz olsaydi bir sonraki
-    // korumasiz sutun de fark edilmezdi.
-    expect(unguarded.map((r) => `${r.rel}.${r.col}`)).toEqual([
+    const candidates: { rel: string; col: string }[] = []
+    for (const { rel, col } of textCols) {
+      const { rows } = await pool.query<{ n: number; addressy: number }>(
+        `SELECT count(v)::int AS n,
+                count(*) FILTER (WHERE v ~ '^0x[0-9a-f]{40}$')::int AS addressy
+         FROM (SELECT "${col}" AS v FROM "${rel}") s`,
+      )
+      const r = rows[0]
+      if (r && r.n > 0 && r.n === r.addressy) candidates.push({ rel, col })
+    }
+
+    // Olcum ancak her tablonun SATIRI varsa anlamli; bos bir tablo her sutunu
+    // sessizce aday olmaktan cikarirdi. Bu, "test tesadufen bos oldugu icin
+    // gecti" arizasinin bu testteki hali.
+    const { rows: empties } = await pool.query<{ rel: string }>(`
+      SELECT c.relname AS rel FROM pg_class c
+      JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+      WHERE c.relkind = 'r' AND c.reltuples = 0 AND NOT EXISTS (
+        SELECT 1 FROM pg_stat_user_tables s WHERE s.relid = c.oid AND s.n_live_tup > 0)
+      ORDER BY 1`)
+    const rowCounts = await Promise.all(
+      empties.map(async ({ rel }) => {
+        const { rows } = await pool.query<{ n: number }>(`SELECT count(*)::int n FROM "${rel}"`)
+        return { rel, n: rows[0]?.n ?? 0 }
+      }),
+    )
+    expect(rowCounts.filter((t) => t.n === 0)).toEqual([])
+
+    const kinds = await Promise.all(
+      candidates.map(async ({ rel, col }) => {
+        const { rows } = await pool.query<{ kind: string }>(
+          `SELECT CASE
+             WHEN EXISTS (SELECT 1 FROM pg_constraint k
+                          WHERE k.conrelid = $1::regclass AND k.contype = 'c'
+                            AND (SELECT attnum FROM pg_attribute
+                                 WHERE attrelid = $1::regclass AND attname = $2) = ANY(k.conkey)
+                            AND pg_get_constraintdef(k.oid) LIKE '%[0-9a-f]{40}%')
+               THEN 'pattern'
+             WHEN EXISTS (SELECT 1 FROM pg_constraint k
+                          WHERE k.conrelid = $1::regclass AND k.contype = 'f'
+                            AND (SELECT attnum FROM pg_attribute
+                                 WHERE attrelid = $1::regclass AND attname = $2) = ANY(k.conkey))
+               THEN 'fkey'
+             ELSE 'UNGUARDED' END AS kind`,
+          [rel, col],
+        )
+        return { name: `${rel}.${col}`, kind: rows[0]?.kind ?? 'UNGUARDED' }
+      }),
+    )
+
+    // Aday kumesinin kendisi de sabitlenir: sessizce KUCULMESI, "hepsi
+    // korunuyor" ifadesini bosaltmanin en kolay yolu olurdu.
+    expect(kinds.map((k) => k.name)).toEqual([
+      'creator_history.creator',
+      'creator_history.token',
+      'curve_state.curve',
+      'curve_state.token',
+      'deployment.escrow',
+      'deployment.factory',
+      'deployment.protocol_treasury',
+      'fee_balances.recipient',
+      'fee_events.from_addr',
+      'fee_events.recipient',
+      'holders.holder',
+      'holders.token',
+      'launches.curve',
+      'launches.launch_creator',
+      'launches.token',
+      'rejected_launches.curve',
+      'rejected_launches.expected',
+      'rejected_launches.raw_addr',
+      'rejected_launches.token',
+      'token_stats.token',
+      'token_transfers.from_addr',
+      'token_transfers.to_addr',
+      'token_transfers.token',
+      'trades.curve',
+      'trades.token',
+      'trades.trader',
+    ])
+
+    // `rejected_launches.{token,curve}` TEK ISTISNADIR ve bilerek oyle:
+    // reddedilmis bir launch'un adresleri tanim geregi guvenilmezdir; onlara
+    // `launches`'in desenini dayatmak kaydin var olma amacini -- elle inceleme
+    // -- yok ederdi. Istisna BURADA, ISMIYLE duruyor; sessiz olsaydi bir
+    // sonraki korumasiz sutun de fark edilmezdi.
+    expect(kinds.filter((k) => k.kind === 'UNGUARDED').map((k) => k.name)).toEqual([
       'rejected_launches.curve',
       'rejected_launches.token',
     ])
+  })
+
+  // ---------------------------------------------------------------
+  // SISTEM ADRESI BIR LAUNCH KIMLIGI OLAMAZ
+  // ---------------------------------------------------------------
+  it('native USDC adresi `launches`e GIREMEZ (EIP-7708 duvarini KOSULSUZ yapan sey)', async () => {
+    // Gozden gecirme bunu calistirarak gosterdi: desen kontrolu 0x3600...0000'i
+    // kabul ediyordu ve satir temiz giriyordu. O halde duvarin gucu tamamen
+    // Task 6'nin -- HENUZ YAZILMAMIS -- provenance dogrulamasina baglıydi.
+    for (const bad of [
+      '0x3600000000000000000000000000000000000000',
+      '0x0000000000000000000000000000000000000000',
+    ]) {
+      const e = await failure(() =>
+        pool.query(
+          `INSERT INTO launches
+             (token, curve, launch_creator, name, symbol, uri,
+              name_hex, symbol_hex, uri_hex, salt, created_seq, created_at, tx_hash)
+           VALUES ($1, $2, $2, 'x', 'X', '', '0x78', '0x58', '0x', $3, 99, now(), $4)`,
+          [bad, addr(0xdd), hash32(0x1), hash32(0x2)],
+        ),
+      )
+      expect(e.code, bad).toBe('23514')
+      expect(e.constraint, bad).toBe('launches_token_is_not_a_system_address')
+    }
+  })
+
+  it('sistem adresi bir CURVE de olamaz', async () => {
+    const e = await failure(() =>
+      pool.query(
+        `INSERT INTO launches
+           (token, curve, launch_creator, name, symbol, uri,
+            name_hex, symbol_hex, uri_hex, salt, created_seq, created_at, tx_hash)
+         VALUES ($1, $2, $1, 'x', 'X', '', '0x78', '0x58', '0x', $3, 98, now(), $4)`,
+        [addr(0xdd), '0x3600000000000000000000000000000000000000', hash32(0x1), hash32(0x2)],
+      ),
+    )
+    expect(e.code).toBe('23514')
+    expect(e.constraint).toBe('launches_curve_is_not_a_system_address')
+  })
+
+  it('curve_state.curve `launches(curve)`e baglidir (sahte curve turetilemez)', async () => {
+    // Onceden yalnizca desen kontrolu vardi, yani `launches`'takinden BASKA bir
+    // curve adresi tasiyan bir curve_state satiri mesruydu ve `trades.curve`
+    // ondan tureyerek butun islem gecmisini sahte bir curve'e baglayabilirdi.
+    //
+    // TOKEN'in ZATEN bir curve_state satiri var ve `token` UNIQUE, yani onu
+    // kullanmak 23505 verirdi ve test YANLIS SEBEPTEN gecerdi (ilk kosuda tam
+    // olarak bu oldu). Bu yuzden curve_state'i OLMAYAN taze bir launch
+    // uretiliyor: patlayan tek sey yabanci anahtar olabilsin.
+    await pool.query(
+      `INSERT INTO launches
+         (token, curve, launch_creator, name, symbol, uri,
+          name_hex, symbol_hex, uri_hex, salt, created_seq, created_at, tx_hash)
+       VALUES ($1, $2, $2, 'orphan', 'ORP', '', '0x6f', '0x4f', '0x', $3, 12345, now(), $4)`,
+      [addr(0x7f01), addr(0xcf01), hash32(0x5f01), hash32(0x6f01)],
+    )
+
+    const e = await failure(() =>
+      pool.query(
+        `INSERT INTO curve_state
+           (curve, token, virtual_token_reserves_tok, virtual_quote_reserves_wei,
+            real_token_reserves_tok, real_quote_reserves_wei, last_seq)
+         VALUES ($1, $2, 1, 1, 1, 1, 1)`,
+        [addr(0xfeed), addr(0x7f01)],
+      ),
+    )
+    expect(e.code).toBe('23503')
+    expect(e.constraint).toBe('curve_state_curve_fkey')
+
+    // POZITIF KONTROL: ayni satir DOGRU curve ile gecer, yani reddin sebebi
+    // gercekten yabanci anahtardi.
+    await pool.query(
+      `INSERT INTO curve_state
+         (curve, token, virtual_token_reserves_tok, virtual_quote_reserves_wei,
+          real_token_reserves_tok, real_quote_reserves_wei, last_seq)
+       VALUES ($1, $2, 1, 1, 1, 1, 1)`,
+      [addr(0xcf01), addr(0x7f01)],
+    )
+  })
+
+  it('ham log sutunlari metin TASIYAMAZ (U+0000 kamasi yapisal olarak kapali)', async () => {
+    // `raw` eskiden `jsonb` idi ve `launches`'ta kapatilan kamayi bir tablo
+    // oteye tasiyordu. Simdi tabloda cozulmus metnin konabilecegi bir yer yok:
+    // uc sutun da onaltilik desenle kisitli.
+    for (const [col, value] of [
+      ['raw_addr', 'not-an-address'],
+      ['raw_topics_hex', '0xzz'],
+      ['raw_data_hex', 'plain text'],
+    ] as const) {
+      const e = await failure(() =>
+        pool.query(
+          `INSERT INTO rejected_launches
+             (created_seq, token, curve, reason, expected, raw_addr, raw_topics_hex, raw_data_hex)
+           VALUES (77, $1, $1, 'r', $1, $2, $3, $4)`,
+          [
+            addr(0x1),
+            col === 'raw_addr' ? value : addr(0x2),
+            col === 'raw_topics_hex' ? value : '',
+            col === 'raw_data_hex' ? value : '0x',
+          ],
+        ),
+      )
+      expect(e.code, col).toBe('23514')
+      expect(e.constraint, col).toBe(`rejected_launches_${col}_check`)
+    }
+  })
+
+  it('bes topic li bir log reddedilir (EVM tavani dort)', async () => {
+    const five = Array.from({ length: 5 }, (_, i) => hash32(i)).join(',')
+    const e = await failure(() =>
+      pool.query(
+        `INSERT INTO rejected_launches
+           (created_seq, token, curve, reason, expected, raw_addr, raw_topics_hex, raw_data_hex)
+         VALUES (76, $1, $1, 'r', $1, $1, $2, '0x')`,
+        [addr(0x1), five],
+      ),
+    )
+    expect(e.code).toBe('23514')
+    expect(e.constraint).toBe('rejected_launches_raw_topics_hex_check')
   })
 
   // ---------------------------------------------------------------

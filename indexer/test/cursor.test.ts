@@ -46,6 +46,31 @@ describe('nextRange', () => {
     expect(nextRange(100n, 101n, 500n)).toEqual({ from: 101n, to: 101n })
   })
 
+  // Gozden geciren bunu KODU OKUYARAK isaretledi, calistirmadi. Burada
+  // calistiriliyor: eski govdede nextRange(-5n, 10n, 5n) `{from: -4n, to: 0n}`
+  // donduruyordu -- sifirin altinda bir blok numarasi.
+  it('negatif cursor u reddeder', () => {
+    expect(() => nextRange(-5n, 10n, 5n)).toThrow(RangeError)
+    expect(() => nextRange(-1n, 10n, 5n)).toThrow(/cursor negatif/)
+    // Sinirin dogru tarafi: sifir MESRU bir imlectir (henuz hicbir sey
+    // islenmedi) ve genesis'ten sonraki bloktan baslar.
+    expect(nextRange(0n, 3n, 5n)).toEqual({ from: 1n, to: 3n })
+  })
+
+  it('negatif cursor lar ailesinin TAMAMI reddedilir', () => {
+    // Tek nokta degil aile: -1..-50, uc ayri head ve uc ayri maxSpan ile.
+    let cases = 0
+    for (let c = -1n; c >= -50n; c--) {
+      for (const head of [-10n, 0n, 100n]) {
+        for (const span of [1n, 7n, 10_000n]) {
+          cases++
+          expect(() => nextRange(c, head, span)).toThrow(RangeError)
+        }
+      }
+    }
+    expect(cases).toBe(450)
+  })
+
   it('gecerli maxSpan araliginin IKI ucunu da sabitler', () => {
     // Alt uc: 1. Ust uc: ARC_GETLOGS_MAX_RANGE. Ikisi de gecmeli; bir adim
     // disarilari yukaridaki iki test tarafindan reddediliyor.
@@ -122,6 +147,24 @@ describe('nextRange', () => {
     expect(seen[0]).toBe(1n)
     expect(seen[4999]).toBe(5000n)
     expect(new Set(seen).size).toBe(5000)
+  })
+})
+
+describe('ARC_GETLOGS_MAX_RANGE -- iki kaynak riski', () => {
+  // Sabitin normal evi `@arcpad/shared` (plan Task 1). O paket baska bir ajanin
+  // elinde oldugu icin deger burada, bu taskin sinirinda tanimlandi. Task 1
+  // indi ve `@arcpad/shared` sabiti HALA yayinlamiyor -- yani sapma mesru
+  // kaldi. Ama shared bir gun onu yayinlarsa IKI KAYNAK olur ve ikisi sessizce
+  // ayrilabilir.
+  //
+  // Bu test o gunu bir HATAYA cevirir: kirildiginde yapilacak sey belli --
+  // `cursor.ts`teki yerel `const`i `export { ARC_GETLOGS_MAX_RANGE } from
+  // '@arcpad/shared'` ile degistirmek ve bu testi silmek.
+  it('shared bu sabiti HENUZ yayinlamiyor; yayinladigi gun bu test kirilir', async () => {
+    const shared = (await import('@arcpad/shared')) as Record<string, unknown>
+    expect(Object.hasOwn(shared, 'ARC_GETLOGS_MAX_RANGE')).toBe(false)
+    // Tek kaynak bugun burasi ve degeri olculmus sinirdir.
+    expect(ARC_GETLOGS_MAX_RANGE).toBe(10_000n)
   })
 })
 

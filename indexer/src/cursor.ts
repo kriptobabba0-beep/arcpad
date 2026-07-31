@@ -32,6 +32,12 @@ export function nextRange(
   // {from: 1n, to: 0n}. Faz 0'da zararsizdi (MAX_SPAN modul sabitiydi); Faz
   // 3'te konfigurasyondan geldigi icin bir sifir env degeri butun ingest'i
   // sessizce bos aralik dondurmeye cevirirdi.
+  // Negatif imlec, `head <= cursor` dalina TAKILMAZ ve `from = cursor + 1n`
+  // ile sifirin altinda bir blok numarasi uretir -- `eth_getLogs`'a gonderilen
+  // anlamsiz bir aralik. Uygulamada ulasilamaz (imlec `bigint NOT NULL` bir
+  // sutundan gelir) ama `toSeq` ayni kontrolu yapiyor ve iki taraf ayni seyi
+  // soylemeli: negatif bir blok numarasi yoktur.
+  if (cursor < 0n) throw new RangeError(`nextRange: cursor negatif: ${cursor}`)
   if (maxSpan <= 0n) throw new RangeError('nextRange: maxSpan pozitif olmali')
   // Arc'in eth_getLogs'u 10.000 blokla SINIRLI (olculdu: span 10_000 ok,
   // 50_000 -> -32012, 100_000 -> -32614). Sinirin USTUNDE bir maxSpan her

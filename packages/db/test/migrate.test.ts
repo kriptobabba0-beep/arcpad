@@ -110,6 +110,60 @@ describe('runMigrations', () => {
     expect(rows.map((r) => r.filename)).toEqual(EXPECTED)
   })
 
+  // ---------------------------------------------------------------
+  // UYGULANMIS BIR MIGRATION YERINDE DUZENLENIRSE.
+  //
+  // Bu proje 001-006'yi YERINDE duzenlemeyi secti (semanin uygulanmis bir
+  // ornegi yok; ayni saatte yazilmis alti dosyayi yedinciyle yamalamak kalici
+  // olarak daha kotu okunur). O secim ancak duzenleme GORULEBILIRSE guvenli:
+  // aksi halde dosyayi bir kez uygulamis olan bir veritabani -- ornegin bir
+  // gozden gecirenin kendi kumesi -- sonraki kosuda hicbir sey yapmadan yesil
+  // doner ve semanin ESKI halini tasimaya devam eder.
+  // ---------------------------------------------------------------
+  it('uygulanan her dosyanin ozeti deftere yazilir', async () => {
+    await runMigrations(pool)
+    const { rows } = await pool.query<{ filename: string; checksum_hex: string | null }>(
+      'SELECT filename, checksum_hex FROM schema_migrations ORDER BY filename',
+    )
+    expect(rows).toHaveLength(6)
+    for (const r of rows) expect(r.checksum_hex).toMatch(/^[0-9a-f]{64}$/)
+    // Ozetler DOSYAYA gore; iki farkli dosya ayni ozeti tasimaz.
+    expect(new Set(rows.map((r) => r.checksum_hex)).size).toBe(6)
+  })
+
+  it('uygulanmis bir dosya DEGISTIYSE kosmayi reddeder', async () => {
+    await runMigrations(pool)
+    await pool.query('UPDATE schema_migrations SET checksum_hex = $2 WHERE filename = $1', [
+      '002_launches.sql',
+      'a'.repeat(64),
+    ])
+    await expect(runMigrations(pool)).rejects.toThrow(/002_launches\.sql uygulandiktan SONRA/)
+  })
+
+  it('ozeti OLMAYAN eski bir satir benimsenir (bilmedigimizi uydurmayiz)', async () => {
+    // Ozet sutunundan once uygulanmis bir defter satiri. Ne oldugunu
+    // BILEMEYIZ; bildigimizi varsayip patlamak da, sessizce gecmek de yanlis
+    // olurdu. Bugunku icerik benimsenir ve yaziya dokulur, boylece BUNDAN
+    // SONRAKI her degisiklik yakalanir.
+    await runMigrations(pool)
+    await pool.query(
+      "UPDATE schema_migrations SET checksum_hex = NULL WHERE filename = '005_fees.sql'",
+    )
+    await expect(runMigrations(pool)).resolves.toEqual([])
+
+    const { rows } = await pool.query<{ checksum_hex: string | null }>(
+      "SELECT checksum_hex FROM schema_migrations WHERE filename = '005_fees.sql'",
+    )
+    expect(rows[0]?.checksum_hex).toMatch(/^[0-9a-f]{64}$/)
+
+    // Ve benimsendikten SONRA muhafiz gercekten calisiyor.
+    await pool.query(
+      "UPDATE schema_migrations SET checksum_hex = $1 WHERE filename = '005_fees.sql'",
+      ['b'.repeat(64)],
+    )
+    await expect(runMigrations(pool)).rejects.toThrow(/005_fees\.sql/)
+  })
+
   it('TEMIZ OLMAYAN bir veritabaninda da calisir (test tesadufen bos degil)', async () => {
     // "Bos oldugu icin gecen migration" bu projenin isimlendirdigi ariza
     // kiplerinden biri. Burada semada ALAKASIZ bir tablo varken kosuluyor:

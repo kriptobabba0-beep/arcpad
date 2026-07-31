@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { readdir, readFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,9 +15,18 @@ export async function migrationFiles(): Promise<string[]> {
 
 const CREATE_LEDGER = `
   CREATE TABLE IF NOT EXISTS schema_migrations (
-    filename    text PRIMARY KEY,
-    applied_at  timestamptz NOT NULL DEFAULT now()
+    filename      text PRIMARY KEY,
+    applied_at    timestamptz NOT NULL DEFAULT now(),
+    checksum_hex  text
   )`
+
+// Defteri, sutunu SONRADAN eklenmis eski bir veritabaninda da onarir. Islemin
+// DISINDA, `CREATE_LEDGER` ile ayni gerekceyle.
+const ADD_CHECKSUM = `ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum_hex text`
+
+function sha256Hex(content: string): string {
+  return createHash('sha256').update(content, 'utf8').digest('hex')
+}
 
 /**
  * `migrations/*.sql` dosyalarini ada gore sirali, TEK BIR ISLEM icinde
@@ -45,10 +55,44 @@ export async function runMigrations(pool: Pool, files?: string[]): Promise<strin
   const list = files ?? (await migrationFiles())
 
   await pool.query(CREATE_LEDGER)
+  await pool.query(ADD_CHECKSUM)
 
-  const { rows } = await pool.query<{ filename: string }>('SELECT filename FROM schema_migrations')
-  const already = new Set(rows.map((r) => r.filename))
-  const pending = list.filter((f) => !already.has(f))
+  const { rows } = await pool.query<{ filename: string; checksum_hex: string | null }>(
+    'SELECT filename, checksum_hex FROM schema_migrations',
+  )
+  const applied = new Map(rows.map((r) => [r.filename, r.checksum_hex]))
+
+  // UYGULANMIS DOSYALARIN ICERIGI DEGISTI MI? Bu proje migration'lari yerinde
+  // duzenlemeyi tercih ediyor (bu semanin henuz uygulanmis bir ornegi yok) ve
+  // duzenleme SESSIZ kalirsa, dosyayi bir kez uygulamis olan her veritabani --
+  // ornegin bir gozden gecirenin kendi kumesi -- sonraki kosuda hicbir sey
+  // yapmadan yesil doner ve semanin ESKI halini tasimaya devam eder. Ozet
+  // karsilastirmasi bunu gurultulu bir hataya cevirir.
+  for (const filename of list) {
+    if (!applied.has(filename)) continue
+    const path = isAbsolute(filename) ? filename : join(MIGRATIONS_DIR, filename)
+    const current = sha256Hex(await readFile(path, 'utf8'))
+    const stored = applied.get(filename) ?? null
+    if (stored === null) {
+      // Ozet sutunundan ONCE uygulanmis satir. Ne oldugunu BILEMEYIZ; bildigimizi
+      // varsaymak daha kotu olurdu. Bugunku icerigi benimseyip yaziya dokuyoruz,
+      // boylece BUNDAN SONRAKI her degisiklik yakalanir.
+      await pool.query('UPDATE schema_migrations SET checksum_hex = $2 WHERE filename = $1', [
+        filename,
+        current,
+      ])
+      continue
+    }
+    if (stored !== current) {
+      throw new Error(
+        `runMigrations: ${filename} uygulandiktan SONRA degisti ` +
+          `(defter ${stored.slice(0, 12)}..., dosya ${current.slice(0, 12)}...). ` +
+          `Bu veritabani semanin eski halini tasiyor; yeniden kurun.`,
+      )
+    }
+  }
+
+  const pending = list.filter((f) => !applied.has(f))
   if (pending.length === 0) return []
 
   const client = await pool.connect()
@@ -58,7 +102,10 @@ export async function runMigrations(pool: Pool, files?: string[]): Promise<strin
       const path = isAbsolute(filename) ? filename : join(MIGRATIONS_DIR, filename)
       const sql = await readFile(path, 'utf8')
       await client.query(sql)
-      await client.query('INSERT INTO schema_migrations (filename) VALUES ($1)', [filename])
+      await client.query('INSERT INTO schema_migrations (filename, checksum_hex) VALUES ($1, $2)', [
+        filename,
+        sha256Hex(sql),
+      ])
     }
     await client.query('COMMIT')
     return pending

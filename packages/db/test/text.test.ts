@@ -1,9 +1,23 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { applyLaunch } from '../src/apply'
-import { lower, lowerHash32, pgSafeText } from '../src/hex'
+import { fromHexBytes, lower, lowerHash32, pgSafeText, toHexBytes } from '../src/hex'
 import { pool, resetSchema } from './setup'
 import { addr, hash32, LAUNCH } from './fixtures'
 import { toSeq } from '../src/seq'
+
+interface PgError extends Error {
+  code?: string
+  constraint?: string
+}
+
+async function failure(fn: () => Promise<unknown>): Promise<PgError> {
+  try {
+    await fn()
+  } catch (error) {
+    return error as PgError
+  }
+  throw new Error('beklenen hata olusmadi')
+}
 
 const NUL = '\u0000'
 const LONE_HIGH = '\uD800'
@@ -75,9 +89,14 @@ describe('metin: zincirden gelen sey Postgres text ine girebilmeli', () => {
       curve: addr(0xc001),
       txHash: hash32(0xaaa1),
       salt: hash32(0x5a18),
-      name: `bad${NUL}name`,
-      symbol: `B${LONE_HIGH}D`,
-      uri: `ipfs://${NUL}`,
+      name: pgSafeText(`bad${NUL}name`),
+      symbol: pgSafeText(`B${LONE_HIGH}D`),
+      uri: pgSafeText(`ipfs://${NUL}`),
+      // ZINCIRDEKI HAM BAYTLAR -- temizlenmemis. Gercek ingest bunlari logun
+      // COZULMEMIS `data` alanindan alir; burada dogrudan yaziliyorlar.
+      nameHex: toHexBytes(`bad${NUL}name`),
+      symbolHex: '0x42ffd80044',
+      uriHex: toHexBytes(`ipfs://${NUL}`),
     }
     await expect(applyLaunch(pool, hostile)).resolves.toBe(1)
     const { rows } = await pool.query<{ name: string; symbol: string; uri: string }>(
@@ -89,6 +108,102 @@ describe('metin: zincirden gelen sey Postgres text ine girebilmeli', () => {
       symbol: `B${FFFD}D`,
       uri: `ipfs://${FFFD}`,
     })
+  })
+
+  // ---------------------------------------------------------------
+  // PROVENANCE: `pgSafeText` COKA-BIRDIR, ham baytlar bu yuzden saklanir.
+  // ---------------------------------------------------------------
+  it('gosterim metni COKA-BIR duser ama ham baytlar AYRISIR', async () => {
+    // Zincirdeki IKI AYRI isim ayni gosterim metnine duser. Token adresi
+    // CREATE2 ile HAM baytlardan turetildigi icin, yalnizca gosterim metnini
+    // saklayan bir veritabani bu iki launch'i BIRBIRINDEN AYIRAMAZ ve
+    // hicbirinin canonicity'sini yeniden hesaplayamaz.
+    const a = `x${NUL}y`
+    const b = `x${FFFD}y`
+    expect(a).not.toBe(b)
+    expect(pgSafeText(a)).toBe(pgSafeText(b)) // <-- kaybin kendisi
+    expect(toHexBytes(a)).not.toBe(toHexBytes(b)) // <-- kurtarilan sey
+
+    for (const [i, raw] of [a, b].entries()) {
+      await applyLaunch(pool, {
+        ...LAUNCH,
+        eventSeq: toSeq(54_000_010n + BigInt(i), 0),
+        token: addr(0x7010 + i),
+        curve: addr(0xc010 + i),
+        txHash: hash32(0xbb00 + i),
+        salt: hash32(0x5b00 + i),
+        name: pgSafeText(raw),
+        nameHex: toHexBytes(raw),
+      })
+    }
+
+    const { rows } = await pool.query<{ name: string; name_hex: string }>(
+      'SELECT name, name_hex FROM launches WHERE token IN ($1, $2) ORDER BY token',
+      [addr(0x7010), addr(0x7011)],
+    )
+    expect(rows).toHaveLength(2)
+    // Gosterim metinleri AYNI...
+    expect(rows[0]?.name).toBe(rows[1]?.name)
+    // ...ham baytlar FARKLI, ve her biri zincirdeki degeri TAM olarak verir.
+    expect(rows[0]?.name_hex).not.toBe(rows[1]?.name_hex)
+    expect(fromHexBytes(rows[0]!.name_hex)).toBe(a)
+    expect(fromHexBytes(rows[1]!.name_hex)).toBe(b)
+  })
+
+  it('ham bayt sutunlari ZINCIRIN bayt tavanini zorlar (karakter degil BAYT)', async () => {
+    // Gosterim sutunlari `length()` ile KARAKTER sayar; `*_hex` desenleri BAYT
+    // sayar. Zincir de bayt sayar (LaunchToken.sol:103-105 @26ce330), yani
+    // gercek kisit burada. 32 emoji = 32 karakter ama 128 bayt: gosterim
+    // kontrolunden gecer, bayt kontrolunden GECMEZ -- ve zincir de onu
+    // NameTooLong ile reddederdi.
+    const emoji = '🚀'.repeat(32)
+    expect(emoji).toHaveLength(64) // 32 kod noktasi, 64 kod birimi
+    expect(toHexBytes(emoji)).toHaveLength(2 + 128 * 2)
+    const e = await failure(() =>
+      applyLaunch(pool, {
+        ...LAUNCH,
+        eventSeq: toSeq(54_000_020n, 0),
+        token: addr(0x7020),
+        curve: addr(0xc020),
+        txHash: hash32(0xcc01),
+        salt: hash32(0x5c01),
+        name: '🚀'.repeat(16), // 16 kod noktasi -> length() 32, gecer
+        nameHex: toHexBytes(emoji), // 128 bayt -> GECMEZ
+      }),
+    )
+    expect(e.code).toBe('23514')
+    expect(e.constraint).toBe('launches_name_hex_check')
+  })
+
+  it('bos ham bayt reddedilir (zincir bos isme izin vermez)', async () => {
+    const e = await failure(() =>
+      applyLaunch(pool, {
+        ...LAUNCH,
+        eventSeq: toSeq(54_000_021n, 0),
+        token: addr(0x7021),
+        curve: addr(0xc021),
+        txHash: hash32(0xcc02),
+        salt: hash32(0x5c02),
+        nameHex: '0x',
+      }),
+    )
+    expect(e.code).toBe('23514')
+    expect(e.constraint).toBe('launches_name_hex_check')
+  })
+
+  it('bos URI KABUL edilir (zincir uri icin bos kontrolu yapmaz)', async () => {
+    await expect(
+      applyLaunch(pool, {
+        ...LAUNCH,
+        eventSeq: toSeq(54_000_022n, 0),
+        token: addr(0x7022),
+        curve: addr(0xc022),
+        txHash: hash32(0xcc03),
+        salt: hash32(0x5c03),
+        uri: '',
+        uriHex: '0x',
+      }),
+    ).resolves.toBe(1)
   })
 
   it('zincirin TAM TAVANINDAKI metin semaya sigar (CHECK bir liveness hatasi degil)', async () => {

@@ -8,6 +8,7 @@ import type {
   TransferEvent,
 } from '../src/apply'
 import type { Deployment } from '../src/deployment'
+import { toHexBytes } from '../src/hex'
 import { toSeq } from '../src/seq'
 
 export function addr(n: number): Address {
@@ -70,6 +71,11 @@ export const LAUNCH: LaunchEvent = {
   name: 'Arc Pad Test',
   symbol: 'APT',
   uri: 'ipfs://bafyexampleexampleexample',
+  // Gecerli UTF-8 tasiyan bir launch icin ham baytlar gosterim metninden
+  // TURETILEBILIR; dusman metinli olan icin turetilemez (bkz. text.test.ts).
+  nameHex: toHexBytes('Arc Pad Test'),
+  symbolHex: toHexBytes('APT'),
+  uriHex: toHexBytes('ipfs://bafyexampleexampleexample'),
   salt: hash32(0x5a17),
   virtualTokenReservesTok: PROFILE.virtualTokenReservesTok,
   virtualQuoteReservesWei: PROFILE.virtualQuoteReservesWei,

@@ -1315,6 +1315,41 @@ git commit -m "feat(indexer): fetch logs behind an address filter that EIP-7708 
 - Create: `indexer/src/admit.ts`
 - Create: `indexer/test/admit.test.ts`
 
+#### ZORUNLULUK — `Launched` logu, ÇÖZÜLMÜŞ dizge ile değil HAM BAYTLA okunmalı
+
+Task 3'ün `LaunchEvent` tipi `nameHex`, `symbolHex`, `uriHex` alanlarını **zorunlu**
+tutar ve bunlar `name`/`symbol`/`uri`'den **türetilmez**. Bu, Task 6'nın üstünde iki
+ayrı yükümlülük doğurur; ikisi de mekanizmasıyla birlikte:
+
+1. **Ham baytları logun çözülmemiş `data` alanından çıkar.** `Launched(address
+   indexed token, address indexed curve, address indexed creator, string name,
+   string symbol, string uri, bytes32 salt)` — üç `string` indekssizdir, yani `data`
+   içindedir. ABI kodlamasında her biri bir offset ile gösterilir; offset'teki 32
+   baytlık uzunluğun ardından o kadar bayt gelir. `viem`in `decodeEventLog`'u bu
+   baytları **UTF-8 olarak çözer** ve geçersiz dizileri sessizce U+FFFD yapar. O
+   çözülmüş dizgeyi `toHexBytes` ile geri kodlamak **ham baytları geri getirmez**.
+   Doğru yol `data`'yı elle dilimlemektir (`slice` + `hexToBigInt` ile offset ve
+   uzunluk), ve `nameHex`e o dilimi vermektir.
+   **Gerekçe:** token kimliği `CREATE2(factory, salt, keccak(creationCode ++
+   abi.encode(name, symbol, uri, creator, curve, salt)))` ile **ham baytlardan**
+   türer ve `deriveTokenAddress` tam olarak bunu yeniden hesaplar. `pgSafeText`
+   çoka-bir olduğu için gösterim metninden türetilen bir adres, düşman metinli bir
+   launch'ta **yanlış çıkar** — yani provenance kapısı sessizce yanlış cevap verir.
+   `launches.{name,symbol,uri}_hex` bu yüzden vardır: canonicity yalnızca
+   veritabanına bakarak yeniden doğrulanabilir kalsın diye.
+
+2. **`rejected_launches`'a YALNIZCA onaltılık yaz.** Tablonun `raw` sütunu artık
+   `jsonb` değildir; `raw_addr`, `raw_topics_hex`, `raw_data_hex` olarak üçe
+   ayrılmıştır ve üçü de onaltılık desenle kısıtlıdır. **Bir launch'ı reddettiren
+   şey zaten onun düşman metni olacaktır**, ve `jsonb` U+0000 taşıyamaz (ölçüldü,
+   Postgres 17.9: `to_jsonb('a'||chr(0)||'b')` → `null character not permitted`;
+   `json`'a geçmek hatayı yalnızca çıkarma zamanına erteler). Çözülmüş
+   `name`/`symbol`/`uri`'yi bu tabloya **koymayın** — koyacak yer bilerek
+   bırakılmadı. `raw_topics_hex` virgülle birleştirilmiş en çok dört topic'tir.
+   **Gerekçe:** aksi hâlde zincir-meşru bir launch ingest işlemini geri aldırır ve
+   indexer o blokta sonsuza kadar kilitlenir — CHECK'le yakalanamayan bir liveness
+   arızası, çünkü değer sunucuya hiç ulaşmaz.
+
 **Interfaces:**
 - Tüketir: `LAUNCH_TOKEN_CREATION_CODE` (Task 1); `launches`, `rejected_launches`, `creator_history`, `curve_state`, `token_stats` (Task 3).
 - Üretir:

@@ -4,7 +4,15 @@
 -- virtualQuoteReserves, realTokenReserves, realQuoteReserves) indexer zincire
 -- hic sormaz.
 CREATE TABLE curve_state (
-  curve                       text PRIMARY KEY CHECK (curve ~ '^0x[0-9a-f]{40}$'),
+  -- `launches(curve)`'e YABANCI ANAHTAR. Onceden yalnizca desen kontrolu
+  -- vardi, yani sema `launches`'takinden BASKA bir curve adresi tasiyan bir
+  -- curve_state satirina izin veriyordu ve `trades.curve` ondan tureyerek
+  -- butun islem gecmisini sahte bir curve'e baglayabiliyordu. Yabanci anahtar
+  -- bunu imkansiz kilar ve ayni zamanda `launches_curve_is_not_a_system_address`
+  -- kisitini BURAYA da tasir -- garanti tek yerde tanimlanip her yere
+  -- devrolur.
+  curve                       text PRIMARY KEY CHECK (curve ~ '^0x[0-9a-f]{40}$')
+                              REFERENCES launches(curve),
   token                       text NOT NULL UNIQUE REFERENCES launches(token),
   virtual_token_reserves_tok  numeric(78,0) NOT NULL,
   virtual_quote_reserves_wei  numeric(78,0) NOT NULL,

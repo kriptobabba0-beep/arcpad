@@ -51,6 +51,20 @@ export interface LaunchEvent extends LogRef {
   name: string
   symbol: string
   uri: string
+  /**
+   * ZINCIRDEKI HAM BAYTLAR, onaltilik. ZORUNLUDUR ve `name`'den TURETILMEZ.
+   *
+   * Istege bagli yapip yoklugunda `toHexBytes(name)`e dusmek, tam olarak bu
+   * projenin "yazilmamis bir gerekce yuzunden gecen test" dedigi seyi
+   * uretirdi: cagiran, cozulmus (ve belki coktan kayipli) dizgeyi verir,
+   * fonksiyon sessizce onu HAM baytmis gibi saklar, ve canonicity dogrulamasi
+   * gorunuste calisirken aslinda yanlis girdiyle calisir. Zorunlu tutmak
+   * kararı cagiranin -- Task 5/8'in, logun COZULMEMIS `data` alanini
+   * dilimleyerek -- vermesini SART kosar.
+   */
+  nameHex: string
+  symbolHex: string
+  uriHex: string
   salt: string
   /** Curve'un acilis rezervleri; `Launched` tasimaz, `deployment` profilinden gelir. */
   virtualTokenReservesTok: bigint
@@ -122,8 +136,9 @@ export async function applyLaunch(db: Queryable, e: LaunchEvent): Promise<number
     db,
     `WITH ins AS (
        INSERT INTO launches
-         (token, curve, launch_creator, name, symbol, uri, salt, created_seq, created_at, tx_hash)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         (token, curve, launch_creator, name, symbol, uri,
+          name_hex, symbol_hex, uri_hex, salt, created_seq, created_at, tx_hash)
+       VALUES ($1,$2,$3,$4,$5,$6,$15,$16,$17,$7,$8,$9,$10)
        ON CONFLICT (token) DO NOTHING
        RETURNING token, curve, launch_creator, created_seq, created_at
      ),
@@ -160,6 +175,11 @@ export async function applyLaunch(db: Queryable, e: LaunchEvent): Promise<number
       e.virtualQuoteReservesWei.toString(),
       e.realTokenReservesTok.toString(),
       e.realQuoteReservesWei.toString(),
+      // $15..$17 -- HAM baytlar. `pgSafeText`'ten GECMEZLER: temizlemek tam
+      // olarak kaybetmemek icin sakladigimiz seyi kaybetmek olurdu.
+      e.nameHex,
+      e.symbolHex,
+      e.uriHex,
     ],
   )
 }
