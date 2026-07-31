@@ -56,20 +56,46 @@ export function nextRange(
 }
 
 /**
- * Head'in TEK kaynagi.
+ * Head'in TEK kaynagi: `finalized` etiketi.
  *
- * `finalized`, `latest` DEGIL. Arc'ta ikisi genelde ESIT (deterministik
- * finality, olculen gecikme 0 blok) ama AYNI KAYNAK DEGILLER; olculdu:
+ * DUZELTME -- BU YORUM DAHA ONCE YANLIS BIR OLCUME DAYANIYORDU.
  *
- *   latest 54326388  finalized 54326388  safe 54326388
- *   latest 54326390  finalized 54326391  safe 54326391   <-- finalized > latest
- *   latest 54326393  finalized 54326393  safe 54326394
+ * Burada eskiden "olculdu: latest 54326390 iken finalized 54326391 idi" diyen
+ * bir tablo vardi ve `finalized`in `latest`in ONUNDE gorulebildigi iddia
+ * ediliyordu. O sayilar plandan devralinmisti, bu dosyada hicbir zaman
+ * calistirilmadi, ve YANLISLAR: sira sira yapilan uc `eth_getBlockByNumber`
+ * cagrisi arasinda, Arc'in ~350ms blok suresinde, bir blok gecer. Yani olculen
+ * sey etiketlerin farki degil ZAMANIN GECMESIYDI. Kontrol: cagri sirasini ters
+ * cevirince isaret de ters donuyor.
  *
- * Yuk dengeleyici arkasinda farkli dugumler iki bagimsiz gecikmeli gorunum
- * verir. Karistirmak, ayni turda GELECEKTEN bir head ile GECMISTEN bir aralik
- * hesaplamak olurdu. `finalized` iki okuma arasinda geriye de dusebilir;
- * `nextRange`'in `head <= cursor -> null` dali bunu yutar ve o dalin gerekcesi
- * artik olculmus bir olgudur, varsayim degil.
+ * TEK BIR JSON-RPC BATCH'INDE -- yani uc etiket ayni ani paylasirken --
+ * olculdu (arc testnet, 6 ornek, 400ms arayla):
+ *
+ *   latest=54514654  safe=54514654  finalized=54514654   finalized-latest=0
+ *   latest=54514655  safe=54514655  finalized=54514655   finalized-latest=0
+ *   latest=54514656  safe=54514656  finalized=54514656   finalized-latest=0
+ *   latest=54514656  safe=54514656  finalized=54514656   finalized-latest=0
+ *   latest=54514657  safe=54514657  finalized=54514657   finalized-latest=0
+ *   latest=54514658  safe=54514658  finalized=54514658   finalized-latest=0
+ *
+ * UCU DE AYNI. Bu, Arc'in belgelenmis ~350ms deterministik finality'si ve
+ * reorg olmamasiyla tutarli.
+ *
+ * "finalized geriye dusebilir" iddiasi da ayni yerden devralinmisti; ayri
+ * olarak sinandi (tek etiket, 80 ardisik okuma, 250ms arayla): sifir gerileme,
+ * ayni yukseklikte sifir hash degisikligi. Uretilemedi, o yuzden dayanak
+ * olarak KULLANILMIYOR.
+ *
+ * O HALDE `finalized` OKUMAK NE KAZANDIRIR: bugun olculebilir bir GUVENLIK
+ * farki yok. Ama GECIKME de MALIYETI YOK -- uc etiket ayni blok oldugu icin
+ * `finalized` okumak `latest` okumaktan bir blok bile geride kalmiyor. Yani
+ * bu, "guvenlik icin geriden gitmek" DEGILDIR; bedava olan tarafi secmektir.
+ * Anlami ihtiyacimiz olan seye uyan etiket budur (geri alinmayacak blok), ve
+ * Arc bir gun belgesinden saparsa yapisal olarak dogru tarafta oluruz.
+ *
+ * `nextRange`'in `head <= cursor -> null` dali duruyor ama gerekcesi artik
+ * "olculmus bir olgu" DEGIL: RPC degistirmek ya da geride kalmis bir dugume
+ * dusmek gibi calisma zamani olasiliklarina karsi ucuz bir korumadir.
  */
 export async function finalizedHead(client: PublicClient): Promise<bigint> {
   const block = await client.getBlock({ blockTag: 'finalized' })
@@ -108,13 +134,16 @@ export class ReorgDetected extends Error {
  *    keeper bunu bulundugu yerden ENGELLEYEMEZ. Engelleme verinin kuruldugu
  *    yere ait, ve `Launched`a degil HER olay tipine uygulanmali -- bu yuzden
  *    muhafiz olaylara degil BLOKLARA takili.
- *  - Arc'ta ~350ms deterministik finality var, reorg olmadigi belgeli, ve
- *    `finalizedHead` yalnizca `finalized` etiketinden okuyor. Yani burada
- *    yakalanacak sey ZATEN OLMAMALI.
- *  - Ama varsayim bos degil: OLCULDU ki `finalized` `latest`in ONUNDE
- *    gorulebiliyor ve iki okuma arasinda GERIYE dusebiliyor. "finalized"
- *    gorunumu dugumden dugume tutarli DEGIL, ve o gorunum degisirse ingest
- *    farkli bir zincirin uzerine yazmaya devam eder.
+ *  - IHLAL GORULMEDI, ve bu muhafiz bir ihlal goruldugu icin YAZILMADI. Arc
+ *    ~350ms deterministik finality ve reorg olmadigini BELGELIYOR; batch'li
+ *    olcum (bkz. `finalizedHead`) `latest`, `safe` ve `finalized`i AYNI blok
+ *    gosteriyor; ve ingest yalnizca `finalized` etiketinden okuyor. Yani
+ *    burada yakalanacak seyin OLMAMASI bekleniyor.
+ *  - Muhafizin gerekcesi ASIMETRIK MALIYET: varsayim tutarsa muhafiz tur
+ *    basina bir karsilastirma harcar; tutmazsa ortaya cikan sey SESSIZ bir
+ *    fazla sayimdir ve keeper onu ancak OLDUKTAN SONRA fark eder. Yani bu,
+ *    gozlenmis bir arizaya cevap degil; belgeye dayanan bir varsayimi, yanlis
+ *    oldugu anda KENDINI DUYURAN bir seye cevirme isi.
  *  - KENDINI ONARAN bir geri sarma BILEREK YAZILMADI: reorg uretmeyen bir
  *    zincirde onu hicbir sey egzersiz etmez -- "hicbir seyin calistirmadigi
  *    kod yolu" -- ve guvenilir gorunurdu. Duran bir indexer kurtarilabilir;

@@ -490,22 +490,59 @@ export function nextRange(
 
 - [ ] **Adım 2: `finalizedHead` — head'in tek kaynağı**
 
-Bu, ölçülmüş bir RPC tutarsızlığına verilen cevaptır:
+> **DÜZELTME (2026-07-31) — bu adımın önceki gerekçesi yanlış bir ölçüme dayanıyordu.**
+>
+> Burada şu tablo duruyordu ve `finalized`'ın `latest`'in **önünde** görülebildiği
+> iddia ediliyordu:
+>
+> ```
+> latest 54326388  finalized 54326388  safe 54326388
+> latest 54326390  finalized 54326391  safe 54326391   <-- finalized > latest
+> latest 54326393  finalized 54326393  safe 54326394
+> ```
+>
+> **Bu bir artefakttır.** Üç etiket *sırayla* okunmuştu ve Arc'ın ~350ms blok
+> süresinde çağrılar arasında bir blok geçiyor; ölçülen şey etiketlerin farkı değil
+> **zamanın geçmesiydi**. İki kontrol de bunu gösteriyor:
+>
+> - **Çağrı sırası ters çevrilince işaret de ters dönüyor** (`finalized` önce
+>   okunduğunda delta −1/−2). Gerçek bir özellik, okuma sırası değişince tersine
+>   dönmez.
+> - **Tek bir JSON-RPC batch'inde** (üç etiket aynı anı paylaşır) ölçüldü — arc
+>   testnet, 6 örnek, 400ms arayla:
+>
+>   ```
+>   latest=54514654  safe=54514654  finalized=54514654   finalized-latest=0
+>   latest=54514655  safe=54514655  finalized=54514655   finalized-latest=0
+>   latest=54514656  safe=54514656  finalized=54514656   finalized-latest=0
+>   latest=54514656  safe=54514656  finalized=54514656   finalized-latest=0
+>   latest=54514657  safe=54514657  finalized=54514657   finalized-latest=0
+>   latest=54514658  safe=54514658  finalized=54514658   finalized-latest=0
+>   ```
+>
+>   **Üçü de aynı.** Arc'ın belgelenmiş ~350ms deterministik finality'si ve reorg
+>   olmamasıyla tutarlı.
+>
+> "`finalized` iki okuma arasında geriye düşebilir" iddiası da ayrı olarak sınandı —
+> tek etiket, 80 ardışık okuma, 250ms arayla: **sıfır gerileme, aynı yükseklikte
+> sıfır hash değişikliği.** Üretilemedi, o yüzden dayanak olarak kullanılmıyor.
 
-```
-latest 54326388  finalized 54326388  safe 54326388
-latest 54326390  finalized 54326391  safe 54326391   <-- finalized > latest
-latest 54326393  finalized 54326393  safe 54326394
-```
+Doğru gerekçe: `latest`, `safe` ve `finalized` Arc'ta **aynı bloktur**, yani
+`finalized` okumak `latest` okumaya göre bir blok bile **gecikme maliyeti taşımaz**.
+Bu bir "güvenlik için geriden gitme" değildir — bedava olan tarafı seçmektir. Anlamı
+ihtiyacımıza uyan etiket `finalized`'dır (geri alınmayacak blok), ve Arc bir gün
+belgesinden saparsa yapısal olarak doğru tarafta oluruz. **Head'in tek kaynağı olması**
+ise ayrı ve bağımsız bir gerekçedir: aynı turda iki farklı etiketten okumak, gelecekten
+bir head ile geçmişten bir aralık hesaplamaya açık kapı bırakır.
 
-`finalized`, `eth_blockNumber`'ın **önünde** görülebildi. İkisi bağımsız gecikmeli görünümlerdir (yük dengeleyici arkasında farklı düğümler). Sonuç: **`eth_blockNumber` ile `finalized` asla karıştırılmaz.** Ayrıca `finalized` iki okuma arasında geriye de düşebilir; `nextRange`'in `head <= cursor → null` dalı bunu zaten yutar ve gerekçesi artık ölçülmüş bir olgudur, varsayım değil.
+`nextRange`'in `head <= cursor → null` dalı duruyor, ama gerekçesi artık "ölçülmüş bir
+olgu" **değildir**: RPC değiştirmek ya da geride kalmış bir düğüme düşmek gibi çalışma
+zamanı olasılıklarına karşı ucuz bir korumadır.
 
 ```ts
 export async function finalizedHead(client: PublicClient): Promise<bigint> {
-  // `finalized`, `latest` DEGIL. Arc'ta ikisi genelde ESIT (deterministik
-  // finality, olculen gecikme 0 blok) ama AYNI KAYNAK DEGILLER: olculdu,
-  // finalized 54326391 iken latest 54326390 idi. Karistirmak, ayni turda
-  // gelecekten bir head ile gecmisten bir aralik hesaplamak olurdu.
+  // Head'in TEK kaynagi. `latest` ile ayni blok (batch'li olcum: 6/6 esit),
+  // yani gecikme maliyeti yok; secim, anlami ihtiyacimiza uyan etiket olmasi.
   const block = await client.getBlock({ blockTag: 'finalized' })
   return block.number
 }

@@ -241,7 +241,23 @@ describe('ARC_GETLOGS_MAX_RANGE -- iki kaynak riski', () => {
   })
 })
 
-describe('finalizedHead', () => {
+/**
+ * BU BLOKTAKI SAYILAR SENTETIKTIR, OLCUM DEGILDIR.
+ *
+ * Onceki hali gercek bir okumaymis gibi sunulan bir tabloya dayaniyordu
+ * (`latest 54326390 / finalized 54326391`). O tablo plandan devralinmisti ve
+ * YANLISTI: uc etiket sirayla okunmustu ve Arc'in ~350ms blok suresinde
+ * aralarinda bir blok geciyordu. Tek bir JSON-RPC batch'inde okununca ucu de
+ * AYNI blogu veriyor (6/6 ornek).
+ *
+ * Testler duruyor, cunku sinadiklari sey bir olcum degil bir SOZLESME:
+ * `finalizedHead` yalnizca `finalized` etiketini okur, baska etikete
+ * DUSMEZ, ve donen degeri duzeltmez. Etiketlerin bugun esit olmasi bu
+ * sozlesmeyi gereksiz kilmaz -- tersine, sozlesme sayesinde esitlik BOZULURSA
+ * davranisimiz onceden bellidir. Asagidaki farkli degerler o "bozulursa"
+ * durumunu kurmak icin UYDURULMUSTUR.
+ */
+describe('finalizedHead sozlesmesi (sentetik degerler)', () => {
   /** viem'in `PublicClient`'inin yalnizca `getBlock`'unu tasiyan sahte istemci. */
   function fakeClient(byTag: Record<string, bigint>) {
     const getBlock = vi.fn(async ({ blockTag }: { blockTag: string }) => {
@@ -253,41 +269,47 @@ describe('finalizedHead', () => {
   }
 
   it("`finalized` etiketini okur, `latest`'i DEGIL", async () => {
-    const { client, getBlock } = fakeClient({ latest: 54_326_390n, finalized: 54_326_391n })
-    await expect(finalizedHead(client)).resolves.toBe(54_326_391n)
+    const { client, getBlock } = fakeClient({ latest: 1_000n, finalized: 1_001n })
+    await expect(finalizedHead(client)).resolves.toBe(1_001n)
     expect(getBlock).toHaveBeenCalledTimes(1)
     expect(getBlock).toHaveBeenCalledWith({ blockTag: 'finalized' })
   })
 
-  it("OLCULMUS tutarsizlikta latest'e DUSMEZ (finalized > latest)", async () => {
-    // Gercek okuma: latest 54326390, finalized 54326391. `latest`'e dusen bir
-    // uygulama burada BIR blok geride kalir ve o blogun loglari, imlec
-    // ilerledigi icin bir daha hic taranmaz.
-    const { client } = fakeClient({ latest: 54_326_390n, finalized: 54_326_391n })
-    const head = await finalizedHead(client)
-    expect(head).not.toBe(54_326_390n)
+  it('etiketler bir gun AYRISIRSA latest e dusmez', async () => {
+    // Bugun Arc'ta ayrilmiyorlar. Bu test o gunun davranisini onceden
+    // sabitler: `latest`'e dusen bir uygulama bir blok geride kalir ve o
+    // blogun loglari, imlec ilerledigi icin bir daha hic taranmaz.
+    const { client } = fakeClient({ latest: 1_000n, finalized: 1_001n })
+    expect(await finalizedHead(client)).not.toBe(1_000n)
   })
 
-  it('finalized geriye duserse deger oldugu gibi doner; yutma yeri nextRange', async () => {
-    // Iki ardisik okuma: 54326391 sonra 54326388. `finalizedHead` bunu
-    // DUZELTMEZ -- duzeltmek, head'in tek kaynagi olma sozunu bozardi.
-    const a = fakeClient({ finalized: 54_326_391n })
-    const b = fakeClient({ finalized: 54_326_388n })
-    expect(await finalizedHead(a.client)).toBe(54_326_391n)
-    expect(await finalizedHead(b.client)).toBe(54_326_388n)
-    // Geriye dusmus head, imlec ilerledikten sonra bos donguye cevrilir.
-    expect(nextRange(54_326_391n, 54_326_388n, 1_000n)).toBeNull()
+  it('etiketler ESITKEN de dogru calisir (Arc ta bugunku durum)', async () => {
+    // Asil yol budur ve digerlerinin yaninda kaybolmamali: batch'li olcumde
+    // latest = safe = finalized. Testlerin tamami "ayrisma" senaryosu olsaydi,
+    // gercekte kosan tek durum HIC test edilmemis olurdu.
+    const { client } = fakeClient({
+      latest: 54_514_654n,
+      safe: 54_514_654n,
+      finalized: 54_514_654n,
+    })
+    expect(await finalizedHead(client)).toBe(54_514_654n)
+  })
+
+  it('donen degeri DUZELTMEZ; geri dusmus bir head i yutan yer nextRange', async () => {
+    // `finalizedHead` bir head'i asla kirpmaz ya da hatirlamaz -- oyle yapmak
+    // "head'in tek kaynagi" sozunu bozardi. Geriye dusmus bir head UREYECEK
+    // olursa (olculmedi; ayrica sinandi ve uretilemedi) onu bos donguye
+    // ceviren sey `nextRange`in `head <= cursor` dalidir.
+    const a = fakeClient({ finalized: 2_000n })
+    const b = fakeClient({ finalized: 1_990n })
+    expect(await finalizedHead(a.client)).toBe(2_000n)
+    expect(await finalizedHead(b.client)).toBe(1_990n)
+    expect(nextRange(2_000n, 1_990n, 1_000n)).toBeNull()
   })
 
   it('`safe` etiketini de kullanmaz', async () => {
-    // Olculen ucuncu satir: latest 54326393, finalized 54326393, safe
-    // 54326394. `safe`, `finalized`'in ONUNDE gorulebildi.
-    const { client, getBlock } = fakeClient({
-      latest: 54_326_393n,
-      finalized: 54_326_393n,
-      safe: 54_326_394n,
-    })
-    await expect(finalizedHead(client)).resolves.toBe(54_326_393n)
+    const { client, getBlock } = fakeClient({ latest: 1_000n, finalized: 1_000n, safe: 1_001n })
+    await expect(finalizedHead(client)).resolves.toBe(1_000n)
     expect(getBlock).not.toHaveBeenCalledWith({ blockTag: 'safe' })
   })
 })

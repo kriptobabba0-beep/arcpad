@@ -64,13 +64,24 @@ CREATE TABLE sync_state (
   -- `Launched`a degil HER olay tipine uygulanmalidir; bu yuzden muhafiz
   -- olaylara degil BLOKLARA takilidir.
   --
-  -- Arc'ta ~350ms deterministik finality var ve reorg OLMADIGI belgeli;
-  -- ustelik ingest yalnizca `finalized` etiketinden okuyor (bkz.
-  -- indexer/src/cursor.ts `finalizedHead`). Yani bu satirin yakalayacagi sey
-  -- ZATEN OLMAMALI. Buna ragmen SESSIZ bir varsayim birakmak bu projenin
-  -- tekrar tekrar dustugu ariza kipidir, ve varsayim bos degil: OLCULDU ki
-  -- `finalized` iki okuma arasinda GERIYE dusebiliyor ve `latest`in ONUNDE
-  -- gorulebiliyor -- yani "finalized" gorunumu dugumden dugume tutarli DEGIL.
+  -- IHLAL GORULMEDI ve bu sutun bir ihlal goruldugu icin EKLENMEDI. Arc
+  -- ~350ms deterministik finality ve reorg olmadigini BELGELIYOR; tek bir
+  -- JSON-RPC batch'inde okundugunda `latest`, `safe` ve `finalized` AYNI
+  -- blogu veriyor (6/6 ornek, arc testnet); ustelik ingest yalnizca
+  -- `finalized` etiketinden okuyor. Yani bu satirin yakalayacagi seyin
+  -- OLMAMASI bekleniyor.
+  --
+  -- (DUZELTME: burada eskiden "olculdu ki finalized latest'in onunde
+  -- gorulebiliyor ve geriye dusebiliyor" yaziyordu. O sayilar plandan
+  -- devralinmisti ve YANLISTI -- sirali yapilan uc cagri arasinda bir blok
+  -- geciyor; cagri sirasi ters cevrilince isaret de ters donuyor. Geriye
+  -- dusme iddiasi da ayrica sinandi: tek etiket, 80 ardisik okuma, sifir
+  -- gerileme. Uretilemedi.)
+  --
+  -- Gerekce ASIMETRIK MALIYET: varsayim tutarsa maliyet tur basina bir
+  -- karsilastirma; tutmazsa ortaya cikan sey SESSIZ bir fazla sayimdir ve
+  -- keeper onu ancak OLDUKTAN SONRA fark eder. Belgeye dayanan bir varsayimi,
+  -- yanlis oldugu anda kendini duyuran bir seye ceviriyoruz.
   --
   -- Secim bilincli: KENDINI ONARAN bir geri sarma (belirli bir derinligin
   -- ustundeki satirlari sil, imleci geri al) YAZILMADI. Reorg uretmeyen bir
