@@ -117,47 +117,45 @@ contract GovernanceForkTest is Test {
         assertGe(ISafe(GOVERNOR_SAFE).getThreshold(), 2, "one signature must never be enough");
     }
 
-    /// @dev TASK 6'NIN ON KOSULU, ZINCIRDE OLCULUR. `plan()`in yaptigi her
-    ///      seyi tekrarlamaz; yalnizca deploy edilecek IKI ADRESIN hala BOS
-    ///      oldugunu soyler. Dolu bir adres, ya deploy'un zaten yapildigi ya
-    ///      da bir adres carpismasi demektir -- ikisi de Task 6'yi
-    ///      durdurmalidir.
-    function test_theTargetAddressesAreStillFree() public view {
+    /// @dev BU TEST TASK 6'DA ANLAM DEGISTIRDI VE ADI DA DEGISTI.
+    ///      Onceki hali "iki hedef adres HALA BOS" diyordu ve Task 6'nin on
+    ///      kosuluydu. Task 6 CALISTI, dolayisiyla o iddia artik yanlis olurdu.
+    ///      Yerine gecen sey daha guclu: iki adres de DOLU, ve icindekiler
+    ///      plandaki degerlerin TA KENDISI.
+    function test_theDeploymentIsPresentAndHoldsTheResolvedProfile() public view {
         Profile memory profile = Profiles.forChain(ARC_TESTNET_CHAIN_ID);
         (address governor, address treasury) = Profiles.governanceForChain(ARC_TESTNET_CHAIN_ID);
         Plan memory p = DeployLib.build(ARC_TESTNET_CHAIN_ID, profile, DEPLOYER, governor, treasury);
 
-        assertEq(p.escrow.code.length, 0, "the escrow address is already occupied on Arc");
-        assertEq(p.factory.code.length, 0, "the factory address is already occupied on Arc");
+        assertGt(p.escrow.code.length, 0, "FeeEscrow is not deployed at the reserved address");
+        assertGt(p.factory.code.length, 0, "LaunchFactory is not deployed at the reserved address");
+
+        // Deploy script'inin KENDI geri okumasi degil; fork testinin kendi
+        // iddiasi. Ayni kontroller, bagimsiz bir yerden.
+        LaunchFactory f = LaunchFactory(p.factory);
+        assertEq(f.escrow(), p.escrow, "escrow");
+        assertEq(f.governor(), GOVERNOR_SAFE, "governor");
+        assertEq(f.protocolTreasury(), TREASURY_SAFE, "protocolTreasury");
+        assertEq(f.VIRTUAL_TOKEN_RESERVES(), 1_073_000_000e18, "T");
+        assertEq(f.VIRTUAL_QUOTE_RESERVES(), 4_292e15, "V -- 4292e15 is testnet; 4292e18 would be production");
+        assertEq(f.SALE_SUPPLY(), 793_100_000e18, "S");
+        assertEq(f.graduationTarget(), address(0), "graduationTarget must still be unset");
     }
 
-    /// @dev TORENIN GERCEKTEN YURUDUGUNUN KALICI KANITI.
-    ///
-    ///      Prova factory'si governor Safe'i governor VE treasury olarak
-    ///      dogdu; toren `setProtocolTreasury`yi 2-of-3 imzayla yurutup onu
-    ///      treasury Safe'e cevirdi. Yani asagidaki esitsizlik, o imza
-    ///      demetinin Safe tarafindan KABUL EDILDIGININ ve cagrinin ETKI
-    ///      ETTIGININ zincirdeki izidir.
-    ///
-    ///      Bu adres ADRES DEFTERINDE DEGILDIR ve olmayacaktir: ayri bir salt
-    ///      (`keccak256("arcpad.LaunchFactory.rehearsal")`) ile deploy edildi,
-    ///      atilabilir, ve gercek deploy'un onune gecemez. Buradaki tek isi,
-    ///      "toren calisiyor" iddiasinin BIR OLCUME dayanmasini saglamak --
-    ///      iddia bir gun yanlis olursa bu test kirmizilasir.
-    function test_theCeremonyRehearsalTookEffectOnChain() public view {
-        address rehearsalFactory = 0xfed991C6B9AD7144Df3d670c6b9EcF3620ac6eA5;
-        assertGt(rehearsalFactory.code.length, 0, "the rehearsal factory is gone");
+    /// DEPLOY EDEN EOA, DEPLOY ETTIGI SEY UZERINDE HICBIR YETKI TUTMUYOR.
+    function test_theDeployerCannotGovernTheDeployedFactory() public {
+        Profile memory profile = Profiles.forChain(ARC_TESTNET_CHAIN_ID);
+        (address governor, address treasury) = Profiles.governanceForChain(ARC_TESTNET_CHAIN_ID);
+        Plan memory p = DeployLib.build(ARC_TESTNET_CHAIN_ID, profile, DEPLOYER, governor, treasury);
+        LaunchFactory f = LaunchFactory(p.factory);
 
-        assertEq(
-            LaunchFactory(rehearsalFactory).governor(),
-            GOVERNOR_SAFE,
-            "the rehearsal factory was not governed by the governor Safe"
-        );
-        assertEq(
-            LaunchFactory(rehearsalFactory).protocolTreasury(),
-            TREASURY_SAFE,
-            "the 2-of-3 ceremony did not take effect: the treasury never moved"
-        );
+        vm.prank(DEPLOYER);
+        vm.expectRevert(LaunchFactory.NotGovernor.selector);
+        f.proposeGraduationTarget(address(0xABCD));
+
+        vm.prank(DEPLOYER);
+        vm.expectRevert(LaunchFactory.NotGovernor.selector);
+        f.setProtocolTreasury(DEPLOYER);
     }
 
     /// @dev ADRES DEFTERININ HENUZ OLMAYAN GIRISININ ONCEDEN OLCULMESI.
