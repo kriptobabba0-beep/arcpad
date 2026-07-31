@@ -211,6 +211,19 @@ export async function main(): Promise<number> {
     const sinceMs = Date.parse(rawSince)
     if (Number.isNaN(sinceMs)) throw new Error(`KEEPER_DRILL_SINCE is "${rawSince}", not ISO-8601`)
 
+    // PENCERE SINIRSIZ GENISLETILEMEZ. Tatbikat haftaliktir; iki gunden eski
+    // bir baslangic ya bir yazim hatasidir ya da kapiyi susturma girisimi --
+    // ve `1970-01-01` gecirmek, dorduncu tura kadar var olan bosluga geri
+    // donmek olurdu. Kabuk tarafinda bir varsayilan yeterli DEGILDI: kod
+    // tarafinda reddedilmeli ki hangi yoldan gelirse gelsin gecerli olmasin.
+    const MAX_WINDOW_MS = 2 * 24 * 60 * 60 * 1000
+    const age = Date.now() - sinceMs
+    if (age > MAX_WINDOW_MS) {
+      throw new Error(
+        `KEEPER_DRILL_SINCE is "${rawSince}", ${Math.round(age / 3_600_000)}h ago, wider than the ${MAX_WINDOW_MS / 3_600_000}h maximum. A window that wide accepts a page from an earlier drill and turns this gate back into the vacuous pass it was.`,
+      )
+    }
+
     const outcome = await drillObserve({
       sink: fileAlertSink(logPath),
       target: getAddress(rawTarget),

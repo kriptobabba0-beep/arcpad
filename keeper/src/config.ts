@@ -156,14 +156,45 @@ export function loadWatcherConfig(env: NodeJS.ProcessEnv, bookDir?: string): Wat
     )
   }
 
+  // IKISI BIRDEN EZILEMEZ, ve bu duzeltme bir incelemenin ACIK ISABETIDIR.
+  //
+  // Round 3'un raporu zincir pinini "UC BAGIMSIZ KAYNAK" diye anlatti. DEGILDI:
+  // `allowlist.governor` `KEEPER_GOVERNANCE_FILE`dan gelir, yani pin
+  // ENV-SECILI bir defteri ENV-SECILI bir governance dosyasiyla
+  // karsilastiriyordu -- iki env kaynagi ve bir zincir okumasi. Ikisini birden
+  // ayarlayan biri (ki capraz kontrolu denemek isteyen herkes dogal olarak
+  // oyle yapar) uc kapiyi da gecebilirdi.
+  //
+  // OLCULDU: bugun bu SOMURULEBILIR DEGIL, ama sebebi bu dosya degil --
+  // `packages/shared`'in `assertGovernanceAgrees`i her defterin `governor`
+  // alanini SABIT YOLLU commit'li governance dosyasina bagliyor (GOVERNANCE_PATH
+  // bir sabittir, env'den gelmez). Yani beni kurtaran sey BENIM savunmam degil,
+  // baska bir ajanin dosyasi. O dosya degisirse pinim sessizce bosalir.
+  //
+  // Bu yuzden burada KENDI yarimi kapatiyorum: defter yeniden yonlendirildiyse
+  // governance dosyasi VARSAYILAN, commit'li olan OLMAK ZORUNDADIR. Boylece
+  // pinin ucuncu kaynagi, tam da onemli oldugu durumda, env'e acik degildir.
+  if (envRedirectIsEffective && blankToUndefined(env['KEEPER_GOVERNANCE_FILE']) !== undefined) {
+    throw new Error(
+      "KEEPER_ADDRESS_BOOK_DIR and KEEPER_GOVERNANCE_FILE cannot both be overridden. The startup pin compares the factory's on-chain governor() against expected-governance.json; if BOTH the book and that file come from env, the pin compares two attacker- or accident-chosen files and proves nothing. Redirect at most one, so the pin always has one fixed, committed side.",
+    )
+  }
+
   // Env AYARLIYSA defterle AYNI olmak zorundadir. Ayarli degilse sorun yok:
   // deger zaten defterden geldi.
   assertEnvAgrees(env, 'ARC_FACTORY_ADDRESS', factory)
   assertEnvAgrees(env, 'ARC_START_BLOCK', startBlock.toString())
   assertEnvAgrees(env, 'KEEPER_CHAIN_KEY', chainKey)
 
-  const governancePath = env['KEEPER_GOVERNANCE_FILE'] ?? DEFAULT_GOVERNANCE_PATH
-  const cursorPath = env['KEEPER_CURSOR_FILE'] ?? DEFAULT_CURSOR_PATH
+  // HER YOL DEGISKENINDE BOS DIZE = AYARLANMAMIS.
+  //
+  // Round 3 bu hatayi YALNIZCA `KEEPER_ADDRESS_BOOK_DIR` icin duzeltti ve
+  // hemen yanindaki iki satiri oldugu gibi birakti. Round 4'un pin sondasi
+  // bunu calistirarak buldu: `KEEPER_GOVERNANCE_FILE=''` ile keeper
+  // "cannot read the governance allowlist at " (yol BOS) diyerek oluyordu --
+  // ayni sinif, bir satir asagida. Tek bir yardimci, uc yol.
+  const governancePath = blankToUndefined(env['KEEPER_GOVERNANCE_FILE']) ?? DEFAULT_GOVERNANCE_PATH
+  const cursorPath = blankToUndefined(env['KEEPER_CURSOR_FILE']) ?? DEFAULT_CURSOR_PATH
 
   const rawChunk = env['KEEPER_LOG_SCAN_CHUNK']
   let logScanChunk = DEFAULT_LOG_SCAN_CHUNK

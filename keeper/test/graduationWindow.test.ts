@@ -20,7 +20,6 @@ import {
   drillExpiry,
   drillObserve,
   fileAlertSink,
-  type SinkLine,
 } from '../src/drill'
 import {
   type Allowlist,
@@ -1127,40 +1126,36 @@ describe('parseGovernanceAllowlist', () => {
 describe('drill: observe', () => {
   const noSleep = (): Promise<void> => Promise.resolve()
 
-  // Lavabo satirlari artik ZAMAN DAMGALIDIR ve tatbikat pencereyi zorunlu
-  // kilar; bu yardimcilar o sekli tasir.
-  const beat = (atMs = 1_000): SinkLine => ({
-    kind: 'heartbeat',
-    atMs,
-    text: 'HEARTBEAT keeper.graduationWindow',
+  // BU YARDIMCILAR ARTIK SAHTE DEGIL. Onceki halleri `fileAlertSink`in
+  // GOVDESINI yeniden yaziyordu -- ayni regex, ayni `Date.parse`, ayni pencere
+  // karsilastirmasi -- yani onlari kullanan her test, test ettigi kodu
+  // ATLIYORDU. M23 mutanti (pencereyi kaldir) tam olarak bu yuzden SAG KALDI:
+  // suzgec testin kendi kopyasinda duruyordu.
+  //
+  // Simdi ikisi de satirlari GERCEK BICIMDE gecici bir dosyaya yazar ve
+  // GERCEK `fileAlertSink`i dondurur. Yani "en yakin yardimciya uzanmak"
+  // artik bos bir yesil uretemez: yardimcinin kendisi gercek yolu kosar.
+  const scratch: string[] = []
+  afterEach(() => {
+    while (scratch.length > 0) rmSync(scratch.pop() as string, { recursive: true, force: true })
   })
-  const page = (target: Address, atMs = 1_000): SinkLine => ({
-    kind: 'page',
-    atMs,
-    text: `PAGE keeper.graduationWindow pendingGraduationTarget is ${target} ...`,
-  })
-  const fakeSink = (lines: SinkLine[]): AlertSinkQuery => ({
-    readSince: (sinceMs) => Promise.resolve(lines.filter((l) => l.atMs >= sinceMs)),
-  })
-  /** Gercek `consoleSink`/`fileSink` satirlarindan kurulan lavabo. */
-  const linesSink = (raw: string[]): AlertSinkQuery => ({
-    readSince: (sinceMs) =>
-      Promise.resolve(
-        raw.flatMap((text) => {
-          const m = /^(PAGE|OK|HEARTBEAT) keeper\.graduationWindow at=(\S+)/.exec(text)
-          if (m === null) return []
-          const atMs = Date.parse(m[2] as string)
-          if (Number.isNaN(atMs) || atMs < sinceMs) return []
-          const kind = m[1] === 'PAGE' ? 'page' : m[1] === 'OK' ? 'ok' : 'heartbeat'
-          return [{ kind, atMs, text } as SinkLine]
-        }),
-      ),
-  })
+  let seq = 0
+  const sinkOf = (lines: string[]): AlertSinkQuery => {
+    const dir = mkdtempSync(join(tmpdir(), 'arcpad-sinkof-'))
+    scratch.push(dir)
+    const path = join(dir, `alerts-${(seq += 1)}.log`)
+    writeFileSync(path, lines.length === 0 ? '' : `${lines.join('\n')}\n`, 'utf8')
+    return fileAlertSink(path)
+  }
+  const stamp = (atMs: number): string => new Date(atMs).toISOString()
+  const beatLine = (atMs = 1_000): string => `HEARTBEAT keeper.graduationWindow at=${stamp(atMs)}`
+  const pageLine = (target: Address, atMs = 1_000): string =>
+    `PAGE keeper.graduationWindow at=${stamp(atMs)} pendingGraduationTarget is ${target} ...`
+  const fakeSink = (lines: string[]): AlertSinkQuery => sinkOf(lines)
+  const linesSink = (raw: string[]): AlertSinkQuery => sinkOf(raw)
 
   it('lavaboda hedefi anan bir sayfa varsa gecer', async () => {
-    const sink = {
-      readSince: () => Promise.resolve([beat(), page(EVIL_TARGET)]),
-    }
+    const sink = fakeSink([beatLine(), pageLine(EVIL_TARGET)])
     const outcome = await drillObserve({
       sinceMs: 0,
       sink,
@@ -1198,7 +1193,7 @@ describe('drill: observe', () => {
     const now = Date.parse('2026-07-01T00:00:00.000Z')
     const outcome = await drillObserve({
       sinceMs: now,
-      sink: fakeSink([page(EVIL_TARGET, monthAgo), beat(monthAgo)]),
+      sink: fakeSink([pageLine(EVIL_TARGET, monthAgo), beatLine(monthAgo)]),
       target: EVIL_TARGET,
       waitMs: 0,
       sleep: noSleep,
@@ -1213,7 +1208,7 @@ describe('drill: observe', () => {
     const at = Date.parse('2026-07-01T00:00:00.000Z')
     const outcome = await drillObserve({
       sinceMs: at - 1000,
-      sink: fakeSink([page(EVIL_TARGET, at), beat(at)]),
+      sink: fakeSink([pageLine(EVIL_TARGET, at), beatLine(at)]),
       target: EVIL_TARGET,
       waitMs: 0,
       sleep: noSleep,
@@ -1226,7 +1221,7 @@ describe('drill: observe', () => {
   it('kalp atisi VAR ama sayfa YOK: farkli mesaj, yine duser', async () => {
     const outcome = await drillObserve({
       sinceMs: 0,
-      sink: fakeSink([beat()]),
+      sink: fakeSink([beatLine()]),
       target: EVIL_TARGET,
       waitMs: 0,
       sleep: noSleep,
@@ -1252,7 +1247,10 @@ describe('drill: observe', () => {
   })
 
   it('ALAKASIZ bir sayfa tatbikati gecirmez', async () => {
-    const sink = fakeSink([{ kind: 'page', atMs: 1000, text: 'PAGE chain-head-stale ...' }, beat()])
+    const sink = fakeSink([
+      `PAGE keeper.graduationWindow at=${stamp(1000)} chain-head-stale ...`,
+      beatLine(),
+    ])
     const outcome = await drillObserve({
       sinceMs: 0,
       sink,
@@ -1266,10 +1264,14 @@ describe('drill: observe', () => {
 
   it('sayfa gec gelirse sonraki denemede yakalanir', async () => {
     let calls = 0
+    // Iki GERCEK lavabo, ve aralarinda gecis. Sayim disinda hicbir sey taklit
+    // edilmiyor: her iki dal da `fileAlertSink`i kosar.
+    const early = fakeSink([beatLine()])
+    const late = fakeSink([beatLine(), pageLine(EVIL_TARGET)])
     const sink: AlertSinkQuery = {
-      readSince: () => {
+      readSince: (sinceMs) => {
         calls += 1
-        return Promise.resolve(calls < 3 ? [beat()] : [beat(), page(EVIL_TARGET)])
+        return (calls < 3 ? early : late).readSince(sinceMs)
       },
     }
     const outcome = await drillObserve({

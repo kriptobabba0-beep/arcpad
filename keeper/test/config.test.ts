@@ -113,16 +113,64 @@ describe('loadWatcherConfig', () => {
   // zincire karsi kirabilmek icin var -- loop-level tatbikat onu kullanir.
   const FACTORY = '0xeeaE42fa79dA76cF5186CE47e5c66BF496DF66f3'
 
+  // Defter yeniden yonlendirildiginde governance dosyasi VARSAYILAN olmak
+  // ZORUNDA (asagida), o yuzden bu blok `KEEPER_GOVERNANCE_FILE` TASIMAZ.
+  const redirectBase = { ARC_CHAIN_ID: '31337' }
+
   it('defter dizini env uzerinden verilebilir, ve arguman env i EZER', () => {
-    const redirected = { ...base, KEEPER_ADDRESS_BOOK_DIR: BOOK_DIR, ARC_FACTORY_ADDRESS: FACTORY }
+    const redirected = {
+      ...redirectBase,
+      KEEPER_ADDRESS_BOOK_DIR: BOOK_DIR,
+      ARC_FACTORY_ADDRESS: FACTORY,
+    }
     expect(loadWatcherConfig(redirected).startBlock).toBe(1n)
     expect(() =>
-      loadWatcherConfig({ ...base, KEEPER_ADDRESS_BOOK_DIR: 'nope', ARC_FACTORY_ADDRESS: FACTORY }),
+      loadWatcherConfig({
+        ...redirectBase,
+        KEEPER_ADDRESS_BOOK_DIR: 'nope',
+        ARC_FACTORY_ADDRESS: FACTORY,
+      }),
     ).toThrow(/file/)
     // Arguman verildiginde env yok sayilir.
     expect(loadWatcherConfig({ ...base, KEEPER_ADDRESS_BOOK_DIR: 'nope' }, BOOK_DIR).chainKey).toBe(
       'local-rehearsal',
     )
+  })
+
+  // ZINCIR PININ UCUNCU KAYNAGI ENV'E ACIK OLAMAZ.
+  //
+  // Round 3'un raporu pini "uc bagimsiz kaynak" diye anlatti; degildi --
+  // `allowlist.governor` `KEEPER_GOVERNANCE_FILE`dan geliyordu, yani IKISI DE
+  // env-seciliydi. Ikisini birden ezmek, capraz kontrolu denemek isteyen
+  // herkesin dogal olarak yapacagi seydir.
+  it('KEEPER_ADDRESS_BOOK_DIR ile KEEPER_GOVERNANCE_FILE birlikte EZILEMEZ', () => {
+    expect(() =>
+      loadWatcherConfig({
+        ...redirectBase,
+        KEEPER_ADDRESS_BOOK_DIR: BOOK_DIR,
+        ARC_FACTORY_ADDRESS: FACTORY,
+        KEEPER_GOVERNANCE_FILE: GOVERNANCE,
+      }),
+    ).toThrow(/cannot both be overridden/)
+  })
+
+  // AYNI SINIF, BIR SATIR ASAGIDA. Round 3 bos-dize hatasini yalnizca defter
+  // dizininde duzeltmisti; round 4'un pin sondasi bunu CALISTIRARAK buldu:
+  // `KEEPER_GOVERNANCE_FILE=''` ile keeper "cannot read the governance
+  // allowlist at " (yol BOS) diyerek oluyordu.
+  it('BOS yol degiskenleri varsayilana duser, ciplak bos yola degil', () => {
+    for (const key of ['KEEPER_GOVERNANCE_FILE', 'KEEPER_CURSOR_FILE'] as const) {
+      const config = loadWatcherConfig({ ARC_CHAIN_ID: '31337', [key]: '' }, BOOK_DIR)
+      const path = key === 'KEEPER_GOVERNANCE_FILE' ? config.governancePath : config.cursorPath
+      expect(path, key).not.toBe('')
+      expect(path.replace(/\\/g, '/'), key).toContain('/')
+    }
+  })
+
+  it('YALNIZCA governance dosyasini ezmek serbesttir -- defter hala commit"li', () => {
+    expect(() =>
+      loadWatcherConfig({ ...base, KEEPER_GOVERNANCE_FILE: GOVERNANCE }, BOOK_DIR),
+    ).not.toThrow()
   })
 
   // BOS DIZE = AYARLANMAMIS. `.env.example` bu degiskeni BOS gonderir ve
@@ -178,12 +226,12 @@ describe('loadWatcherConfig', () => {
   // izleyiciyi baska, sessiz, gercek bir factory'ye baglar ve her dedektor
   // susar.
   it('dizin ezilirse ARC_FACTORY_ADDRESS ZORUNLUDUR', () => {
-    expect(() => loadWatcherConfig({ ...base, KEEPER_ADDRESS_BOOK_DIR: BOOK_DIR })).toThrow(
+    expect(() => loadWatcherConfig({ ...redirectBase, KEEPER_ADDRESS_BOOK_DIR: BOOK_DIR })).toThrow(
       /ARC_FACTORY_ADDRESS must also be set/,
     )
     expect(() =>
       loadWatcherConfig({
-        ...base,
+        ...redirectBase,
         KEEPER_ADDRESS_BOOK_DIR: BOOK_DIR,
         ARC_FACTORY_ADDRESS: '0x0000000000000000000000000000000000000001',
       }),
