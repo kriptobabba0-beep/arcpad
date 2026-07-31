@@ -4,7 +4,7 @@ import { argv, env, exit } from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { createArcClient } from '@arcpad/shared'
 import { type Address, BaseError, ContractFunctionRevertedError, getAddress } from 'viem'
-import { loadWatcherConfig } from './config'
+import { blankToUndefined, loadWatcherConfig } from './config'
 import { FACTORY_WATCH_ABI } from './watch/graduationWindow'
 
 /**
@@ -228,7 +228,8 @@ export async function main(): Promise<number> {
       sink: fileAlertSink(logPath),
       target: getAddress(rawTarget),
       sinceMs,
-      waitMs: Number(env['KEEPER_POLL_INTERVAL_MS'] ?? 5_000),
+      // Bos dize -> Number('') === 0 -> beklemesiz donen bir tatbikat.
+      waitMs: Number(blankToUndefined(env['KEEPER_POLL_INTERVAL_MS']) ?? 5_000),
       sleep,
     })
     console.log(`${outcome.ok ? 'DRILL PASS' : 'DRILL FAIL'} observe: ${outcome.detail}`)
@@ -244,7 +245,8 @@ export async function main(): Promise<number> {
             address: watcher.factory,
             abi: FACTORY_WATCH_ABI,
             functionName: 'applyGraduationTarget',
-            account: getAddress(env['KEEPER_DRILL_CALLER'] ?? watcher.factory),
+            // Bos dize -> getAddress('') FIRLATIR; yedege dusmesi gerekirdi.
+            account: getAddress(blankToUndefined(env['KEEPER_DRILL_CALLER']) ?? watcher.factory),
           })
           return { reverted: false }
         } catch (error) {

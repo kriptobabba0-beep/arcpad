@@ -103,8 +103,11 @@ export const DEFAULT_GOVERNANCE_PATH = fileURLToPath(
  * ALANI ADIYLA yapiliyor.
  */
 export function loadWatcherConfig(env: NodeJS.ProcessEnv, bookDir?: string): WatcherConfig {
-  const chainId =
-    env['ARC_CHAIN_ID'] === undefined ? ARC_TESTNET_CHAIN_ID : Number(env['ARC_CHAIN_ID'])
+  // `ARC_CHAIN_ID=''` -> `Number('')` SIFIRDIR ve `Number.isSafeInteger(0)`
+  // DOGRUDUR, yani bos dize sessizce `addresses.0.json` arayan bir keeper
+  // uretirdi. Ayni sinif, ucuncu yer.
+  const rawChainId = blankToUndefined(env['ARC_CHAIN_ID'])
+  const chainId = rawChainId === undefined ? ARC_TESTNET_CHAIN_ID : Number(rawChainId)
   if (!Number.isSafeInteger(chainId)) {
     throw new Error(`ARC_CHAIN_ID must be an integer, got "${env['ARC_CHAIN_ID'] ?? ''}"`)
   }
@@ -229,7 +232,8 @@ export function loadWatcherConfig(env: NodeJS.ProcessEnv, bookDir?: string): Wat
     cursorPath,
     logScanChunk,
     allowlist: parseGovernanceAllowlist(JSON.parse(raw) as unknown, chainKey),
-    alertLogPath: env['KEEPER_ALERT_LOG'] === '' ? undefined : env['KEEPER_ALERT_LOG'],
+    // `=== ''` bosluktan ibaret bir degeri KACIRIRDI; tek yardimci her ikisini de alir.
+    alertLogPath: blankToUndefined(env['KEEPER_ALERT_LOG']),
     alertRepeatMs,
   }
 }
@@ -297,8 +301,16 @@ function coerceAddress(value: unknown, field: string): Address {
   return getAddress(value)
 }
 
-/** Bos dize env'de "ayarlanmamis" demektir; `??` bunu GORMEZ. */
-function blankToUndefined(value: string | undefined): string | undefined {
+/**
+ * Bos dize env'de "ayarlanmamis" demektir; `??` bunu GORMEZ.
+ *
+ * `keeper/` icindeki HER dize env okumasi bundan gecer. Bu kural uc turda uc
+ * kez ihlal edildi -- once `KEEPER_ADDRESS_BOOK_DIR`, sonra
+ * `KEEPER_GOVERNANCE_FILE`/`KEEPER_CURSOR_FILE`, sonra `ARC_CHAIN_ID` ile
+ * `drill.ts`in iki okumasi -- ve her seferinde duzeltme YALNIZCA o an bakilan
+ * satira uygulandi. Yeni bir env degiskeni eklerken: `??` degil, BU.
+ */
+export function blankToUndefined(value: string | undefined): string | undefined {
   return value === undefined || value.trim() === '' ? undefined : value
 }
 

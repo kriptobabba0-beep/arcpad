@@ -15,12 +15,7 @@ import {
   multiSink,
 } from '../src/alert'
 import { parseGovernanceAllowlist } from '../src/config'
-import {
-  type AlertSinkQuery,
-  drillExpiry,
-  drillObserve,
-  fileAlertSink,
-} from '../src/drill'
+import { type AlertSinkQuery, drillExpiry, drillObserve, fileAlertSink } from '../src/drill'
 import {
   type Allowlist,
   type ChainReader,

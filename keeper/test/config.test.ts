@@ -1,6 +1,18 @@
-import { describe, expect, it } from 'vitest'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { afterEach, describe, expect, it } from 'vitest'
 import { loadKeeperConfig, loadWatcherConfig } from '../src/config'
+
+const BOOK_DIR = fileURLToPath(new URL('../../contracts/deploy/testdata', import.meta.url))
+const GOVERNANCE = fileURLToPath(
+  new URL('../../contracts/deploy/expected-governance.json', import.meta.url),
+)
+const scratch: string[] = []
+afterEach(() => {
+  while (scratch.length > 0) rmSync(scratch.pop() as string, { recursive: true, force: true })
+})
 
 describe('loadKeeperConfig', () => {
   it('gecerli ortamdan yapilandirma uretir', () => {
@@ -242,5 +254,143 @@ describe('loadWatcherConfig', () => {
     expect(() => loadWatcherConfig({ ...base, KEEPER_ALERT_REPEAT_MS: 'soon' }, BOOK_DIR)).toThrow(
       /KEEPER_ALERT_REPEAT_MS/,
     )
+  })
+})
+
+/**
+ * ============================================================================
+ * CROSS-PACKAGE CONTRACT TEST -- DO NOT DELETE WITHOUT READING THIS
+ * ============================================================================
+ *
+ * NEYI SAVUNUYOR: keeper'in acilis pini
+ * (`assertFactoryMatchesGovernance`) factory'nin ZINCIRDEKI `governor()`
+ * degerini `expected-governance.json`daki governor ile karsilastirir. O
+ * karsilastirmanin bir anlami olmasi icin, DEFTERIN ISARET ETTIGI factory ile
+ * governance dosyasinin ZATEN baglanmis olmasi gerekir -- aksi halde yeniden
+ * yonlendirilmis bir defter hem factory'yi hem de "beklenen" governor'u
+ * secebilir ve pin iki secili degeri birbiriyle karsilastirip hicbir sey
+ * ispatlamaz.
+ *
+ * O baglamayi keeper YAPMAZ. `packages/shared`in `parseAddressBook`i yapar:
+ * her defteri, SABIT yollu `expected-governance.json` ile karsilastirir.
+ *
+ * NEDEN BU TEST VAR: bu, BASKA BIR PAKETTEKI, BASKA BIR AJANIN sahibi oldugu
+ * bir garantiye YAZILMAMIS bir bagimliliktir. Round 4'un incelemesi bunu
+ * "kimsenin kaydetmedigi bir sebeple dogru olan ozellik" olarak isaretledi:
+ * `packages/shared` o kontrolu kaldirirsa, bir env degiskeninin arkasina
+ * alirsa ya da kosullu yaparsa, keeper'in pini SESSIZCE bosalir ve BENIM
+ * hicbir testim kirmizi olmaz. Bu test tam olarak o sessizligi bir
+ * BASARISIZLIGA cevirir.
+ *
+ * SILMEDEN ONCE: pinin hala bir sey ispatladigini gosteren baska bir
+ * mekanizma yazin. Bu testi kirmizi buldugunuzda dogru refleks onu silmek
+ * DEGIL, `packages/shared`in neden garantiyi biraktigini sormaktir.
+ *
+ * `packages/shared`in ICINE BAKMAZ: dosyalarini okumaz, ic fonksiyonlarini
+ * cagirmaz. Yalnizca keeper'in GERCEKTEN kullandigi arayuzden --
+ * `loadWatcherConfig` -- gozlenebilir davranisi iddia eder.
+ */
+describe('CONTRACT: the address book is bound to expected-governance.json', () => {
+  const REAL_GOVERNANCE = JSON.parse(readFileSync(GOVERNANCE, 'utf8')) as Record<
+    string,
+    { governor: string; treasury: string }
+  >
+
+  /** testdata defterini alir, istenen alanlari degistirip gecici bir dizine yazar. */
+  const bookDirWith = (overrides: Record<string, unknown>): string => {
+    const book = JSON.parse(readFileSync(join(BOOK_DIR, 'addresses.31337.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    const dir = mkdtempSync(join(tmpdir(), 'arcpad-contract-'))
+    scratch.push(dir)
+    writeFileSync(
+      join(dir, 'addresses.31337.json'),
+      JSON.stringify({ ...book, ...overrides }, null, 2),
+      'utf8',
+    )
+    return dir
+  }
+
+  it('bir defter, governance dosyasiyla CELISEN bir governor bildiremez', () => {
+    const chainKey = (
+      JSON.parse(readFileSync(join(BOOK_DIR, 'addresses.31337.json'), 'utf8')) as {
+        chainKey: string
+      }
+    ).chainKey
+    const declared = REAL_GOVERNANCE[chainKey]
+    expect(declared, `expected-governance.json has no ${chainKey} entry`).toBeDefined()
+
+    // Gercek governor'dan FARKLI, ama gecerli ve diger rollerle takma ad olmayan bir adres.
+    const impostor = '0x00000000000000000000000000000000000B0b01'
+    expect(impostor.toLowerCase()).not.toBe(
+      (declared as { governor: string }).governor.toLowerCase(),
+    )
+
+    let message = ''
+    try {
+      loadWatcherConfig({ ARC_CHAIN_ID: '31337' }, bookDirWith({ governor: impostor }))
+      message = 'LOADED -- the book was NOT checked against expected-governance.json'
+    } catch (error) {
+      message = String(error)
+    }
+    expect(
+      message,
+      'packages/shared must reject a book whose governor disagrees with expected-governance.json; if this fails, the keeper startup pin no longer proves anything -- read the comment above this describe block',
+    ).toMatch(/expected-governance.json/)
+    expect(message).not.toContain('LOADED')
+  })
+
+  it('o karsilastirmanin yolu ENV ILE DEGISTIRILEMEZ', () => {
+    // Sahte bir governance dosyasi yaz: sahtekar governor'u MESRU ilan eder.
+    const dir = mkdtempSync(join(tmpdir(), 'arcpad-contract-gov-'))
+    scratch.push(dir)
+    const impostor = '0x00000000000000000000000000000000000B0b01'
+    const chainKey = (
+      JSON.parse(readFileSync(join(BOOK_DIR, 'addresses.31337.json'), 'utf8')) as {
+        chainKey: string
+        protocolTreasury: string
+      }
+    ).chainKey
+    const fakePath = join(dir, 'governance.json')
+    writeFileSync(
+      fakePath,
+      JSON.stringify({
+        [chainKey]: {
+          governor: impostor,
+          treasury: (REAL_GOVERNANCE[chainKey] as { treasury: string }).treasury,
+          owners: [],
+          allowedGraduationTargets: [],
+        },
+      }),
+      'utf8',
+    )
+
+    // Defter argumanla verilir (env yonlendirme kapisini atlar), governance
+    // dosyasi ise ENV ile ezilir. Kontrol env'den okusaydi, bu GECERDI.
+    let message = ''
+    try {
+      loadWatcherConfig(
+        { ARC_CHAIN_ID: '31337', KEEPER_GOVERNANCE_FILE: fakePath },
+        bookDirWith({ governor: impostor }),
+      )
+      message = 'LOADED -- the comparison followed KEEPER_GOVERNANCE_FILE'
+    } catch (error) {
+      message = String(error)
+    }
+    expect(
+      message,
+      'the book<->governance comparison must use a fixed path, not KEEPER_GOVERNANCE_FILE; if env can redirect it, a redirected book can bless its own governor and the startup pin is vacuous',
+    ).toMatch(/expected-governance.json/)
+    expect(message).not.toContain('LOADED')
+  })
+
+  // NOT: bu bloktaki iddia BILEREK `expected-governance.json`i arar,
+  // `/governor/i` gibi genis bir kalibi DEGIL. Ilk hali genisti ve test
+  // GECIYORDU -- ama sebebi governance karsilastirmasi degil, EIP-55 checksum
+  // hatasiydi: sahtekar adres yanlis checksum'luydu. Yani `assertGovernanceAgrees`
+  // silinseydi test YINE gecerdi. Kalibi daraltmak bunu aninda ortaya cikardi.
+  it('DOGRU governor ile ayni defter YUKLENIR -- kontrol "her zaman reddet" degil', () => {
+    expect(() => loadWatcherConfig({ ARC_CHAIN_ID: '31337' }, bookDirWith({}))).not.toThrow()
   })
 })
