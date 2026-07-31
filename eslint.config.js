@@ -18,6 +18,15 @@ export default tseslint.config(
       '**/out/**',
       '**/*.tsbuildinfo',
       'web/next-env.d.ts',
+      // .superpowers/ is git-ignored scratch: task briefs, review packages, and the
+      // mutation/live-break harnesses preserved out of the ephemeral scratchpad so
+      // they survive a session. They are throwaway instruments, not shipped source
+      // -- and they are deliberately written to be broken (a mutation harness edits
+      // a copy of real code), so linting them is meaningless. Without this line
+      // `make lint` reports ~90 errors that no one can act on, which trains people
+      // to ignore the lint gate. Deliberately narrow: it does NOT mask errors in
+      // packages/, indexer/, keeper/ or web/, which live at different paths.
+      '.superpowers/**',
     ],
   },
   js.configs.recommended,
