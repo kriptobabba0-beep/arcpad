@@ -223,6 +223,89 @@ describe('runMigrations', () => {
     }
   })
 
+  // ---------------------------------------------------------------
+  // DEFTER DOSYALAR uzerinde tamdi, SEMA uzerinde degildi. Olculen sonuc:
+  // kusursuz bir defter + `DROP TABLE token_stats` = `ok=true, result=[]`.
+  // Bos/dusurulmus semalar yalnizca TESADUFEN yakalaniyordu (ilk CREATE
+  // TABLE'in 42P07'si), yani bir `IF NOT EXISTS` sessizlige bir adim
+  // uzaktaydi -- ve C-1'in butun meselesi muhafizin tesadufe dayanmamasiydi.
+  // ---------------------------------------------------------------
+  it('DUSURULMUS bir tablo yakalanir (defter kusursuz olsa bile)', async () => {
+    await runMigrations(pool)
+    await pool.query('DROP TABLE token_stats')
+
+    // Defter hala kusursuz: alti dosya, alti dogru ozet.
+    const { rows } = await pool.query<{ n: number }>(
+      'SELECT count(*)::int n FROM schema_migrations WHERE checksum_hex IS NOT NULL',
+    )
+    expect(rows[0]?.n).toBe(6)
+
+    const err = await runMigrations(pool).catch((e: Error) => e)
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toMatch(/sema, migration'larin urettiginden FARKLI/)
+    // Ve NE eksik oldugunu SOYLUYOR.
+    expect((err as Error).message).toContain('token_stats')
+  })
+
+  it('DUSURULMUS bir sutun ve FAZLADAN bir tablo da yakalanir', async () => {
+    await runMigrations(pool)
+    await pool.query('ALTER TABLE trades DROP COLUMN source')
+    await pool.query('CREATE TABLE stowaway (x int PRIMARY KEY)')
+    const err = await runMigrations(pool).catch((e: Error) => e)
+    expect((err as Error).message).toContain('trades.source')
+    expect((err as Error).message).toContain('stowaway')
+  })
+
+  it('parmak izi YOKSA (bu surumden onceki bir kosu) sert durustur', async () => {
+    await runMigrations(pool)
+    await pool.query('DELETE FROM schema_state')
+    await expect(runMigrations(pool)).rejects.toThrow(/sema parmak izi YOK/)
+  })
+
+  it('DOKUNULMAMIS bir sema tekrar tekrar gecer (parmak izi kararli)', async () => {
+    // Parmak izi katalogdan turedigi icin, hicbir sey degismediginde ayni
+    // kalmali; aksi halde muhafiz her kosuda yanlis alarm verirdi.
+    await runMigrations(pool)
+    const { rows: a } = await pool.query<{ fingerprint_hex: string }>(
+      'SELECT fingerprint_hex FROM schema_state',
+    )
+    await expect(runMigrations(pool)).resolves.toEqual([])
+    await expect(runMigrations(pool)).resolves.toEqual([])
+    const { rows: b } = await pool.query<{ fingerprint_hex: string }>(
+      'SELECT fingerprint_hex FROM schema_state',
+    )
+    expect(b[0]?.fingerprint_hex).toBe(a[0]?.fingerprint_hex)
+    expect(a[0]?.fingerprint_hex).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  it('SATIRLAR parmak izini degistirmez (yapinin izi, verinin degil)', async () => {
+    await runMigrations(pool)
+    const { rows: a } = await pool.query<{ fingerprint_hex: string }>(
+      'SELECT fingerprint_hex FROM schema_state',
+    )
+    await pool.query('INSERT INTO sync_state (id, last_block, last_block_hash) VALUES (1, 7, $1)', [
+      `0x${'a'.repeat(64)}`,
+    ])
+    await expect(runMigrations(pool)).resolves.toEqual([])
+    const { rows: b } = await pool.query<{ fingerprint_hex: string }>(
+      'SELECT fingerprint_hex FROM schema_state',
+    )
+    expect(b[0]?.fingerprint_hex).toBe(a[0]?.fingerprint_hex)
+  })
+
+  it('42P07 e DAYANMIYOR: `IF NOT EXISTS` ile bile sessiz kalmaz', async () => {
+    // Eski davranisin tesadufi olan yani: bos bir sema yalnizca ilk
+    // `CREATE TABLE` catistigi icin yakalaniyordu. Burada catisma OLMAYAN bir
+    // durum kuruluyor -- tablo GERCEKTEN yok -- ve muhafiz yine de duruyor.
+    await runMigrations(pool)
+    await pool.query('DROP TABLE token_stats')
+    await pool.query('CREATE TABLE IF NOT EXISTS token_stats (token text PRIMARY KEY)')
+    // Artik bir tablo VAR, yani hicbir CREATE catismaz; tek fark sutunlari.
+    const err = await runMigrations(pool).catch((e: Error) => e)
+    expect((err as Error).message).toMatch(/sema, migration'larin urettiginden FARKLI/)
+    expect((err as Error).message).toContain('token_stats')
+  })
+
   it('uyusmazlik varsa HICBIR DDL calismaz', async () => {
     // Karsilastirma her seyden ONCE yapilir. Ledger bozukken bekleyen bir
     // dosya da varsa, o dosya UYGULANMAMALI.

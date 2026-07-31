@@ -3,6 +3,7 @@ import { readdir, readFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Pool } from 'pg'
+import type { Queryable } from './pool'
 
 /** `packages/db/migrations` -- kaynak dosyaya GORE, calisma dizinine gore degil. */
 export const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations')
@@ -24,6 +25,51 @@ const CREATE_LEDGER = `
 // DISINDA, `CREATE_LEDGER` ile ayni gerekceyle.
 const ADD_CHECKSUM = `ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum_hex text`
 
+/**
+ * Uygulanan migration'larin URETTIGI semanin kaydi.
+ *
+ * NICIN VAR: defter karsilastirmasi DOSYALAR uzerinde tamdi, SEMA uzerinde
+ * degil. Olculen sonuc: kusursuz bir defter + `DROP TABLE token_stats` =
+ * `ok=true, result=[]`. Bos ve dusurulmus semalar yalnizca TESADUFEN
+ * yakalaniyordu -- ilk `CREATE TABLE` 42P07 verdigi icin -- yani bir
+ * `CREATE TABLE IF NOT EXISTS` sessizlige bir adim uzaktaydi. C-1'in butun
+ * meselesi muhafizin tesadufi bir seye dayanmamasiydi.
+ */
+const CREATE_STATE = `
+  CREATE TABLE IF NOT EXISTS schema_state (
+    id               smallint PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+    fingerprint_hex  text NOT NULL CHECK (fingerprint_hex ~ '^[0-9a-f]{64}$'),
+    inventory_json   text NOT NULL,
+    updated_at       timestamptz NOT NULL DEFAULT now()
+  )`
+
+/**
+ * Semanin karsilastirilabilir tam envanteri: her iliski, her sutun, her kisit,
+ * her indeks. Satirlar DAHIL DEGILDIR -- bu yapinin parmak izidir.
+ */
+export async function schemaInventory(db: Queryable): Promise<string[]> {
+  const columns = await db.query<{ line: string }>(`
+    SELECT n.nspname || '.' || c.relname || '.' || a.attname || '|' ||
+           format_type(a.atttypid, a.atttypmod) || '|' || a.attnotnull::text AS line
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+    WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+      AND n.nspname NOT LIKE 'pg\\_%'
+      AND c.relkind = ANY ('{r,p,v,m,f}')`)
+  const constraints = await db.query<{ line: string }>(`
+    SELECT conrelid::regclass::text || '|' || conname || '|' || pg_get_constraintdef(oid) AS line
+    FROM pg_constraint WHERE connamespace = 'public'::regnamespace`)
+  const indexes = await db.query<{ line: string }>(`
+    SELECT schemaname || '.' || tablename || '|' || indexname || '|' || indexdef AS line
+    FROM pg_indexes WHERE schemaname NOT IN ('pg_catalog', 'information_schema')`)
+  return [
+    ...columns.rows.map((r) => `col ${r.line}`),
+    ...constraints.rows.map((r) => `con ${r.line}`),
+    ...indexes.rows.map((r) => `idx ${r.line}`),
+  ].sort()
+}
+
 function sha256Hex(content: string): string {
   return createHash('sha256').update(content, 'utf8').digest('hex')
 }
@@ -33,7 +79,7 @@ function sha256Hex(content: string): string {
  *
  * Bu, migration'lari YERINDE duzenleme kararinin bedelidir; o karari mesru
  * kilan tek sey duzenlemenin GORULEBILIR olmasidir. Ilk hali yalnizca
- * "degismis" dosyayi ariyordu ve uc kaciş birakiyordu; ucu de olculdu:
+ * "degismis" dosyayi ariyordu ve uc kacis birakiyordu; ucu de olculdu:
  *
  *   - SILINMIS bir dosya hic bakilmadigi icin sessiz kaliyordu;
  *   - ARAYA EKLENMIS bir dosya sirasiz uygulaniyordu;
@@ -138,6 +184,7 @@ export async function runMigrations(pool: Pool, files?: string[]): Promise<strin
 
   await pool.query(CREATE_LEDGER)
   await pool.query(ADD_CHECKSUM)
+  await pool.query(CREATE_STATE)
 
   const { rows } = await pool.query<{ filename: string; checksum_hex: string | null }>(
     'SELECT filename, checksum_hex FROM schema_migrations',
@@ -159,6 +206,38 @@ export async function runMigrations(pool: Pool, files?: string[]): Promise<strin
   }
 
   const problems = ledgerProblems(applied, list, onDisk)
+
+  // SEMANIN KENDISI DEFTERE UYUYOR MU? Dosyalar uzerindeki karsilastirma
+  // tamdi, sema uzerindeki degildi.
+  if (applied.size > 0) {
+    const { rows: stateRows } = await pool.query<{
+      fingerprint_hex: string
+      inventory_json: string
+    }>('SELECT fingerprint_hex, inventory_json FROM schema_state WHERE id = 1')
+    const state = stateRows[0]
+    const current = await schemaInventory(pool)
+    const currentHex = sha256Hex(current.join('\n'))
+    if (state === undefined) {
+      problems.push(
+        `sema parmak izi YOK ama defterde ${applied.size} uygulanmis migration var ` +
+          `(parmak izi sutunundan onceki bir kosudan kalma). Semanin defterle ` +
+          `ayni sey olup olmadigi bilinemez.`,
+      )
+    } else if (state.fingerprint_hex !== currentHex) {
+      const before = new Set(JSON.parse(state.inventory_json) as string[])
+      const after = new Set(current)
+      const missing = [...before].filter((x) => !after.has(x)).sort()
+      const extra = [...after].filter((x) => !before.has(x)).sort()
+      const show = (xs: string[]) =>
+        xs.length <= 8 ? xs.join('; ') : `${xs.slice(0, 8).join('; ')} ... (+${xs.length - 8})`
+      problems.push(
+        `sema, migration'larin urettiginden FARKLI. ` +
+          (missing.length > 0 ? `EKSIK: ${show(missing)}. ` : '') +
+          (extra.length > 0 ? `FAZLA: ${show(extra)}. ` : ''),
+      )
+    }
+  }
+
   if (problems.length > 0) {
     throw new Error(
       `runMigrations: defter ile diskteki migration'lar UYUSMUYOR.\n` +
@@ -170,7 +249,13 @@ export async function runMigrations(pool: Pool, files?: string[]): Promise<strin
   }
 
   const pending = list.filter((f) => !applied.has(f))
-  if (pending.length === 0) return []
+  if (pending.length === 0) {
+    // Defter dolu ama parmak izi henuz yoksa (bu surumun ilk kosusu), semayi
+    // OLDUGU GIBI kaydet. Bu bir "benimseme" DEGILDIR: yukaridaki kontrol
+    // parmak izi eksikken zaten HATA verir, yani buraya ancak `applied` bos
+    // oldugunda -- yani kaydedilecek bir sema olmadiginda -- gelinir.
+    return []
+  }
 
   const client = await pool.connect()
   try {
@@ -184,6 +269,18 @@ export async function runMigrations(pool: Pool, files?: string[]): Promise<strin
         sha256Hex(sql),
       ])
     }
+    // Parmak izi ISLEMIN ICINDE yazilir: migration'lar uygulandi ama kayit
+    // yazilamadi diye bir ara durum olmamali.
+    const inventory = await schemaInventory(client)
+    await client.query(
+      `INSERT INTO schema_state (id, fingerprint_hex, inventory_json, updated_at)
+       VALUES (1, $1, $2, now())
+       ON CONFLICT (id) DO UPDATE
+         SET fingerprint_hex = EXCLUDED.fingerprint_hex,
+             inventory_json = EXCLUDED.inventory_json,
+             updated_at = now()`,
+      [sha256Hex(inventory.join('\n')), JSON.stringify(inventory)],
+    )
     await client.query('COMMIT')
     return pending
   } catch (error) {

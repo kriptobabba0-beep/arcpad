@@ -46,7 +46,7 @@ import { pool, resetSchema } from './setup'
 
 /** Bildirilmis sonekler. Hicbiri para gorunumu BILDIRMEZ; para `_wei`/`_tok`tur. */
 const NON_MONEY_SUFFIX =
-  /(_ppm|_bps|_seq|_at|_time|_count|_id|_block|_number|_index|_hash|_hex|_addr)$/
+  /(_ppm|_bps|_seq|_at|_time|_count|_id|_block|_number|_index|_hash|_hex|_addr|_json)$/
 const MONEY_SUFFIX = /(_wei|_tok)$/
 const FORBIDDEN = /(_usdc|_uusdc|_micro|_e6)$/
 
@@ -73,7 +73,22 @@ const NON_AMOUNT_TYPES = new Set([
   'uuid',
 ])
 
-const EXEMPT = new Set([
+/**
+ * MUAFIYETLER TIPE BAGLIDIR.
+ *
+ * Onceki hali tek bir ada gore anahtarlanmis kumeydi ve TIPE HIC BAKMIYORDU.
+ * Gozden gecirenin probe'u calistirildi ve deligi ISPATLADI: `token`, `name`,
+ * `id`, `reason`, `salt`, `source` adlarindan HERHANGI BIRINI tasiyan bir
+ * `bigint` sutunu ALTI kovanin ALTISINDAN da gecti (`*** NO FINDING ***`,
+ * her biri examined +1). `is_buy`i dusurup `bigint` olarak geri eklemek de
+ * ayni sekilde kacti. Yani kapinin var olma sebebi -- gorunumunu bildirmeden
+ * miktar tasiyan sutun -- tam olarak muafiyet listesinin altindan geciyordu.
+ *
+ * Kural: bir muafiyet YALNIZCA sutunun tipi bir miktar tasiyamayacak tipteyse
+ * gecerlidir. Tamsayi tiplerinde tek mesru muafiyet `id`dir; `numeric` icin
+ * muafiyet HIC yoktur (zaten `_wei`/`_tok` sart).
+ */
+const EXEMPT_NON_AMOUNT = new Set([
   'token',
   'curve',
   'trader',
@@ -95,10 +110,26 @@ const EXEMPT = new Set([
   'complete',
   'is_buy',
   'filename',
-  // Tekil satirli tablolarin (`deployment`, `sync_state`) sabit birincil
-  // anahtari. Bir tutar DEGILDIR ve olamaz: `CHECK (id = 1)`.
-  'id',
 ])
+
+/**
+ * Tamsayi tipinde de mesru olan TEK ad: tekil satirli tablolarin
+ * (`deployment`, `sync_state`, `schema_state`) sabit birincil anahtari. Bir
+ * tutar DEGILDIR ve olamaz: `CHECK (id = 1)`.
+ */
+const EXEMPT_INTEGER = new Set(['id'])
+
+/** Butun muaf adlar -- yalnizca "olu giris" testi icin. */
+const EXEMPT = new Set([...EXEMPT_NON_AMOUNT, ...EXEMPT_INTEGER])
+
+/** Bu sutunun tipi icin gecerli muafiyet kumesi. */
+function exemptFor(col: Col): ReadonlySet<string> {
+  if (INTEGER_TYPES.has(col.data_type)) return EXEMPT_INTEGER
+  if (NUMERIC_TYPES.has(col.data_type)) return NO_EXEMPTION
+  return EXEMPT_NON_AMOUNT
+}
+
+const NO_EXEMPTION: ReadonlySet<string> = new Set()
 
 interface Col {
   table_schema: string
@@ -209,6 +240,15 @@ interface Report {
   forbidden: Ref[]
   /** Tipten bagimsiz: hicbir bildirilmis sonek tasimayan ve muaf olmayan. */
   unsuffixed: Ref[]
+  /**
+   * Sayimin gordugu HER sutun, `sema:relkind:tablo.sutun` olarak sirali.
+   *
+   * `examined` bir SAYIDIR ve bir-cikar-bir-ekle ona gorunmez: gozden
+   * gecirenin probe'u bunu calistirarak gosterdi (`SWAP: drop one column, add
+   * one column -> delta +0, NO FINDING`). Kume o takasi gorur, ve fail-closed
+   * OLCULUR: hem silme hem ekleme yonu asagida test ediliyor.
+   */
+  inventory: string[]
 }
 
 /**
@@ -247,7 +287,7 @@ async function gate(db: {
       .map(ref),
     moneyNamedInteger: integers.filter((r) => MONEY_SUFFIX.test(r.column_name)).map(ref),
     undeclaredInteger: integers
-      .filter((r) => !NON_MONEY_SUFFIX.test(r.column_name) && !EXEMPT.has(r.column_name))
+      .filter((r) => !NON_MONEY_SUFFIX.test(r.column_name) && !EXEMPT_INTEGER.has(r.column_name))
       .map(ref),
     forbidden: all.filter((r) => FORBIDDEN.test(r.column_name)).map(ref),
     unsuffixed: all
@@ -255,9 +295,12 @@ async function gate(db: {
         (r) =>
           !MONEY_SUFFIX.test(r.column_name) &&
           !NON_MONEY_SUFFIX.test(r.column_name) &&
-          !EXEMPT.has(r.column_name),
+          !exemptFor(r).has(r.column_name),
       )
       .map(ref),
+    inventory: all
+      .map((r) => `${r.table_schema}:${r.relkind}:${r.table_name}.${r.column_name}`)
+      .sort(),
   }
 }
 
@@ -273,6 +316,131 @@ async function withColumn(ddl: string, check: (r: Report) => void): Promise<void
     client.release()
   }
 }
+
+/**
+ * SAYIMIN GORDUGU HER SUTUN. Bir SAYI degil bir KUME, cunku gozden gecirenin
+ * probe'u bir-cikar-bir-ekle takasinin sayiya gorunmez oldugunu calistirarak
+ * gosterdi (`delta +0, NO FINDING`). Liste elle bakildiginda semanin tam
+ * envanteri olarak da okunur.
+ */
+const EXPECTED_INVENTORY = [
+  'public:r:creator_history.creator',
+  'public:r:creator_history.from_seq',
+  'public:r:creator_history.token',
+  'public:r:curve_state.complete',
+  'public:r:curve_state.completed_seq',
+  'public:r:curve_state.curve',
+  'public:r:curve_state.last_seq',
+  'public:r:curve_state.pool_seed_supply_tok',
+  'public:r:curve_state.real_quote_reserves_wei',
+  'public:r:curve_state.real_token_reserves_tok',
+  'public:r:curve_state.token',
+  'public:r:curve_state.virtual_quote_reserves_wei',
+  'public:r:curve_state.virtual_token_reserves_tok',
+  'public:r:deployment.chain_id',
+  'public:r:deployment.escrow',
+  'public:r:deployment.factory',
+  'public:r:deployment.id',
+  'public:r:deployment.protocol_treasury',
+  'public:r:deployment.sale_supply_tok',
+  'public:r:deployment.start_block',
+  'public:r:deployment.total_supply_tok',
+  'public:r:deployment.virtual_quote_reserves_wei',
+  'public:r:deployment.virtual_token_reserves_tok',
+  'public:r:fee_balances.claimable_wei',
+  'public:r:fee_balances.claimed_total_wei',
+  'public:r:fee_balances.deposited_total_wei',
+  'public:r:fee_balances.last_seq',
+  'public:r:fee_balances.recipient',
+  'public:r:fee_events.amount_wei',
+  'public:r:fee_events.block_number',
+  'public:r:fee_events.block_time',
+  'public:r:fee_events.event_seq',
+  'public:r:fee_events.from_addr',
+  'public:r:fee_events.kind',
+  'public:r:fee_events.log_index',
+  'public:r:fee_events.recipient',
+  'public:r:fee_events.tx_hash',
+  'public:r:holders.balance_tok',
+  'public:r:holders.holder',
+  'public:r:holders.last_seq',
+  'public:r:holders.token',
+  'public:r:launches.created_at',
+  'public:r:launches.created_seq',
+  'public:r:launches.curve',
+  'public:r:launches.launch_creator',
+  'public:r:launches.name',
+  'public:r:launches.name_hex',
+  'public:r:launches.salt',
+  'public:r:launches.symbol',
+  'public:r:launches.symbol_hex',
+  'public:r:launches.token',
+  'public:r:launches.tx_hash',
+  'public:r:launches.uri',
+  'public:r:launches.uri_hex',
+  'public:r:rejected_launches.created_seq',
+  'public:r:rejected_launches.curve',
+  'public:r:rejected_launches.expected',
+  'public:r:rejected_launches.raw_addr',
+  'public:r:rejected_launches.raw_data_hex',
+  'public:r:rejected_launches.raw_topics_hex',
+  'public:r:rejected_launches.reason',
+  'public:r:rejected_launches.seen_at',
+  'public:r:rejected_launches.token',
+  'public:r:schema_migrations.applied_at',
+  'public:r:schema_migrations.checksum_hex',
+  'public:r:schema_migrations.filename',
+  'public:r:schema_state.fingerprint_hex',
+  'public:r:schema_state.id',
+  'public:r:schema_state.inventory_json',
+  'public:r:schema_state.updated_at',
+  'public:r:sync_state.id',
+  'public:r:sync_state.last_block',
+  'public:r:sync_state.last_block_hash',
+  'public:r:sync_state.updated_at',
+  'public:r:token_stats.ath_market_cap_wei',
+  'public:r:token_stats.buy_count',
+  'public:r:token_stats.created_at',
+  'public:r:token_stats.created_seq',
+  'public:r:token_stats.holder_count',
+  'public:r:token_stats.last_buy_at',
+  'public:r:token_stats.last_buy_seq',
+  'public:r:token_stats.last_trade_at',
+  'public:r:token_stats.last_trade_seq',
+  'public:r:token_stats.market_cap_wei',
+  'public:r:token_stats.token',
+  'public:r:token_stats.trade_count',
+  'public:r:token_stats.volume_24h_refreshed_at',
+  'public:r:token_stats.volume_24h_wei',
+  'public:r:token_stats.volume_total_wei',
+  'public:r:token_transfers.amount_tok',
+  'public:r:token_transfers.block_number',
+  'public:r:token_transfers.block_time',
+  'public:r:token_transfers.event_seq',
+  'public:r:token_transfers.from_addr',
+  'public:r:token_transfers.log_index',
+  'public:r:token_transfers.to_addr',
+  'public:r:token_transfers.token',
+  'public:r:token_transfers.tx_hash',
+  'public:r:trades.block_number',
+  'public:r:trades.block_time',
+  'public:r:trades.creator_fee_wei',
+  'public:r:trades.curve',
+  'public:r:trades.event_seq',
+  'public:r:trades.is_buy',
+  'public:r:trades.log_index',
+  'public:r:trades.protocol_fee_wei',
+  'public:r:trades.quote_amount_wei',
+  'public:r:trades.real_quote_reserves_wei',
+  'public:r:trades.real_token_reserves_tok',
+  'public:r:trades.source',
+  'public:r:trades.token',
+  'public:r:trades.token_amount_tok',
+  'public:r:trades.trader',
+  'public:r:trades.tx_hash',
+  'public:r:trades.virtual_quote_reserves_wei',
+  'public:r:trades.virtual_token_reserves_tok',
+]
 
 describe('adlandirma kapisi', () => {
   beforeAll(resetSchema)
@@ -292,11 +460,62 @@ describe('adlandirma kapisi', () => {
   // semalar. Asagidaki uc test erisimi OLCER.
   // ---------------------------------------------------------------
 
-  it('SAYIM: incelenen sutun sayisi TAM olarak sabitlenir', async () => {
-    // `> 0` yeterli DEGIL: sayim daralirsa (bir iliski tipi gorunmez olursa)
-    // butun kurallar sessizce daha az sutuna uygulanir ve suite yesil kalir.
+  it('SAYIM: incelenen sutunlarin KUMESI sabitlenir, sayisi degil', async () => {
+    // `examined` bir SAYIDIR ve bir-cikar-bir-ekle ona gorunmez. Gozden
+    // gecirenin probe'u bunu calistirarak gosterdi:
+    //   SWAP: drop one column, add one column -> delta +0, NO FINDING
+    // Kume o takasi gorur. Fail-closed'in IKI YONU de asagida OLCULUYOR --
+    // "silince zaten kirilir" bir akil yurutmedir, olcum degil.
     const g = await gate(pool)
-    expect(g.examined).toBe(112)
+    expect(g.examined).toBe(g.inventory.length)
+    expect(g.inventory).toEqual(EXPECTED_INVENTORY)
+  })
+
+  it('SAYIM fail-closed: bir sutun SILININCE kirilir', async () => {
+    const before = await gate(pool)
+    await withColumn('ALTER TABLE token_stats DROP COLUMN trade_count', (g) => {
+      expect(g.inventory).not.toEqual(EXPECTED_INVENTORY)
+      expect(before.inventory.filter((x) => !g.inventory.includes(x))).toEqual([
+        'public:r:token_stats.trade_count',
+      ])
+    })
+  })
+
+  it('SAYIM fail-closed: bir sutun EKLENINCE kirilir', async () => {
+    await withColumn('ALTER TABLE token_stats ADD COLUMN extra_seq bigint', (g) => {
+      // Adi kusursuz -- hicbir KURAL kovasina dusmez. Yakalayan tek sey kume.
+      expect(g.undeclaredInteger).toEqual([])
+      expect(g.unsuffixed).toEqual([])
+      expect(g.inventory).not.toEqual(EXPECTED_INVENTORY)
+      expect(g.inventory.filter((x) => !EXPECTED_INVENTORY.includes(x))).toEqual([
+        'public:r:token_stats.extra_seq',
+      ])
+    })
+  })
+
+  it('SAYIM fail-closed: BIR CIKAR BIR EKLE (sayinin goremedigi takas)', async () => {
+    // Probe'un `delta +0, NO FINDING` dedigi tam durum.
+    const client: PoolClient = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('ALTER TABLE token_stats DROP COLUMN trade_count')
+      await client.query('ALTER TABLE trades ADD COLUMN fill_count bigint')
+      const g = await gate(client)
+      // SAYI degismedi -- eski iddia bunu gecirirdi.
+      expect(g.examined).toBe(EXPECTED_INVENTORY.length)
+      // KUME degisti.
+      expect(g.inventory).not.toEqual(EXPECTED_INVENTORY)
+    } finally {
+      await client.query('ROLLBACK')
+      client.release()
+    }
+  })
+
+  it('SAYIM fail-closed: bir TABLO dusurulunce kirilir', async () => {
+    await withColumn('DROP TABLE creator_history', (g) => {
+      expect(g.inventory.filter((x) => x.startsWith('public:r:creator_history.'))).toEqual([])
+      expect(g.inventory).not.toEqual(EXPECTED_INVENTORY)
+    })
   })
 
   it('SAYIM: sistem disi tek sema `public`tir', async () => {
@@ -496,6 +715,141 @@ describe('adlandirma kapisi', () => {
         expect(g.forbidden).toEqual([{ table_name: 'v_leak', column_name: 'fee_usdc' }])
       },
     )
+  })
+
+  // ---------------------------------------------------------------
+  // MUAFIYETIN TIP DELIGI -- gozden gecirenin probe'u calistirilarak
+  // ispatlandi. Alti muaf adin ALTISI da `bigint` olarak butun kovalardan
+  // geciyordu.
+  // ---------------------------------------------------------------
+  it('MUAF bir AD, tamsayi tipinde artik muaf DEGILDIR', async () => {
+    for (const nm of ['token', 'name', 'reason', 'salt', 'source', 'is_buy', 'filename']) {
+      await withColumn(`CREATE TABLE probe_${nm} ("${nm}" bigint)`, (g) => {
+        expect(g.undeclaredInteger, nm).toEqual([{ table_name: `probe_${nm}`, column_name: nm }])
+        expect(g.unsuffixed, nm).toEqual([{ table_name: `probe_${nm}`, column_name: nm }])
+      })
+    }
+  })
+
+  it('`is_buy`i dusurup bigint olarak geri eklemek de yakalanir', async () => {
+    // Probe'un `DROP then RE-ADD (attisdropped path)` senaryosu: eskiden
+    // delta 0 ve HIC BULGU YOKTU.
+    const client: PoolClient = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('ALTER TABLE trades DROP COLUMN is_buy')
+      await client.query('ALTER TABLE trades ADD COLUMN is_buy bigint')
+      const g = await gate(client)
+      expect(g.undeclaredInteger).toEqual([{ table_name: 'trades', column_name: 'is_buy' }])
+    } finally {
+      await client.query('ROLLBACK')
+      client.release()
+    }
+  })
+
+  it('MUAF bir AD, hala kendi tipinde muaftir (kapi fazla siki degil)', async () => {
+    // `is_buy boolean`, `token text` gecmeye devam etmeli; aksi halde sema
+    // adlarinin yarisini yeniden adlandirmak gerekirdi.
+    await withColumn('CREATE TABLE probe_ok (is_buy boolean, token text, id smallint)', (g) => {
+      expect(g.unsuffixed).toEqual([])
+      expect(g.undeclaredInteger).toEqual([])
+    })
+  })
+
+  // ---------------------------------------------------------------
+  // PROBE'DAN GELEN RELKIND KAPSAMI. Bunlar SQL'de yaziliydi ama hicbir test
+  // olusturmuyordu -- yani yalnizca YAPI GEREGI iddia ediliyorlardi. Artik
+  // olculuyorlar.
+  // ---------------------------------------------------------------
+  it('RELKIND p: bolumlenmis tablo ve COCUKLARI gorulur', async () => {
+    const before = await gate(pool)
+    const client: PoolClient = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query(`CREATE TABLE part_parent (token text, fee_wei bigint)
+                          PARTITION BY RANGE (token)`)
+      await client.query(`CREATE TABLE part_a PARTITION OF part_parent
+                          FOR VALUES FROM ('a') TO ('m')`)
+      const g = await gate(client)
+      // Ebeveyn (p) + cocuk (r) = 4 sutun.
+      expect(g.examined).toBe(before.examined + 4)
+      expect(g.reach).toEqual(['public:p', 'public:r'])
+      expect(g.moneyNamedInteger.map((r) => `${r.table_name}.${r.column_name}`).sort()).toEqual([
+        'part_a.fee_wei',
+        'part_parent.fee_wei',
+      ])
+    } finally {
+      await client.query('ROLLBACK')
+      client.release()
+    }
+  })
+
+  it('RELKIND f: yabanci tablo gorulur', async () => {
+    const before = await gate(pool)
+    const client: PoolClient = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('CREATE EXTENSION IF NOT EXISTS file_fdw')
+      await client.query('CREATE SERVER probe_fs FOREIGN DATA WRAPPER file_fdw')
+      await client.query(`CREATE FOREIGN TABLE ft_leak (fee_usdc double precision, amount bigint)
+                          SERVER probe_fs OPTIONS (filename 'C:/Windows/win.ini', format 'csv')`)
+      const g = await gate(client)
+      expect(g.examined).toBe(before.examined + 2)
+      expect(g.reach).toEqual(['public:f', 'public:r'])
+      expect(g.banned).toEqual([{ table_name: 'ft_leak', column_name: 'fee_usdc' }])
+      expect(g.forbidden).toEqual([{ table_name: 'ft_leak', column_name: 'fee_usdc' }])
+    } finally {
+      await client.query('ROLLBACK')
+      client.release()
+    }
+  })
+
+  it('RELKIND m, `public` DISINDA: matview + yabanci sema birlikte gorulur', async () => {
+    // Onceki "yabanci sema" testi bir SEMA kacisiydi, relkind kacisi degil;
+    // ikisi birlikte hic denenmemisti.
+    const before = await gate(pool)
+    const client: PoolClient = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('CREATE SCHEMA rollup')
+      await client.query(`CREATE MATERIALIZED VIEW rollup.mv AS
+                          SELECT token, 1::double precision AS fee_usdc FROM launches`)
+      const g = await gate(client)
+      expect(g.examined).toBe(before.examined + 2)
+      expect(g.reach).toEqual(['public:r', 'rollup:m'])
+      expect(g.schemas).toEqual(['public', 'rollup'])
+      expect(g.banned).toEqual([{ table_name: 'mv', column_name: 'fee_usdc' }])
+    } finally {
+      await client.query('ROLLBACK')
+      client.release()
+    }
+  })
+
+  it('KAPSAM DISI, ACIKCA: `pg_temp` ve kullanilmayan composite type', async () => {
+    // Ikisi de probe'da `ESCAPED`/artefakt olarak gorundu ve ikisi de BILEREK
+    // disarida. Sessiz kalmasinlar diye burada ISIMLERIYLE duruyorlar.
+    //
+    // - `pg_temp_N`: oturuma bagli; oturum bitince yok olur, urun verisi
+    //   tasiyamaz. `pg\_%` suzgeci onu disarida birakir.
+    // - Kullanilmayan bir composite type (relkind `c`): hicbir sey saklamaz.
+    //   Bir SUTUN onu kullandigi anda tipi `unclassified`a duser ve kapi
+    //   kirilir -- asagida olculuyor.
+    const client: PoolClient = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('CREATE TEMP TABLE t_leak (fee_usdc double precision)')
+      await client.query('CREATE TYPE money_t AS (fee_usdc double precision)')
+      const g = await gate(client)
+      expect(g.reach).toEqual(['public:r'])
+      expect(g.schemas).toEqual(['public'])
+      expect(g.banned).toEqual([])
+      // Ama o tipi KULLANAN bir sutun yakalanir:
+      await client.query('ALTER TABLE trades ADD COLUMN blob money_t')
+      expect((await gate(client)).unclassified).toEqual(['money_t'])
+    } finally {
+      await client.query('ROLLBACK')
+      client.release()
+    }
   })
 
   it('POZITIF KONTROL: fill_count bigint GECER (kapi fazla siki degil)', async () => {

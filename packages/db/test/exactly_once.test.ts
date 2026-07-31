@@ -367,6 +367,7 @@ async function stableSnapshot(): Promise<Record<string, unknown[]>> {
   expect(rows.map((r) => `${r.table_name}.${r.column_name}`)).toEqual([
     'rejected_launches.seen_at',
     'schema_migrations.applied_at',
+    'schema_state.updated_at',
     'sync_state.updated_at',
     'token_stats.volume_24h_refreshed_at',
   ])

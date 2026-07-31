@@ -93,6 +93,7 @@ describe('snapshot', () => {
       'launches',
       'rejected_launches',
       'schema_migrations',
+      'schema_state',
       'sync_state',
       'token_stats',
       'token_transfers',

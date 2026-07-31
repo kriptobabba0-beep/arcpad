@@ -196,14 +196,14 @@ describe('kisitlar gercekten bagli mi', () => {
       SELECT c.relname AS rel FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
       WHERE c.relkind = 'r' ORDER BY 1`)
-    expect(allTables).toHaveLength(13)
+    expect(allTables).toHaveLength(14)
     const rowCounts = await Promise.all(
       allTables.map(async ({ rel }) => {
         const { rows } = await pool.query<{ n: number }>(`SELECT count(*)::int n FROM "${rel}"`)
         return { rel, n: rows[0]?.n ?? 0 }
       }),
     )
-    expect(rowCounts).toHaveLength(13)
+    expect(rowCounts).toHaveLength(14)
     expect(rowCounts.filter((t) => t.n === 0)).toEqual([])
 
     const kinds = await Promise.all(
@@ -268,6 +268,35 @@ describe('kisitlar gercekten bagli mi', () => {
       'rejected_launches.curve',
       'rejected_launches.token',
     ])
+  })
+
+  it('I-5 DISLERI: bir tablo BOS olsaydi bosluk muhafizi patlardi', async () => {
+    // Muhafizin kendisi eskiden vacuity ile geciyordu (`reltuples = 0` ama
+    // PostgreSQL >= 14 hic ANALYZE edilmemis iliskiler icin -1 tutar, yani
+    // taze bir veritabaninda ADAY LISTESI BOSTU ve `count(*)` iddiasi SIFIR
+    // tablo uzerinde kosuyordu). Tahmin atildi ve her tablo dogrudan
+    // sayiliyor; burada o sayimin GERCEKTEN patladigi gosteriliyor.
+    const client: PoolClient = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('DELETE FROM creator_history')
+      const { rows: allTables } = await client.query<{ rel: string }>(`
+        SELECT c.relname AS rel FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
+        WHERE c.relkind = 'r' ORDER BY 1`)
+      expect(allTables).toHaveLength(14)
+      const counts = await Promise.all(
+        allTables.map(async ({ rel }) => {
+          const { rows } = await client.query<{ n: number }>(`SELECT count(*)::int n FROM "${rel}"`)
+          return { rel, n: rows[0]?.n ?? 0 }
+        }),
+      )
+      // Bos tablo GORULUYOR -- eski muhafiz burada bos liste dondururdu.
+      expect(counts.filter((t) => t.n === 0).map((t) => t.rel)).toEqual(['creator_history'])
+    } finally {
+      await client.query('ROLLBACK')
+      client.release()
+    }
   })
 
   // ---------------------------------------------------------------
@@ -374,6 +403,51 @@ describe('kisitlar gercekten bagli mi', () => {
       expect(e.code, col).toBe('23514')
       expect(e.constraint, col).toBe(`rejected_launches_${col}_check`)
     }
+  })
+
+  // I-4, CALISTIRILARAK. Gozden geciren bunu KAYNAKTAN okuyarak kapatmisti.
+  it('`reason` U+0000 tasiyamaz (kama bir sutun oteye kaymadi)', async () => {
+    // Kisitsiz `text` olsaydi bu sunucu tarafinda 22021 verir, islemi geri
+    // alir ve indexer'i o blokta kilitlerdi -- `raw jsonb`de kapatilan kamanin
+    // aynisi. Simdi desen onu ONCE reddediyor.
+    const e = await failure(() =>
+      pool.query(
+        `INSERT INTO rejected_launches
+           (created_seq, token, curve, reason, expected, raw_addr, raw_topics_hex, raw_data_hex)
+         VALUES (61, $1, $1, $2, $1, $1, '', '0x')`,
+        [addr(0x1), 'bad\u0000name'],
+      ),
+    )
+    // Surucu/sunucu NUL'u reddeder (22021) ya da desen reddeder (23514);
+    // hangisi once davranirsa davransin, SESSIZ gecmez.
+    expect(['22021', '23514']).toContain(e.code)
+  })
+
+  it('`reason` a cozulmus bir isim ENTERPOLE EDILEMEZ', async () => {
+    // Bir Task 6 yazarinin yazacagi en dogal satir. Desen bosluklari, buyuk
+    // harfleri ve iki nokta ustustesini reddediyor, yani bu satir DERLENIR ama
+    // CALISMAZ -- ve arizayi ilk reddedilen launch'ta degil ilk TESTTE gorur.
+    for (const reason of ['name mismatch: Arc Pad Test', 'NotCanonical', 'x'.repeat(65), '']) {
+      const e = await failure(() =>
+        pool.query(
+          `INSERT INTO rejected_launches
+             (created_seq, token, curve, reason, expected, raw_addr, raw_topics_hex, raw_data_hex)
+           VALUES (62, $1, $1, $2, $1, $1, '', '0x')`,
+          [addr(0x1), reason],
+        ),
+      )
+      expect(e.code, reason).toBe('23514')
+      expect(e.constraint, reason).toBe('rejected_launches_reason_check')
+    }
+  })
+
+  it('`reason` MESRU bir etiketi kabul eder (desen fazla siki degil)', async () => {
+    await pool.query(
+      `INSERT INTO rejected_launches
+         (created_seq, token, curve, reason, expected, raw_addr, raw_topics_hex, raw_data_hex)
+       VALUES (63, $1, $1, 'not_canonical', $1, $1, '', '0x')`,
+      [addr(0x1)],
+    )
   })
 
   it('bes topic li bir log reddedilir (EVM tavani dort)', async () => {
