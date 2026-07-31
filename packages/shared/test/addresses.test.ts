@@ -303,6 +303,26 @@ describe('adres defteri', () => {
       }
     })
 
+    // .env.example bu degiskenleri BOS gonderiyor, yani `cp .env.example .env`
+    // yapan ilk kisi TAM OLARAK bu yola giriyor. Bos dize "ayarlanmamis"
+    // sayilmali; aksi halde mesaj operatore "yanlis deger koydun" derdi.
+    it('treats an EMPTY string as unset, not as a wrong value -- a case per variable', () => {
+      const b = book()
+      for (const name of Object.keys(goodEnv(b))) {
+        for (const empty of ['', '   ']) {
+          const env = { ...goodEnv(b), [name]: empty }
+          try {
+            assertEnvMatchesBook(env, b)
+            throw new Error(`expected a throw for ${name}=${JSON.stringify(empty)}`)
+          } catch (error) {
+            expect(error).toBeInstanceOf(AddressBookError)
+            expect((error as AddressBookError).field).toBe(name)
+            expect((error as AddressBookError).message).toContain('is not set')
+          }
+        }
+      }
+    })
+
     it('throws naming the MISSING variable -- a case per variable', () => {
       const b = book()
       for (const name of Object.keys(goodEnv(b))) {

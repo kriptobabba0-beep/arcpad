@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {DeployLib, Plan} from "../../script/DeployLib.sol";
 import {Governance, ISafe} from "../../script/Governance.s.sol";
+import {LaunchFactory} from "../../src/LaunchFactory.sol";
 import {Profile, Profiles} from "../../script/Profiles.sol";
 
 /// @title GovernanceForkTest
@@ -128,6 +129,35 @@ contract GovernanceForkTest is Test {
 
         assertEq(p.escrow.code.length, 0, "the escrow address is already occupied on Arc");
         assertEq(p.factory.code.length, 0, "the factory address is already occupied on Arc");
+    }
+
+    /// @dev TORENIN GERCEKTEN YURUDUGUNUN KALICI KANITI.
+    ///
+    ///      Prova factory'si governor Safe'i governor VE treasury olarak
+    ///      dogdu; toren `setProtocolTreasury`yi 2-of-3 imzayla yurutup onu
+    ///      treasury Safe'e cevirdi. Yani asagidaki esitsizlik, o imza
+    ///      demetinin Safe tarafindan KABUL EDILDIGININ ve cagrinin ETKI
+    ///      ETTIGININ zincirdeki izidir.
+    ///
+    ///      Bu adres ADRES DEFTERINDE DEGILDIR ve olmayacaktir: ayri bir salt
+    ///      (`keccak256("arcpad.LaunchFactory.rehearsal")`) ile deploy edildi,
+    ///      atilabilir, ve gercek deploy'un onune gecemez. Buradaki tek isi,
+    ///      "toren calisiyor" iddiasinin BIR OLCUME dayanmasini saglamak --
+    ///      iddia bir gun yanlis olursa bu test kirmizilasir.
+    function test_theCeremonyRehearsalTookEffectOnChain() public view {
+        address rehearsalFactory = 0xfed991C6B9AD7144Df3d670c6b9EcF3620ac6eA5;
+        assertGt(rehearsalFactory.code.length, 0, "the rehearsal factory is gone");
+
+        assertEq(
+            LaunchFactory(rehearsalFactory).governor(),
+            GOVERNOR_SAFE,
+            "the rehearsal factory was not governed by the governor Safe"
+        );
+        assertEq(
+            LaunchFactory(rehearsalFactory).protocolTreasury(),
+            TREASURY_SAFE,
+            "the 2-of-3 ceremony did not take effect: the treasury never moved"
+        );
     }
 
     /// @dev ADRES DEFTERININ HENUZ OLMAYAN GIRISININ ONCEDEN OLCULMESI.

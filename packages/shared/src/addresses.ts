@@ -355,9 +355,28 @@ export function assertEnvMatchesBook(
   expectEnv(env, 'ARC_START_BLOCK', String(book.startBlock))
 }
 
+/**
+ * BOS DIZE "AYARLANMAMIS" DEMEKTIR, "yanlis deger" DEMEK DEGIL.
+ *
+ * `.env.example` bu degiskenleri BOS gonderir -- kasitli olarak: adresler
+ * oraya kopyalansaydi "yapilandirilmamis" durumu ulasilamaz hale gelir ve Faz
+ * 4 preflight'inin belgelenmis EXIT KODU 2'si olu kod olurdu. Dolayisiyla
+ * `cp .env.example .env` yapan ILK kisi bu yola KESINLIKLE girer.
+ *
+ * `?? ` ve `=== undefined` yalnizca null/undefined'i yakalar; bos dize
+ * SUZULUP GECER ve karsilastirmaya duserdi. Sonuc yine bir hata olurdu ama
+ * mesaji YANLIS olurdu: 'NEXT_PUBLIC_ARCPAD_FACTORY is "" but the address book
+ * says "0x..."' -- yani operatore "yanlis deger koymussun" derdi, oysa hic
+ * deger koymamistir. Keeper ajani ayni sinifin bir baskasini kendi
+ * `KEEPER_ADDRESS_BOOK_DIR`inde buldu; bu, ayni dersin burada uygulanmasidir.
+ */
+function isUnset(value: string | undefined): value is undefined {
+  return value === undefined || value.trim() === ''
+}
+
 function expectEnv(env: Record<string, string | undefined>, name: string, expected: string): void {
   const actual = env[name]
-  if (actual === undefined)
+  if (isUnset(actual))
     throw new AddressBookError(name, 'is not set, but the address book is configured')
   if (actual !== expected)
     throw new AddressBookError(name, `is "${actual}" but the address book says "${expected}"`)
@@ -370,7 +389,7 @@ function expectEnvAddress(
   expected: Address,
 ): void {
   const actual = env[name]
-  if (actual === undefined)
+  if (isUnset(actual))
     throw new AddressBookError(name, 'is not set, but the address book is configured')
   if (!isAddress(actual, { strict: false }))
     throw new AddressBookError(name, `is "${actual}", not an address`)

@@ -54,6 +54,42 @@ library Profiles {
     ///      ucluyu hash'leyip buraya karsilastiran bir test TOTOLOJIDIR; sabit
     ///      ELLE YAZILMIS literallere pinlenir (bkz.
     ///      test_digestIsTheHashOfTheHandWrittenTriple).
+    ///
+    /// @dev BU DIGEST'IN NEYI KAPATTIGI, NEYI KAPATMADIGI -- VE IKINCISININ
+    ///      NEDEN BASKA BIR YERE AIT OLDUGU. Olculdu (inceleme, iki saldiri):
+    ///
+    ///        (a) YALNIZCA `profiles.toml` duzenlenirse: 29/44 Solidity ve
+    ///            14/41 TypeScript testi kirmizilasir, VE `plan()` ile `run()`
+    ///            hicbir sey insa edilmeden once `ProfileDigestMismatch` ile
+    ///            olur. Yani bu digest DEPLOY ZAMANINDA kapatir.
+    ///
+    ///        (b) `profiles.toml` VE yukaridaki sabit BIRLIKTE duzenlenirse:
+    ///            deploy zamanindaki kapi GECER. Kalan 8 kirmizi testin hepsi
+    ///            BAGIMSIZ ELLE YAZILMIS literallerden gelir --
+    ///            `test_digestIsTheHashOfTheHandWrittenTriple`,
+    ///            `Deploy.t.sol`daki yerinde literaller, ve TypeScript
+    ///            tarafindaki `PROFILE_DIGESTS`. Yani CI ZAMANINDA kapanir.
+    ///
+    ///      AYRIM KASITLIDIR VE (b)'yi deploy zamanina tasimak MUMKUN DEGILDIR.
+    ///      Tek dosyalik duzenleme bir KAZADIR: kaymis bir us bir yazim
+    ///      hatasidir ve yazim hatalari dogasi geregi tek dosyaliktir; kazanin
+    ///      zarar verecegi ANDA yakalanmasi gerekir, o yuzden digest buradadir.
+    ///      Iki dosyalik duzenleme KAZA DEGILDIR; ve ona karsi HICBIR deploy
+    ///      zamani kontrolu ILKESEL OLARAK yardim edemez, cunku her deploy
+    ///      zamani kontrolu deploy'u AGACTAKI bir seyle karsilastirir ve
+    ///      koordineli bir duzenleme agaci degistirir. Ucuncu bir sabit eklemek
+    ///      bunu yalnizca uc dosyalik bir duzenlemeye cevirirdi. Savunma daha
+    ///      guclu bir KONTROL degil, DAHA BUYUK VE DAHA GOZE CARPAN BIR
+    ///      DIFF'tir -- ve "iki dilde bes dosyayi tutarli bicimde duzenlemek
+    ///      zorundasin" kuralini uygulayan sey fazlaliktir: CI'da kontrol
+    ///      edilir, insan tarafindan diff'te okunur.
+    ///
+    ///      OZET: digest DEPLOY ZAMANINDA bir DOGRULUK kapisidir; elle yazilmis
+    ///      literaller INCELEME ZAMANINDA bir BUTUNLUK kapisidir.
+    ///
+    ///      BAGLI OLDUGU KOSUL, ACIKCA: bu yalnizca CI ZORUNLU BIR KAPI
+    ///      KALDIGI SURECE gecerlidir. Fork isini tavsiye niteligine
+    ///      dusurmek, (b)'ye karsi tek savunmayi da dusurur.
     ///        T = 1_073_000_000e18, V = 4_292e15, S = 793_100_000e18
     bytes32 internal constant TESTNET_DIGEST = 0xa67f784bd45f49baa48601d390ecafdb2fe44aadffd974b4b0bd582c10d6600d;
     ///        T = 1_073_000_000e18, V = 4_292e18, S = 793_100_000e18

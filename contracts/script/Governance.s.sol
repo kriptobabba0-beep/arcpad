@@ -3,7 +3,10 @@ pragma solidity ^0.8.26;
 
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
-import {Profiles} from "./Profiles.sol";
+import {FeeEscrow} from "../src/FeeEscrow.sol";
+import {LaunchFactory} from "../src/LaunchFactory.sol";
+import {DeployLib} from "./DeployLib.sol";
+import {Profile, Profiles} from "./Profiles.sol";
 
 interface ISafeProxyFactory {
     function createProxyWithNonce(address singleton, bytes memory initializer, uint256 saltNonce)
@@ -35,6 +38,31 @@ interface ISafeSetup {
 interface ISafe {
     function getThreshold() external view returns (uint256);
     function getOwners() external view returns (address[] memory);
+    function nonce() external view returns (uint256);
+    function getTransactionHash(
+        address to,
+        uint256 value,
+        bytes calldata data,
+        uint8 operation,
+        uint256 safeTxGas,
+        uint256 baseGas,
+        uint256 gasPrice,
+        address gasToken,
+        address refundReceiver,
+        uint256 _nonce
+    ) external view returns (bytes32);
+    function execTransaction(
+        address to,
+        uint256 value,
+        bytes calldata data,
+        uint8 operation,
+        uint256 safeTxGas,
+        uint256 baseGas,
+        uint256 gasPrice,
+        address gasToken,
+        address payable refundReceiver,
+        bytes memory signatures
+    ) external payable returns (bool);
 }
 
 /// @title Governance
@@ -73,7 +101,41 @@ contract Governance is Script {
     uint256 internal constant GOVERNOR_SALT_NONCE = uint256(keccak256("arcpad.governor.v1"));
     uint256 internal constant TREASURY_SALT_NONCE = uint256(keccak256("arcpad.treasury.v1"));
 
+    // ---------------------------------------------------------------
+    // The signing ceremony
+    // ---------------------------------------------------------------
+    //
+    // NICIN BU BLOK TASK 6'DAN ONCE GELMEK ZORUNDA. `LaunchFactory` deploy
+    // edildigi anda governor Safe, `graduationTarget`a dokunmanin TEK yolu
+    // olur -- ve Faz 2 curve'u pool'a yoneltmek icin TAM OLARAK o cagriyi
+    // gerektirir. Toren calismiyorsa, KALICI bir adreste KIMSENIN
+    // YONETEMEYECEGI bir factory deploy etmis oluruz; kurtarma yolu her seyi
+    // yeniden deploy edip adresleri terk etmekten ibarettir.
+    //
+    // Bu yuzden toren GERCEK zincirde, GERCEK anahtarlarla, ATILABILIR bir
+    // hedefe karsi prova edilir -- ve YANLIS durumlar da kanitlanir: yanlis
+    // sebeple calisiyor gorunen bir toren, hic olmamasindan kotudur.
+
+    /// @dev EIP-712. Sabitler ELLE TURETILDI ve zincire karsi CAPRAZ
+    ///      KONTROL EDILIR (`_safeTxHash` yerel hesabi Safe'in kendi
+    ///      `getTransactionHash`'i ile karsilastirir): typehash'i yanlis
+    ///      yazmak sessizce imzalanamaz bir hash uretirdi.
+    ///        keccak256("SafeTx(address to,uint256 value,bytes data,uint8 operation,uint256 safeTxGas,uint256 baseGas,uint256 gasPrice,address gasToken,address refundReceiver,uint256 nonce)")
+    bytes32 internal constant SAFE_TX_TYPEHASH = 0xbb8310d486368db6bd6f849402fdd73ad53d316b5a4b2644ad6efe0f941286d8;
+    ///        keccak256("EIP712Domain(uint256 chainId,address verifyingContract)")
+    bytes32 internal constant SAFE_DOMAIN_TYPEHASH = 0x47e79534a245952e8b16893a336b85a3d9ea9fa8c573f3d803afb92a79469218;
+
+    /// @dev PROVA YIGININ SALT'LARI GERCEKLERDEN AYRIDIR VE OYLE OLMAK
+    ///      ZORUNDADIR. `Deploy.s.sol`un `FACTORY_SALT`i bir SABITTIR ve oyle
+    ///      kalmalidir: salt argumani kabul eden bir deploy script'i, her yere
+    ///      yoneltilebilen bir deploy script'idir. Prova yigini bu yuzden
+    ///      `DeployLib.deploy`i KENDI salt'lariyla dogrudan cagirir ve
+    ///      ADRES DEFTERINE ASLA GIRMEZ.
+    bytes32 internal constant REHEARSAL_ESCROW_SALT = keccak256("arcpad.FeeEscrow.rehearsal");
+    bytes32 internal constant REHEARSAL_FACTORY_SALT = keccak256("arcpad.LaunchFactory.rehearsal");
+
     error SafeDeploymentMissing(string what, address at);
+    error SafeTxHashDiverged(bytes32 local, bytes32 onchain);
     error NoOwnersDeclared(string chainKey);
     error SafeAddressDiverged(string role, address predicted, address actual);
     error SafesCollide(address both);
@@ -201,6 +263,168 @@ contract Governance is Script {
             }
             require(found, "declared owner is not an owner of the deployed Safe");
         }
+    }
+
+    // ---------------------------------------------------------------
+    // Ceremony: build the payload, execute the bundle
+    // ---------------------------------------------------------------
+
+    /// @notice Governor Safe'in bir cagriyi imzalamasi icin gereken EIP-712
+    ///         hash'i ve gonderilecek IC calldata.
+    ///
+    /// @dev PLANDAN SAPMA, GEREKCESIYLE. Plan bunlari `encodeProposeTarget(address)`
+    ///      diye, hedef factory ORTUK olacak sekilde tarif ediyor. Factory
+    ///      adresi acikca gecirilir, cunku torenin ATILABILIR bir factory'ye
+    ///      karsi prova edilebilmesi gerekir; gercek factory'yi sabitlemek
+    ///      provayi -- yani bu blogun VAROLMA SEBEBINI -- imkansiz kilardi.
+    function encodeProposeTarget(address factory, address target)
+        public
+        view
+        returns (bytes32 safeTxHash, bytes memory txData, uint256 nonce)
+    {
+        txData = abi.encodeCall(LaunchFactory.proposeGraduationTarget, (target));
+        (safeTxHash, nonce) = _safeTxHash(_governorSafe(), factory, txData);
+        _printTx("proposeGraduationTarget", factory, target, safeTxHash, nonce, txData);
+    }
+
+    function encodeRotateTreasury(address factory, address next)
+        public
+        view
+        returns (bytes32 safeTxHash, bytes memory txData, uint256 nonce)
+    {
+        txData = abi.encodeCall(LaunchFactory.setProtocolTreasury, (next));
+        (safeTxHash, nonce) = _safeTxHash(_governorSafe(), factory, txData);
+        _printTx("setProtocolTreasury", factory, next, safeTxHash, nonce, txData);
+    }
+
+    /// @notice Imza demetini governor Safe'e gonderir.
+    /// @param signatures 65 baytlik imzalarin bitisik hali, OWNER ADRESINE
+    ///        GORE ARTAN SIRADA. Safe bunu zorunlu kilar: sirasiz bir demet
+    ///        `GS026` ile doner.
+    function executeFromGovernor(address to, bytes memory txData, bytes memory signatures) public {
+        address safe = _governorSafe();
+        vm.startBroadcast();
+        bool ok = ISafe(safe).execTransaction(to, 0, txData, 0, 0, 0, 0, address(0), payable(address(0)), signatures);
+        vm.stopBroadcast();
+        require(ok, "execTransaction returned false");
+        console2.log("executed from the governor Safe", safe);
+    }
+
+    /// @dev YEREL HESAP + ZINCIR CAPRAZ KONTROLU. Yalnizca Safe'e sormak
+    ///      calisirdi, ama o zaman typehash'lerimizin dogru oldugunu HICBIR
+    ///      SEY olcmezdi; yalnizca yerel hesaplamak da calisirdi, ama o zaman
+    ///      Safe'in gercekten ayni seyi bekledigini hicbir sey olcmezdi.
+    ///      Ikisi birden, birbirini olcer.
+    function _safeTxHash(address safe, address to, bytes memory data)
+        internal
+        view
+        returns (bytes32 hash, uint256 nonce)
+    {
+        nonce = ISafe(safe).nonce();
+
+        bytes32 domainSeparator = keccak256(abi.encode(SAFE_DOMAIN_TYPEHASH, block.chainid, safe));
+        bytes32 structHash = keccak256(
+            abi.encode(
+                SAFE_TX_TYPEHASH,
+                to,
+                uint256(0), // value
+                keccak256(data),
+                uint8(0), // operation = CALL
+                uint256(0), // safeTxGas
+                uint256(0), // baseGas
+                uint256(0), // gasPrice
+                address(0), // gasToken
+                address(0), // refundReceiver
+                nonce
+            )
+        );
+        hash = keccak256(abi.encodePacked(hex"1901", domainSeparator, structHash));
+
+        bytes32 onchain = ISafe(safe).getTransactionHash(to, 0, data, 0, 0, 0, 0, address(0), address(0), nonce);
+        if (hash != onchain) revert SafeTxHashDiverged(hash, onchain);
+    }
+
+    function _governorSafe() internal view returns (address governor) {
+        (governor,) = Profiles.governanceForChain(block.chainid);
+    }
+
+    // ---------------------------------------------------------------
+    // The disposable rehearsal stack
+    // ---------------------------------------------------------------
+
+    /// @notice Torenin uzerinde prova edildigi ATILABILIR yigin.
+    ///
+    /// @dev Prova factory'sinin governor'i governor Safe'tir -- mesele budur.
+    ///      Treasury'si de BASLANGICTA governor Safe'tir, boylece toren onu
+    ///      treasury Safe'e cevirebilir ve degisiklik ZINCIRDE GOZLENEBILIR
+    ///      olur. `LaunchFactory` `governor == protocolTreasury`i acikca kabul
+    ///      eder; bu factory adres defterine hic girmedigi icin defterin
+    ///      takma-ad kontrolu onu hic gormez.
+    ///
+    /// @dev AYRI BIR ESCROW da deploy edilir. Gercek escrow'u kullanmak onun
+    ///      adresini TUKETIRDI ve Task 6'nin `AlreadyDeployed` on-kontrolunu
+    ///      tetiklerdi; provanin gercek deploy'un onune gecmesi yasaktir.
+    function rehearsalAddresses() public view returns (address escrow, address factory) {
+        Profile memory p = Profiles.forChain(block.chainid);
+        (address governor,) = Profiles.governanceForChain(block.chainid);
+
+        bytes memory escrowInitcode = type(FeeEscrow).creationCode;
+        escrow = _predictWithSalt(REHEARSAL_ESCROW_SALT, escrowInitcode);
+
+        bytes memory factoryInitcode = abi.encodePacked(
+            type(LaunchFactory).creationCode,
+            abi.encode(escrow, governor, governor, p.virtualTokenReserves, p.virtualQuoteReserves, p.saleSupply)
+        );
+        factory = _predictWithSalt(REHEARSAL_FACTORY_SALT, factoryInitcode);
+    }
+
+    function deployRehearsalStack() public returns (address escrow, address factory) {
+        Profile memory p = Profiles.forChain(block.chainid);
+        (address governor,) = Profiles.governanceForChain(block.chainid);
+
+        bytes memory escrowInitcode = type(FeeEscrow).creationCode;
+        bytes memory factoryInitcode;
+
+        vm.startBroadcast();
+        escrow = _predictWithSalt(REHEARSAL_ESCROW_SALT, escrowInitcode);
+        if (escrow.code.length == 0) escrow = DeployLib.deploy(REHEARSAL_ESCROW_SALT, escrowInitcode);
+
+        factoryInitcode = abi.encodePacked(
+            type(LaunchFactory).creationCode,
+            abi.encode(escrow, governor, governor, p.virtualTokenReserves, p.virtualQuoteReserves, p.saleSupply)
+        );
+        factory = _predictWithSalt(REHEARSAL_FACTORY_SALT, factoryInitcode);
+        if (factory.code.length == 0) factory = DeployLib.deploy(REHEARSAL_FACTORY_SALT, factoryInitcode);
+        vm.stopBroadcast();
+
+        console2.log("REHEARSAL escrow ", escrow);
+        console2.log("REHEARSAL factory", factory);
+        console2.log("governor         ", LaunchFactory(factory).governor());
+        console2.log("protocolTreasury ", LaunchFactory(factory).protocolTreasury());
+        console2.log("NOT IN THE ADDRESS BOOK. Disposable. Different salt from the real one.");
+    }
+
+    function _predictWithSalt(bytes32 salt, bytes memory initcode) private pure returns (address) {
+        return DeployLib.predict(salt, initcode);
+    }
+
+    function _printTx(
+        string memory what,
+        address to,
+        address argument,
+        bytes32 safeTxHash,
+        uint256 nonce,
+        bytes memory txData
+    ) private pure {
+        console2.log("=== arcpad governance tx ===");
+        console2.log("call                ", what);
+        console2.log("to (factory)        ", to);
+        console2.log("argument            ", argument);
+        console2.log("safe nonce          ", nonce);
+        console2.log("SAFE TX HASH        ", vm.toString(safeTxHash));
+        console2.log("inner calldata      ", vm.toString(txData));
+        console2.log("-- each owner signs the SAFE TX HASH with: cast wallet sign --no-hash <hash>");
+        console2.log("-- concatenate 65-byte signatures ORDERED BY OWNER ADDRESS ASCENDING");
     }
 
     function _print(address[] memory owners, address governor, address treasury, string memory banner) private pure {
