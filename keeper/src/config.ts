@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ARC_TESTNET_CHAIN_ID, loadAddressBook } from '@arcpad/shared'
 import { type Address, getAddress, isAddress } from 'viem'
@@ -19,10 +20,13 @@ const DEFAULT_POLL_INTERVAL_MS = 5_000
  * baslamasi, hic calismamasindan cok daha pahalidir.
  */
 export function loadKeeperConfig(env: NodeJS.ProcessEnv): KeeperConfig {
-  const rpcUrl = env['ARC_RPC_URL']
+  const rpcUrl = blankToUndefined(env['ARC_RPC_URL'])
   if (!rpcUrl) throw new Error('ARC_RPC_URL is not set (see .env.example)')
 
-  const rawInterval = env['KEEPER_POLL_INTERVAL_MS']
+  // BOSLUK DA BOSTUR, ve bu satirin `blankToUndefined`siz hali `.env.example`in
+  // sekiz degisken icin ogrettigi "bos birak = varsayilan" kuralini TAM BURADA
+  // bozuyordu: `KEEPER_POLL_INTERVAL_MS=` ile keeper HIC BASLAMIYORDU.
+  const rawInterval = blankToUndefined(env['KEEPER_POLL_INTERVAL_MS'])
   let pollIntervalMs = DEFAULT_POLL_INTERVAL_MS
   if (rawInterval !== undefined) {
     pollIntervalMs = Number(rawInterval)
@@ -177,6 +181,21 @@ export function loadWatcherConfig(env: NodeJS.ProcessEnv, bookDir?: string): Wat
   // Bu yuzden burada KENDI yarimi kapatiyorum: defter yeniden yonlendirildiyse
   // governance dosyasi VARSAYILAN, commit'li olan OLMAK ZORUNDADIR. Boylece
   // pinin ucuncu kaynagi, tam da onemli oldugu durumda, env'e acik degildir.
+  // YALNIZCA VARSAYILAN GOVERNANCE DOSYASI KABUL EDILIR.
+  //
+  // Onceki hal bunu SADECE defter dizini de ezildiginde yasakliyordu. Ama
+  // governance dosyasi pinin sabit tarafidir ve `packages/shared` defteri de
+  // ayni dosyaya bagladigi icin, onu tek basina baska bir yere cevirmek ya
+  // hicbir ise yaramaz ya da (o baglama bir gun `process.env`den okursa)
+  // pinin iki tarafini birden secilebilir yapar. Degiskeni ACIKLIK icin
+  // koruyoruz -- operator varsayilani yazabilir -- ama BASKA bir yola
+  // isaret edemez.
+  const governanceOverride = blankToUndefined(env['KEEPER_GOVERNANCE_FILE'])
+  if (governanceOverride !== undefined && resolve(governanceOverride) !== DEFAULT_GOVERNANCE_PATH) {
+    throw new Error(
+      `KEEPER_GOVERNANCE_FILE may only name the committed default (${DEFAULT_GOVERNANCE_PATH}); it is the fixed side of the startup pin that compares the factory's on-chain governor() against expected-governance.json, and a pin whose every side is env-chosen proves nothing. Got "${governanceOverride}".`,
+    )
+  }
   if (envRedirectIsEffective && blankToUndefined(env['KEEPER_GOVERNANCE_FILE']) !== undefined) {
     throw new Error(
       "KEEPER_ADDRESS_BOOK_DIR and KEEPER_GOVERNANCE_FILE cannot both be overridden. The startup pin compares the factory's on-chain governor() against expected-governance.json; if BOTH the book and that file come from env, the pin compares two attacker- or accident-chosen files and proves nothing. Redirect at most one, so the pin always has one fixed, committed side.",
@@ -199,7 +218,7 @@ export function loadWatcherConfig(env: NodeJS.ProcessEnv, bookDir?: string): Wat
   const governancePath = blankToUndefined(env['KEEPER_GOVERNANCE_FILE']) ?? DEFAULT_GOVERNANCE_PATH
   const cursorPath = blankToUndefined(env['KEEPER_CURSOR_FILE']) ?? DEFAULT_CURSOR_PATH
 
-  const rawChunk = env['KEEPER_LOG_SCAN_CHUNK']
+  const rawChunk = blankToUndefined(env['KEEPER_LOG_SCAN_CHUNK'])
   let logScanChunk = DEFAULT_LOG_SCAN_CHUNK
   if (rawChunk !== undefined) {
     if (!/^\d+$/.test(rawChunk) || BigInt(rawChunk) === 0n) {
@@ -215,9 +234,14 @@ export function loadWatcherConfig(env: NodeJS.ProcessEnv, bookDir?: string): Wat
     throw new Error(`cannot read the governance allowlist at ${governancePath}`)
   }
 
-  const rawRepeat = env['KEEPER_ALERT_REPEAT_MS']
+  // EN KOTUSU BUYDU CUNKU SESSIZ BASARISIZ OLUYORDU. '' korunuyordu ama
+  // BOSLUK korunmuyordu: Number('   ') === 0, Number.isInteger(0) dogru,
+  // 0 < 0 yanlis -> alertRepeatMs = 0 -> createThrottle(0) HICBIR SEYI
+  // BASTIRMAZ, yani throttle'in var olma sebebi olan gunde ~35.000 sayfa geri
+  // gelir. Ailenin geri kalani GURULTULU duser; bu tek basina sessizdi.
+  const rawRepeat = blankToUndefined(env['KEEPER_ALERT_REPEAT_MS'])
   let alertRepeatMs: number | undefined
-  if (rawRepeat !== undefined && rawRepeat !== '') {
+  if (rawRepeat !== undefined) {
     alertRepeatMs = Number(rawRepeat)
     if (!Number.isInteger(alertRepeatMs) || alertRepeatMs < 0) {
       throw new Error(`KEEPER_ALERT_REPEAT_MS must be a non-negative integer, got "${rawRepeat}"`)

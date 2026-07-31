@@ -366,21 +366,34 @@ describe('CONTRACT: the address book is bound to expected-governance.json', () =
       'utf8',
     )
 
-    // Defter argumanla verilir (env yonlendirme kapisini atlar), governance
-    // dosyasi ise ENV ile ezilir. Kontrol env'den okusaydi, bu GECERDI.
+    // `process.env` UZERINDEN, ARGUMAN NESNESI UZERINDEN DEGIL.
+    //
+    // Bu testin ilk hali `KEEPER_GOVERNANCE_FILE`i `loadWatcherConfig`in ENV
+    // NESNESI argumaninda geciriyordu -- ve `packages/shared` o nesneyi HIC
+    // ALMAZ; imzasinda env parametresi yoktur. Yani "yol env ile
+    // degistirilemez" iddiasi, ayristirmanin OKUYABILECEGI tek kanali
+    // (`process.env`) hic denemiyordu. Olculdu: karsilastirma
+    // `process.env['KEEPER_GOVERNANCE_FILE'] || GOVERNANCE_PATH` yapilacak
+    // sekilde mutasyona ugratildiginda 136 testin TAMAMI geciyordu.
+    //
+    // Simdi gercek `process.env` kirletilir; arguman nesnesi ise TEMIZ birakilir
+    // ki keeper'in KENDI kapisi once atesleyip testi maskelemesin. Boylece
+    // kirmizi olmanin tek yolu, ayristirmanin gercekten process.env'i okumasidir.
+    const saved = process.env['KEEPER_GOVERNANCE_FILE']
     let message = ''
     try {
-      loadWatcherConfig(
-        { ARC_CHAIN_ID: '31337', KEEPER_GOVERNANCE_FILE: fakePath },
-        bookDirWith({ governor: impostor }),
-      )
-      message = 'LOADED -- the comparison followed KEEPER_GOVERNANCE_FILE'
+      process.env['KEEPER_GOVERNANCE_FILE'] = fakePath
+      loadWatcherConfig({ ARC_CHAIN_ID: '31337' }, bookDirWith({ governor: impostor }))
+      message = 'LOADED -- the comparison followed process.env KEEPER_GOVERNANCE_FILE'
     } catch (error) {
       message = String(error)
+    } finally {
+      if (saved === undefined) delete process.env['KEEPER_GOVERNANCE_FILE']
+      else process.env['KEEPER_GOVERNANCE_FILE'] = saved
     }
     expect(
       message,
-      'the book<->governance comparison must use a fixed path, not KEEPER_GOVERNANCE_FILE; if env can redirect it, a redirected book can bless its own governor and the startup pin is vacuous',
+      'the book<->governance comparison must use a fixed path, not process.env KEEPER_GOVERNANCE_FILE; if env can redirect it, a redirected book can bless its own governor and the startup pin is vacuous',
     ).toMatch(/expected-governance.json/)
     expect(message).not.toContain('LOADED')
   })
@@ -392,5 +405,102 @@ describe('CONTRACT: the address book is bound to expected-governance.json', () =
   // silinseydi test YINE gecerdi. Kalibi daraltmak bunu aninda ortaya cikardi.
   it('DOGRU governor ile ayni defter YUKLENIR -- kontrol "her zaman reddet" degil', () => {
     expect(() => loadWatcherConfig({ ARC_CHAIN_ID: '31337' }, bookDirWith({}))).not.toThrow()
+  })
+})
+
+/**
+ * BOS/BOSLUK ENV AILESI -- DORDUNCU TUR, ve bu kez TABLO ILE.
+ *
+ * Ayni sekil dort turda dort kez cikti: `KEEPER_ADDRESS_BOOK_DIR`, sonra
+ * `KEEPER_GOVERNANCE_FILE`/`KEEPER_CURSOR_FILE`, sonra `ARC_CHAIN_ID` ve
+ * `drill.ts`in iki okumasi, sonra `KEEPER_ALERT_REPEAT_MS`. Her seferinde
+ * duzeltme o an bakilan siteye uygulandi ve KARDESLERI atlandi -- yani hata
+ * "bir giris noktasinda kapatilan ozellik tumunde kapali sayilir"in ta
+ * kendisiydi.
+ *
+ * Bu blok her degiskeni TEK TEK ve HEM `''` HEM `'   '` ile yurur, boylece
+ * bir sonraki ekleme kardeslerini atlayamaz.
+ *
+ * `KEEPER_ALERT_REPEAT_MS` ozellikle onemliydi: ailenin geri kalani GURULTULU
+ * duserken bu SESSIZ basarisiz oluyordu. `Number('   ') === 0`,
+ * `Number.isInteger(0)` dogru, `0 < 0` yanlis -> `alertRepeatMs = 0` ->
+ * `createThrottle(0)` HICBIR SEYI bastirmaz -> throttle'in var olma sebebi olan
+ * gunde ~35.000 sayfa geri gelir, hicbir hata mesaji olmadan.
+ */
+describe('bos ve BOSLUK env degerleri: her degisken, iki bicim', () => {
+  const BLANKS = ['', '   ', '\t'] as const
+
+  it('KEEPER_ALERT_REPEAT_MS bos ya da bosluksa varsayilana duser, 0"a DEGIL', () => {
+    for (const blank of BLANKS) {
+      const config = loadWatcherConfig(
+        { ARC_CHAIN_ID: '31337', KEEPER_ALERT_REPEAT_MS: blank },
+        BOOK_DIR,
+      )
+      expect(config.alertRepeatMs, JSON.stringify(blank)).toBeUndefined()
+    }
+    // Ve gercek bir deger hala okunur.
+    expect(
+      loadWatcherConfig({ ARC_CHAIN_ID: '31337', KEEPER_ALERT_REPEAT_MS: '900000' }, BOOK_DIR)
+        .alertRepeatMs,
+    ).toBe(900_000)
+  })
+
+  it('KEEPER_LOG_SCAN_CHUNK bos ya da bosluksa varsayilana duser', () => {
+    for (const blank of BLANKS) {
+      const config = loadWatcherConfig(
+        { ARC_CHAIN_ID: '31337', KEEPER_LOG_SCAN_CHUNK: blank },
+        BOOK_DIR,
+      )
+      expect(config.logScanChunk, JSON.stringify(blank)).toBe(10_000n)
+    }
+  })
+
+  it('KEEPER_ALERT_LOG bosluksa "ayarlanmamis" sayilir', () => {
+    for (const blank of BLANKS) {
+      const config = loadWatcherConfig({ ARC_CHAIN_ID: '31337', KEEPER_ALERT_LOG: blank }, BOOK_DIR)
+      expect(config.alertLogPath, JSON.stringify(blank)).toBeUndefined()
+    }
+  })
+
+  // AYNI DEGISKEN, IKI GIRIS NOKTASI. `drill.ts` bunu `blankToUndefined` ile
+  // okuyordu, `loadKeeperConfig` ham okuyordu -- ve `index.ts` ikincisini
+  // cagirir, yani `.env.example`in "bos birak" ogretisini izleyen bir operator
+  // icin izleyici HIC BASLAMIYORDU.
+  it('KEEPER_POLL_INTERVAL_MS her IKI giris noktasinda da bosluga dayanikli', () => {
+    for (const blank of BLANKS) {
+      const config = loadKeeperConfig({
+        ARC_RPC_URL: 'https://rpc.testnet.arc.io',
+        KEEPER_POLL_INTERVAL_MS: blank,
+      })
+      expect(config.pollIntervalMs, JSON.stringify(blank)).toBe(5_000)
+    }
+    // Gecersiz ama BOS OLMAYAN deger hala ALANI ADIYLA duser.
+    expect(() =>
+      loadKeeperConfig({
+        ARC_RPC_URL: 'https://rpc.testnet.arc.io',
+        KEEPER_POLL_INTERVAL_MS: 'soon',
+      }),
+    ).toThrow(/KEEPER_POLL_INTERVAL_MS/)
+  })
+
+  it('ARC_RPC_URL bosluksa ADIYLA reddedilir, sessizce gecmez', () => {
+    for (const blank of BLANKS) {
+      expect(() => loadKeeperConfig({ ARC_RPC_URL: blank }), JSON.stringify(blank)).toThrow(
+        /ARC_RPC_URL/,
+      )
+    }
+  })
+
+  it('ARC_CHAIN_ID bosluksa varsayilan zincire duser, 0"a DEGIL', () => {
+    for (const blank of BLANKS) {
+      let message = ''
+      try {
+        loadWatcherConfig({ ARC_CHAIN_ID: blank }, BOOK_DIR)
+      } catch (error) {
+        message = String(error)
+      }
+      // Varsayilan Arc testnet zinciri aranir; `addresses.0.json` ASLA.
+      expect(message, JSON.stringify(blank)).not.toContain('addresses.0.json')
+    }
   })
 })
