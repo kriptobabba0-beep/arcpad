@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {DeployLib, Plan} from "../../script/DeployLib.sol";
 import {Governance, ISafe} from "../../script/Governance.s.sol";
+import {BondingCurve} from "../../src/BondingCurve.sol";
 import {LaunchFactory} from "../../src/LaunchFactory.sol";
 import {Profile, Profiles} from "../../script/Profiles.sol";
 
@@ -169,5 +170,69 @@ contract GovernanceForkTest is Test {
 
         assertEq(p.escrow, 0xEEd4431eAD3E27F16D97f677A9C4c1a963DF8dC6, "escrow address moved");
         assertEq(p.factory, 0x0d75a4fFb8CD6dB4237557E9519591b94d6Ab439, "factory address moved");
+    }
+
+    /// @dev TORENIN GERCEKTEN YURUDUGUNUN KALICI KANITI.
+    ///
+    ///      Prova factory'si governor Safe'i governor VE treasury olarak dogdu;
+    ///      toren `setProtocolTreasury`yi 2-of-3 imzayla yurutup onu treasury
+    ///      Safe'e cevirdi. Asagidaki esitsizlik o imza demetinin Safe
+    ///      tarafindan KABUL EDILDIGININ zincirdeki izidir.
+    ///
+    ///      BU TEST BIR KEZ KAZAYLA SILINDI VE SAYIM ONU GIZLEDI. Task 6
+    ///      duzenlemesi iki testi degistirirken bu ucuncusunu de kapsayan bir
+    ///      araligi degistirdi; suite 10'dan 10'a gitti (iki yeni, iki eski,
+    ///      bir silinen) ve yesil kaldi. Ders yazili birakiliyor: SABIT KALAN
+    ///      BIR TEST SAYISI, SILINMIS BIR TESTI GIZLER -- degisen ARALIK degil,
+    ///      degisen ISIM LISTESI okunmalidir.
+    function test_theCeremonyRehearsalTookEffectOnChain() public view {
+        address rehearsalFactory = 0xfed991C6B9AD7144Df3d670c6b9EcF3620ac6eA5;
+        assertGt(rehearsalFactory.code.length, 0, "the rehearsal factory is gone");
+        assertEq(
+            LaunchFactory(rehearsalFactory).governor(),
+            GOVERNOR_SAFE,
+            "the rehearsal factory was not governed by the governor Safe"
+        );
+        assertEq(
+            LaunchFactory(rehearsalFactory).protocolTreasury(),
+            TREASURY_SAFE,
+            "the 2-of-3 ceremony did not take effect: the treasury never moved"
+        );
+        // ...ve propose ayagi da yurudu: hedef ONERILDI, henuz INMEDI.
+        assertEq(
+            LaunchFactory(rehearsalFactory).pendingGraduationTarget(),
+            0x000000000000000000000000000000000000dEaD,
+            "the propose leg left no pending target"
+        );
+        assertEq(
+            LaunchFactory(rehearsalFactory).graduationTarget(), address(0), "the target landed without the 3-day wait"
+        );
+    }
+
+    /// @dev ADRES DEFTERININ `smokeToken`/`smokeCurve` ALANLARININ VAROLMA
+    ///      SEBEBI: "CI fork kapisinin okudugu KALICI tamamlanmis-curve
+    ///      fixture'i". Task 7 onlari doldurdu; bu test onlari DEFTERDEN okuyup
+    ///      ZINCIRE karsi dogrular -- yani defter artik yalnizca yazilan degil,
+    ///      OKUNAN bir sey.
+    function test_theSmokeCurveInTheBookIsRealAndComplete() public view {
+        string memory book = vm.readFile("deploy/addresses.5042002.json");
+        address smokeToken = vm.parseJsonAddress(book, ".smokeToken");
+        address smokeCurve = vm.parseJsonAddress(book, ".smokeCurve");
+        address factory = vm.parseJsonAddress(book, ".launchFactory");
+
+        assertGt(smokeToken.code.length, 0, "the book names a smokeToken with no code");
+        assertGt(smokeCurve.code.length, 0, "the book names a smokeCurve with no code");
+
+        assertTrue(LaunchFactory(factory).isCanonical(smokeToken), "the smoke token is not canonical");
+        assertEq(BondingCurve(payable(smokeCurve)).token(), smokeToken, "curve and token disagree");
+        assertTrue(BondingCurve(payable(smokeCurve)).complete(), "the smoke curve is not complete");
+        assertFalse(BondingCurve(payable(smokeCurve)).graduated(), "the smoke curve has graduated");
+
+        // "Tamamlandi"nin EKONOMIK anlami: hasilat graduation esigini gecti.
+        assertGe(
+            BondingCurve(payable(smokeCurve)).realQuoteReserves(),
+            LaunchFactory(factory).MIN_GRADUATION_RAISE(),
+            "the completed curve did not reach the graduation raise"
+        );
     }
 }
