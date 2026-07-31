@@ -53,6 +53,8 @@ The watcher polls every `KEEPER_POLL_INTERVAL_MS` (default 5s) and reads **both 
 
 **The mismatch has two directions and the page names which one you have.** `UNDER-reporting` means the log path is missing launches and every exposure figure is a **LOWER BOUND**. `OVER-reporting` means the cursor is holding a curve the chain no longer has — a reorged-out `Launched`, or a `startBlock` that does not belong to this chain. The cursor only ever adds, so that state is **sticky**: it pages every poll and never emits a heartbeat until someone clears it. The remedy is in §6.
 
+> **What makes "detected, not prevented" tolerable is the throttle.** This state is sticky — it recurs every poll until someone clears the cursor — so without repeat suppression it would be roughly 35 000 pages a day, and a rota that gets 35 000 pages turns the pager off. Detection alone would not have been an acceptable answer; detection *plus* an hourly repeat ceiling is.
+>
 > **The watcher DETECTS reorg-driven over-count; it does not PREVENT it, and that is deliberate.** Removing a reorged-out entry needs per-curve block numbers and a confirmation depth — i.e. a small reorg-aware indexer. Phase 3 replaces this cursor with a `@arcpad/db` query, and reorg handling belongs there once, for every event type, rather than being built twice and deleted here. What the keeper owes you in the meantime is that the condition is **loud, correctly labelled, and self-describing** — which the `OVER-reporting` page is. It is never silent, and it never under-states the amount at risk.
 
 ### The window arithmetic is only as good as the clock
@@ -230,6 +232,17 @@ pnpm --filter @arcpad/keeper drill expiry
 ```
 
 In CI the keeper runs elsewhere, so the workflow's `Fetch the keeper's alert sink` step `curl`s `$KEEPER_ALERT_LOG_URL` into place first. That variable is the drill's one unconfigured input; while it is unset the job fails and names it.
+
+### The drill can only pass on evidence from *this* run
+
+`KEEPER_DRILL_SINCE` (ISO-8601) opens the window — record it just before the Safe proposes. Two things must then be true inside that window, and **both** are required:
+
+1. a `PAGE` naming the drill target, and
+2. **at least one `HEARTBEAT`.**
+
+Requirement 2 is the one that matters. Without it the gate survives the death of the thing it monitors: `fileSink` appends and nothing rotates, so one old page would keep the job green forever — passing whether or not the watcher fired that week, and continuing to pass after the watcher died. A liveness gate that outlives its subject is worse than no gate, because it actively reassures. The heartbeat is produced independently of any page, so demanding both makes the only way to pass "the watcher was alive **and** it fired".
+
+The two failures are reported differently on purpose, because they go to different sections: **no heartbeat** means *there was no watcher* (§6), not *the alarm failed*. A line whose timestamp cannot be parsed is **not counted** — the window errs towards a false red rather than a false green.
 
 **Step 1 is not in the script and must not be.** The governor is a Safe, its signatures are collected by humans, and handing governor authority to a drill script would create the thing the drill exists to detect.
 

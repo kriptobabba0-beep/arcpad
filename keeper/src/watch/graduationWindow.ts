@@ -91,6 +91,15 @@ export const FACTORY_WATCH_ABI = [
     inputs: [],
     outputs: [{ type: 'uint256' }],
   },
+  // Siniflandirmada okunmaz; yalnizca acilistaki
+  // `assertFactoryMatchesGovernance` pini icin.
+  {
+    type: 'function',
+    name: 'governor',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'address' }],
+  },
   {
     type: 'function',
     name: 'applyGraduationTarget',
@@ -420,6 +429,52 @@ export async function readWindowState(
 export type Allowlist = {
   graduationTargets: readonly Address[]
   treasuries: readonly Address[]
+  /**
+   * `expected-governance.json`in bildirdigi governor. SINIFLANDIRMADA
+   * KULLANILMAZ; `assertFactoryMatchesGovernance`in DEFTERDEN BAGIMSIZ
+   * dayanagidir.
+   */
+  governor: Address
+}
+
+/**
+ * DEFTERDEN BAGIMSIZ PIN. Baslangicta bir kez.
+ *
+ * Adres defterinin DIZINI env'e acilinca (`KEEPER_ADDRESS_BOOK_DIR`) factory
+ * artik sabit yollu, commit'li bir dosyayla capraz kontrol edilemez hale
+ * geldi: `assertEnvAgrees`in iki tarafi da ayni env-secili dosyadan geliyor.
+ * Bu fonksiyon ucuncu, BAGIMSIZ bir kaynak getirir -- ZINCIRIN KENDISI --
+ * ve onu AYRI yollu governance dosyasina baglar:
+ *
+ *     defter der ki: factory F
+ *     zincir der ki: F.governor() == G
+ *     governance dosyasi der ki: governor G olmali
+ *
+ * Bayat bir tatbikat dizini BASKA bir gercek factory'yi gosterirse o
+ * factory'nin governor'i tutmaz ve izleyici BASLAMAZ. Yanlis yapilandirmanin
+ * sessiz kalabildigi tek yol kapanir: sessizlik yerine acilista gurultu.
+ *
+ * Kodu olmayan bir adres de burada duser -- `eth_call` bos doner ve
+ * `asAddress` ALANI ADIYLA firlatir.
+ */
+export async function assertFactoryMatchesGovernance(
+  client: ChainReader,
+  factory: Address,
+  allowlist: Allowlist,
+): Promise<void> {
+  const head = await client.getBlock()
+  const raw = await client.readContract({
+    address: factory,
+    abi: FACTORY_WATCH_ABI,
+    functionName: 'governor',
+    blockNumber: head.number,
+  })
+  const onChain = asAddress(raw, `${factory}.governor()`)
+  if (onChain.toLowerCase() !== allowlist.governor.toLowerCase()) {
+    throw new Error(
+      `the factory at ${factory} reports governor ${onChain}, but expected-governance.json says ${allowlist.governor}. Either the address book points at a different factory than the governance file describes -- the shape a stale KEEPER_ADDRESS_BOOK_DIR produces -- or the governor was rotated without updating the file. Refusing to start: a watcher pointed at the wrong factory is silent about the right one.`,
+    )
+  }
 }
 
 export type FindingCode =

@@ -39,61 +39,115 @@ export type DrillOutcome = { ok: boolean; detail: string }
  * BORUSUNUN calistigi hakkinda hicbir sey soylemezdi -- ve on bir kez isiran
  * sekil tam olarak "mekanizma var ama ciktisi hicbir yere varmiyor"dur.
  */
+export type SinkLine = { kind: 'page' | 'ok' | 'heartbeat'; atMs: number; text: string }
+
 export interface AlertSinkQuery {
-  recentPages(): Promise<string[]>
+  /** `sinceMs`ten SONRA damgalanmis satirlar. Damgasi okunamayan satir DUSER. */
+  readSince(sinceMs: number): Promise<SinkLine[]>
 }
 
+const LINE = /^(PAGE|OK|HEARTBEAT) keeper\.graduationWindow at=(\S+)/
+
 /**
- * `consoleSink`in yazdigi satirlari okuyan lavabo sorgusu. Bicim
- * `PAGE keeper.graduationWindow ...` ile baslar ve JSON DEGILDIR: bir alarm
- * yolunun ayristirma hatasiyla sessizlesmesi, korunmaya calisilan seydir.
+ * `consoleSink`/`fileSink`in yazdigi satirlari okuyan lavabo sorgusu. Bicim
+ * `PAGE keeper.graduationWindow at=<ISO> ...` ile baslar ve JSON DEGILDIR: bir
+ * alarm yolunun ayristirma hatasiyla sessizlesmesi, korunmaya calisilan seydir.
+ *
+ * ZAMAN PENCERESI ZORUNLUDUR VE SONRADAN EKLENDI. Onceki hal dosyanin
+ * TAMAMINI okuyup "hedefi anan bir sayfa var mi" diye bakiyordu. `fileSink`
+ * ekler ve hicbir sey donmez, dolayisiyla DORT HAFTA ONCEKI bir sayfa --
+ * baskasi olmasa bile -- `ok=true` veriyordu. Yani ilk basarili tatbikattan
+ * SONRA is, izleyici o hafta atesledi mi etmedi mi diye bakmaksizin geciyordu,
+ * VE IZLEYICI OLDUKTEN SONRA DA GECMEYE DEVAM EDIYORDU. Izledigi seyin
+ * olumunden sag cikan bir canlilik kapisi, hic kapi olmamasindan KOTUDUR,
+ * cunku aktif olarak icini rahatlatir.
+ *
+ * Damgasi ayristirilamayan satir SAYILMAZ. Yon bilincli: yanlis KIRMIZI,
+ * yanlis YESILE tercih edilir.
  */
 export function fileAlertSink(path: string): AlertSinkQuery {
   return {
-    recentPages(): Promise<string[]> {
+    readSince(sinceMs: number): Promise<SinkLine[]> {
       let raw: string
       try {
         raw = readFileSync(path, 'utf8')
       } catch {
         return Promise.resolve([])
       }
-      return Promise.resolve(raw.split(/\r?\n/).filter((line) => line.startsWith('PAGE ')))
+      const out: SinkLine[] = []
+      for (const text of raw.split(/\r?\n/)) {
+        const m = LINE.exec(text)
+        if (m === null) continue
+        const atMs = Date.parse(m[2] as string)
+        if (Number.isNaN(atMs) || atMs < sinceMs) continue
+        const kind = m[1] === 'PAGE' ? 'page' : m[1] === 'OK' ? 'ok' : 'heartbeat'
+        out.push({ kind, atMs, text })
+      }
+      return Promise.resolve(out)
     },
   }
 }
 
 /**
- * ADIM 2: izleyici bir poll araligi icinde sayfa cikardi mi.
+ * ADIM 2: izleyici BU KOSUDA sayfa cikardi mi.
  *
- * @param attempts Kac kez bakilacagi. `1` "tam olarak bir poll araligi"
- *                 demektir; CI birazcik pay birakir cunku is basladiginda
- *                 keeper'in poll'unun neresinde oldugu bilinemez.
+ * IKI SART, VE IKINCISI TATBIKATIN ASIL DEGERI:
+ *
+ *   (1) `sinceMs`ten sonra, hedefi anan bir `PAGE`.
+ *   (2) `sinceMs`ten sonra EN AZ BIR `HEARTBEAT`.
+ *
+ * (2) olmadan kapi, izledigi seyin olumunden SAG CIKAR: eski bir sayfa
+ * dosyada durdugu surece is yesil kalir, izleyici haftalardir olu olsa bile.
+ * Kalp atisi "izleyici bu pencerede CALISIYORDU"nun kanitidir ve sayfadan
+ * bagimsiz olarak uretilir; ikisini birlikte istemek, gecmenin tek yolunu
+ * "izleyici yasiyordu VE atesledi" yapar.
+ *
+ * Sirasi da onemli: kalp atisi YOKSA hata mesaji "sayfa gelmedi" DEMEZ,
+ * "izleyici kosmuyordu" der. Ikisi farkli arizalar ve farkli runbook
+ * dallaridir; birini digerinin adiyla raporlamak rota'yi yanlis yere gonderir.
+ *
+ * @param attempts Kac kez bakilacagi. CI birazcik pay birakir cunku is
+ *                 basladiginda keeper'in poll'unun neresinde oldugu bilinemez.
  */
 export async function drillObserve(deps: {
   sink: AlertSinkQuery
   target: Address
+  /** Bu kosunun basladigi an. Bundan ONCEKI hicbir kanit sayilmaz. */
+  sinceMs: number
   attempts?: number
   waitMs: number
   sleep: (ms: number) => Promise<void>
 }): Promise<DrillOutcome> {
   const attempts = deps.attempts ?? 3
   const needle = deps.target.toLowerCase()
-  const seen: string[] = []
+  let beats = 0
+  let pages = 0
 
   for (let i = 0; i < attempts; i += 1) {
-    const pages = await deps.sink.recentPages()
-    seen.length = 0
-    seen.push(...pages)
-    const hit = pages.find((page) => page.toLowerCase().includes(needle))
-    if (hit !== undefined) {
-      return { ok: true, detail: `paged on attempt ${i + 1}/${attempts}: ${hit}` }
+    const lines = await deps.sink.readSince(deps.sinceMs)
+    beats = lines.filter((l) => l.kind === 'heartbeat').length
+    const fresh = lines.filter((l) => l.kind === 'page')
+    pages = fresh.length
+    const hit = fresh.find((l) => l.text.toLowerCase().includes(needle))
+    if (hit !== undefined && beats > 0) {
+      return {
+        ok: true,
+        detail: `paged on attempt ${i + 1}/${attempts}, and the watcher was alive for it (${beats} heartbeat(s) inside the window): ${hit.text}`,
+      }
     }
     if (i + 1 < attempts) await deps.sleep(deps.waitMs)
   }
 
+  const window = new Date(deps.sinceMs).toISOString()
+  if (beats === 0) {
+    return {
+      ok: false,
+      detail: `NO HEARTBEAT in the sink since ${window}. The watcher was not running during this drill, so nothing here is evidence either way -- do not read this as "the alarm failed", read it as "there was no watcher". Runbook section 6.`,
+    }
+  }
   return {
     ok: false,
-    detail: `NO PAGE mentioning ${deps.target} after ${attempts} attempt(s). The watcher did not fire in anger. ${seen.length} unrelated page(s) were in the sink.`,
+    detail: `The watcher was alive (${beats} heartbeat(s) since ${window}) but produced NO PAGE naming ${deps.target} in that window. ${pages} unrelated page(s) were in it. The alarm path did not carry the proposal.`,
   }
 }
 
@@ -144,9 +198,23 @@ export async function main(): Promise<number> {
     const logPath = env['KEEPER_ALERT_LOG']
     if (!logPath)
       throw new Error('KEEPER_ALERT_LOG is not set (the file the keeper writes its sink to)')
+    // PENCERENIN BASI DISARIDAN GELIR ve gelmesi zorunludur: is baslarken
+    // "simdi"yi almak, Safe onerisi ile is arasindaki gecikmeyi pencerenin
+    // disinda birakirdi. `KEEPER_DRILL_SINCE` Safe islemini gonderen kisinin
+    // (ya da is akisinin) kaydettigi andir.
+    const rawSince = env['KEEPER_DRILL_SINCE']
+    if (!rawSince) {
+      throw new Error(
+        'KEEPER_DRILL_SINCE is not set (ISO-8601 instant the drill window opens -- normally just before the Safe proposes). Without it the drill would accept a page from any point in history.',
+      )
+    }
+    const sinceMs = Date.parse(rawSince)
+    if (Number.isNaN(sinceMs)) throw new Error(`KEEPER_DRILL_SINCE is "${rawSince}", not ISO-8601`)
+
     const outcome = await drillObserve({
       sink: fileAlertSink(logPath),
       target: getAddress(rawTarget),
+      sinceMs,
       waitMs: Number(env['KEEPER_POLL_INTERVAL_MS'] ?? 5_000),
       sleep,
     })

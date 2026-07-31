@@ -111,13 +111,83 @@ describe('loadWatcherConfig', () => {
   // Uretimde varsayilan (contracts/deploy) dogru olandir. Bu knob staging
   // defterlerine karsi kosmak ve izleyiciyi GERCEK bir surec olarak sahte bir
   // zincire karsi kirabilmek icin var -- loop-level tatbikat onu kullanir.
+  const FACTORY = '0xeeaE42fa79dA76cF5186CE47e5c66BF496DF66f3'
+
   it('defter dizini env uzerinden verilebilir, ve arguman env i EZER', () => {
-    expect(loadWatcherConfig({ ...base, KEEPER_ADDRESS_BOOK_DIR: BOOK_DIR }).startBlock).toBe(1n)
-    expect(() => loadWatcherConfig({ ...base, KEEPER_ADDRESS_BOOK_DIR: 'nope' })).toThrow(/file/)
+    const redirected = { ...base, KEEPER_ADDRESS_BOOK_DIR: BOOK_DIR, ARC_FACTORY_ADDRESS: FACTORY }
+    expect(loadWatcherConfig(redirected).startBlock).toBe(1n)
+    expect(() =>
+      loadWatcherConfig({ ...base, KEEPER_ADDRESS_BOOK_DIR: 'nope', ARC_FACTORY_ADDRESS: FACTORY }),
+    ).toThrow(/file/)
     // Arguman verildiginde env yok sayilir.
     expect(loadWatcherConfig({ ...base, KEEPER_ADDRESS_BOOK_DIR: 'nope' }, BOOK_DIR).chainKey).toBe(
       'local-rehearsal',
     )
+  })
+
+  // BOS DIZE = AYARLANMAMIS. `.env.example` bu degiskeni BOS gonderir ve
+  // dotenv onu bos DIZE olarak verir; `??` bunu gormez ve deger
+  // `loadAddressBook(chainId, '')`e ciplak goreli yol olarak giderdi. Yani
+  // deponun kendi belgelenmis kurulum yolu, baslamayi reddeden bir keeper
+  // uretiyordu.
+  // ARGUMANSIZ CAGRILIR, ve bu sart: `bookDir` argumani env'i tamamen ezer,
+  // dolayisiyla onu gecen bir test bos-dize islemesini HIC yurutmez. Ilk hali
+  // oyleydi ve M30 mutanti (bos dizeyi ciplak goreli yol olarak gecir) SAG
+  // KALDI. Ayirt edici kanit HATA MESAJINDAKI YOL: dogru halde varsayilan
+  // dizin (`contracts/deploy/...`) gorunur, bozuk halde CIPLAK dosya adi.
+  it('BOS bir KEEPER_ADDRESS_BOOK_DIR "ayarlanmamis" sayilir', () => {
+    for (const blank of ['', '   ']) {
+      let message = ''
+      try {
+        loadWatcherConfig({ ...base, KEEPER_ADDRESS_BOOK_DIR: blank })
+      } catch (error) {
+        message = String(error)
+      }
+      expect(message, `blank=${JSON.stringify(blank)}`).toContain('addresses.31337.json')
+      // VARSAYILAN DIZINE dustu, ciplak goreli yola degil.
+      expect(message.replace(/\\/g, '/'), `blank=${JSON.stringify(blank)}`).toContain(
+        'contracts/deploy/addresses.31337.json',
+      )
+      // Ve bos dize yonlendirme kapisini TETIKLEMEZ: hata defter yolu
+      // hakkindadir, ARC_FACTORY_ADDRESS hakkinda degil.
+      expect(message).not.toContain('ARC_FACTORY_ADDRESS must also be set')
+    }
+  })
+
+  it('ayarsiz ile bos dize AYNI davranir', () => {
+    const unset = (): string => {
+      try {
+        loadWatcherConfig({ ARC_CHAIN_ID: '31337', KEEPER_GOVERNANCE_FILE: GOVERNANCE })
+        return 'no throw'
+      } catch (error) {
+        return String(error)
+      }
+    }
+    const blank = (): string => {
+      try {
+        loadWatcherConfig({ ...base, KEEPER_ADDRESS_BOOK_DIR: '' })
+        return 'no throw'
+      } catch (error) {
+        return String(error)
+      }
+    }
+    expect(blank()).toBe(unset())
+  })
+
+  // Defteri yeniden yonlendirmek SESSIZ olamaz: bayat bir tatbikat dizini
+  // izleyiciyi baska, sessiz, gercek bir factory'ye baglar ve her dedektor
+  // susar.
+  it('dizin ezilirse ARC_FACTORY_ADDRESS ZORUNLUDUR', () => {
+    expect(() => loadWatcherConfig({ ...base, KEEPER_ADDRESS_BOOK_DIR: BOOK_DIR })).toThrow(
+      /ARC_FACTORY_ADDRESS must also be set/,
+    )
+    expect(() =>
+      loadWatcherConfig({
+        ...base,
+        KEEPER_ADDRESS_BOOK_DIR: BOOK_DIR,
+        ARC_FACTORY_ADDRESS: '0x0000000000000000000000000000000000000001',
+      }),
+    ).toThrow(/ARC_FACTORY_ADDRESS/)
   })
 
   it('bozuk tekrar araligi reddedilir', () => {

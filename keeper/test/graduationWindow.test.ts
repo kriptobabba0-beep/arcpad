@@ -15,7 +15,13 @@ import {
   multiSink,
 } from '../src/alert'
 import { parseGovernanceAllowlist } from '../src/config'
-import { drillExpiry, drillObserve, fileAlertSink } from '../src/drill'
+import {
+  type AlertSinkQuery,
+  drillExpiry,
+  drillObserve,
+  fileAlertSink,
+  type SinkLine,
+} from '../src/drill'
 import {
   type Allowlist,
   type ChainReader,
@@ -26,6 +32,7 @@ import {
   fileCursorStore,
   knownCurves,
   LogScanError,
+  assertFactoryMatchesGovernance,
   readWindowState,
   runWatcher,
   scanFactoryLogs,
@@ -160,8 +167,16 @@ function curveSet(entries: Array<[Address, CurveFixture]>): Record<string, Curve
   return Object.fromEntries(entries.map(([address, fixture]) => [address.toLowerCase(), fixture]))
 }
 
-const ALLOW_GOOD: Allowlist = { graduationTargets: [GOOD_TARGET], treasuries: [TREASURY] }
-const ALLOW_EMPTY: Allowlist = { graduationTargets: [], treasuries: [TREASURY] }
+const ALLOW_GOOD: Allowlist = {
+  graduationTargets: [GOOD_TARGET],
+  treasuries: [TREASURY],
+  governor: addr('601'),
+}
+const ALLOW_EMPTY: Allowlist = {
+  graduationTargets: [],
+  treasuries: [TREASURY],
+  governor: addr('601'),
+}
 
 /** Alarm lavabosu -- her seyi tutar, boylece SESSIZLIK de olculebilir. */
 function recorder(): {
@@ -504,7 +519,11 @@ describe('classify', () => {
     const state = stateOf({ pendingTarget: EVIL_TARGET, pendingEta: NOW + 1n })
     expect(classify(state, ALLOW_GOOD).level).toBe('page')
     expect(
-      classify(state, { graduationTargets: [EVIL_TARGET], treasuries: [TREASURY] }).level,
+      classify(state, {
+        graduationTargets: [EVIL_TARGET],
+        treasuries: [TREASURY],
+        governor: addr('601'),
+      }).level,
     ).toBe('ok')
   })
 
@@ -513,6 +532,7 @@ describe('classify', () => {
     const lowercased = {
       graduationTargets: [GOOD_TARGET.toLowerCase() as Address],
       treasuries: [TREASURY],
+      governor: addr('601'),
     }
     expect(classify(state, lowercased).level).toBe('ok')
     expect(classify(state, lowercased).findings).toEqual(['pending-target-allowlisted'])
@@ -995,7 +1015,11 @@ describe('parseGovernanceAllowlist', () => {
       },
       'arc-testnet',
     )
-    expect(parsed).toEqual({ graduationTargets: [GOOD_TARGET], treasuries: [TREASURY] })
+    expect(parsed).toEqual({
+      graduationTargets: [GOOD_TARGET],
+      treasuries: [TREASURY],
+      governor: addr('601'),
+    })
   })
 
   // Faz 1d'de hicbir hedef atanmamistir. BOS LISTE "kontrol yok" degil,
@@ -1074,8 +1098,25 @@ describe('parseGovernanceAllowlist', () => {
     const parsed = parseGovernanceAllowlist(raw, 'local-rehearsal')
     expect(parsed.graduationTargets).toEqual([])
     expect(parsed.treasuries.length).toBe(1)
-    // arc-testnet KAYDI HENUZ SIFIR: izleyici ona karsi baslamayi reddetmeli.
-    expect(() => parseGovernanceAllowlist(raw, 'arc-testnet')).toThrow(/zero address/)
+
+    // HER KAYIT ICIN DEGISMEZ: ya SIFIR OLMAYAN governance ile yuklenir, ya da
+    // sifir adresi ADIYLA soyleyerek REDDEDER. Bunun onceki hali "arc-testnet
+    // henuz sifirdir" diye BUGUNKU degere pinliydi ve baska bir ajan Safe'leri
+    // doldurdugu anda kirildi -- fixture'a pinlenmis bir test, degismezi degil
+    // takvimi olcer.
+    for (const key of Object.keys(raw as Record<string, unknown>)) {
+      let entry: ReturnType<typeof parseGovernanceAllowlist> | undefined
+      try {
+        entry = parseGovernanceAllowlist(raw, key)
+      } catch (error) {
+        expect(String(error), `${key} must name the zero address if it refuses`).toMatch(
+          /zero address/,
+        )
+        continue
+      }
+      expect(entry.governor, key).not.toBe(ZERO_ADDRESS)
+      expect(entry.treasuries[0], key).not.toBe(ZERO_ADDRESS)
+    }
   })
 })
 
@@ -1086,14 +1127,47 @@ describe('parseGovernanceAllowlist', () => {
 describe('drill: observe', () => {
   const noSleep = (): Promise<void> => Promise.resolve()
 
+  // Lavabo satirlari artik ZAMAN DAMGALIDIR ve tatbikat pencereyi zorunlu
+  // kilar; bu yardimcilar o sekli tasir.
+  const beat = (atMs = 1_000): SinkLine => ({
+    kind: 'heartbeat',
+    atMs,
+    text: 'HEARTBEAT keeper.graduationWindow',
+  })
+  const page = (target: Address, atMs = 1_000): SinkLine => ({
+    kind: 'page',
+    atMs,
+    text: `PAGE keeper.graduationWindow pendingGraduationTarget is ${target} ...`,
+  })
+  const fakeSink = (lines: SinkLine[]): AlertSinkQuery => ({
+    readSince: (sinceMs) => Promise.resolve(lines.filter((l) => l.atMs >= sinceMs)),
+  })
+  /** Gercek `consoleSink`/`fileSink` satirlarindan kurulan lavabo. */
+  const linesSink = (raw: string[]): AlertSinkQuery => ({
+    readSince: (sinceMs) =>
+      Promise.resolve(
+        raw.flatMap((text) => {
+          const m = /^(PAGE|OK|HEARTBEAT) keeper\.graduationWindow at=(\S+)/.exec(text)
+          if (m === null) return []
+          const atMs = Date.parse(m[2] as string)
+          if (Number.isNaN(atMs) || atMs < sinceMs) return []
+          const kind = m[1] === 'PAGE' ? 'page' : m[1] === 'OK' ? 'ok' : 'heartbeat'
+          return [{ kind, atMs, text } as SinkLine]
+        }),
+      ),
+  })
+
   it('lavaboda hedefi anan bir sayfa varsa gecer', async () => {
     const sink = {
-      recentPages: () =>
-        Promise.resolve([
-          `PAGE keeper.graduationWindow pendingGraduationTarget is ${EVIL_TARGET} ...`,
-        ]),
+      readSince: () => Promise.resolve([beat(), page(EVIL_TARGET)]),
     }
-    const outcome = await drillObserve({ sink, target: EVIL_TARGET, waitMs: 0, sleep: noSleep })
+    const outcome = await drillObserve({
+      sinceMs: 0,
+      sink,
+      target: EVIL_TARGET,
+      waitMs: 0,
+      sleep: noSleep,
+    })
     expect(outcome.ok).toBe(true)
     expect(outcome.detail).toContain('attempt 1/3')
   })
@@ -1102,30 +1176,109 @@ describe('drill: observe', () => {
   // izleyici "sayfa cikardim" dese bile lavaboya bir sey varmadiysa kontrol
   // yoktur.
   it('lavabo bossa duser', async () => {
-    const sink = { recentPages: () => Promise.resolve([]) }
-    const outcome = await drillObserve({ sink, target: EVIL_TARGET, waitMs: 0, sleep: noSleep })
+    const sink = fakeSink([])
+    const outcome = await drillObserve({
+      sinceMs: 0,
+      sink,
+      target: EVIL_TARGET,
+      waitMs: 0,
+      sleep: noSleep,
+    })
     expect(outcome.ok).toBe(false)
-    expect(outcome.detail).toContain('NO PAGE')
+    // Bos lavabo "alarm basarisiz" DEGIL "izleyici kosmuyordu" demektir; iki
+    // ariza farkli runbook dallarina gider.
+    expect(outcome.detail).toContain('NO HEARTBEAT')
+    expect(outcome.detail).toContain('there was no watcher')
+  })
+
+  // KAPI, IZLEDIGI SEYIN OLUMUNDEN SAG CIKMAMALI. Eski bir sayfa dosyada
+  // durur, izleyici olmustur (pencerede kalp atisi yok) -> DUSER.
+  it('BAYAT bir sayfa, kalp atisi olmadan, tatbikati GECIREMEZ', async () => {
+    const monthAgo = Date.parse('2026-06-01T00:00:00.000Z')
+    const now = Date.parse('2026-07-01T00:00:00.000Z')
+    const outcome = await drillObserve({
+      sinceMs: now,
+      sink: fakeSink([page(EVIL_TARGET, monthAgo), beat(monthAgo)]),
+      target: EVIL_TARGET,
+      waitMs: 0,
+      sleep: noSleep,
+    })
+    expect(outcome.ok).toBe(false)
+    expect(outcome.detail).toContain('NO HEARTBEAT')
+  })
+
+  // Ve TERSI: ayni bayat sayfa, ama pencere onu KAPSIYORSA gecer. Pencere
+  // "her zaman reddet" degil.
+  it('ayni sayfa pencere icindeyse gecer', async () => {
+    const at = Date.parse('2026-07-01T00:00:00.000Z')
+    const outcome = await drillObserve({
+      sinceMs: at - 1000,
+      sink: fakeSink([page(EVIL_TARGET, at), beat(at)]),
+      target: EVIL_TARGET,
+      waitMs: 0,
+      sleep: noSleep,
+    })
+    expect(outcome.ok).toBe(true)
+    expect(outcome.detail).toContain('the watcher was alive for it')
+  })
+
+  // IZLEYICI YASIYOR AMA ATESLEMEDI: ucuncu, ayri ariza.
+  it('kalp atisi VAR ama sayfa YOK: farkli mesaj, yine duser', async () => {
+    const outcome = await drillObserve({
+      sinceMs: 0,
+      sink: fakeSink([beat()]),
+      target: EVIL_TARGET,
+      waitMs: 0,
+      sleep: noSleep,
+    })
+    expect(outcome.ok).toBe(false)
+    expect(outcome.detail).toContain('The watcher was alive')
+    expect(outcome.detail).toContain('did not carry the proposal')
+  })
+
+  it('damgasi ayristirilamayan satir SAYILMAZ -- yanlis kirmizi, yanlis yesile yeglenir', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'arcpad-badstamp-'))
+    try {
+      const path = join(dir, 'alerts.log')
+      writeFileSync(
+        path,
+        `PAGE keeper.graduationWindow at=not-a-date ${EVIL_TARGET}\nHEARTBEAT keeper.graduationWindow at=also-bad\n`,
+        'utf8',
+      )
+      return expect(fileAlertSink(path).readSince(0)).resolves.toEqual([])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('ALAKASIZ bir sayfa tatbikati gecirmez', async () => {
-    const sink = {
-      recentPages: () => Promise.resolve(['PAGE keeper.graduationWindow chain-head-stale ...']),
-    }
-    const outcome = await drillObserve({ sink, target: EVIL_TARGET, waitMs: 0, sleep: noSleep })
+    const sink = fakeSink([{ kind: 'page', atMs: 1000, text: 'PAGE chain-head-stale ...' }, beat()])
+    const outcome = await drillObserve({
+      sinceMs: 0,
+      sink,
+      target: EVIL_TARGET,
+      waitMs: 0,
+      sleep: noSleep,
+    })
     expect(outcome.ok).toBe(false)
     expect(outcome.detail).toContain('1 unrelated page(s)')
   })
 
   it('sayfa gec gelirse sonraki denemede yakalanir', async () => {
     let calls = 0
-    const sink = {
-      recentPages: () => {
+    const sink: AlertSinkQuery = {
+      readSince: () => {
         calls += 1
-        return Promise.resolve(calls < 3 ? [] : [`PAGE ... ${EVIL_TARGET} ...`])
+        return Promise.resolve(calls < 3 ? [beat()] : [beat(), page(EVIL_TARGET)])
       },
     }
-    const outcome = await drillObserve({ sink, target: EVIL_TARGET, waitMs: 0, sleep: noSleep })
+    const outcome = await drillObserve({
+      sinceMs: 0,
+      sink,
+      target: EVIL_TARGET,
+      waitMs: 0,
+      sleep: noSleep,
+    })
     expect(outcome.ok).toBe(true)
     expect(outcome.detail).toContain('attempt 3/3')
   })
@@ -1140,6 +1293,8 @@ describe('drill: observe', () => {
     console.log = (line: string): void => void lines.push(line)
     console.error = (line: string): void => void lines.push(line)
     try {
+      // Gercek bir keeper IKISINI DE yayar; tatbikat da ikisini birden ister.
+      emitHeartbeat(consoleSink)
       emitAlert(
         'page',
         `pendingGraduationTarget is ${EVIL_TARGET} and is NOT on the allowlist`,
@@ -1149,11 +1304,12 @@ describe('drill: observe', () => {
       console.log = original.log
       console.error = original.error
     }
-    const pages = lines.filter((line) => line.startsWith('PAGE '))
-    expect(pages.length).toBe(1)
+    expect(lines.filter((line) => line.startsWith('PAGE ')).length).toBe(1)
+    expect(lines.filter((line) => line.startsWith('HEARTBEAT ')).length).toBe(1)
     await expect(
       drillObserve({
-        sink: { recentPages: () => Promise.resolve(pages) },
+        sinceMs: 0,
+        sink: linesSink(lines),
         target: EVIL_TARGET,
         waitMs: 0,
         sleep: noSleep,
@@ -1365,6 +1521,7 @@ describe('runWatcher: ASLA REJECT ETMEZ', () => {
     const sink = recorder()
     const exploding: Allowlist = {
       treasuries: [TREASURY],
+      governor: addr('601'),
       get graduationTargets(): Address[] {
         throw new Error('boom from inside classify')
       },
@@ -1671,6 +1828,7 @@ describe('KEEPER_ALERT_LOG borusu', () => {
 
       await expect(
         drillObserve({
+          sinceMs: 0,
           sink: fileAlertSink(path),
           target: EVIL_TARGET,
           waitMs: 0,
@@ -1692,6 +1850,7 @@ describe('KEEPER_ALERT_LOG borusu', () => {
       emitAlert('ok', 'all quiet', sink)
       await expect(
         drillObserve({
+          sinceMs: 0,
           sink: fileAlertSink(path),
           target: EVIL_TARGET,
           waitMs: 0,
@@ -1706,11 +1865,204 @@ describe('KEEPER_ALERT_LOG borusu', () => {
   it('dosya hic yoksa tatbikat DUSER, gecmez', async () => {
     await expect(
       drillObserve({
+        sinceMs: 0,
         sink: fileAlertSink(join(tmpdir(), 'arcpad-does-not-exist-9f3a1', 'alerts.log')),
         target: EVIL_TARGET,
         waitMs: 0,
         sleep: () => Promise.resolve(),
       }),
     ).resolves.toMatchObject({ ok: false })
+  })
+})
+
+// ---------------------------------------------------------------
+// 16. DEFTERDEN BAGIMSIZ PIN  (re-inceleme: Finding B)
+// ---------------------------------------------------------------
+//
+// `KEEPER_ADDRESS_BOOK_DIR` defterin dizinini env'e acti, ve bununla birlikte
+// round 1'in capraz kontrolunun GUVENLIK ICERIGI bosaldi: `assertEnvAgrees`in
+// iki tarafi da ayni env-secili dosyadan gelir. Bu pin ucuncu, bagimsiz bir
+// kaynak getirir -- zincir -- ve onu AYRI yollu governance dosyasina baglar.
+
+describe('assertFactoryMatchesGovernance', () => {
+  const GOVERNOR = addr('601')
+  const allow: Allowlist = {
+    graduationTargets: [GOOD_TARGET],
+    treasuries: [TREASURY],
+    governor: GOVERNOR,
+  }
+  const chainWithGovernor = (governor: unknown): ChainReader => ({
+    getBlock: () => Promise.resolve({ number: 10n, timestamp: NOW }),
+    readContract: (call) =>
+      call.functionName === 'governor'
+        ? Promise.resolve(governor)
+        : Promise.reject(new Error('unexpected call')),
+    getLogs: () => Promise.resolve([]),
+  })
+
+  it('zincirin governor"u governance dosyasiyla ayniysa gecer', async () => {
+    await expect(
+      assertFactoryMatchesGovernance(chainWithGovernor(GOVERNOR), FACTORY, allow),
+    ).resolves.toBeUndefined()
+  })
+
+  it('buyuk-kucuk harf farki gecerli bir eslesmeyi bozmaz', async () => {
+    await expect(
+      assertFactoryMatchesGovernance(chainWithGovernor(GOVERNOR.toLowerCase()), FACTORY, allow),
+    ).resolves.toBeUndefined()
+  })
+
+  // BAYAT TATBIKAT DIZINI SEKLI: defter BASKA, gercek, sessiz bir factory'yi
+  // gosteriyor. Okumalar basarili, kalp atislari akardi, her dedektor
+  // susardi -- eger acilista burada dusmeseydi.
+  it('defter BASKA bir factory"yi gosteriyorsa BASLAMAZ', async () => {
+    await expect(
+      assertFactoryMatchesGovernance(chainWithGovernor(addr('f00d')), FACTORY, allow),
+    ).rejects.toThrow(/reports governor .* but expected-governance\.json says/)
+  })
+
+  it('hata mesaji bayat dizin ihtimalini ADIYLA soyler', async () => {
+    await expect(
+      assertFactoryMatchesGovernance(chainWithGovernor(addr('f00d')), FACTORY, allow),
+    ).rejects.toThrow(/stale KEEPER_ADDRESS_BOOK_DIR/)
+  })
+
+  // Kodu olmayan bir adres `eth_call`da bos doner; `asAddress` ALANI ADIYLA
+  // firlatir, sessizce sifir governor'a cozmez.
+  it('kodsuz adres (bos donus) ALANI ADIYLA duser', async () => {
+    await expect(
+      assertFactoryMatchesGovernance(chainWithGovernor('0x'), FACTORY, allow),
+    ).rejects.toThrow(/governor\(\)/)
+  })
+})
+
+// ---------------------------------------------------------------
+// 17. UC HAYATTA KALAN MUTANTIN KAPATTIGI DELIKLER
+// ---------------------------------------------------------------
+//
+// M23, M24 ve M30 round 3'un kampanyasinda HAYATTA KALDI, ve ucu de AYNI
+// hatanin ornegiydi: test, test ettigi kodu ATLAYAN bir yoldan iddia
+// ediyordu.
+//
+//   M23  `fileAlertSink`in zaman penceresi kaldirildi -> test gormedi, cunku
+//        `fakeSink` filtrelemeyi KENDI yapiyordu; gercek suzgec hic
+//        yurutulmuyordu.
+//   M24  kalp atisi sarti kaldirildi -> hicbir testte "pencere icinde sayfa
+//        VAR ama kalp atisi YOK" durumu yoktu.
+//   M30  bos dizeyi undefined'a ceviren yardimci kaldirildi -> test
+//        `bookDir` ARGUMANI geciyordu, ki o env'i tamamen ezer.
+//
+// Asagidakiler ucunu de GERCEK yoldan yurur.
+
+describe('hayatta kalan mutantlarin kapatilmasi', () => {
+  const noSleep = (): Promise<void> => Promise.resolve()
+  const withSink = <T>(body: (path: string) => T): T => {
+    const dir = mkdtempSync(join(tmpdir(), 'arcpad-surv-'))
+    try {
+      return body(join(dir, 'alerts.log'))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  // M23: GERCEK `fileAlertSink` uzerinden, sahte suzgec olmadan.
+  it('fileAlertSink penceresi GERCEKTEN suzer (M23)', async () => {
+    const old = '2026-06-01T00:00:00.000Z'
+    const fresh = '2026-07-01T00:00:00.000Z'
+    await withSink(async (path) => {
+      writeFileSync(
+        path,
+        [
+          `PAGE keeper.graduationWindow at=${old} pendingGraduationTarget is ${EVIL_TARGET}`,
+          `HEARTBEAT keeper.graduationWindow at=${fresh}`,
+          '',
+        ].join('\n'),
+        'utf8',
+      )
+      const since = Date.parse('2026-06-15T00:00:00.000Z')
+      const lines = await fileAlertSink(path).readSince(since)
+      expect(lines.map((l) => l.kind)).toEqual(['heartbeat'])
+
+      // Ve uctan uca: BAYAT sayfa + TAZE kalp atisi -> tatbikat DUSER.
+      await expect(
+        drillObserve({
+          sink: fileAlertSink(path),
+          target: EVIL_TARGET,
+          sinceMs: since,
+          waitMs: 0,
+          sleep: noSleep,
+        }),
+      ).resolves.toMatchObject({ ok: false })
+    })
+  })
+
+  it('ayni dosya, pencere ONCEYE alininca GECER -- suzgec "her zaman reddet" degil (M23)', async () => {
+    const at = '2026-07-01T00:00:00.000Z'
+    await withSink(async (path) => {
+      writeFileSync(
+        path,
+        [
+          `PAGE keeper.graduationWindow at=${at} pendingGraduationTarget is ${EVIL_TARGET}`,
+          `HEARTBEAT keeper.graduationWindow at=${at}`,
+          '',
+        ].join('\n'),
+        'utf8',
+      )
+      await expect(
+        drillObserve({
+          sink: fileAlertSink(path),
+          target: EVIL_TARGET,
+          sinceMs: Date.parse('2026-06-15T00:00:00.000Z'),
+          waitMs: 0,
+          sleep: noSleep,
+        }),
+      ).resolves.toMatchObject({ ok: true })
+    })
+  })
+
+  // M24: PENCERE ICINDE sayfa VAR, kalp atisi YOK. Kapinin izledigi seyin
+  // olumunden sag cikmadigini ispatlayan TEK durum budur.
+  it('pencere icinde sayfa var ama kalp atisi yoksa DUSER (M24)', async () => {
+    const at = '2026-07-01T00:00:00.000Z'
+    await withSink(async (path) => {
+      writeFileSync(
+        path,
+        `PAGE keeper.graduationWindow at=${at} pendingGraduationTarget is ${EVIL_TARGET}\n`,
+        'utf8',
+      )
+      const outcome = await drillObserve({
+        sink: fileAlertSink(path),
+        target: EVIL_TARGET,
+        sinceMs: Date.parse('2026-06-15T00:00:00.000Z'),
+        waitMs: 0,
+        sleep: noSleep,
+      })
+      expect(outcome.ok).toBe(false)
+      expect(outcome.detail).toContain('NO HEARTBEAT')
+    })
+  })
+
+  it('ayni dosyaya kalp atisi eklenince GECER (M24)', async () => {
+    const at = '2026-07-01T00:00:00.000Z'
+    await withSink(async (path) => {
+      writeFileSync(
+        path,
+        [
+          `PAGE keeper.graduationWindow at=${at} pendingGraduationTarget is ${EVIL_TARGET}`,
+          `HEARTBEAT keeper.graduationWindow at=${at}`,
+          '',
+        ].join('\n'),
+        'utf8',
+      )
+      await expect(
+        drillObserve({
+          sink: fileAlertSink(path),
+          target: EVIL_TARGET,
+          sinceMs: Date.parse('2026-06-15T00:00:00.000Z'),
+          waitMs: 0,
+          sleep: noSleep,
+        }),
+      ).resolves.toMatchObject({ ok: true })
+    })
   })
 })

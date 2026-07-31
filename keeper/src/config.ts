@@ -114,11 +114,47 @@ export function loadWatcherConfig(env: NodeJS.ProcessEnv, bookDir?: string): Wat
   // kosmak ve izleyiciyi GERCEK bir surec olarak sahte bir zincire karsi
   // kirabilmek icindir -- bkz. docs/runbooks/graduation-window.md, tatbikat.
   // Argumanla verilen dizin env'i EZER, cunku onu yalnizca testler gecer.
-  const dir = bookDir ?? env['KEEPER_ADDRESS_BOOK_DIR']
+  //
+  // BOS DIZE `undefined` DEMEKTIR. `??` yalnizca null/undefined'a bakar, yani
+  // onceki hal `.env.example`in gonderdigi `KEEPER_ADDRESS_BOOK_DIR=` degerini
+  // -- dotenv onu bos DIZE olarak verir -- `loadAddressBook(chainId, '')`e
+  // gecirip ciplak bir goreli yola ceviriyordu. Olculdu: ayarsiz ->
+  // `contracts/deploy/addresses.31337.json`; `""` -> `cannot read
+  // addresses.31337.json`. Yani DEPONUN KENDI BELGELENMIS KURULUM YOLU,
+  // BASLAMAYI REDDEDEN BIR KEEPER URETIYORDU. Bu dosyadaki diger her
+  // degisken `''`i acikca ele aliyordu; yalnizca 7ffd985'te eklenen bu biri
+  // almiyordu.
+  const dirOverride = blankToUndefined(env['KEEPER_ADDRESS_BOOK_DIR'])
+  const dir = bookDir ?? dirOverride
   const book = dir === undefined ? loadAddressBook(chainId) : loadAddressBook(chainId, dir)
   const factory = book.launchFactory
   const startBlock = book.startBlock
   const chainKey = book.chainKey
+
+  // DEFTERI YENIDEN YONLENDIRMEK, FACTORY'YI ACIKCA SOYLEMEYI ZORUNLU KILAR.
+  //
+  // Round 1 defteri KAYNAK yapti ve `assertEnvAgrees`i capraz kontrol olarak
+  // birakti. Defterin DIZINI env'e acilinca o capraz kontrolun GUVENLIK
+  // ICERIGI bosaldi: iki taraf da ayni env-secili dosyadan geliyor, yani
+  // hicbir sey atesleyemez. Gercekci zarar saldiri degil YANLIS
+  // YAPILANDIRMADIR -- bir tatbikattan kalma bayat bir dizin izleyiciyi
+  // BASKA, SESSIZ, GERCEK bir factory'ye baglar: okumalar basarili olur, kalp
+  // atislari akar, her dedektor susar, ve onemli olan factory izlenmez. Bu
+  // gorevin tamami tam olarak o sessizligi onlemek uzerine kurulu.
+  //
+  // Cozum, yonlendirmeyi SESSIZ olmaktan cikarmaktir: dizin ezildiginde
+  // `ARC_FACTORY_ADDRESS` ZORUNLU olur ve tutmak zorundadir. Operator niyetini
+  // IKI KEZ, IKI AYRI degiskende bildirmis olur. Ikinci ve daha guclu kapi
+  // zincirin kendisidir; bkz. `assertFactoryMatchesGovernance`.
+  // Yalnizca ETKIN olan yonlendirme sayilir: `bookDir` argumani verildiginde
+  // env zaten yok sayilir, dolayisiyla ortada kapatilacak bir risk yoktur.
+  // Arguman yolunu testler kullanir; operasyonel risk env yolundadir.
+  const envRedirectIsEffective = bookDir === undefined && dirOverride !== undefined
+  if (envRedirectIsEffective && blankToUndefined(env['ARC_FACTORY_ADDRESS']) === undefined) {
+    throw new Error(
+      'KEEPER_ADDRESS_BOOK_DIR redirects the address book, so ARC_FACTORY_ADDRESS must also be set and must match it. A redirected book is otherwise unchecked: a stale drill directory would point the watcher at a different, quiet, real factory while every detector stayed silent.',
+    )
+  }
 
   // Env AYARLIYSA defterle AYNI olmak zorundadir. Ayarli degilse sorun yok:
   // deger zaten defterden geldi.
@@ -220,7 +256,7 @@ export function parseGovernanceAllowlist(input: unknown, chainKey: string): Allo
     return address
   })
 
-  return { graduationTargets, treasuries: [treasury] }
+  return { graduationTargets, treasuries: [treasury], governor }
 }
 
 function coerceAddress(value: unknown, field: string): Address {
@@ -228,6 +264,11 @@ function coerceAddress(value: unknown, field: string): Address {
     throw new Error(`${field}: expected an address, got ${JSON.stringify(value)}`)
   }
   return getAddress(value)
+}
+
+/** Bos dize env'de "ayarlanmamis" demektir; `??` bunu GORMEZ. */
+function blankToUndefined(value: string | undefined): string | undefined {
+  return value === undefined || value.trim() === '' ? undefined : value
 }
 
 /** Ayarlanmamis env sorun degil; YANLIS ayarlanmis env, ALANI ADIYLA, durdurur. */

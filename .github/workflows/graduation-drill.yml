@@ -109,4 +109,16 @@ jobs:
           KEEPER_CHAIN_KEY: ${{ vars.KEEPER_CHAIN_KEY }}
           KEEPER_DRILL_TARGET: "0x000000000000000000000000000000000000dEaD"
           KEEPER_DRILL_CALLER: ${{ vars.KEEPER_DRILL_CALLER }}
-        run: pnpm --filter @arcpad/keeper drill ${{ steps.phase.outputs.value }}
+          # PENCERE. `vars.KEEPER_DRILL_SINCE` rota'nin Safe islemini
+          # gondermeden hemen once yazdigi ISO damgasidir. Ayarli degilse
+          # is BUGUNUN baslangicini kullanir -- yani kanit BU KOSUYA ait
+          # olmak zorundadir ve gecen haftanin sayfasi gecemez.
+          KEEPER_DRILL_SINCE: ${{ vars.KEEPER_DRILL_SINCE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEEPER_DRILL_SINCE:-}" ]; then
+            KEEPER_DRILL_SINCE="$(date -u +%Y-%m-%dT00:00:00Z)"
+            echo "KEEPER_DRILL_SINCE unset; defaulting to the start of today ($KEEPER_DRILL_SINCE)"
+          fi
+          export KEEPER_DRILL_SINCE
+          pnpm --filter @arcpad/keeper drill ${{ steps.phase.outputs.value }}

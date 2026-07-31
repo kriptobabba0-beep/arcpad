@@ -13,7 +13,11 @@ import {
 } from './alert'
 import { viemChainReader } from './chainReader'
 import { loadKeeperConfig, loadWatcherConfig } from './config'
-import { fileCursorStore, runWatcher } from './watch/graduationWindow'
+import {
+  assertFactoryMatchesGovernance,
+  fileCursorStore,
+  runWatcher,
+} from './watch/graduationWindow'
 
 async function main(): Promise<void> {
   const config = loadKeeperConfig(process.env)
@@ -22,6 +26,12 @@ async function main(): Promise<void> {
   await assertArcChain(client)
 
   const reader = viemChainReader(client)
+
+  // ZINCIR PINI, HER SEYDEN ONCE. Defterin dizini env'e acik oldugu icin
+  // factory'yi commit'li bir dosyaya baglayan tek sey budur; bkz.
+  // `assertFactoryMatchesGovernance`. Bir poll bile atilmadan once duser.
+  await assertFactoryMatchesGovernance(reader, watcher.factory, watcher.allowlist)
+
   const store = fileCursorStore(watcher.cursorPath)
   const liveness = createLiveness({ pollIntervalMs: config.pollIntervalMs }, Date.now())
   const throttle = createThrottle({ repeatAfterMs: watcher.alertRepeatMs })

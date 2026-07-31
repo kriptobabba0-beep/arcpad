@@ -218,6 +218,31 @@ export interface Liveness {
 export function createLiveness(config: LivenessConfig, startedAtMs: number): Liveness {
   const missedBeats = config.missedBeatsBeforePage ?? 2
   const staleIntervals = config.staleHeadIntervals ?? 2
+  // IKI TOLERANS ARASINDA 15 KAT FARK VAR VE SEBEBI SUDUR -- daha once
+  // yalnizca "Arc'ta duraklamalar normaldir" yaziyordu, ki dogru ama EKSIK:
+  //
+  //   DONMUS ZAMAN `expired` URETEMEZ. `eta = block.timestamp +
+  //   GRADUATION_TARGET_DELAY` ZINCIR USTUNDE hesaplanir, yani duran bir saat
+  //   `now`u da `eta`yi da ayni anda dondurur; pencere ILERLEMEZ ama SESSIZ
+  //   DALA DA GECMEZ. Kaybedilen sey ilerlemedir, koruma degil.
+  //
+  //   ILERI KAYMA `expired` URETIR. Taze bir oneri, `now` yeterince ileri
+  //   kaydirilinca aninda "suresi gecmis" okunur -- ve `expired` dusman bir
+  //   hedef icin TEK sessiz daldir. Bu yuzden kayma toleransi dar.
+  //
+  // Ucuncu bir sebep: uzun suren bir donma zaten kaymaya DONUSUR -- yerel saat
+  // ilerlerken zincir saati durdugu icin fark buyur ve 900 sn'lik kontrol
+  // devreye girer. Yani genis butce bir bosluk birakmaz, yalnizca gurultuyu
+  // keser.
+  //
+  // OLCUM (canli Arc testnet, koordinator, 553 ardisik finalize edilmis cift):
+  // ciftlerin %49.0'i (271) AYNI zaman damgasini paylasiyor, dagilim
+  // {1 blok: 41, 2: 244, 3: 14}, ve SIFIR GERILEME. Yani "artmayabilir" ESIT
+  // demek, GERI GITMEK degil; gercekci donma suresi bir ila uc bloktur, sinirsiz
+  // bir durus degil. 60 sn'lik taban bunun cok uzerindedir ve bir gerileme
+  // varsayimi uzerine kurulu DEGILDIR -- kayma kontrolu zaten iki yonlu
+  // (`skew > tolerance || -skew > tolerance`), o yuzden gerilemeler olsaydi da
+  // yakalanirdi.
   const skewToleranceMs = config.clockSkewToleranceMs ?? 900_000
   const frozenBudgetMs = config.chainTimeFrozenMs ?? Math.max(60_000, 10 * config.pollIntervalMs)
 
