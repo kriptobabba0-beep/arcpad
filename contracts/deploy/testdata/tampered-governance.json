@@ -1,0 +1,15 @@
+{
+  "_comment": "NOT A DEPLOYABLE GOVERNANCE FILE. Fixture for test_aTamperedGovernanceFileIsRejectedByTheDigest. It is deploy/expected-governance.json with local-rehearsal's governor swapped for a DIFFERENT, PERFECTLY VALID-LOOKING address -- exactly what pasting the wrong Safe out of a chat window produces. assertDeployable would accept it if the address held a >=2-of-3 Safe, because that is the only thing it checks. The factory address it produces is a DIFFERENT factory address, permanently, and with it every curve and token address arcpad would ever mint. Only the digest separates this file from the real one.",
+  "arc-testnet": {
+    "governor": "0x0000000000000000000000000000000000000000",
+    "treasury": "0x0000000000000000000000000000000000000000",
+    "owners": [],
+    "allowedGraduationTargets": []
+  },
+  "local-rehearsal": {
+    "governor": "0x00000000000000000000000000000000000006A1",
+    "treasury": "0x0000000000000000000000000000000000007EA5",
+    "owners": [],
+    "allowedGraduationTargets": []
+  }
+}

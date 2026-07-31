@@ -11,7 +11,8 @@ import {Profile, Profiles} from "./Profiles.sol";
 ///         gecer; `run()`un iddialari atlayabilecegi bir yol YOKTUR, cunku
 ///         yayinladigi Plan tam olarak `_resolve()`in dondurdugu Plan'dir.
 contract Deploy is Script {
-    string internal constant GOVERNANCE_PATH = "deploy/expected-governance.json";
+    // GOVERNANCE_PATH BURADA DEGIL, `Profiles.sol`dadir: governance dosyasi
+    // artik profil dosyasiyla ayni mekanizmadan -- yol + digest -- gecer.
 
     function plan() public view returns (Plan memory p) {
         p = _resolve();
@@ -34,12 +35,14 @@ contract Deploy is Script {
         console2.log("read-back OK: the deployed factory holds the resolved profile");
     }
 
+    /// @dev IKI VERI DOSYASI, IKI DIGEST, AYNI MEKANIZMA. Sayilar
+    ///      `profiles.toml`dan `ProfileDigestMismatch` ile, adresler
+    ///      `expected-governance.json`dan `GovernanceDigestMismatch` ile gelir.
+    ///      Ikisi de tek basina duzenlenemez, cunku ikisinin de pinlenmis
+    ///      sabiti DERLENEN kodda durur.
     function _resolve() private view returns (Plan memory p) {
         Profile memory profile = Profiles.forChain(block.chainid);
-        string memory key = Profiles.chainKeyFor(block.chainid);
-        string memory json = vm.readFile(GOVERNANCE_PATH);
-        address governor = vm.parseJsonAddress(json, string.concat(".", key, ".governor"));
-        address treasury = vm.parseJsonAddress(json, string.concat(".", key, ".treasury"));
+        (address governor, address treasury) = Profiles.governanceForChain(block.chainid);
 
         p = DeployLib.build(block.chainid, profile, msg.sender, governor, treasury);
         DeployLib.assertDeployable(p);

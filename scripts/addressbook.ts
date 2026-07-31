@@ -28,29 +28,30 @@ import {
 import {
   AddressBookError,
   addressBookPath,
+  CREATE2_FACTORY,
   DEFAULT_BOOK_DIR,
+  ESCROW_SALT,
+  FACTORY_SALT,
   loadAddressBook,
 } from '../packages/shared/src/addresses'
 import {
+  chainKeyFor,
   isProfileName,
   type ProfileName,
   readProfiles,
   REPO_ROOT,
 } from '../packages/shared/src/profiles'
 
-const CREATE2_FACTORY = getAddress('0x4e59b44847b379578588920cA78FbF26c0B4956C')
-const ESCROW_SALT = keccak256(Buffer.from('arcpad.FeeEscrow.v1'))
-const FACTORY_SALT = keccak256(Buffer.from('arcpad.LaunchFactory.v1'))
-
 const TESTDATA_DIR = join(REPO_ROOT, 'contracts', 'deploy', 'testdata')
 
 /** Prova zinciri. Canli bir 31337 YOKTUR, o yuzden girdileri checked-in'dir. */
 const REHEARSAL_CHAIN = 31337
 
-const CHAIN_KEYS: Record<number, string> = {
-  5042002: 'arc-testnet',
-  31337: 'local-rehearsal',
-}
+// CHAIN_KEYS BURADA DEGIL. Bu dosya baginin UCUNCU kopyasini tasiyordu ve
+// hicbir sey onu `Profiles.sol` ile karsilastirmiyordu: buradaki bir yazim
+// hatasi, defterin icine sonradan tertemiz yuklenen yanlis bir anahtar
+// yazardi (inceleme bulgusu I-4). Artik `@arcpad/shared` uzerinden gelir --
+// yukleyicinin dogruladigi TAM OLARAK ayni tablo.
 
 const PROFILE_FOR_CHAIN: Record<number, ProfileName> = {
   5042002: 'testnet',
@@ -183,9 +184,9 @@ export function buildAddressBook(args: {
 }): Record<string, unknown> {
   const { chainId, receipt, reads, commit } = args
 
-  const chainKey = CHAIN_KEYS[chainId]
+  const chainKey = chainKeyFor(chainId)
   const profile = PROFILE_FOR_CHAIN[chainId]
-  if (!chainKey || !profile || !isProfileName(profile)) {
+  if (!profile || !isProfileName(profile)) {
     throw new Error(
       `chain ${chainId} is not registered; add it to Profiles.sol first, in a reviewed commit`,
     )

@@ -1,11 +1,15 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { getCreate2Address } from 'viem'
 import { describe, expect, it } from 'vitest'
 import {
   type AddressBook,
   addressBookPath,
   AddressBookError,
   assertEnvMatchesBook,
+  CREATE2_FACTORY,
+  ESCROW_SALT,
+  FACTORY_SALT,
   loadAddressBook,
   parseAddressBook,
   toDeployment,
@@ -74,6 +78,101 @@ describe('adres defteri', () => {
 
   it('rejects a book whose chainId disagrees with its filename', () => {
     expectFieldError(() => parseAddressBook(withField('chainId', 5042002), CHAIN), 'chainId')
+  })
+
+  // I-4. `chainKey` Solidity tarafinda derlenip mutasyonla test ediliyordu
+  // (P12/P14) ve DEFTERDE hicbir seye karsi dogrulanmiyordu.
+  it('rejects a book whose chainKey is not the one registered for its chainId', () => {
+    expectFieldError(
+      () => parseAddressBook(withField('chainKey', 'arc-testnet'), CHAIN),
+      'chainKey',
+    )
+  })
+
+  it('rejects an invented chainKey', () => {
+    expectFieldError(
+      () => parseAddressBook(withField('chainKey', 'totally-made-up'), CHAIN),
+      'chainKey',
+    )
+  })
+
+  // M-2. `assertReserve` uc rezerv icin de cagriliyor; negatif testi yalnizca
+  // `V`nin vardi. Ayni aile, bir alan olcegunde -- I-1'in TS'teki ikizi.
+  it('rejects a book whose T disagrees with the profile it names', () => {
+    expectFieldError(
+      () =>
+        parseAddressBook(withField('virtualTokenReserves', '1073000000000000000000000001'), CHAIN),
+      'virtualTokenReserves',
+    )
+  })
+
+  it('rejects a book whose S disagrees with the profile it names', () => {
+    expectFieldError(
+      () => parseAddressBook(withField('saleSupply', '793100000000000000000000001'), CHAIN),
+      'saleSupply',
+    )
+  })
+
+  // M-5. Iki hash defterde "adresleri yalnizca defterden yeniden turet"
+  // diye duruyor; yukleyici artik gercekten turetiyor.
+  it('rejects a book whose feeEscrow does not match its own escrowInitcodeHash', () => {
+    expectFieldError(
+      () =>
+        parseAddressBook(
+          withField('feeEscrow', '0x000000000000000000000000000000000000BEEF'),
+          CHAIN,
+        ),
+      'feeEscrow',
+    )
+  })
+
+  it('rejects a book whose launchFactory does not match its own factoryInitcodeHash', () => {
+    expectFieldError(
+      () =>
+        parseAddressBook(
+          withField('launchFactory', '0x000000000000000000000000000000000000bEEF'),
+          CHAIN,
+        ),
+      'launchFactory',
+    )
+  })
+
+  it('re-derives both addresses from the book alone', () => {
+    const b = book()
+    expect(
+      getCreate2Address({
+        from: CREATE2_FACTORY,
+        salt: ESCROW_SALT,
+        bytecodeHash: b.escrowInitcodeHash,
+      }),
+    ).toBe(b.feeEscrow)
+    expect(
+      getCreate2Address({
+        from: CREATE2_FACTORY,
+        salt: FACTORY_SALT,
+        bytecodeHash: b.factoryInitcodeHash,
+      }),
+    ).toBe(b.launchFactory)
+  })
+
+  // M-6.
+  it('rejects a book whose governance disagrees with expected-governance.json', () => {
+    expectFieldError(
+      () =>
+        parseAddressBook(
+          withField('governor', '0x00000000000000000000000000000000000006A1'),
+          CHAIN,
+        ),
+      'governor',
+    )
+    expectFieldError(
+      () =>
+        parseAddressBook(
+          withField('protocolTreasury', '0x0000000000000000000000000000000000007EA6'),
+          CHAIN,
+        ),
+      'protocolTreasury',
+    )
   })
 
   it('rejects a book whose reserves disagree with the profile it names', () => {

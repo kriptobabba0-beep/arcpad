@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { PROFILE_DIGESTS, profileDigest, readProfiles } from '../src/profiles'
+import { join } from 'node:path'
+import {
+  CHAIN_KEYS,
+  chainKeyFor,
+  PROFILE_DIGESTS,
+  profileDigest,
+  readProfiles,
+  REPO_ROOT,
+} from '../src/profiles'
 
 describe('curve profilleri', () => {
   it('the TOML matches the pinned digest for both profiles', () => {
@@ -48,6 +56,28 @@ describe('curve profilleri', () => {
       saleSupply: testnet.saleSupply,
     })
     expect(transposed).not.toBe(PROFILE_DIGESTS.testnet)
+  })
+
+  // I-4'un TS tarafi. Iki literal de ELLE yazilir ve Solidity tarafi
+  // `Profiles.t.sol::test_eachChainCarriesItsOwnGovernanceKey` icinde AYNI
+  // ikisine pinlenir; iki dilin ayrismasi bu ikili sayesinde CI'da gorunur.
+  it('binds each registered chain to its own governance key', () => {
+    expect(CHAIN_KEYS[5042002]).toBe('arc-testnet')
+    expect(CHAIN_KEYS[31337]).toBe('local-rehearsal')
+    expect(chainKeyFor(5042002)).toBe('arc-testnet')
+    expect(chainKeyFor(31337)).toBe('local-rehearsal')
+  })
+
+  it('refuses an unregistered chain rather than inventing a key', () => {
+    for (const id of [0, 1, 5042, 5042001, 5042003, 8453, 31338, 42161]) {
+      expect(() => chainKeyFor(id)).toThrow(/unregistered chain/)
+    }
+  })
+
+  // M-4.
+  it('rejects a duplicate [profiles.*] section rather than taking the last', () => {
+    const doubled = join(REPO_ROOT, 'contracts', 'deploy', 'testdata', 'duplicate-section.toml')
+    expect(() => readProfiles(doubled)).toThrow(/duplicate section/)
   })
 
   it('refuses a line it does not understand instead of skipping it', () => {

@@ -426,6 +426,30 @@ contract DeployTest is Test {
         script.run();
     }
 
+    /// I-3'UN KENDI TANIGI. On-kontrol artik UZUNLUK degil KOD KIMLIGI ister,
+    /// yani "69 baytlik herhangi bir sey" ARTIK GECMEZ. Bu testin varligi,
+    /// asagidaki iki tanigin neden `script.run()` uzerinden degil kutuphaneyi
+    /// DOGRUDAN cagirarak yurudugunu de acikliyor: o durum artik `run()`a
+    /// ulasamiyor.
+    function test_aNonCanonicalDeployerOfTheRightLengthIsRejected() public {
+        bytes memory impostor = abi.encodePacked(hex"60146000fd", new bytes(64));
+        vm.etch(DeployLib.CREATE2_FACTORY, impostor);
+        assertEq(DeployLib.CREATE2_FACTORY.code.length, 69, "the impostor must have the CANONICAL LENGTH");
+        assertTrue(
+            DeployLib.CREATE2_FACTORY.codehash != DeployLib.CREATE2_FACTORY_CODEHASH, "...but a different codehash"
+        );
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployLib.Create2DeployerNotCanonical.selector,
+                DeployLib.CREATE2_FACTORY,
+                DeployLib.CREATE2_FACTORY_CODEHASH,
+                DeployLib.CREATE2_FACTORY.codehash
+            )
+        );
+        script.run();
+    }
+
     /// D5'IN TANIGI, VE VAR OLMA SEBEBI OLCULDU. `deploy` icindeki `!ok`
     /// kolu, `ret.length != 20` koluyla BIRLIKTE yazilmistir; kanonik
     /// deterministik deployer basarisiz oldugunda BOS veriyle revert eder,
@@ -433,33 +457,39 @@ contract DeployTest is Test {
     /// yolda tek basina calismaz. Olculdu: `!ok`u silen mutant (D5) TAM
     /// SUITE'IN 394 TESTINI birden yesil biraktu.
     ///
-    /// Bu tanik o kolu ULASILABILIR yapar: 69 bayt uzunlugunda (on-kontrolu
-    /// gecer), `revert(0, 20)` yapan bir deployer -- yani BASARISIZ ama tam
-    /// ADRES BOYUNDA veri donduren. `!ok` olmasaydi `address(0)` deploy
-    /// edilmis SAYILIRDI.
-    function test_aDeployerThatRevertsWithAnAddressSizedPayloadIsRejected() public {
+    /// @dev NICIN ARTIK `script.run()` UZERINDEN DEGIL. Bu tanik daha once
+    ///      on-kontrolun KABUL ETTIGI bir durumdan yararlaniyordu: 69 baytlik,
+    ///      kanonik olmayan bir deployer. I-3 o durumu KAPATTI, dolayisiyla
+    ///      `run()` artik `deploy()`a hic ulasmiyor. Iki secenek vardi:
+    ///      `!ok`u OLU KOD ilan edip silmek, ya da onu tutup DOGRUDAN
+    ///      puanlamak. Ikincisi secildi -- `DeployLib.deploy` bir kutuphane
+    ///      fonksiyonudur ve `Deploy.s.sol` disindan da cagrilabilir; savunma
+    ///      derinligini tutup PUANSIZ birakmak, bu depoda tam olarak
+    ///      kacinilmaya calisilan sey olurdu.
+    function test_deployRejectsADeployerThatRevertsWithAnAddressSizedPayload() public {
         // PUSH1 0x14; PUSH1 0x00; REVERT  -> revert(offset=0, length=20)
-        // ...then zero-padded to the 69 bytes the pre-flight demands.
         bytes memory stub = abi.encodePacked(hex"60146000fd", new bytes(64));
         vm.etch(DeployLib.CREATE2_FACTORY, stub);
-        assertEq(DeployLib.CREATE2_FACTORY.code.length, 69, "witness must pass the length pre-flight");
 
         (bool ok, bytes memory ret) = DeployLib.CREATE2_FACTORY.call(abi.encodePacked(DeployLib.ESCROW_SALT));
         assertFalse(ok, "witness must FAIL");
         assertEq(ret.length, 20, "witness must fail with exactly 20 bytes, or it does not isolate !ok");
 
         vm.expectRevert(abi.encodeWithSelector(DeployLib.Create2Failed.selector, DeployLib.ESCROW_SALT));
-        script.run();
+        this.deployEscrowOnly();
     }
 
-    /// D6'NIN TANIGI. 69 bayt STOP: on-kontrolden GECER (uzunluk dogru), ama
-    /// adres DONDURMEZ. `ret.length != 20` kontrolu olmasa `address(0)`
-    /// deploy edilmis sayilirdi.
-    function test_aDeployerThatReturnsNoAddressIsRejected() public {
+    /// D6'NIN TANIGI. 69 bayt STOP: cagri BASARIR ama adres DONDURMEZ.
+    /// `ret.length != 20` olmasa `address(0)` deploy edilmis sayilirdi.
+    function test_deployRejectsADeployerThatReturnsNoAddress() public {
         vm.etch(DeployLib.CREATE2_FACTORY, new bytes(69));
-        assertEq(DeployLib.CREATE2_FACTORY.code.length, 69, "witness must pass the length pre-flight");
+
+        (bool ok, bytes memory ret) = DeployLib.CREATE2_FACTORY.call(abi.encodePacked(DeployLib.ESCROW_SALT));
+        assertTrue(ok, "witness must SUCCEED, or it does not isolate the length check");
+        assertEq(ret.length, 0, "witness must return zero bytes");
+
         vm.expectRevert(abi.encodeWithSelector(DeployLib.Create2Failed.selector, DeployLib.ESCROW_SALT));
-        script.run();
+        this.deployEscrowOnly();
     }
 
     // ---------------------------------------------------------------
@@ -491,7 +521,239 @@ contract DeployTest is Test {
         this.deployPlanFactory(plan);
     }
 
+    // ---------------------------------------------------------------
+    // The initcode pre-flight -- a witness for every one of ITS comparisons
+    // ---------------------------------------------------------------
+    //
+    // Inceleme bulgusu I-2: `plan()` BASTIGI profilin initcode tarafindan
+    // GERCEKTEN kodlandigini hicbir yerde kanitlamiyordu, yani kuru kosu
+    // KENDI ICINDE TUTARLI BIR YALAN basabilirdi. Kontrol artik
+    // `assertDeployable` icinde, yani HER IKI giris noktasi da, HICBIR SEY
+    // DEPLOY EDILMEDEN once yapiyor.
+    //
+    // Ve bu blok, I-1'in dersini KENDI YENI KODUMA uyguluyor: yeni bir
+    // "tek savunma" yazip karsilastirmalarini olcusuz birakmak, incelemenin
+    // az once buldugu kusurun aynisi olurdu.
+
+    /// Plan'i bozmak initcode'u DEGISTIRMEZ; ikisi ayrisir ve on-kontrol bunu
+    /// gormek zorundadir. Bu, D14'un (`build` `V`yi sabitler) `plan()`
+    /// katmanindaki ikizidir.
+    function test_thePreFlightCatchesAnInitcodeThatDisagreesAboutV() public {
+        Plan memory p = _buildRehearsalPlan();
+        p.profile.virtualQuoteReserves = 4_292e18;
+        vm.expectRevert(abi.encodeWithSelector(DeployLib.InitcodeDoesNotEncodeThePlan.selector, "V"));
+        this.assertDeployable(p);
+    }
+
+    function test_thePreFlightCatchesAnInitcodeThatDisagreesAboutT() public {
+        Plan memory p = _buildRehearsalPlan();
+        p.profile.virtualTokenReserves += 1;
+        vm.expectRevert(abi.encodeWithSelector(DeployLib.InitcodeDoesNotEncodeThePlan.selector, "T"));
+        this.assertDeployable(p);
+    }
+
+    function test_thePreFlightCatchesAnInitcodeThatDisagreesAboutS() public {
+        Plan memory p = _buildRehearsalPlan();
+        p.profile.saleSupply -= 1;
+        vm.expectRevert(abi.encodeWithSelector(DeployLib.InitcodeDoesNotEncodeThePlan.selector, "S"));
+        this.assertDeployable(p);
+    }
+
+    function test_thePreFlightCatchesAnInitcodeThatDisagreesAboutTheEscrow() public {
+        Plan memory p = _buildRehearsalPlan();
+        p.escrow = address(0xBEEF);
+        vm.expectRevert(abi.encodeWithSelector(DeployLib.InitcodeDoesNotEncodeThePlan.selector, "escrow"));
+        this.assertDeployable(p);
+    }
+
+    function test_thePreFlightCatchesAnInitcodeThatDisagreesAboutTheGovernor() public {
+        Plan memory p = _buildRehearsalPlan();
+        p.governor = TREASURY; // a real Safe, so the multisig probe still passes
+        vm.expectRevert(abi.encodeWithSelector(DeployLib.InitcodeDoesNotEncodeThePlan.selector, "governor"));
+        this.assertDeployable(p);
+    }
+
+    function test_thePreFlightCatchesAnInitcodeThatDisagreesAboutTheTreasury() public {
+        Plan memory p = _buildRehearsalPlan();
+        p.treasury = GOVERNOR;
+        vm.expectRevert(abi.encodeWithSelector(DeployLib.InitcodeDoesNotEncodeThePlan.selector, "treasury"));
+        this.assertDeployable(p);
+    }
+
+    /// D2'nin (`build` factory icin escrow creation code'u kullanir) on-kontrol
+    /// katmanindaki ikizi, ters yonden: escrow initcode'unun YERINE baska bir
+    /// sey konursa.
+    function test_thePreFlightCatchesASubstitutedEscrowInitcode() public {
+        Plan memory p = _buildRehearsalPlan();
+        p.escrowInitcode = hex"600160015500";
+        vm.expectRevert(abi.encodeWithSelector(DeployLib.InitcodeDoesNotEncodeThePlan.selector, "escrowInitcode"));
+        this.assertDeployable(p);
+    }
+
+    function test_thePreFlightCatchesAFactoryInitcodeTooShortToCarryArguments() public {
+        Plan memory p = _buildRehearsalPlan();
+        p.factoryInitcode = hex"6001";
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployLib.InitcodeDoesNotEncodeThePlan.selector, "factoryInitcodeLength")
+        );
+        this.assertDeployable(p);
+    }
+
+    /// ...ve bozulmamis plan GECER, yani yukaridaki sekizi her zaman revert
+    /// eden bir mutantla da yesil olmaz.
+    function test_theUncorruptedPlanPassesThePreFlight() public view {
+        this.assertDeployable(_buildRehearsalPlan());
+    }
+
+    function _buildRehearsalPlan() internal view returns (Plan memory) {
+        return DeployLib.build(LOCAL_REHEARSAL, _profile("testnet"), deployer, GOVERNOR, TREASURY);
+    }
+
+    // ---------------------------------------------------------------
+    // assertAsDeployed -- A WITNESS FOR EVERY ONE OF THE EIGHT COMPARISONS
+    // ---------------------------------------------------------------
+    //
+    // NICIN BURASI OZEL. Rapor `assertAsDeployed`i "URETIM YOLUNDAKI TEK
+    // savunma" diye adlandiriyor, ve inceleme sekiz karsilastirmasindan
+    // YEDISININ hicbir mutant tarafindan puanlanmadigini olctu: governor,
+    // escrow, S, graduationTarget ve launchCount kollarini SILEN dort mutantin
+    // dordu de 44/44 testi yesil biraktu. "Tek savunma" ile "sekiz
+    // karsilastirmadan yedisi olculmemis" AYNI ANDA DOGRU OLAMAZ.
+    //
+    // Kalibi tek ve kasitlidir: BOZULMAMIS bir plan'dan deploy et, sonra
+    // plan'in TEK BIR alanini boz ve `assertAsDeployed`i cagir. Boylece her
+    // test tam olarak BIR karsilastirmayi kirmizilastirir ve o karsilastirmayi
+    // silen mutant TAM OLARAK burada olur.
+    //
+    // `test_theDeployedFactoryHoldsTheResolvedProfile`in bunu YAPMADIGINA
+    // dikkat: o, ayni degerleri TESTTEN okur, `assertAsDeployed`den GECMEZ --
+    // kollari silmenin neden gorunmez oldugunun sebebi tam olarak budur.
+
+    /// Bozulmamis bir deploy yapar ve plan'i doner.
+    function _deployedPlan() internal returns (Plan memory p) {
+        p = script.run();
+    }
+
+    function test_readBackCatchesADivergentT() public {
+        Plan memory p = _deployedPlan();
+        p.profile.virtualTokenReserves += 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployLib.ProfileNotAsDeployed.selector, "T", p.profile.virtualTokenReserves, uint256(1_073_000_000e18)
+            )
+        );
+        this.assertAsDeployed(p);
+    }
+
+    function test_readBackCatchesADivergentV() public {
+        Plan memory p = _deployedPlan();
+        p.profile.virtualQuoteReserves = 4_292e18;
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployLib.ProfileNotAsDeployed.selector, "V", uint256(4_292e18), uint256(4_292e15))
+        );
+        this.assertAsDeployed(p);
+    }
+
+    function test_readBackCatchesADivergentS() public {
+        Plan memory p = _deployedPlan();
+        p.profile.saleSupply -= 1;
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployLib.ProfileNotAsDeployed.selector, "S", p.profile.saleSupply, uint256(793_100_000e18)
+            )
+        );
+        this.assertAsDeployed(p);
+    }
+
+    function test_readBackCatchesADivergentEscrow() public {
+        Plan memory p = _deployedPlan();
+        address real = p.escrow;
+        p.escrow = address(0xBEEF);
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployLib.GovernanceNotAsDeployed.selector, "escrow", address(0xBEEF), real)
+        );
+        this.assertAsDeployed(p);
+    }
+
+    function test_readBackCatchesADivergentGovernor() public {
+        Plan memory p = _deployedPlan();
+        p.governor = address(0xBEEF);
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployLib.GovernanceNotAsDeployed.selector, "governor", address(0xBEEF), GOVERNOR)
+        );
+        this.assertAsDeployed(p);
+    }
+
+    function test_readBackCatchesADivergentTreasury() public {
+        Plan memory p = _deployedPlan();
+        p.treasury = address(0xBEEF);
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployLib.GovernanceNotAsDeployed.selector, "treasury", address(0xBEEF), TREASURY)
+        );
+        this.assertAsDeployed(p);
+    }
+
+    /// `graduationTarget` ve `launchCount` kollarinin taniklari, plan'i degil
+    /// KONTRATIN DURUMUNU bozarak yurunur: ikisi de plan'dan degil, sifir
+    /// beklentisinden okunur, dolayisiyla onlari kirmizilastirmanin tek yolu
+    /// deploy edilmis factory'yi hareket ettirmektir.
+    function test_readBackCatchesANonZeroGraduationTarget() public {
+        Plan memory p = _deployedPlan();
+        LaunchFactory f = LaunchFactory(p.factory);
+
+        vm.prank(GOVERNOR);
+        f.proposeGraduationTarget(address(0xCAFE));
+        // PENCERE [eta, eta + 3 gun]; eta = simdi + 3 gun. 8 gun ILERI SARMAK
+        // `GraduationTargetProposalExpired()` verir (olculdu), 4 gun vermez.
+        vm.warp(block.timestamp + 4 days);
+        f.applyGraduationTarget();
+        assertEq(f.graduationTarget(), address(0xCAFE), "precondition: the target really moved");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployLib.GovernanceNotAsDeployed.selector, "graduationTarget", address(0), address(0xCAFE)
+            )
+        );
+        this.assertAsDeployed(p);
+    }
+
+    function test_readBackCatchesANonZeroLaunchCount() public {
+        Plan memory p = _deployedPlan();
+        LaunchFactory f = LaunchFactory(p.factory);
+
+        f.launch("Arc Token", "ARC", "ipfs://arcpad-witness");
+        assertEq(f.launchCount(), 1, "precondition: a launch really happened");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(DeployLib.ProfileNotAsDeployed.selector, "launchCount", uint256(0), uint256(1))
+        );
+        this.assertAsDeployed(p);
+    }
+
+    /// SEKIZINCI KARSILASTIRMA DEGIL, DOKUZUNCU BIR IDDIA: bozulmamis plan
+    /// GECER. Sekiz negatif testin hepsi, `assertAsDeployed`i her zaman
+    /// revert ettiren bir mutantla da yesil olurdu; bu onu kapatir.
+    function test_theUncorruptedPlanPassesTheReadBack() public {
+        Plan memory p = _deployedPlan();
+        this.assertAsDeployed(p);
+    }
+
     // --- external wrappers so expectRevert has a call boundary ---
+
+    function assertAsDeployed(Plan memory p) external view {
+        DeployLib.assertAsDeployed(p);
+    }
+
+    function assertDeployable(Plan memory p) external view {
+        DeployLib.assertDeployable(p);
+    }
+
+    /// `DeployLib.deploy`i on-kontrolden GECMEDEN cagirir. D5/D6 taniklari
+    /// bunu kullanir; bkz. o testlerin NatSpec'i.
+    function deployEscrowOnly() external returns (address) {
+        Plan memory p = DeployLib.build(LOCAL_REHEARSAL, _profile("testnet"), deployer, GOVERNOR, TREASURY);
+        return DeployLib.deploy(p.escrowSalt, p.escrowInitcode);
+    }
 
     function constructFactory(Profile memory p) external returns (address) {
         return address(

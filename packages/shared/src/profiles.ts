@@ -33,6 +33,42 @@ export const PROFILE_DIGESTS = {
 
 export type ProfileName = keyof typeof PROFILE_DIGESTS
 
+/**
+ * ZINCIR -> GOVERNANCE ANAHTARI. `Profiles.sol`daki `chainKeyFor`in ikizi.
+ *
+ * BURADA OLMASININ SEBEBI BIR INCELEME BULGUSUDUR (I-4). Bag Solidity
+ * tarafinda derleniyor ve mutasyonla test ediliyordu (P12/P14), ama defterin
+ * kendi `chainKey` alani HICBIR SEYE karsi dogrulanmiyordu: 31337 icin
+ * `"arc-testnet"` -- hatta `"totally-made-up"` -- tasiyan bir defter tertemiz
+ * yukleniyordu. Bu, deponun EN COK TEKRAR EDEN kusurunun bir ornegi daha:
+ * ozellik bir tuketicide kapali, KARDESINDE acik.
+ *
+ * Bahis o bulgudan sonra daha da yukseldi: keeper artik `chainKey`i defterden
+ * OKUYOR ve `expected-governance.json` icindeki izin listesini onunla
+ * indeksliyor -- yani yanlis bir anahtar artik yalnizca hos gorulmuyor,
+ * KULLANILIYOR.
+ *
+ * Literaller ELLE yazilmistir, `PROFILE_DIGESTS` gibi. Solidity tarafi
+ * `Profiles.t.sol::test_eachChainCarriesItsOwnGovernanceKey` icinde AYNI iki
+ * literale pinlenmistir, dolayisiyla iki dilin ayrismasi CI'da gorunur.
+ */
+export const CHAIN_KEYS = {
+  5042002: 'arc-testnet',
+  31337: 'local-rehearsal',
+} as const satisfies Record<number, string>
+
+export type RegisteredChainId = keyof typeof CHAIN_KEYS
+
+export function chainKeyFor(chainId: number): string {
+  const key = (CHAIN_KEYS as Record<number, string | undefined>)[chainId]
+  if (key === undefined) {
+    throw new Error(
+      `unregistered chain ${chainId}; add it to Profiles.sol and CHAIN_KEYS together, in a reviewed commit`,
+    )
+  }
+  return key
+}
+
 export const PROFILE_NAMES = Object.keys(PROFILE_DIGESTS) as ProfileName[]
 
 export function isProfileName(name: string): name is ProfileName {
@@ -89,8 +125,16 @@ export function readProfiles(
 
     const section = /^\[profiles\.([A-Za-z0-9_-]+)\]$/.exec(line)
     if (section) {
+      const name = section[1] as string
+      // GERCEK TOML da tekrarlanan bir tabloyu REDDEDER. Onceki hal sessizce
+      // SONUNCUYU aliyordu (`sections.set` uzerine yaziyordu) -- ve bu,
+      // "taninmadigi her satirda firlatir" diye belgelenen bir okuyucunun
+      // kabul ettigi TEK bozukluktu. Inceleme bulgusu M-4.
+      if (sections.has(name)) {
+        throw new Error(`profiles.toml:${lineNumber}: duplicate section [profiles.${name}]`)
+      }
       current = new Map()
-      sections.set(section[1] as string, current)
+      sections.set(name, current)
       continue
     }
 

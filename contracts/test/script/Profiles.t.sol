@@ -134,6 +134,74 @@ contract ProfilesTest is Test {
         this.readFrom("deploy/testdata/slipped-testnet.toml", "testnet");
     }
 
+    // --- governance dosyasi: SAYILARLA AYNI MEKANIZMA ---
+    //
+    // Inceleme bulgusu I-5. Digest SAYILARIN dosyasini bagliyordu; ADRESLERIN
+    // dosyasinin hicbir butunluk bagi YOKTU -- ve asimetri yanlis taraftaydi.
+    // `governor` ve `treasury` factory'nin initcode'una girer, yani factory
+    // adresini KALICI olarak belirler; `LaunchFactory` curve ve token
+    // adreslerini `address(this)`ten turettigi icin de ARC'TA URETILECEK HER
+    // ADRESI transitif olarak belirler. `assertDeployable` yalnizca
+    // ">= 2-of-3 Safe" ister ve bunu HERHANGI bir Safe saglar.
+
+    address internal constant REHEARSAL_GOVERNOR = 0x0000000000000000000000000000000000000601;
+    address internal constant REHEARSAL_TREASURY = 0x0000000000000000000000000000000000007EA5;
+    address internal constant TAMPERED_GOVERNOR = 0x00000000000000000000000000000000000006a1;
+
+    function test_theRehearsalGovernanceIsBoundToItsDigest() public view {
+        (address governor, address treasury) = Profiles.governanceForChain(31337);
+        assertEq(governor, REHEARSAL_GOVERNOR);
+        assertEq(treasury, REHEARSAL_TREASURY);
+    }
+
+    /// TASK 4'UN KAPISI, SABIT TARAFINDAN DA TUTULUYOR. Arc testnet girisi
+    /// bugun sifirdir ve digest de SIFIR CIFTINE pinlenmistir; Task 4 dosyayi
+    /// doldurdugunda bu sabiti de degistirmek ZORUNDA kalacak, yani islem
+    /// INCELENMIS bir commit'ten gececek.
+    function test_arcTestnetGovernanceIsPinnedAsUnfilled() public view {
+        (address governor, address treasury) = Profiles.governanceForChain(5042002);
+        assertEq(governor, address(0));
+        assertEq(treasury, address(0));
+    }
+
+    /// TOTOLOJI KIRICI: digest dosyadan degil ELLE YAZILMIS ciftten turetilir.
+    function test_theGovernanceDigestIsTheHashOfTheHandWrittenPair() public pure {
+        assertEq(keccak256(abi.encode(address(0), address(0))), Profiles.ARC_TESTNET_GOVERNANCE_DIGEST, "arc-testnet");
+        assertEq(
+            keccak256(abi.encode(REHEARSAL_GOVERNOR, REHEARSAL_TREASURY)),
+            Profiles.LOCAL_REHEARSAL_GOVERNANCE_DIGEST,
+            "local-rehearsal"
+        );
+    }
+
+    /// I-5'IN TA KENDISI, gercek bir dosyayla yurunur: gecerli GORUNEN ama
+    /// YANLIS bir Safe adresi.
+    function test_aTamperedGovernanceFileIsRejectedByTheDigest() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Profiles.GovernanceDigestMismatch.selector,
+                "local-rehearsal",
+                Profiles.LOCAL_REHEARSAL_GOVERNANCE_DIGEST,
+                keccak256(abi.encode(TAMPERED_GOVERNOR, REHEARSAL_TREASURY))
+            )
+        );
+        this.readGovernanceFrom("deploy/testdata/tampered-governance.json", "local-rehearsal");
+    }
+
+    function test_anUnknownChainKeyHasNoGovernanceDigest() public {
+        string[3] memory unknown = ["arc-mainnet", "Arc-Testnet", ""];
+        for (uint256 i = 0; i < unknown.length; ++i) {
+            vm.expectRevert(abi.encodeWithSelector(Profiles.UnknownChainKey.selector, unknown[i]));
+            this.governanceDigestFor(unknown[i]);
+        }
+    }
+
+    /// IKI DIGEST BIRBIRINDEN AYRIDIR. Tek bir sabit ikisine de hizmet
+    /// etseydi, bir zincirin governance'ini digerine tasimak serbest olurdu.
+    function test_theTwoGovernanceDigestsDiffer() public pure {
+        assertTrue(Profiles.ARC_TESTNET_GOVERNANCE_DIGEST != Profiles.LOCAL_REHEARSAL_GOVERNANCE_DIGEST);
+    }
+
     // --- fs_permissions kapisi: UC IDDIA, ucuncusu GENISLEME icin ---
 
     function test_theArtifactGrantSurvived() public view {
@@ -173,6 +241,14 @@ contract ProfilesTest is Test {
 
     function readFrom(string calldata p, string calldata n) external view returns (Profile memory) {
         return Profiles.readFrom(p, n);
+    }
+
+    function readGovernanceFrom(string calldata p, string calldata k) external view returns (address, address) {
+        return Profiles.readGovernanceFrom(p, k);
+    }
+
+    function governanceDigestFor(string calldata k) external pure returns (bytes32) {
+        return Profiles.governanceDigestFor(k);
     }
 
     function readSrc() external view returns (string memory) {

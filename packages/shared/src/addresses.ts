@@ -1,14 +1,36 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { type Address, getAddress, type Hex, isAddress } from 'viem'
 import {
+  type Address,
+  getAddress,
+  getCreate2Address,
+  type Hex,
+  isAddress,
+  keccak256,
+  toBytes,
+} from 'viem'
+import {
+  chainKeyFor,
   type CurveProfile,
   isProfileName,
+  PROFILE_DIGESTS,
   type ProfileName,
   profileDigest,
   readProfiles,
   REPO_ROOT,
 } from './profiles'
+
+/**
+ * `DeployLib.sol`daki uclunun ikizi. Defterin `escrowInitcodeHash` /
+ * `factoryInitcodeHash` alanlarinin var olma sebebi "her iki adres YALNIZCA
+ * defterden yeniden turetilebilsin" idi; yukleyici bunu YAPMIYORDU (inceleme
+ * bulgusu M-5). Artik yapiyor, yani defter kendi kendini dogruluyor.
+ */
+export const CREATE2_FACTORY: Address = '0x4e59b44847b379578588920cA78FbF26c0B4956C'
+export const ESCROW_SALT: Hex = keccak256(toBytes('arcpad.FeeEscrow.v1'))
+export const FACTORY_SALT: Hex = keccak256(toBytes('arcpad.LaunchFactory.v1'))
+
+export const GOVERNANCE_PATH = join(REPO_ROOT, 'contracts', 'deploy', 'expected-governance.json')
 
 /**
  * DEFTER. Indexer, keeper, fork testleri ve (env uzerinden) web -- dordu de
@@ -126,7 +148,20 @@ export function parseAddressBook(input: unknown, expectedChainId: number): Addre
     )
   }
 
+  // I-4. Onceki hal `requireString` ile yetiniyordu, yani BOS OLMAYAN HER
+  // DIZEYI kabul ediyordu: 31337 icin `"arc-testnet"` tasiyan bir defter de,
+  // `"totally-made-up"` tasiyan bir defter de tertemiz yukleniyordu. Bag
+  // Solidity tarafinda derlenip mutasyonla test edilirken (P12/P14) onu
+  // TUKETEN tarafta hic dogrulanmiyordu.
   const chainKey = requireString(o, 'chainKey')
+  const expectedChainKey = chainKeyFor(chainId)
+  if (chainKey !== expectedChainKey) {
+    throw new AddressBookError(
+      'chainKey',
+      `book says "${chainKey}" but chain ${chainId} is "${expectedChainKey}"`,
+    )
+  }
+
   const profileName = requireString(o, 'profile')
   if (!isProfileName(profileName)) {
     throw new AddressBookError('profile', `"${profileName}" is not a known profile`)
@@ -169,7 +204,11 @@ export function parseAddressBook(input: unknown, expectedChainId: number): Addre
     virtualQuoteReserves: book.virtualQuoteReserves,
     saleSupply: book.saleSupply,
   })
-  const expected = PROFILE_DIGEST_LOOKUP[book.profile]
+  // TEK KOPYA. Burada ELLE YAZILMIS ikinci bir tablo vardi ve hicbir test
+  // onu `PROFILE_DIGESTS` ile dogrudan karsilastirmiyordu (inceleme bulgusu
+  // M-1). Kaynak zaten `profiles.ts`teydi; ikinci kopyanin kazandirdigi
+  // hicbir sey yoktu, kaybettirebilecegi sey sessiz bir kaymaydi.
+  const expected = PROFILE_DIGESTS[book.profile]
   if (digest !== expected) {
     throw new AddressBookError(
       'profile',
@@ -189,6 +228,13 @@ export function parseAddressBook(input: unknown, expectedChainId: number): Addre
     )
   }
 
+  // SIRA ONEMLI VE OLCULEREK SECILDI. Takma-ad kontrolu, tureme
+  // kontrolunden ONCE gelir: escrow adresini `launchFactory` alanina
+  // yapistirmak IKISINI BIRDEN ihlal eder ("takma ad" ve "kendi initcode
+  // hash'inden turemiyor"), ve operatore daha yararli olan teshis birincisidir
+  // -- ne yaptigini soyler, yalnizca sonucu degil. Tureme kontrolu once
+  // konuldugunda alti-cift testi olculebilir bicimde `feeEscrow` diyordu,
+  // beklenen `launchFactory` yerine.
   for (let i = 0; i < DISTINCT_FIELDS.length; i += 1) {
     for (let j = i + 1; j < DISTINCT_FIELDS.length; j += 1) {
       const a = DISTINCT_FIELDS[i] as (typeof DISTINCT_FIELDS)[number]
@@ -199,12 +245,71 @@ export function parseAddressBook(input: unknown, expectedChainId: number): Addre
     }
   }
 
+  // M-5. Iki initcode hash'i defterde TAM OLARAK "adresler yalnizca defterden
+  // yeniden turetilebilsin" diye duruyor. Yukleyici bunu yapmiyordu, yani
+  // alanlar bir IDDIA'ydi; artik yapiyor, yani bir ISPAT. Elle duzenlenmis bir
+  // defter -- takma ad kontrollerinin varlik sebebi -- burada da yakalanir.
+  assertDerivedAddress(book, 'feeEscrow', ESCROW_SALT, book.escrowInitcodeHash)
+  assertDerivedAddress(book, 'launchFactory', FACTORY_SALT, book.factoryInitcodeHash)
+
+  // M-6. Iki dosya da commit'li ve ayni agac tarafindan okunuyor; birbirleriyle
+  // celismelerine izin vermek icin bir sebep yok. `expected-governance.json`
+  // Solidity tarafinda ayrica bir digest'e de baglidir (Profiles.sol), yani bu
+  // capraz kontrol defteri O bagin ucuna iliştirir.
+  assertGovernanceAgrees(book)
+
   return book
 }
 
-const PROFILE_DIGEST_LOOKUP: Record<ProfileName, string> = {
-  testnet: '0xa67f784bd45f49baa48601d390ecafdb2fe44aadffd974b4b0bd582c10d6600d',
-  production: '0x7def5669fd9a5fd109bf35f1d1b04c651e124b6f0f22c37ced26fb77880a80e3',
+function assertDerivedAddress(
+  book: AddressBook,
+  field: 'feeEscrow' | 'launchFactory',
+  salt: Hex,
+  initcodeHash: Hex,
+): void {
+  const derived = getCreate2Address({ from: CREATE2_FACTORY, salt, bytecodeHash: initcodeHash })
+  if (derived !== book[field]) {
+    throw new AddressBookError(
+      field,
+      `is ${book[field]} but CREATE2(${CREATE2_FACTORY}, ${salt}, ${initcodeHash}) derives ${derived}`,
+    )
+  }
+}
+
+function assertGovernanceAgrees(book: AddressBook): void {
+  let raw: string
+  try {
+    raw = readFileSync(GOVERNANCE_PATH, 'utf8')
+  } catch {
+    throw new AddressBookError('governor', `cannot read ${GOVERNANCE_PATH}`)
+  }
+  const parsed = JSON.parse(raw) as Record<string, unknown>
+  const entry = parsed[book.chainKey]
+  if (typeof entry !== 'object' || entry === null) {
+    throw new AddressBookError(
+      'chainKey',
+      `expected-governance.json has no entry for "${book.chainKey}"`,
+    )
+  }
+  const e = entry as Record<string, unknown>
+  for (const [bookField, jsonField] of [
+    ['governor', 'governor'],
+    ['protocolTreasury', 'treasury'],
+  ] as const) {
+    const declared = e[jsonField]
+    if (typeof declared !== 'string' || !isAddress(declared, { strict: false })) {
+      throw new AddressBookError(
+        bookField,
+        `expected-governance.json ${book.chainKey}.${jsonField} is not an address`,
+      )
+    }
+    if (getAddress(declared) !== book[bookField]) {
+      throw new AddressBookError(
+        bookField,
+        `book says ${book[bookField]} but expected-governance.json ${book.chainKey}.${jsonField} says ${getAddress(declared)}`,
+      )
+    }
+  }
 }
 
 function assertReserve(book: AddressBook, profile: CurveProfile, key: keyof CurveProfile): void {

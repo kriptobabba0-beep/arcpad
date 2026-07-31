@@ -60,10 +60,36 @@ library Profiles {
     bytes32 internal constant PRODUCTION_DIGEST = 0x7def5669fd9a5fd109bf35f1d1b04c651e124b6f0f22c37ced26fb77880a80e3;
 
     string internal constant PROFILES_PATH = "deploy/profiles.toml";
+    string internal constant GOVERNANCE_PATH = "deploy/expected-governance.json";
+
+    /// @dev SAYILARIN dosyasi bir digest ile bagliydi; ADRESLERIN dosyasi
+    ///      DEGILDI, ve o asimetri yanlis taraftaydi. `governor` ve `treasury`
+    ///      factory'nin initcode'una girer, yani factory adresini KALICI olarak
+    ///      belirler -- ve `LaunchFactory` her curve ile her token adresini
+    ///      `address(this)`ten turettigi icin ARC'TA URETILECEK HER ADRESI
+    ///      transitif olarak belirler. `assertDeployable` yalnizca ">= 2-of-3
+    ///      Safe" ister; bunu HERHANGI bir Safe saglar.
+    ///
+    ///      Bugun aciklik SIFIRDIR cunku arc-testnet girisi sifirdir ve sifir
+    ///      fail-closed'dir. AMA TASK 4 O GIRISI DOLDURACAK. O an geldiginde
+    ///      JSON'u TEK BASINA duzenlemek yanlis bir factory adresi uretebilirdi;
+    ///      bu digest onu, sayilar tarafinda `ProfileDigestMismatch`in yaptigi
+    ///      seyin AYNISIYLA kapatir: dosyayi degistirmek DERLENEN bir sabiti de
+    ///      degistirmeyi, yani INCELENMIS bir commit'i gerektirir.
+    ///
+    ///      keccak256(abi.encode(governor, treasury)).
+    ///        arc-testnet     : (0x0, 0x0)          -- Task 4 bunu degistirecek
+    bytes32 internal constant ARC_TESTNET_GOVERNANCE_DIGEST =
+        0xad3228b676f7d3cd4284a5443f17f1962b36e491b30a40b2405849e597ba5fb5;
+    ///        local-rehearsal : (0x...0601, 0x...7EA5)
+    bytes32 internal constant LOCAL_REHEARSAL_GOVERNANCE_DIGEST =
+        0x53ba4ecc78a97624249985e3dd16ece64902e4efc1b151cf0b314764f8d5539a;
 
     error UnregisteredChain(uint256 chainId);
     error UnknownProfileName(string name);
     error ProfileDigestMismatch(string name, bytes32 expected, bytes32 actual);
+    error UnknownChainKey(string chainKey);
+    error GovernanceDigestMismatch(string chainKey, bytes32 expected, bytes32 actual);
 
     /// @notice Bu zincire hangi profil aittir.
     /// @dev PARAMETRESIZ VE `pure`. Cagiran bir profil GECIREMEZ; "sessizce
@@ -108,6 +134,36 @@ library Profiles {
     /// @notice POLITIKA: bu zincire ait profil.
     function forChain(uint256 chainId) internal view returns (Profile memory) {
         return readFrom(PROFILES_PATH, nameForChain(chainId));
+    }
+
+    function governanceDigestFor(string memory chainKey) internal pure returns (bytes32) {
+        bytes32 h = keccak256(bytes(chainKey));
+        if (h == keccak256("arc-testnet")) return ARC_TESTNET_GOVERNANCE_DIGEST;
+        if (h == keccak256("local-rehearsal")) return LOCAL_REHEARSAL_GOVERNANCE_DIGEST;
+        revert UnknownChainKey(chainKey);
+    }
+
+    /// @notice MEKANIZMA: governance dosyasini okur ve digest'ler.
+    /// @dev `readFrom`un ADRESLER icin ikizi, ve bilincli olarak AYNI SEKILDE
+    ///      yazildi: mekanizma (verilen dosya) politikadan (kanonik yol)
+    ///      ayridir, boylece negatif test GERCEK bir bozuk dosya yurutebilir.
+    function readGovernanceFrom(string memory jsonPath, string memory chainKey)
+        internal
+        view
+        returns (address governor, address treasury)
+    {
+        string memory json = vm.readFile(jsonPath);
+        governor = vm.parseJsonAddress(json, string.concat(".", chainKey, ".governor"));
+        treasury = vm.parseJsonAddress(json, string.concat(".", chainKey, ".treasury"));
+
+        bytes32 expected = governanceDigestFor(chainKey);
+        bytes32 actual = keccak256(abi.encode(governor, treasury));
+        if (actual != expected) revert GovernanceDigestMismatch(chainKey, expected, actual);
+    }
+
+    /// @notice POLITIKA: bu zincire ait governance.
+    function governanceForChain(uint256 chainId) internal view returns (address governor, address treasury) {
+        return readGovernanceFrom(GOVERNANCE_PATH, chainKeyFor(chainId));
     }
 
     /// @dev Ondalik STRING olarak okunur; TOML tamsayilari i64'tur ve

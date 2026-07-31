@@ -33,6 +33,26 @@ library DeployLib {
     address internal constant CREATE2_FACTORY = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
     uint256 internal constant CREATE2_FACTORY_CODE_LENGTH = 69;
 
+    /// @dev KOD KIMLIGI, UZUNLUK DEGIL. Onceki hali `code.length == 69`
+    ///      kontrol ediyordu ve bu YETERSIZDI: 69 baytlik HERHANGI bir kontrat
+    ///      geciyordu. Bunun varsayimsal olmadigini bu dosyanin KENDI testleri
+    ///      gosteriyor -- D5 ve D6 taniklari tam olarak o durumu kullaniyor
+    ///      (69 baytlik, kanonik OLMAYAN bir deployer etch'lenir ve on-kontrol
+    ///      bunu kabul eder). Onemli olan varsayim "o adreste 69 baytlik bir
+    ///      sey var" degil, "o adreste KANONIK deployer var"dir: her tahmin
+    ///      edilen adresi dogru kilan sey budur.
+    ///
+    ///      DEGER ARC TESTNET'TEN OLCULDU, bir incelemeciden veya
+    ///      dokumantasyondan alinmadi:
+    ///        cast keccak $(cast code 0x4e59b448... --rpc-url $ARC_RPC_URL)
+    ///        -> 0x2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989
+    bytes32 internal constant CREATE2_FACTORY_CODEHASH =
+        0x2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989;
+
+    /// @dev `LaunchFactory` constructor'inin ABI-encode edilmis alti argumani:
+    ///      6 * 32 bayt. Initcode'un KUYRUGUDUR.
+    uint256 internal constant FACTORY_ARG_BYTES = 192;
+
     /// @dev Salt'lar SECILMEZ, TURETILIR.
     ///      keccak256("arcpad.FeeEscrow.v1")
     ///        = 0xc86ad978a80671d39d91fd5b65d5b29cc34a84fb29664012ce6de14effefa718
@@ -51,6 +71,8 @@ library DeployLib {
     uint256 internal constant MIN_DEPLOYER_BALANCE = 0.5e18;
 
     error Create2DeployerMissing(address expected, uint256 codeLength);
+    error Create2DeployerNotCanonical(address at, bytes32 expected, bytes32 actual);
+    error InitcodeDoesNotEncodeThePlan(string field);
     error NotAMultisig(string role, address account);
     error MultisigThresholdTooLow(string role, address account, uint256 threshold);
     error MultisigTooFewOwners(string role, address account, uint256 owners);
@@ -104,16 +126,67 @@ library DeployLib {
     }
 
     function assertDeployable(Plan memory plan) internal view {
-        if (CREATE2_FACTORY.code.length != CREATE2_FACTORY_CODE_LENGTH) {
-            revert Create2DeployerMissing(CREATE2_FACTORY, CREATE2_FACTORY.code.length);
+        // IKI AYRI DURUM, IKI AYRI HATA. "Deployer hic yok" (yeni bir zincir)
+        // ile "adreste baska bir sey var" operator icin ayni sey degildir.
+        if (CREATE2_FACTORY.code.length == 0) {
+            revert Create2DeployerMissing(CREATE2_FACTORY, 0);
+        }
+        if (CREATE2_FACTORY.codehash != CREATE2_FACTORY_CODEHASH) {
+            revert Create2DeployerNotCanonical(CREATE2_FACTORY, CREATE2_FACTORY_CODEHASH, CREATE2_FACTORY.codehash);
         }
         if (plan.deployer.balance < MIN_DEPLOYER_BALANCE) {
             revert InsufficientDeployerBalance(plan.deployer, plan.deployer.balance, MIN_DEPLOYER_BALANCE);
         }
+        _assertInitcodeEncodesThePlan(plan);
         _assertMultisig("governor", plan.governor);
         _assertMultisig("treasury", plan.treasury);
         if (plan.escrow.code.length != 0) revert AlreadyDeployed("FeeEscrow", plan.escrow);
         if (plan.factory.code.length != 0) revert AlreadyDeployed("LaunchFactory", plan.factory);
+    }
+
+    /// @dev BASILAN SAYILARIN GERCEKTEN DEPLOY EDILECEK SAYILAR OLDUGUNU
+    ///      KANITLAR -- ve `assertDeployable` icinde durdugu icin bunu HEM
+    ///      `plan()` HEM `run()` yapar, HERHANGI BIR SEY DEPLOY EDILMEDEN ONCE.
+    ///
+    /// @dev NICIN GEREKLI. `_print`, `V`yi `p.profile`den, initcode hash'ini
+    ///      ise `keccak256(p.factoryInitcode)`ten okur; bu ikisinin AYNI SEYI
+    ///      soyledigini `plan()` yolunda hicbir sey iddia etmiyordu. `build`
+    ///      icinde `V`yi sabitleyen bir hata (mutant D14) kuru kosuda
+    ///      `V 4292000000000000000` yazdirip yanina 4292000000000000000000'e
+    ///      baglanan bir initcode hash'i koyardi -- ve basilan adres de hash de
+    ///      KENDI ICINDE TUTARLI olurdu. Yani operatorun inceledigi ciktinin
+    ///      KENDISI yalan soyleyebilirdi. Brief'in 6. adimi tam olarak bu
+    ///      ciktiyi inceleme delili yaptigi icin bu bir teshis bosluğundan
+    ///      fazlasidir.
+    ///
+    /// @dev BU, GERI OKUMANIN YERINI ALMAZ; ONDAN ONCE GELIR. `assertAsDeployed`
+    ///      deploy EDILMIS kontrattan okur (dolayisiyla constructor'in gercekten
+    ///      ne sakladigini gorur); bu ise deploy EDILECEK baytlari cozer. Ikisi
+    ///      birlikte "plan -> initcode -> deploy edilmis kontrat" zincirinin her
+    ///      iki halkasini da kapatir.
+    function _assertInitcodeEncodesThePlan(Plan memory plan) private pure {
+        // Escrow'un initcode'u SALT creation code'dur; argumani yoktur.
+        if (keccak256(plan.escrowInitcode) != keccak256(type(FeeEscrow).creationCode)) {
+            revert InitcodeDoesNotEncodeThePlan("escrowInitcode");
+        }
+
+        bytes memory initcode = plan.factoryInitcode;
+        if (initcode.length <= FACTORY_ARG_BYTES) revert InitcodeDoesNotEncodeThePlan("factoryInitcodeLength");
+
+        bytes memory tail = new bytes(FACTORY_ARG_BYTES);
+        uint256 start = initcode.length - FACTORY_ARG_BYTES;
+        for (uint256 i = 0; i < FACTORY_ARG_BYTES; ++i) {
+            tail[i] = initcode[start + i];
+        }
+        (address escrow_, address treasury_, address governor_, uint256 t, uint256 v, uint256 s) =
+            abi.decode(tail, (address, address, address, uint256, uint256, uint256));
+
+        if (escrow_ != plan.escrow) revert InitcodeDoesNotEncodeThePlan("escrow");
+        if (treasury_ != plan.treasury) revert InitcodeDoesNotEncodeThePlan("treasury");
+        if (governor_ != plan.governor) revert InitcodeDoesNotEncodeThePlan("governor");
+        if (t != plan.profile.virtualTokenReserves) revert InitcodeDoesNotEncodeThePlan("T");
+        if (v != plan.profile.virtualQuoteReserves) revert InitcodeDoesNotEncodeThePlan("V");
+        if (s != plan.profile.saleSupply) revert InitcodeDoesNotEncodeThePlan("S");
     }
 
     /// @dev EOA REDDEDILIR VE SEBEBI YAPISALDIR: bir EOA'nin `getThreshold()`
