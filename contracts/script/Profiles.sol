@@ -78,9 +78,18 @@ library Profiles {
     ///      degistirmeyi, yani INCELENMIS bir commit'i gerektirir.
     ///
     ///      keccak256(abi.encode(governor, treasury)).
-    ///        arc-testnet     : (0x0, 0x0)          -- Task 4 bunu degistirecek
+    ///
+    ///        arc-testnet : governor 0x9705…2C22, treasury 0xebBe…B10c.
+    ///          Task 4'te CANLI OLARAK deploy edilen iki Safe (2-of-3, SafeL2
+    ///          singleton 0x29fc…C762 -- proxy'lerin slot 0'indan dogrulandi).
+    ///          Onceki deger keccak256(abi.encode(0, 0)) =
+    ///          0xad3228b6…5fb5 idi ve dosya bos oldugu surece fail-closed
+    ///          davraniyordu; bu satirin Task 4'te degismesi ZORUNLULUGU
+    ///          I-5'in tam olarak istedigi seydi -- dosyayi doldurmak
+    ///          DERLENEN bir sabiti de degistirmeyi, yani incelenmis bir
+    ///          commit'i gerektirdi.
     bytes32 internal constant ARC_TESTNET_GOVERNANCE_DIGEST =
-        0xad3228b676f7d3cd4284a5443f17f1962b36e491b30a40b2405849e597ba5fb5;
+        0x00280904e53954edb8d84701d76d127dcdb861cafb039b5e0093ae0234f74375;
     ///        local-rehearsal : (0x...0601, 0x...7EA5)
     bytes32 internal constant LOCAL_REHEARSAL_GOVERNANCE_DIGEST =
         0x53ba4ecc78a97624249985e3dd16ece64902e4efc1b151cf0b314764f8d5539a;

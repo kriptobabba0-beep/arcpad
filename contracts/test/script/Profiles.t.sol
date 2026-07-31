@@ -148,6 +148,12 @@ contract ProfilesTest is Test {
     address internal constant REHEARSAL_TREASURY = 0x0000000000000000000000000000000000007EA5;
     address internal constant TAMPERED_GOVERNOR = 0x00000000000000000000000000000000000006a1;
 
+    /// Task 4'te Arc testnet'e CANLI deploy edilen iki Safe (2-of-3, SafeL2).
+    /// ELLE YAZILDI, dosyadan okunmaz -- digest sabitini bu literallere
+    /// pinleyen tautoloji kiricinin calismasi buna baglidir.
+    address internal constant ARC_GOVERNOR_SAFE = 0x970534698e4592932F31892759147f79EB0D2C22;
+    address internal constant ARC_TREASURY_SAFE = 0xebBeCfDA308EA307e173C6eC19a9C48F53d4B10c;
+
     function test_theRehearsalGovernanceIsBoundToItsDigest() public view {
         (address governor, address treasury) = Profiles.governanceForChain(31337);
         assertEq(governor, REHEARSAL_GOVERNOR);
@@ -158,15 +164,20 @@ contract ProfilesTest is Test {
     /// bugun sifirdir ve digest de SIFIR CIFTINE pinlenmistir; Task 4 dosyayi
     /// doldurdugunda bu sabiti de degistirmek ZORUNDA kalacak, yani islem
     /// INCELENMIS bir commit'ten gececek.
-    function test_arcTestnetGovernanceIsPinnedAsUnfilled() public view {
+    function test_arcTestnetGovernanceIsPinnedToTheDeployedSafes() public view {
         (address governor, address treasury) = Profiles.governanceForChain(5042002);
-        assertEq(governor, address(0));
-        assertEq(treasury, address(0));
+        assertEq(governor, ARC_GOVERNOR_SAFE);
+        assertEq(treasury, ARC_TREASURY_SAFE);
+        assertTrue(governor != treasury, "authority and revenue must not be one Safe");
     }
 
     /// TOTOLOJI KIRICI: digest dosyadan degil ELLE YAZILMIS ciftten turetilir.
     function test_theGovernanceDigestIsTheHashOfTheHandWrittenPair() public pure {
-        assertEq(keccak256(abi.encode(address(0), address(0))), Profiles.ARC_TESTNET_GOVERNANCE_DIGEST, "arc-testnet");
+        assertEq(
+            keccak256(abi.encode(ARC_GOVERNOR_SAFE, ARC_TREASURY_SAFE)),
+            Profiles.ARC_TESTNET_GOVERNANCE_DIGEST,
+            "arc-testnet"
+        );
         assertEq(
             keccak256(abi.encode(REHEARSAL_GOVERNOR, REHEARSAL_TREASURY)),
             Profiles.LOCAL_REHEARSAL_GOVERNANCE_DIGEST,

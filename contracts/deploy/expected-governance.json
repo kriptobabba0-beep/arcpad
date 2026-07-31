@@ -1,8 +1,12 @@
 {
   "arc-testnet": {
-    "governor": "0x0000000000000000000000000000000000000000",
-    "treasury": "0x0000000000000000000000000000000000000000",
-    "owners": [],
+    "governor": "0x970534698e4592932F31892759147f79EB0D2C22",
+    "treasury": "0xebBeCfDA308EA307e173C6eC19a9C48F53d4B10c",
+    "owners": [
+      "0x0a95f5F562183089f661577bc6B63D7A829cec88",
+      "0xf5447724A9BEa99635c0456049169eaCa84EE65B",
+      "0x0D646a725DAdc8ADcF209ac999B219EF2a69ad21"
+    ],
     "allowedGraduationTargets": []
   },
   "local-rehearsal": {

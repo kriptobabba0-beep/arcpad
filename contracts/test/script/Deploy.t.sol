@@ -68,6 +68,10 @@ contract DeployTest is Test {
     address internal constant GOVERNOR = 0x0000000000000000000000000000000000000601;
     address internal constant TREASURY = 0x0000000000000000000000000000000000007EA5;
 
+    /// Task 4'te Arc testnet'e deploy edilen governor Safe. Yerel EVM'de KODU
+    /// YOKTUR ve bu kasithdir; bkz. test_arcTestnetPlanFailsClosedWithoutAFork.
+    address internal constant ARC_GOVERNOR_SAFE = 0x970534698e4592932F31892759147f79EB0D2C22;
+
     /// @dev deployer TEST KONTRATININ KENDISIDIR VE BU BIR SECIM DEGIL,
     ///      OLCULMUS BIR KISITTIR. `_resolve()` `msg.sender` okur; ayri bir
     ///      adres gostermenin tek yolu `vm.prank`tir; ve `run()` icindeki
@@ -157,7 +161,7 @@ contract DeployTest is Test {
     ///      Adim 6 kazanir (kapinin CANLI olmasi ozelligin ta kendisidir), ve
     ///      tablonun olcmek istedigi sey IKIYE AYRILIR:
     ///        - profil cozumu             -> bu test,
-    ///        - governance kapisi         -> test_arcTestnetGovernanceIsStillUnfilled,
+    ///        - governance kapisi         -> test_arcTestnetPlanFailsClosedWithoutAFork,
     ///        - `plan()`in tam ciktisi    -> test_planOnLocalRehearsalResolvesTheTestnetProfile.
     function test_theTestnetProfileIsWhatArcTestnetResolves() public view {
         Profile memory p = Profiles.forChain(ARC_TESTNET);
@@ -180,11 +184,20 @@ contract DeployTest is Test {
         assertEq(p.treasury, TREASURY);
     }
 
-    /// TASK 4'UN KAPISI CANLI MI. Sifir governor deploy edilemez, yani
-    /// expected-governance.json YARIM BIRAKILAMAZ.
-    function test_arcTestnetGovernanceIsStillUnfilled() public {
+    /// @dev BU TEST TASK 4'TE ANLAM DEGISTIRDI VE ADI DA DEGISTI. Onceki
+    ///      hali "arc-testnet governance'i HALA SIFIR" diyordu ve sifirin
+    ///      fail-closed oldugunu olcuyordu. Task 4 dosyayi GERCEK iki Safe ile
+    ///      doldurdu, dolayisiyla o iddia artik yanlis olurdu.
+    ///
+    ///      Yerine gecen sey daha dar ama DOGRU: yerel EVM'de (fork YOK) o iki
+    ///      Safe'in KODU yoktur, bu yuzden `plan()` arc-testnet'te hala
+    ///      fail-closed'dir -- ama artik SIFIR ADRES yuzunden degil, KODSUZ
+    ///      UZAK ADRES yuzunden. Governance'in gercekten yerinde oldugunu
+    ///      olcen sey `test/fork/Governance.fork.t.sol`dir; bir fork'suz
+    ///      testin bunu iddia etmesi FIXTURE'IN yalani olurdu.
+    function test_arcTestnetPlanFailsClosedWithoutAFork() public {
         vm.chainId(ARC_TESTNET);
-        vm.expectRevert(abi.encodeWithSelector(DeployLib.NotAMultisig.selector, "governor", address(0)));
+        vm.expectRevert(abi.encodeWithSelector(DeployLib.NotAMultisig.selector, "governor", ARC_GOVERNOR_SAFE));
         script.plan();
     }
 
