@@ -101,7 +101,9 @@ const EXEMPT = new Set([
 ])
 
 interface Col {
+  table_schema: string
   table_name: string
+  relkind: string
   column_name: string
   data_type: string
   numeric_precision: number | null
@@ -110,11 +112,76 @@ interface Col {
 
 type Ref = { table_name: string; column_name: string }
 
+/**
+ * Sutun tasiyan relkind'lar ve kapinin onlara ne yaptigi. Kume KATALOGLA
+ * karsilastirilir: siniflandirilmamis bir relkind (ornegin bir MATVIEW ilk
+ * kez eklendiginde) testi kirar ve ekleyeni karar vermeye zorlar.
+ */
+const EXAMINED_RELKINDS = new Set([
+  'r', // ordinary table
+  'p', // partitioned table
+  'v', // view
+  'm', // materialized view
+  'f', // foreign table
+])
+/** Sutunu olan ama urun verisi TASIMAYAN relkind'lar. */
+const IGNORED_RELKINDS = new Set([
+  'c', // composite type
+])
+
+/**
+ * SAYIMIN ERISIMI DE OLCULUR.
+ *
+ * Onceki hali `information_schema.columns WHERE table_schema='public'` idi ve
+ * ERISIMI HIC OLCULMEMISTI -- yani I-1'in kapattigi ariza kipinin bir ust
+ * kattaki hali. Iki tam kacis olculdu:
+ *
+ *   - `public` icindeki bir MATERIALIZED VIEW `examined`i SIFIR kadar
+ *     oynatiyordu: information_schema matview'lari hic listelemez. Ve bu
+ *     teorik degil: `volume_24h_wei` PENCERELI oldugu icin Task 11'e
+ *     birakildi, ve onu bir matview olarak kurmak en bariz cozum.
+ *   - `public` DISINDA bir semadaki tablo sifir bulgu uretiyordu -- `double
+ *     precision` icin `banned` bile.
+ *
+ * Bu yuzden sayim `pg_class`/`pg_attribute`'tan gelir, SISTEM DISI HER
+ * SEMADAN ve kullanici sutunu tasiyan HER relkind'dan. Ustelik relkind
+ * kumesinin kendisi de -- tip boluntusu gibi -- iddia edilir.
+ */
 const ALL_COLUMNS = `
-  SELECT table_name, column_name, data_type, numeric_precision, numeric_scale
-  FROM information_schema.columns
-  WHERE table_schema = 'public'
-  ORDER BY 1, 2`
+  SELECT n.nspname AS table_schema,
+         c.relname AS table_name,
+         c.relkind::text AS relkind,
+         a.attname AS column_name,
+         format_type(COALESCE(bt.oid, t.oid), NULL) AS data_type,
+         CASE WHEN COALESCE(bt.typname, t.typname) = 'numeric' AND a.atttypmod <> -1
+              THEN ((a.atttypmod - 4) >> 16) & 65535 END AS numeric_precision,
+         CASE WHEN COALESCE(bt.typname, t.typname) = 'numeric' AND a.atttypmod <> -1
+              THEN (a.atttypmod - 4) & 65535 END AS numeric_scale
+  FROM pg_class c
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+  JOIN pg_attribute a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
+  JOIN pg_type t ON t.oid = a.atttypid
+  LEFT JOIN pg_type bt ON t.typtype = 'd' AND bt.oid = t.typbasetype
+  WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+    AND n.nspname NOT LIKE 'pg\\_%'
+    AND c.relkind = ANY ('{r,p,v,m,f}')
+  ORDER BY 1, 2, 4`
+
+/** Kullanici sutunu tasiyan ve dolayisiyla kapinin bakmasi gereken relkind'lar. */
+const DATA_RELKINDS = `
+  SELECT DISTINCT c.relkind::text AS relkind
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+    AND n.nspname NOT LIKE 'pg\\_%'
+    AND c.relkind NOT IN ('i', 'I', 'S', 't')
+  ORDER BY 1`
+
+/** Sistem disi semalar. */
+const SCHEMAS = `
+  SELECT nspname AS name FROM pg_namespace
+  WHERE nspname NOT IN ('pg_catalog', 'information_schema')
+    AND nspname NOT LIKE 'pg\\_%'
+  ORDER BY 1`
 
 const ref = (r: Col): Ref => ({ table_name: r.table_name, column_name: r.column_name })
 
@@ -122,6 +189,12 @@ interface Report {
   examined: number
   numerics: number
   integers: number
+  /** Sistem disi semalar. `['public']` disina cikmasi bir bulgudur. */
+  schemas: string[]
+  /** Kataloga gore sutun tasiyan relkind'lardan siniflandirilmamis olanlar. */
+  unclassifiedRelkinds: string[]
+  /** Sayimin gercekten gordugu (sema, relkind) ciftleri -- erisimin kendisi. */
+  reach: string[]
   /** Semada gecip de boluntude yeri olmayan tipler. */
   unclassified: string[]
   /** Kayan nokta / `money` tipli sutunlar. */
@@ -143,8 +216,12 @@ interface Report {
  * KONTROLLERE AYNI kod uygulanir -- iki ayri kopya olsaydi, negatif kontrolun
  * gecmesi gercek kapinin calistigini gostermezdi.
  */
-async function gate(db: { query: (t: string) => Promise<{ rows: Col[] }> }): Promise<Report> {
-  const all = (await db.query(ALL_COLUMNS)).rows
+async function gate(db: {
+  query: (t: string) => Promise<{ rows: Record<string, string>[] }>
+}): Promise<Report> {
+  const all = (await db.query(ALL_COLUMNS)).rows as unknown as Col[]
+  const relkinds = (await db.query(DATA_RELKINDS)).rows.map((r) => r['relkind'] as string)
+  const schemas = (await db.query(SCHEMAS)).rows.map((r) => r['name'] as string)
   const numerics = all.filter((r) => NUMERIC_TYPES.has(r.data_type))
   const integers = all.filter((r) => INTEGER_TYPES.has(r.data_type))
 
@@ -155,6 +232,11 @@ async function gate(db: { query: (t: string) => Promise<{ rows: Col[] }> }): Pro
     examined: all.length,
     numerics: numerics.length,
     integers: integers.length,
+    schemas,
+    unclassifiedRelkinds: relkinds
+      .filter((k) => !EXAMINED_RELKINDS.has(k) && !IGNORED_RELKINDS.has(k))
+      .sort(),
+    reach: [...new Set(all.map((r) => `${r.table_schema}:${r.relkind}`))].sort(),
     unclassified: [...new Set(all.map((r) => r.data_type))].filter((t) => !classified(t)).sort(),
     banned: all.filter((r) => BANNED_TYPES.has(r.data_type)).map(ref),
     badNumeric: numerics
@@ -196,13 +278,43 @@ describe('adlandirma kapisi', () => {
   beforeAll(resetSchema)
 
   it('tip boluntusu semanin TAMAMINI kapsar', async () => {
-    // EN ONEMLI TEST. Asagidaki butun kurallar "su tipteki sutunlar" diye
-    // baslar; hicbiri boluntunun disinda kalan bir tipi goremez. Bu yuzden
-    // boluntunun kendisi katalogla karsilastiriliyor -- kapinin erisimini
-    // VARSAYILAN degil OLCULEN yapan sey budur.
+    // Asagidaki butun kurallar "su tipteki sutunlar" diye baslar; hicbiri
+    // boluntunun disinda kalan bir tipi goremez. Bu yuzden boluntunun kendisi
+    // katalogla karsilastiriliyor.
     const g = await gate(pool)
     expect(g.unclassified).toEqual([])
-    expect(g.examined).toBeGreaterThan(0)
+  })
+
+  // ---------------------------------------------------------------
+  // SAYIMIN ERISIMI. Tip boluntusu dogru olsa bile, sayim bir iliskiyi hic
+  // GORMUYORSA kural o iliskiye uygulanmaz. Onceki sayim iki seyi tamamen
+  // kaciriyordu (olculdu): `public` icindeki matview'lar ve `public` disindaki
+  // semalar. Asagidaki uc test erisimi OLCER.
+  // ---------------------------------------------------------------
+
+  it('SAYIM: incelenen sutun sayisi TAM olarak sabitlenir', async () => {
+    // `> 0` yeterli DEGIL: sayim daralirsa (bir iliski tipi gorunmez olursa)
+    // butun kurallar sessizce daha az sutuna uygulanir ve suite yesil kalir.
+    const g = await gate(pool)
+    expect(g.examined).toBe(112)
+  })
+
+  it('SAYIM: sistem disi tek sema `public`tir', async () => {
+    // Kapsam iddiasi: baska bir semada tablo YOK. Olsaydi asagidaki erisim
+    // testi onu gorurdu; bu test ise "bakmamiz gereken tek yer burasi"
+    // ifadesini sabitler.
+    expect((await gate(pool)).schemas).toEqual(['public'])
+  })
+
+  it('SAYIM: sutun tasiyan her relkind ya incelenir ya da acikca yok sayilir', async () => {
+    // MATVIEW'LAR ICIN ONEMLI: `volume_24h_wei` PENCERELI oldugu icin Task
+    // 11'e birakildi ve onu bir matview olarak kurmak en bariz cozum. Sayim
+    // `pg_class`'tan geldigi icin boyle bir matview GORULUR; relkind kumesi de
+    // burada sabitlenir ki yeni bir iliski tipi sessizce disarida kalmasin.
+    const g = await gate(pool)
+    expect(g.unclassifiedRelkinds).toEqual([])
+    // Bugun semada yalnizca sirali tablolar var.
+    expect(g.reach).toEqual(['public:r'])
   })
 
   it('her numeric TAM OLARAK numeric(78,0) ve _wei/_tok ile biter', async () => {
@@ -326,6 +438,64 @@ describe('adlandirma kapisi', () => {
     await withColumn('ALTER TABLE trades ADD COLUMN net inet', (g) => {
       expect(g.unclassified).toEqual(['inet'])
     })
+  })
+
+  // ---------------------------------------------------------------
+  // ERISIM KACISLARI -- gozden gecirmenin olctugu iki tam kacis.
+  // ---------------------------------------------------------------
+
+  it('KACIS: `public` icindeki bir MATERIALIZED VIEW artik gorulur', async () => {
+    // Olculen eski davranis: matview `examined`i SIFIR kadar oynatiyordu,
+    // cunku information_schema matview'lari hic listelemez.
+    const before = await gate(pool)
+    await withColumn(
+      `CREATE MATERIALIZED VIEW mv_window AS
+         SELECT token, sum(quote_amount_wei)::numeric(78,6) AS price_wei,
+                count(*)::bigint AS amount
+         FROM trades GROUP BY token`,
+      (g) => {
+        // Sayim GERCEKTEN buyudu.
+        expect(g.examined).toBe(before.examined + 3)
+        expect(g.reach).toEqual(['public:m', 'public:r'])
+        // Ve kurallar matview'a da uygulaniyor.
+        expect(g.badNumeric).toEqual([{ table_name: 'mv_window', column_name: 'price_wei' }])
+        expect(g.undeclaredInteger).toEqual([{ table_name: 'mv_window', column_name: 'amount' }])
+      },
+    )
+    expect((await gate(pool)).examined).toBe(before.examined)
+  })
+
+  it('KACIS: baska bir SEMADAKI tablo artik gorulur', async () => {
+    // Olculen eski davranis: `public` disindaki bir tablo sifir bulgu
+    // uretiyordu -- `double precision` icin `banned` bile.
+    const before = await gate(pool)
+    const client: PoolClient = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('CREATE SCHEMA reporting')
+      await client.query('CREATE TABLE reporting.rollup (price double precision, amount bigint)')
+      const g = await gate(client)
+      expect(g.examined).toBe(before.examined + 2)
+      expect(g.schemas).toEqual(['public', 'reporting'])
+      expect(g.reach).toEqual(['public:r', 'reporting:r'])
+      expect(g.banned).toEqual([{ table_name: 'rollup', column_name: 'price' }])
+      expect(g.undeclaredInteger).toEqual([{ table_name: 'rollup', column_name: 'amount' }])
+    } finally {
+      await client.query('ROLLBACK')
+      client.release()
+    }
+    expect((await gate(pool)).schemas).toEqual(['public'])
+  })
+
+  it('KACIS: bir VIEW de kurallara tabidir', async () => {
+    const before = await gate(pool)
+    await withColumn(
+      `CREATE VIEW v_leak AS SELECT event_seq, quote_amount_wei AS fee_usdc FROM trades`,
+      (g) => {
+        expect(g.examined).toBe(before.examined + 2)
+        expect(g.forbidden).toEqual([{ table_name: 'v_leak', column_name: 'fee_usdc' }])
+      },
+    )
   })
 
   it('POZITIF KONTROL: fill_count bigint GECER (kapi fazla siki degil)', async () => {

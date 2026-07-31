@@ -246,3 +246,11 @@ export const RANGE_TO = BLOCK + 3n
 export function hashFor(block: bigint): string {
   return `0x${block.toString(16).padStart(64, '0')}`
 }
+
+/**
+ * Imlecin BOS oldugu (ilk kosu) durumda `replayRange`e gecilen parent hash.
+ * `assertContinuous` o dalda hicbir sey karsilastirmaz, ama argüman ZORUNLU
+ * oldugu icin cagiran yine de bir deger vermek zorundadir -- ve bu sabitin
+ * adi, degerin neden onemsiz oldugunu cagri yerinde okunur kilar.
+ */
+export const GENESIS = hashFor(0n)

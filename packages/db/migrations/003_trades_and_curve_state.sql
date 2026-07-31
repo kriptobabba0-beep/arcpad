@@ -37,8 +37,18 @@ CREATE TABLE trades (
   block_number                bigint NOT NULL,
   log_index                   integer NOT NULL CHECK (log_index BETWEEN 0 AND 1048575),
   tx_hash                     text NOT NULL CHECK (tx_hash ~ '^0x[0-9a-f]{64}$'),
-  -- YALNIZCA gosterim ve 24s penceresi. SIRALAMA ICIN KULLANILMAZ: Arc'ta
-  -- ardisik 400 blok cifti olculdu, 197'si (%49,1) AYNI timestamp'i tasiyor.
+  -- YALNIZCA gosterim ve 24s penceresi. SIRALAMA ICIN KULLANILMAZ.
+  --
+  -- OLCULDU (2026-07-31, arc testnet, finalized bolgesinden batch'li ve
+  -- yavaslatilmis ornekleme): 553 ardisik blok cifti, 271'i (%49,0) AYNI
+  -- timestamp'i tasiyor; dagilim {1 blok: 41, 2 blok: 244, 3 blok: 14}.
+  -- Timestamp 553 ciftin HICBIRINDE geriye gitmedi -- yani Arc'in "block
+  -- timestamps may not increase" ifadesi ESIT KALABILIR demektir, GERILER
+  -- demek degil.
+  --
+  -- (Bu sayi da plandan devralinmisti ve o plandaki latest/finalized tablosu
+  -- YANLIS cikti; bu yuzden ayrica olculdu. Plandaki zincir iddialari karisik:
+  -- bu dogru, oteki degildi. Tek tek dogrulayin.)
   block_time                  timestamptz NOT NULL,
   token                       text NOT NULL REFERENCES launches(token),
   curve                       text NOT NULL REFERENCES curve_state(curve),

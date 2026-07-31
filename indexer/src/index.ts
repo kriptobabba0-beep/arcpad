@@ -1,6 +1,6 @@
 import 'dotenv/config'
 import { ARC_TESTNET_CHAIN_ID, assertArcChain, createArcClient } from '@arcpad/shared'
-import { assertContinuous, finalizedHead, nextRange } from './cursor'
+import { finalizedHead, nextRange } from './cursor'
 
 const MAX_SPAN = 1_000n
 
@@ -20,17 +20,13 @@ async function main(): Promise<void> {
   const cursor = head - 10n
   const range = nextRange(cursor, head, MAX_SPAN)
 
-  // ZINCIR BAGI MUHAFIZI. Imlec veritabanindan geldiginde ikinci argüman
-  // `(await getCursor(db))?.lastBlockHash ?? null` olur; burada imlec
-  // uydurulmus oldugu icin kaydedilmis bir hash YOKTUR ve `null` gecilir --
-  // yani muhafiz "ilk kosu" dalindan gecer. Bunu sessizce atlamak yerine
-  // acikca cagirmak, Task 5/8'in dongusunu kurarken cagriyi EKLEMEYI
-  // unutmasini zorlastirir.
-  if (range !== null) {
-    const first = await client.getBlock({ blockNumber: range.from })
-    assertContinuous(cursor, null, first.parentHash)
-  }
-
+  // ZINCIR BAGI MUHAFIZI BURADA CAGRILMAZ ve bu bir eksiklik degil, duzeltme:
+  // onceki hali `assertContinuous(cursor, null, ...)` diye cagiriyordu ve
+  // sabit kodlanmis `null` yuzunden HICBIR SEY karsilastirmiyordu -- muhafiz
+  // her seferinde "ilk kosu" dalindan geciyordu. Kontrol artik
+  // `replayRange`'in ICINDE, yani imleci ilerleten tek yolun uzerinde: Task
+  // 5/8 dongusunu kurarken cagriyi eklemeyi UNUTAMAZ, cunku cagri onun elinde
+  // degil.
   console.log(`arc chainId=${ARC_TESTNET_CHAIN_ID} finalizedHead=${head} nextRange=`, range)
 }
 

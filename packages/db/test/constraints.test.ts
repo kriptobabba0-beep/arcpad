@@ -4,7 +4,18 @@ import { replayRange } from '../src/apply'
 import type { PoolClient } from '../src/pool'
 import { toSeq } from '../src/seq'
 import { pool, resetSchema } from './setup'
-import { addr, ALICE, CURVE, DEPLOYMENT, hash32, hashFor, RANGE, RANGE_TO, TOKEN } from './fixtures'
+import {
+  addr,
+  ALICE,
+  CURVE,
+  DEPLOYMENT,
+  GENESIS,
+  hash32,
+  hashFor,
+  RANGE,
+  RANGE_TO,
+  TOKEN,
+} from './fixtures'
 
 interface PgError extends Error {
   code?: string
@@ -24,7 +35,7 @@ describe('kisitlar gercekten bagli mi', () => {
   beforeAll(async () => {
     await resetSchema()
     await putDeployment(pool, DEPLOYMENT)
-    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), GENESIS)
     // Elle inceleme tablosunun da bir tohum satiri olsun ki asagidaki tarama
     // onu de kapsayabilsin.
     await pool.query(
@@ -170,18 +181,29 @@ describe('kisitlar gercekten bagli mi', () => {
     // Olcum ancak her tablonun SATIRI varsa anlamli; bos bir tablo her sutunu
     // sessizce aday olmaktan cikarirdi. Bu, "test tesadufen bos oldugu icin
     // gecti" arizasinin bu testteki hali.
-    const { rows: empties } = await pool.query<{ rel: string }>(`
+    //
+    // ONCEKI HALI KENDISI BOS GECIYORDU. Aday tablolari `c.reltuples = 0` ile
+    // suzuyordu; PostgreSQL >= 14'te hic ANALYZE edilmemis bir iliskinin
+    // `reltuples` degeri **-1**'dir ve az once sifirlanmis bir veritabaninda
+    // BU HER TABLO demektir. Olculdu: 13 tablonun 13'u -1, `empties` bos, ve
+    // `count(*)` iddiasi SIFIR tablo uzerinde kosuyordu. Vacuity'yi durdurmak
+    // icin yazilmis muhafiz vacuity ile geciyordu.
+    //
+    // Cozum tahmini tamamen atmak: her tablo dogrudan SAYILIR. On uc tablo
+    // icin maliyet onemsiz, ve sayilan tablo sayisi da iddia edilir ki sorgu
+    // bir gun bos donerse bu testin kendisi kirilsin.
+    const { rows: allTables } = await pool.query<{ rel: string }>(`
       SELECT c.relname AS rel FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
-      WHERE c.relkind = 'r' AND c.reltuples = 0 AND NOT EXISTS (
-        SELECT 1 FROM pg_stat_user_tables s WHERE s.relid = c.oid AND s.n_live_tup > 0)
-      ORDER BY 1`)
+      WHERE c.relkind = 'r' ORDER BY 1`)
+    expect(allTables).toHaveLength(13)
     const rowCounts = await Promise.all(
-      empties.map(async ({ rel }) => {
+      allTables.map(async ({ rel }) => {
         const { rows } = await pool.query<{ n: number }>(`SELECT count(*)::int n FROM "${rel}"`)
         return { rel, n: rows[0]?.n ?? 0 }
       }),
     )
+    expect(rowCounts).toHaveLength(13)
     expect(rowCounts.filter((t) => t.n === 0)).toEqual([])
 
     const kinds = await Promise.all(

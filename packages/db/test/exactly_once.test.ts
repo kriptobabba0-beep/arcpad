@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { applyTrade, applyTransfer, getCursor, replayRange, setCursor } from '../src/apply'
+import { ReorgDetected } from '../src/reorg'
 import { putDeployment } from '../src/deployment'
 import { snapshot } from '../src/snapshot'
 import { pool, resetSchema } from './setup'
@@ -9,6 +10,7 @@ import {
   BUY,
   CURVE,
   DEPLOYMENT,
+  GENESIS,
   hash32,
   hashFor,
   RANGE,
@@ -45,7 +47,7 @@ describe('exactly-once ingestion', () => {
   // sayaclarla hem de veritabaninin TAM DOKUMUYLE gosteriliyor.
   // ---------------------------------------------------------------
   it('ayni araligi iki kez oynatmak ikinci seferde hicbir sey yazmaz', async () => {
-    const first = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
+    const first = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), await parentHash())
     expect(first).toEqual({
       launches: 1,
       trades: 3,
@@ -58,7 +60,7 @@ describe('exactly-once ingestion', () => {
 
     const after = await snapshot(pool)
 
-    const second = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
+    const second = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), await parentHash())
     expect(second).toEqual({
       launches: 0,
       trades: 0,
@@ -76,10 +78,10 @@ describe('exactly-once ingestion', () => {
   })
 
   it('UCUNCU oynatim da bir no-op (idempotency bir kereye mahsus degil)', async () => {
-    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), await parentHash())
     const after = await snapshot(pool)
-    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
-    const third = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), await parentHash())
+    const third = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), await parentHash())
     expect(third.total).toBe(0)
     expect(await snapshot(pool)).toEqual(after)
   })
@@ -89,7 +91,7 @@ describe('exactly-once ingestion', () => {
     // veriyor. Gercek ingest araligi bloklara boler ve bir tur ortasinda
     // yeniden baslayabilir. Ayni olaylar 12 ayri islemde uygulanip ayni
     // dokumun cikmasi bunu kapatiyor.
-    const whole = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
+    const whole = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), await parentHash())
     expect(whole.total).toBe(13)
     const oneShot = await stableSnapshot()
 
@@ -97,7 +99,8 @@ describe('exactly-once ingestion', () => {
     await putDeployment(pool, DEPLOYMENT)
     let written = 0
     for (const e of RANGE)
-      written += (await replayRange(pool, [e], RANGE_TO, hashFor(RANGE_TO))).total
+      written += (await replayRange(pool, [e], RANGE_TO, hashFor(RANGE_TO), await parentHash()))
+        .total
     // Imlec YALNIZCA ilk parcada hareket eder; sonraki 11 kez ayni degere
     // yazmak bir no-op'tur.
     expect(written).toBe(13)
@@ -109,23 +112,29 @@ describe('exactly-once ingestion', () => {
     // Bir yeniden baslatma imleci geriye alirsa (ya da bir tur iki kez
     // islenirse) araliklar ortusur. Ilk yedi olay, sonra HEPSI.
     const head = RANGE.slice(0, 7)
-    const a = await replayRange(pool, head, RANGE_TO - 2n, hashFor(RANGE_TO - 2n))
+    const a = await replayRange(
+      pool,
+      head,
+      RANGE_TO - 2n,
+      hashFor(RANGE_TO - 2n),
+      await parentHash(),
+    )
     expect(a.total).toBe(8) // 7 olay + imlec
 
-    const b = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
+    const b = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), await parentHash())
     // Yalnizca yeni bes olay + imlec.
     expect(b.total).toBe(6)
 
     await resetSchema()
     await putDeployment(pool, DEPLOYMENT)
-    const clean = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
+    const clean = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), await parentHash())
     expect(clean.total).toBe(13)
     const cleanSnap = await stableSnapshot()
 
     await resetSchema()
     await putDeployment(pool, DEPLOYMENT)
-    await replayRange(pool, head, RANGE_TO - 2n, hashFor(RANGE_TO - 2n))
-    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
+    await replayRange(pool, head, RANGE_TO - 2n, hashFor(RANGE_TO - 2n), await parentHash())
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), await parentHash())
     // Ustuste binen iki gecis, tek temiz gecisle AYNI veritabanini birakir.
     expect(await stableSnapshot()).toEqual(cleanSnap)
   })
@@ -134,7 +143,7 @@ describe('exactly-once ingestion', () => {
   // ARTIMLI GUNCELLEMENIN neden ayri bir kanit istedigi
   // ---------------------------------------------------------------
   it('holders DELTA tasir: ikinci uygulama bakiyeyi ikiye KATLAMAZ', async () => {
-    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), await parentHash())
     const before = await balance(ALICE)
     expect(before).toBeGreaterThan(0n)
 
@@ -148,7 +157,7 @@ describe('exactly-once ingestion', () => {
     // NEGATIF KONTROL. Yukaridaki testin gectigi sebep "defter satiri zaten
     // vardi" olmali. Defter satirini kaldirinca AYNI cagri bu kez YAZMALI --
     // yoksa idempotency baska, adi konmamis bir sebepten geliyor demektir.
-    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), await parentHash())
     const before = await balance(ALICE)
 
     await pool.query('DELETE FROM token_transfers WHERE event_seq = $1', [
@@ -161,14 +170,14 @@ describe('exactly-once ingestion', () => {
   })
 
   it('fee_balances de artimlidir ve ayni sekilde korunur', async () => {
-    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), await parentHash())
     const { rows } = await pool.query<{ deposited_total_wei: string; claimable_wei: string }>(
       'SELECT deposited_total_wei, claimable_wei FROM fee_balances ORDER BY recipient',
     )
     expect(rows).toHaveLength(2)
     const before = JSON.stringify(rows)
 
-    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), await parentHash())
     const { rows: after } = await pool.query(
       'SELECT deposited_total_wei, claimable_wei FROM fee_balances ORDER BY recipient',
     )
@@ -179,7 +188,7 @@ describe('exactly-once ingestion', () => {
   // SIRA MUHAFIZI: `ins` DEGIL, `last_seq` isini yapiyor mu?
   // ---------------------------------------------------------------
   it('hic gorulmemis ESKI bir trade YENI curve durumunu ezmez', async () => {
-    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), await parentHash())
     const stateBefore = await curveState()
 
     // Daha ONCEKI bir blokta, HENUZ YAZILMAMIS bir islem. `ins` onu KABUL
@@ -209,7 +218,7 @@ describe('exactly-once ingestion', () => {
   })
 
   it('imlec geri gitmez', async () => {
-    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), await parentHash())
     expect(await setCursor(pool, RANGE_TO - 100n, hashFor(RANGE_TO - 100n))).toBe(0)
     expect(await setCursor(pool, RANGE_TO, hashFor(RANGE_TO))).toBe(0)
     expect(await setCursor(pool, RANGE_TO + 1n, hashFor(RANGE_TO + 1n))).toBe(1)
@@ -226,7 +235,7 @@ describe('exactly-once ingestion', () => {
   // besledigi deger BURADA saklanir.
   // ---------------------------------------------------------------
   it('imlec blok hash ini de tasir ve ileri giderken onu gunceller', async () => {
-    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO))
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), await parentHash())
     expect(await getCursor(pool)).toEqual({
       lastBlock: RANGE_TO,
       lastBlockHash: hashFor(RANGE_TO),
@@ -266,6 +275,51 @@ describe('exactly-once ingestion', () => {
     expect(e3.constraint).toBe('sync_state_last_block_hash_check')
   })
 
+  // ---------------------------------------------------------------
+  // ZINCIR BAGI ARTIK YAPISAL. Muhafiz `replayRange`'in ICINDE cagriliyor,
+  // yani imleci ilerleten tek yolun uzerinde. Onceki hali TAVSIYE
+  // NITELIGINDEYDI: `replayRange` onu hic cagirmiyordu ve tek cagirani sabit
+  // kodlanmis bir `null` geciyordu, yani calisan hicbir yolda hicbir sey
+  // karsilastirilmiyordu.
+  // ---------------------------------------------------------------
+  it('bag kopuksa replayRange HICBIR SEY yazmaz ve durur', async () => {
+    await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), await parentHash())
+    const before = await snapshot(pool)
+
+    // Imlecin blogu icin kaydedilmis hash `hashFor(RANGE_TO)`; farkli bir
+    // parent hash, uzerine insa ettigimiz zincirin degistigi anlamina gelir.
+    await expect(
+      replayRange(pool, RANGE, RANGE_TO + 10n, hashFor(RANGE_TO + 10n), hashFor(999_999n)),
+    ).rejects.toBeInstanceOf(ReorgDetected)
+
+    // Aralik ya butunuyle girer ya da hic girmez: imlec DE oynamadi.
+    expect(await snapshot(pool)).toEqual(before)
+    expect((await getCursor(pool))?.lastBlock).toBe(RANGE_TO)
+  })
+
+  it('muhafiz cagriyla degil YAPIYLA saglanir: cagiran onu atlayamaz', async () => {
+    // `replayRange`in imzasinda parent hash ZORUNLU. Yanlis bir deger vermek
+    // isi durdurur; dogru degeri vermek tek gecerli yoldur. Yani "kontrolu
+    // cagirmayi unutmak" diye bir durum yok -- kontrol cagiranin elinde degil.
+    await replayRange(pool, RANGE.slice(0, 7), RANGE_TO - 2n, hashFor(RANGE_TO - 2n), GENESIS)
+    const cursor = await getCursor(pool)
+    expect(cursor?.lastBlockHash).toBe(hashFor(RANGE_TO - 2n))
+
+    // Dogru bag -> devam eder.
+    const ok = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), cursor!.lastBlockHash)
+    expect(ok.total).toBe(6)
+  })
+
+  it('ilk kosuda bag kontrolu YAPILMAZ ve bu dal gercekten kullanilir', async () => {
+    // Bos imlecte karsilastirilacak bir sey yok, yani tamamen keyfi bir parent
+    // hash bile gecer. Bu dalin var oldugunu ve ULASILDIGINI gosteriyor --
+    // yoksa yukaridaki testler "ilk cagri neden reddedilmedi" sorusunu
+    // yanitsiz birakirdi.
+    expect(await getCursor(pool)).toBeNull()
+    const r = await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), hashFor(424_242n))
+    expect(r.total).toBe(13)
+  })
+
   it('cursor okumasi bos veritabaninda null doner (ilk kosu)', async () => {
     // `assertContinuous`in `null` dali -- yani "uzerine insa edilmis bir sey
     // yok" durumu -- gercekten ulasilabilir; testte uydurulmus degil.
@@ -282,9 +336,9 @@ describe('exactly-once ingestion', () => {
     // UPDATE'tir ve eslesmeyen WHERE sifir satir gunceller. Testin cakmasi
     // bunu gosterdi.
     const poisoned = [...RANGE, { ...SELL_TRANSFER, eventSeq: toSeq(99_000_000n, 0), token: BOB }]
-    await expect(replayRange(pool, poisoned, RANGE_TO, hashFor(RANGE_TO))).rejects.toThrow(
-      /token_transfers_token_fkey/,
-    )
+    await expect(
+      replayRange(pool, poisoned, RANGE_TO, hashFor(RANGE_TO), await parentHash()),
+    ).rejects.toThrow(/token_transfers_token_fkey/)
 
     for (const table of ['launches', 'trades', 'token_transfers', 'fee_events', 'sync_state']) {
       const { rows } = await pool.query<{ n: number }>(`SELECT count(*)::int n FROM ${table}`)
@@ -323,6 +377,16 @@ async function stableSnapshot(): Promise<Record<string, unknown[]>> {
     }
   }
   return snap
+}
+
+/**
+ * Isledigimiz araligin ILK blogunun `parentHash`'i. Dogru bir zincirde bu,
+ * kayitli imlec hash'ine esittir; imlec bossa (ilk kosu) `GENESIS` gecilir ve
+ * `assertContinuous` hicbir sey karsilastirmaz. Yanlis bir deger gecmenin ne
+ * yaptigini asagidaki "zincir bagi" testleri gosteriyor.
+ */
+async function parentHash(): Promise<string> {
+  return (await getCursor(pool))?.lastBlockHash ?? GENESIS
 }
 
 async function balance(holder: string): Promise<bigint> {

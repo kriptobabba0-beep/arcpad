@@ -21,4 +21,5 @@ export { type Address, fromHexBytes, lower, lowerHash32, pgSafeText, toHexBytes 
 export { MIGRATIONS_DIR, migrationFiles, runMigrations } from './migrate'
 export { createPool, type Pool, type PoolClient, type Queryable, withTransaction } from './pool'
 export { fromSeq, LOG_INDEX_BITS, MAX_BLOCK_NUMBER, MAX_LOG_INDEX, MAX_SEQ, toSeq } from './seq'
+export { assertContinuous, ReorgDetected } from './reorg'
 export { snapshot } from './snapshot'

@@ -137,31 +137,110 @@ describe('runMigrations', () => {
       '002_launches.sql',
       'a'.repeat(64),
     ])
-    await expect(runMigrations(pool)).rejects.toThrow(/002_launches\.sql uygulandiktan SONRA/)
+    await expect(runMigrations(pool)).rejects.toThrow(
+      /002_launches\.sql: uygulandiktan SONRA degismis/,
+    )
   })
 
-  it('ozeti OLMAYAN eski bir satir benimsenir (bilmedigimizi uydurmayiz)', async () => {
-    // Ozet sutunundan once uygulanmis bir defter satiri. Ne oldugunu
-    // BILEMEYIZ; bildigimizi varsayip patlamak da, sessizce gecmek de yanlis
-    // olurdu. Bugunku icerik benimsenir ve yaziya dokulur, boylece BUNDAN
-    // SONRAKI her degisiklik yakalanir.
+  // ---------------------------------------------------------------
+  // KARSILASTIRMA TAM MI? Ilk hali yalnizca "degismis" dosyayi ariyordu ve
+  // uc kacis birakiyordu; ucu de gozden gecirmede olculdu. Hepsi burada.
+  // ---------------------------------------------------------------
+
+  it('OZETSIZ bir defter SERT DURUSTUR, benimseme DEGIL', async () => {
+    // EN ONEMLISI. `6295651`in kurdugu HER veritabaninin defteri boyledir --
+    // yani muhafizin gerekcesi olarak gosterilen durum tam da gecirdigi
+    // durumdu. Olculen sonuc: `ok=true, result=[]`, uzerinde `last_block_hash`
+    // yok, `name_hex` yok, sistem-adresi CHECK'leri yok, `raw jsonb` duruyor
+    // -- ve bugunun ozetleri eski govdelerin uzerine yaziliyor, yani sapma bir
+    // daha ASLA fark edilemiyor.
+    //
+    // BILINMEYEN DURUM SERT DURUSTUR: reddetmenin bedeli, uretimde hicbir
+    // ornegi olmayan bir semada bir `dropdb`; benimsemenin bedeli, tespit
+    // edilemeyen sessizce ayrik bir veritabani.
     await runMigrations(pool)
     await pool.query(
       "UPDATE schema_migrations SET checksum_hex = NULL WHERE filename = '005_fees.sql'",
     )
-    await expect(runMigrations(pool)).resolves.toEqual([])
+    await expect(runMigrations(pool)).rejects.toThrow(/005_fees\.sql: defterde ozet YOK/)
+    // Cozum yolunu SOYLUYOR: yeniden kurun.
+    await expect(runMigrations(pool)).rejects.toThrow(/yeniden kurmakti?r|DROP SCHEMA/)
+  })
 
-    const { rows } = await pool.query<{ checksum_hex: string | null }>(
-      "SELECT checksum_hex FROM schema_migrations WHERE filename = '005_fees.sql'",
+  it('ozetlerin TAMAMI NULL ise (eski surumun defteri) yine durur', async () => {
+    await runMigrations(pool)
+    await pool.query('UPDATE schema_migrations SET checksum_hex = NULL')
+    const err = await runMigrations(pool).catch((e: Error) => e)
+    expect(err).toBeInstanceOf(Error)
+    // ALTI dosyanin ALTISI da raporlanir; ilk bulunanda durup kalmaz.
+    for (const f of EXPECTED) expect((err as Error).message).toContain(f)
+  })
+
+  it('SILINMIS bir applied dosya yakalanir', async () => {
+    // Olculen eski davranis: hic bakilmiyordu, `runMigrations` `[]` donuyor ve
+    // yesil rapor ediyordu.
+    await runMigrations(pool)
+    const files = await migrationFiles()
+    const without = files.filter((f) => f !== '004_transfers_and_holders.sql')
+    await expect(runMigrations(pool, without)).rejects.toThrow(
+      /004_transfers_and_holders\.sql: UYGULANMIS ama diskte yok/,
     )
-    expect(rows[0]?.checksum_hex).toMatch(/^[0-9a-f]{64}$/)
+  })
 
-    // Ve benimsendikten SONRA muhafiz gercekten calisiyor.
+  it('ARAYA EKLENMIS bir dosya yakalanir (sirasiz uygulama)', async () => {
+    // Olculen eski davranis: sessizce, sirasiz uygulaniyordu.
+    await runMigrations(pool)
+    const inserted = '003a_between.tmp.sql'
+    await writeFile(
+      join(MIGRATIONS_DIR, inserted),
+      'CREATE TABLE between_me (x int PRIMARY KEY);\n',
+    )
+    try {
+      await expect(runMigrations(pool, await migrationFiles())).rejects.toThrow(
+        /003a_between\.tmp\.sql: uygulanmamis, ama uygulanmis olan 006_token_stats\.sql/,
+      )
+    } finally {
+      await unlink(join(MIGRATIONS_DIR, inserted))
+    }
+  })
+
+  it('SONA eklenen bir dosya mesrudur ve gecer', async () => {
+    // Kapinin fazla siki OLMADIGININ kaniti: normal evrim yolu -- `007_...` --
+    // engellenmiyor.
+    await runMigrations(pool)
+    const appended = '007_appended.tmp.sql'
+    await writeFile(
+      join(MIGRATIONS_DIR, appended),
+      'CREATE TABLE appended_ok (x int PRIMARY KEY);\n',
+    )
+    try {
+      await expect(runMigrations(pool)).resolves.toEqual([appended])
+      await expect(runMigrations(pool)).resolves.toEqual([])
+    } finally {
+      await unlink(join(MIGRATIONS_DIR, appended))
+      await pool.query('DROP TABLE IF EXISTS appended_ok')
+      await pool.query('DELETE FROM schema_migrations WHERE filename = $1', [appended])
+    }
+  })
+
+  it('uyusmazlik varsa HICBIR DDL calismaz', async () => {
+    // Karsilastirma her seyden ONCE yapilir. Ledger bozukken bekleyen bir
+    // dosya da varsa, o dosya UYGULANMAMALI.
+    await runMigrations(pool)
     await pool.query(
-      "UPDATE schema_migrations SET checksum_hex = $1 WHERE filename = '005_fees.sql'",
-      ['b'.repeat(64)],
+      "UPDATE schema_migrations SET checksum_hex = NULL WHERE filename = '001_deployment_and_cursor.sql'",
     )
-    await expect(runMigrations(pool)).rejects.toThrow(/005_fees\.sql/)
+    const pendingFile = '008_should_not_apply.tmp.sql'
+    await writeFile(
+      join(MIGRATIONS_DIR, pendingFile),
+      'CREATE TABLE should_not_exist (x int PRIMARY KEY);\n',
+    )
+    try {
+      await expect(runMigrations(pool)).rejects.toThrow(/defterde ozet YOK/)
+      await expect(pool.query('SELECT 1 FROM should_not_exist')).rejects.toThrow(/should_not_exist/)
+    } finally {
+      await unlink(join(MIGRATIONS_DIR, pendingFile))
+    }
   })
 
   it('TEMIZ OLMAYAN bir veritabaninda da calisir (test tesadufen bos degil)', async () => {

@@ -2,6 +2,7 @@ import type { Address } from './hex'
 import { lower, lowerHash32, pgSafeText } from './hex'
 import type { Pool, PoolClient, Queryable } from './pool'
 import { withTransaction } from './pool'
+import { assertContinuous } from './reorg'
 
 /**
  * TAM OLARAK BIR KEZ YAZAN uygulayici.
@@ -494,14 +495,28 @@ export async function applyEvent(db: Queryable, e: IngestEvent): Promise<number>
  * Bir blok araliginin olaylarini TEK BIR ISLEMDE uygular ve imleci `to`ya
  * tasir. Gercek ingest dongusunun sekli budur: aralik ya butunuyle girer ya da
  * hic girmez, ve imlec verinin yanindan asla ayrilmaz.
+ *
+ * ZINCIR BAGINI KENDISI KONTROL EDER. `fromParentHash`, isledigimiz araligin
+ * ILK blogunun `parentHash`'idir; kayitli imlec hash'iyle uyusmuyorsa islem
+ * hicbir sey yazmadan `ReorgDetected` ile geri alinir.
+ *
+ * Muhafizin cagrisi BURADA, cunku daha once `indexer`da durup TAVSIYE
+ * NITELIGINDEYDI: `replayRange` onu cagirmiyordu ve tek cagirani sabit
+ * kodlanmis bir `null` geciyordu. Imleci ilerleten tek yol burasi oldugu icin
+ * kontrolu buraya koymak, ozelligi sozlesmeyle degil YAPIYLA saglar.
  */
 export async function replayRange(
   pool: Pool,
   events: readonly IngestEvent[],
   to: bigint,
   toHash: string,
+  fromParentHash: string,
 ): Promise<ReplayResult> {
   return withTransaction(pool, async (tx: PoolClient) => {
+    // Islemin ICINDE okunur: imleci baska bir yazicinin altimizdan
+    // degistirmesi durumunda da dogru degeri gormus oluruz.
+    const current = await getCursor(tx)
+    assertContinuous(current?.lastBlock ?? 0n, current?.lastBlockHash ?? null, fromParentHash)
     const r: ReplayResult = {
       launches: 0,
       trades: 0,

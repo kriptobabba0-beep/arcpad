@@ -103,67 +103,16 @@ export async function finalizedHead(client: PublicClient): Promise<bigint> {
 }
 
 /**
- * Uzerine insa ettigimiz zincir degisti. Ingest DURUR.
+ * ZINCIR BAGI MUHAFIZI -- `@arcpad/db`'den YENIDEN DISA AKTARILIR.
  *
- * Ayri bir sinif, cunku cagiran bunu diger hatalardan AYIRT ETMEK zorunda:
- * gecici bir RPC hatasi yeniden denenir, bu denenmez.
+ * Tanim `packages/db/src/reorg.ts`'e tasindi ve gerekcesi orada. Kisaca:
+ * muhafiz burada dururken TAVSIYE NITELIGINDEYDI -- `replayRange` onu hic
+ * cagirmiyordu ve tek cagirani sabit kodlanmis bir `null` geciyordu, yani
+ * calisan hicbir yolda hicbir sey karsilastirilmiyordu. Imleci ilerleten tek
+ * yol `replayRange` oldugu icin kontrol oraya tasindi; ozellik artik
+ * sozlesmeyle degil YAPIYLA saglaniyor.
+ *
+ * Buradan da disa aktariliyor ki indexer'in yuzeyi degismesin: bir sonraki
+ * ingest dongusu `nextRange` ve `finalizedHead` ile ayni yerden alabilsin.
  */
-export class ReorgDetected extends Error {
-  constructor(
-    readonly cursor: bigint,
-    readonly expectedParentHash: string,
-    readonly actualParentHash: string,
-  ) {
-    super(
-      `ReorgDetected: blok ${cursor + 1n}'in parentHash'i ${actualParentHash}, ` +
-        `ama imlecin ${cursor} numarali blogu icin ${expectedParentHash} kaydedilmisti. ` +
-        `Uzerine insa edilen zincir degismis; ingest durdu.`,
-    )
-    this.name = 'ReorgDetected'
-  }
-}
-
-/**
- * ZINCIR BAGI MUHAFIZI -- reorg'la disari dusmus bir kaydin tutulmasini
- * onleyen sey.
- *
- * BU BIR ONARIM DEGIL, BIR IDDIADIR. Gerekce tam olarak yazili:
- *
- *  - Keeper `launchCount()` slotunu biriktirdigi `Launched` loglariyla
- *    karsilastiriyor; reorg'la dusmus bir kayit o kumeyi FAZLA saydirir ve
- *    keeper bunu bulundugu yerden ENGELLEYEMEZ. Engelleme verinin kuruldugu
- *    yere ait, ve `Launched`a degil HER olay tipine uygulanmali -- bu yuzden
- *    muhafiz olaylara degil BLOKLARA takili.
- *  - IHLAL GORULMEDI, ve bu muhafiz bir ihlal goruldugu icin YAZILMADI. Arc
- *    ~350ms deterministik finality ve reorg olmadigini BELGELIYOR; batch'li
- *    olcum (bkz. `finalizedHead`) `latest`, `safe` ve `finalized`i AYNI blok
- *    gosteriyor; ve ingest yalnizca `finalized` etiketinden okuyor. Yani
- *    burada yakalanacak seyin OLMAMASI bekleniyor.
- *  - Muhafizin gerekcesi ASIMETRIK MALIYET: varsayim tutarsa muhafiz tur
- *    basina bir karsilastirma harcar; tutmazsa ortaya cikan sey SESSIZ bir
- *    fazla sayimdir ve keeper onu ancak OLDUKTAN SONRA fark eder. Yani bu,
- *    gozlenmis bir arizaya cevap degil; belgeye dayanan bir varsayimi, yanlis
- *    oldugu anda KENDINI DUYURAN bir seye cevirme isi.
- *  - KENDINI ONARAN bir geri sarma BILEREK YAZILMADI: reorg uretmeyen bir
- *    zincirde onu hicbir sey egzersiz etmez -- "hicbir seyin calistirmadigi
- *    kod yolu" -- ve guvenilir gorunurdu. Duran bir indexer kurtarilabilir;
- *    sessizce yanlis bir veritabani kurtarilamaz.
- *
- * Maliyet TUR BASINA SABIT: araligin ilk blogunun basligindaki `parentHash`,
- * imlecin blogu icin sakladigimiz hash'e esit olmali. Reorg bir SONEKI
- * yeniden yazdigi icin, imlecten daha derin bir degisiklik de imlecin
- * blogunu degistirir ve ayni tek karsilastirmayla yakalanir.
- *
- * @param cursorHash imlecin blogu icin kaydedilen hash; ilk kosuda `null`.
- */
-export function assertContinuous(
-  cursor: bigint,
-  cursorHash: string | null,
-  firstBlockParentHash: string,
-): void {
-  // ILK KOSU: uzerine insa edilmis bir sey yok, karsilastirilacak sey de yok.
-  if (cursorHash === null) return
-  const expected = cursorHash.toLowerCase()
-  const actual = firstBlockParentHash.toLowerCase()
-  if (expected !== actual) throw new ReorgDetected(cursor, expected, actual)
-}
+export { assertContinuous, ReorgDetected } from '@arcpad/db'

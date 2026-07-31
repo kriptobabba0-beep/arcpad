@@ -22,9 +22,10 @@ CREATE TABLE token_stats (
   holder_count             integer NOT NULL DEFAULT 0 CHECK (holder_count >= 0),
   last_trade_seq           bigint,
   -- "Recent buys" beslemesinin SIRALAMA anahtari. ZAMAN DEGIL SIRA.
-  -- Gerekce Task 10'da; kisaca: Arc'ta ardisik bloklarin %49,1'i ayni
-  -- timestamp'i tasir (olculdu), yani zamana gore siralama yari yariya
-  -- keyfi ve sayfalama sinirinda KARARSIZDIR.
+  -- Gerekce Task 10'da; kisaca: Arc'ta ardisik bloklarin %49,0'i ayni
+  -- timestamp'i tasir -- olculdu 2026-07-31, 553 ciftin 271'i; yontem ve
+  -- dagilim 003_trades_and_curve_state.sql'de. Yani zamana gore siralama yari
+  -- yariya keyfi ve sayfalama sinirinda KARARSIZDIR.
   last_buy_seq             bigint,
   last_trade_at            timestamptz,
   last_buy_at              timestamptz,

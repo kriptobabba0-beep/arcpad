@@ -102,7 +102,13 @@ CREATE TABLE rejected_launches (
   created_seq     bigint PRIMARY KEY,
   token           text NOT NULL,
   curve           text NOT NULL,
-  reason          text NOT NULL,
+  -- SABIT BIR ETIKET, serbest metin DEGIL. Kisitsiz birakildiginda ayni
+  -- U+0000 kamasini tasiyordu (sunucu tarafinda SQLSTATE 22021, islem geri
+  -- alinir, indexer o blokta takilir) ve `reason` tam olarak bir Task 6
+  -- yazarinin cozulmus ismi icine yerlestirecegi yerdir:
+  -- `'name mismatch: ' || name`. Desen bunu IMKANSIZ kilar; ayrintiyi
+  -- tasiyacak yer `raw_data_hex`tir.
+  reason          text NOT NULL CHECK (reason ~ '^[a-z_]{1,64}$'),
   -- Yerel CREATE2 turetmesinin verdigi adres. BIZIM urettigimiz deger oldugu
   -- icin, `token`/`curve`'un aksine, bicimi garantidir ve zorlanir.
   expected        text NOT NULL CHECK (expected ~ '^0x[0-9a-f]{40}$'),
