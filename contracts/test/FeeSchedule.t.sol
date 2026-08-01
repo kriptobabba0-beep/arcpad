@@ -2,8 +2,10 @@
 pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
+import {stdError} from "forge-std/StdError.sol";
 import {FeeSchedule} from "../src/FeeSchedule.sol";
 import {BondingCurve} from "../src/BondingCurve.sol";
+import {GraduationMath} from "../src/libraries/GraduationMath.sol";
 
 /// @title FeeScheduleTest
 /// @notice Tablo CANLI HESAPTAN OKUNDU, uydurulmadi. Kaynak:
@@ -24,6 +26,44 @@ contract FeeScheduleTest is Test {
         // Ucret sabitleri DERLEME ZAMANI sabitleridir; gecerli HERHANGI bir
         // ornek onlari okumaya yeter. Profil yine de gercek testnet ucludur.
         curve = new BondingCurve(address(0xC0FFEE), address(0xE5C0), 1_073_000_000e18, 4_292e15, 793_100_000e18);
+    }
+
+    /// Kanonik 25 esik ve kademe basina (protokol, creator). BAGIMSIZ elle
+    /// yazilmis ikinci kayittir; canli hesaba karsi dogrulanmasi
+    /// `FeeScheduleProvenance.t.sol`da yapilir.
+    function _table() internal pure returns (uint256[25] memory th, uint256[25] memory pr, uint256[25] memory cr) {
+        th = [
+            uint256(0),
+            59_000_000_000,
+            300_000_000_000,
+            500_000_000_000,
+            700_000_000_000,
+            900_000_000_000,
+            2_000_000_000_000,
+            3_000_000_000_000,
+            4_000_000_000_000,
+            5_000_000_000_000,
+            6_000_000_000_000,
+            7_000_000_000_000,
+            8_000_000_000_000,
+            9_000_000_000_000,
+            10_000_000_000_000,
+            11_000_000_000_000,
+            12_000_000_000_000,
+            13_000_000_000_000,
+            14_000_000_000_000,
+            15_000_000_000_000,
+            16_000_000_000_000,
+            17_000_000_000_000,
+            18_000_000_000_000,
+            19_000_000_000_000,
+            20_000_000_000_000
+        ];
+        cr = [uint256(30), 95, 90, 85, 80, 75, 70, 65, 60, 55, 50, 45, 40, 35, 30, 28, 25, 23, 20, 18, 15, 13, 10, 8, 5];
+        pr[0] = 95;
+        for (uint256 i = 1; i < 25; i++) {
+            pr[i] = 25;
+        }
     }
 
     function _assertTier(uint256 mc, uint256 expectedProtocol, uint256 expectedCreator) internal view {
@@ -155,6 +195,32 @@ contract FeeScheduleTest is Test {
         assertEq(cAt, 95);
     }
 
+    /// A-2: HER ESIK ICIN IKI YONLU PROBE -- 24 esigin 24'unde, hem TAM
+    /// USTUNDE hem BIR BIRIM ALTINDA.
+    ///
+    /// BU BOSLUK OLCULEREK BULUNDU (secim incelemesi): eski testlerde 9 bant
+    /// girisinden yalnizca UCUNUN bir-alt probe'u vardi, ve `>=` esikleri
+    /// YUKARI kaydiran mutantlar oluyordu ama ASAGI kaydiranlar
+    /// (900k->800k, 300k->250k, 2M->1M, 700k->600k) HEPSI HAYATTA KALIYORDU.
+    /// Asimetri test ADLARINDAN gorunmuyordu: asagi kaydirma monotonlugu
+    /// BOZMAZ, dolayisiyla hicbir fuzz de gormuyordu. Bir esigi asagi kaydiran
+    /// mutant, o esigin BIR ALTINDAKI degeri yanlis kademeye koyar -- ve
+    /// yalnizca bir-alt probe'u onu yakalar.
+    function test_everyThresholdIsProbedFromBothSides() public view {
+        (uint256[25] memory th, uint256[25] memory pr, uint256[25] memory cr) = _table();
+        for (uint256 i = 1; i < 25; i++) {
+            (uint256 pAt, uint256 cAt) = schedule.tierFor(th[i]);
+            assertEq(pAt, pr[i], "esikte protokol");
+            assertEq(cAt, cr[i], "esikte creator");
+
+            // BIR BIRIM ALTI ONCEKI KADEMEDIR. Esigi ASAGI kaydiran mutant
+            // tam olarak burada olur.
+            (uint256 pBelow, uint256 cBelow) = schedule.tierFor(th[i] - 1);
+            assertEq(pBelow, pr[i - 1], "esigin bir alti protokol");
+            assertEq(cBelow, cr[i - 1], "esigin bir alti creator");
+        }
+    }
+
     /// AYNI SINIR OLCUMU, HER BANT SINIRINDA. Ust kademelerin dallari AYRI
     /// kod yollaridir (lane tablosu, dogrusal formul, sabit dallar) ve bir
     /// giris noktasinda olculen kapsayicilik digerlerinde olculmus SAYILMAZ.
@@ -237,6 +303,62 @@ contract FeeScheduleTest is Test {
         (uint256 p, uint256 c) = schedule.tierFor(schedule.marketCap(12_161_433_369, D));
         assertEq(p, 95);
         assertEq(c, 30);
+    }
+
+    /// A-1: ESIK KOLONU ARTIK KENDISINE DEGIL, ZINCIRE BAGLI.
+    ///
+    /// BOSLUK OLCULEREK BULUNDU: ilk esigi `FeeSchedule.sol`da 59.000 ->
+    /// 250.000 yapip `FeeSchedule.t.sol`daki yedi eslesen literali de
+    /// duzeltmek paketi TAMAMEN YESIL birakiyordu. Iki dosya birbirini
+    /// dogrulamiyor, yalnizca birbirini TEKRAR EDIYORDU.
+    ///
+    /// Bu iddia oyle degil: FDV `D` uzerinden hesaplanir, `D` ise
+    /// `curve.poolSeedSupply()`e pinlenmistir (asagida), yani ZINCIRIN
+    /// soyledigi bir sayidir. Iki dosyayi birlikte duzenleyerek bu orani
+    /// kaydirmak MUMKUN DEGILDIR -- esigi degistiren, orani da degistirir.
+    ///   FDV / ilk esik = 58_783_256_052 / 59_000_000_000 = 0,99632
+    function test_theFirstThresholdIsAnchoredToGraduationFdvNotToItself() public view {
+        // `D` once zincire pinlenir: bu olmadan oran da elle yazilmis iki
+        // sayinin orani olurdu.
+        assertEq(curve.poolSeedSupply(), D, "D curve'un yayinladigi poolSeedSupply degil");
+
+        uint256 fdv = schedule.marketCap(12_161_433_369, D);
+        assertEq(fdv, 58_783_256_052);
+
+        uint256 ratio = (fdv * 100_000) / 59_000_000_000;
+        assertEq(ratio, 99_632, "graduation FDV'sinin ilk esige orani degismis");
+        assertGt(ratio, 99_000, "graduation artik ilk esigin HEMEN altinda degil");
+        assertLt(ratio, 100_000, "graduation ilk esigi GECIYOR -- ucret-notrluk bozuldu");
+    }
+
+    // ---------------------------------------------------------------
+    // A-3: NatSpec'in iddia ettigi tasma savunmalari
+    // ---------------------------------------------------------------
+
+    /// `marketCap` `FullMath.mulDiv` KULLANIR ve NatSpec bunu acikca iddia
+    /// eder: duz `*` `/` ile `quoteRaw * 1e27` tasar ve tasan bir market cap
+    /// EN DUSUK kademeye duserdi. Tanik: `quoteRaw = 1e60` icin
+    /// `1e60 * 1e27 = 1e87` bir `uint256`e (max ~1,16e77) SIGMAZ, ama
+    /// 512-bit ara sonucla bolum `1e47` olarak RAHAT siger.
+    /// Iddiasi olmayan bir savunma yalnizca bir YORUMDUR.
+    function test_marketCapSurvivesAnIntermediateThatPlainArithmeticCannot() public view {
+        assertEq(schedule.marketCap(1e60, 1e40), 1e47);
+    }
+
+    /// forge-config: default.allow_internal_expect_revert = true
+    function test_quoteWeiRevertsRatherThanWrappingOnOverflow() public {
+        vm.expectRevert(stdError.arithmeticError);
+        GraduationMath.quoteWei(type(uint256).max);
+    }
+
+    /// `sqrtPriceX96`in `baseFinal * QUOTE_SCALE`i de KONTROLLUDUR. Sinir
+    /// disi profiller deploy aninda `isSeedable` ile elenir, yani bu revert
+    /// graduation aninda ULASILAMAZDIR -- ama savunmanin VAR OLDUGU burada
+    /// olculur, cunku `unchecked` eklemek sessizce sarardi.
+    /// forge-config: default.allow_internal_expect_revert = true
+    function test_sqrtPriceX96RevertsRatherThanWrappingWhenScalingOverflows() public {
+        vm.expectRevert(stdError.arithmeticError);
+        GraduationMath.sqrtPriceX96(1e18, type(uint256).max, true);
     }
 
     /// FDV ile RAISE AYRI BUYUKLUKLERDIR ve karistirmak sessiz bir hatadir.
