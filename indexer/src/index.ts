@@ -1,36 +1,75 @@
 import 'dotenv/config'
 import { ARC_TESTNET_CHAIN_ID, assertArcChain, createArcClient } from '@arcpad/shared'
-import { finalizedHead, nextRange } from './cursor'
+import { createPool } from '@arcpad/db'
+import { loadConfig } from './config'
+import { createPacer, type RpcClient } from './logs'
+import { ensureDeployment, readFactoryProfile, runWithRetry } from './run'
 
-const MAX_SPAN = 1_000n
-
+/**
+ * INDEXER'IN GIRIS NOKTASI.
+ *
+ * ACILIS SIRASI TESADUFI DEGIL:
+ *   1. konfigurasyon -- eksik bir alan BURADA patlar, ilk turda degil;
+ *   2. zincir kimligi (`assertArcChain`);
+ *   3. PROFIL ZINCIRDEN okunur, `.env`den DEGIL;
+ *   4. kayitli dagitimla karsilastirilir, uyusmazlikta HALT;
+ *   5. dongu.
+ *
+ * Dorduncu adim olmadan iki dagitimin verisi ayni veritabaninda karisir ve
+ * bunun geri donusu YOKTUR: hangi satirin hangi dagitimdan geldigi hicbir
+ * yerde yazili degildir.
+ *
+ * Onceki hali bir GOSTERI yoluydu (head'i okur, bir aralik hesaplar, yazdirir)
+ * ve hicbir sey yazmazdi; imleci ilerleten tek yol artik `runWithRetry`dir.
+ */
 async function main(): Promise<void> {
-  const rpcUrl = process.env['ARC_RPC_URL']
-  if (!rpcUrl) throw new Error('ARC_RPC_URL is not set (see .env.example)')
-
-  const client = createArcClient(rpcUrl)
+  const config = loadConfig()
+  const client = createArcClient(config.rpcUrl)
   await assertArcChain(client)
 
-  // Head'in TEK kaynagi. `client.getBlock({blockTag:'finalized'})` burada
-  // TEKRAR EDILMEZ: tekrar etmek, "tek kaynak" sozunu ikinci bir cagri
-  // yerine yalnizca bir yorumla korurdu.
-  const head = await finalizedHead(client)
-  // Faz 3'te imlec Postgres'ten (`getCursor`) okunacak. Faz 0/1'de yalnizca
-  // baglantinin ve aralik hesabinin calistigini gosteriyoruz.
-  const cursor = head - 10n
-  const range = nextRange(cursor, head, MAX_SPAN)
+  const pool = createPool(config.databaseUrl)
+  const pacer = createPacer({ minIntervalMs: config.minRequestIntervalMs })
+  // viem'in `PublicClient`'i `request`i tasir; indexer yalnizca o yuzeyi ister.
+  const rpc = client as unknown as RpcClient
 
-  // ZINCIR BAGI MUHAFIZI BURADA CAGRILMAZ ve bu bir eksiklik degil, duzeltme:
-  // onceki hali `assertContinuous(cursor, null, ...)` diye cagiriyordu ve
-  // sabit kodlanmis `null` yuzunden HICBIR SEY karsilastirmiyordu -- muhafiz
-  // her seferinde "ilk kosu" dalindan geciyordu. Kontrol artik
-  // `replayRange`'in ICINDE, yani imleci ilerleten tek yolun uzerinde: Task
-  // 5/8 dongusunu kurarken cagriyi eklemeyi UNUTAMAZ, cunku cagri onun elinde
-  // degil.
-  console.log(`arc chainId=${ARC_TESTNET_CHAIN_ID} finalizedHead=${head} nextRange=`, range)
+  const onChain = await readFactoryProfile(
+    rpc,
+    config.factory,
+    BigInt(ARC_TESTNET_CHAIN_ID),
+    config.startBlock,
+    pacer,
+  )
+  const deployment = await ensureDeployment(pool, onChain)
+  console.log(
+    `[indexer] chain=${ARC_TESTNET_CHAIN_ID} factory=${deployment.factory} ` +
+      `escrow=${deployment.escrow} V=${deployment.virtualQuoteReservesWei} ` +
+      `startBlock=${deployment.startBlock}`,
+  )
+
+  const sleep = (ms: number): Promise<void> =>
+    new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+  for (;;) {
+    const result = await runWithRetry(pool, rpc, deployment, config, { pacer })
+    if (result === null) {
+      // Head'e yetistik. `nextRange` `null` dondugunde HICBIR SEY yapilmaz --
+      // ozellikle imlec ILERLETILMEZ.
+      await sleep(config.pollMs)
+      continue
+    }
+    console.log(
+      `[indexer] ${result.from}-${result.to} events=${result.events} ` +
+        `launches=${result.counts.launches} trades=${result.counts.trades} ` +
+        `transfers=${result.counts.transfers} fees=${result.counts.fees}`,
+    )
+  }
 }
 
 main().catch((error: unknown) => {
+  // HALT SINIFI HATALAR BURADA BITER ve surec SIFIRDAN FARKLI bir kodla oler.
+  // Yeniden baslatan bir supervisor'in ayni hatayi tekrar gormesi DOGRUDUR:
+  // `DeploymentMismatch`, `NonCanonicalLaunch` ve `ReorgDetected` operatorun
+  // mudahalesini isteyen olgulardir, kendiliginden gecmezler.
   console.error(error)
   process.exitCode = 1
 })
