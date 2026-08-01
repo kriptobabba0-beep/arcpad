@@ -11,6 +11,8 @@ import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 import {Pool} from "@uniswap/v4-core/src/libraries/Pool.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {GraduationMath} from "../src/libraries/GraduationMath.sol";
+import {BondingCurve} from "../src/BondingCurve.sol";
+import {LAUNCH_TOKEN_TOTAL_SUPPLY} from "../src/LaunchToken.sol";
 
 /// @title GraduationMathTest
 /// @notice BEKLENEN DEGERLER ELLE TURETILMISTIR ve kutuphaneyi cagirarak
@@ -29,13 +31,64 @@ contract GraduationMathTest is Test {
     /// dogrulamamalidir; bu testler icin herhangi bir adres yeterlidir.
     address internal constant HOOK = 0x00000000000000000000000000000000000000a8;
 
-    /// D = S*(T-S)/T, uretim ve testnet profillerinde AYNIDIR (ikisi de
-    /// T = 1_073_000_000e18, S = 793_100_000e18 tasir; yalnizca V ayrisir).
-    ///   D = 793_100_000e18 * 279_900_000e18 / 1_073_000_000e18
+    /// UC AYRI BUYUKLUK, VE IKISINI KARISTIRMAK SESSIZ BIR HATADIR. Harf
+    /// `T` BU DEPODA `virtualTokenReserves`i (vT0) gosterir, TOPLAM ARZI
+    /// DEGIL -- `CurveMath.poolSeedSupply(saleSupply, tokenReserve)` ikinci
+    /// parametreye `virtualTokenReserves_` gecirir. Karisiklik gercek: ayri
+    /// bir izde `vT - rT = TOPLAM_ARZ - S` diye yanlis bir ozdeslik dolasti.
+    ///
+    ///   vT0 = INITIAL_VIRTUAL_TOKEN_RESERVES = 1_073_000_000e18  (1,073e27)
+    ///   S   = INITIAL_REAL_TOKEN_RESERVES    =   793_100_000e18  (7,931e26)
+    ///   N   = LAUNCH_TOKEN_TOTAL_SUPPLY      = 1_000_000_000e18  (1,000e27)
+    ///
+    /// Dogru ozdeslik `vT - rT = vT0 - S`tir (rT `S`ten baslar ve her alimda
+    /// iki taraf ayni miktarda duser), `N - S` DEGIL. Ikisi ESIT DEGILDIR:
+    ///   vT0 - S = 279_900_000e18   <- havuzun ACILIS FIYATINI belirleyen
+    ///   N   - S = 206_900_000e18   <- curve'un DISINDA kalan arz
+    uint256 internal constant VT0 = 1_073_000_000e18;
+    uint256 internal constant S = 793_100_000e18;
+
+    /// D = poolSeedSupply = S*(vT0-S)/vT0. Bu deger asagida CURVE'UN KENDI
+    /// `poolSeedSupply()` uyesine karsi dogrulanir; elle cikarma ile
+    /// TURETILMEZ.
     uint256 internal constant D = 206_886_011_183_597_390_493_942_218;
 
-    /// Vt_final = T - S. Iki profilde de ayni.
+    /// Vt_final = vT0 - S, yani tamamlanmis curve'un `virtualTokenReserves`i.
+    /// `N - S` DEGILDIR.
     uint256 internal constant BASE_FINAL = 279_900_000_000_000_000_000_000_000;
+
+    // ---------------------------------------------------------------
+    // Kimlik: uc buyukluk ayri durur
+    // ---------------------------------------------------------------
+
+    /// `D` ELLE CIKARMAYLA TURETILMEZ; ZINCIRIN SOYLEDIGI DEGERE PINLENIR.
+    /// Curve `poolSeedSupply`i kendisi yayinlar, dolayisiyla bu testteki
+    /// literal onun karsisinda dogrulanir. Bir izde dolasan `vT - rT =
+    /// N - S` yanlis ozdesligi, tam olarak bu literali kaydirarak havuza
+    /// YANLIS MIKTARDA token koydururdu.
+    function test_theSeedSupplyLiteralIsWhatTheCurveItselfPublishes() public {
+        BondingCurve c = new BondingCurve(address(0xC0FFEE), address(0xE5C0), VT0, 4_292e15, S);
+        assertEq(c.poolSeedSupply(), D, "D curve'un yayinladigi poolSeedSupply degil");
+        assertEq(c.INITIAL_VIRTUAL_TOKEN_RESERVES(), VT0);
+        assertEq(c.INITIAL_REAL_TOKEN_RESERVES(), S);
+        // Tamamlanmis curve'un `virtualTokenReserves`i vT0 - S'tir.
+        assertEq(c.INITIAL_VIRTUAL_TOKEN_RESERVES() - c.INITIAL_REAL_TOKEN_RESERVES(), BASE_FINAL);
+    }
+
+    /// `N - S` ILE `poolSeedSupply` AYNI DEGILDIR VE FARK KALICI OLARAK
+    /// KILITLIDIR. Bu, deponun bildigi `N - S != D` olgusunun sayiya
+    /// dokulmus hali:
+    ///   N - S - D = 206_900_000e18 - 206_886_011_183_597_390_493_942_218
+    ///             = 13_988_816_402_609_506_057_782 wei
+    ///             = 13.988,816402609506057782 token
+    /// Ileride bir degisiklik bu ikisini ESITLERSE, 13.988 token'i sessizce
+    /// yutmus demektir -- ve bu test onu kirarak haber verir.
+    function test_theSupplyOutsideTheCurveExceedsThePoolSeedByALockedResidue() public pure {
+        uint256 outsideCurve = LAUNCH_TOKEN_TOTAL_SUPPLY - S;
+        assertEq(outsideCurve, 206_900_000_000_000_000_000_000_000);
+        assertTrue(outsideCurve != BASE_FINAL, "N-S ile vT0-S ayni sayi olamaz");
+        assertEq(outsideCurve - D, 13_988_816_402_609_506_057_782);
+    }
 
     // ---------------------------------------------------------------
     // Sabitlerin kendisi
@@ -440,7 +493,7 @@ contract GraduationMathTest is Test {
     function test_seedingNMinusSWouldNotMoveThePriceButWouldStrandFourteenThousandTokens() public pure {
         uint160 s = 607444218490929862364;
         uint128 withD = GraduationMath.seedLiquidity(s, D, 12_161_433_369);
-        uint128 withNminusS = GraduationMath.seedLiquidity(s, 206_900_000_000_000_000_000_000_000, 12_161_433_369);
+        uint128 withNminusS = GraduationMath.seedLiquidity(s, 206_900_000_000_000_000_000_000_000, 12_161_433_369); // N - S
         assertEq(withD, 1586199999999999999);
         assertEq(withNminusS, 1586200000003369815);
         // ... ve iki durumda da havuza gecilen sqrtPriceX96 AYNIDIR: s
