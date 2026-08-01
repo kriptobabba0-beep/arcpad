@@ -204,6 +204,39 @@ describe('listeler', () => {
     expect((await listTokens(pool, { ageDays: 90 })).rows).toHaveLength(1)
   })
 
+  /**
+   * UCRET PARCALARI VE DORT REZERV DE DONER.
+   *
+   * Frontend'in okuma katmani bunlari ZORUNLU alan olarak istiyor ve sebebi
+   * hesaplanabilirlik: cuzdandan cikan tutar `quote + protocolFee +
+   * creatorFee`dir (satista eksi), ve gerceklesen fiyat grafigi ancak islem
+   * SONRASI rezervlerle kurulabilir. Sutunlar 003'te hep vardi; SELECT onlari
+   * atliyordu -- yani veri kaybi degil, GORUNMEZLIK.
+   */
+  it('listTrades ucret parcalarini ve dort rezervi de dondurur', async () => {
+    const [trade] = await listTrades(pool, TOKEN, { limit: 1 })
+    expect(trade).toBeDefined()
+    const { rows } = await pool.query<Record<string, string>>(
+      `SELECT protocol_fee_wei::text AS p, creator_fee_wei::text AS c,
+              virtual_token_reserves_tok::text AS vt, virtual_quote_reserves_wei::text AS vq,
+              real_token_reserves_tok::text AS rt, real_quote_reserves_wei::text AS rq
+         FROM trades WHERE event_seq = $1`,
+      [trade!.eventSeq.toString()],
+    )
+    const row = rows[0]!
+    expect(trade!.protocolFeeWei).toBe(BigInt(row['p']!))
+    expect(trade!.creatorFeeWei).toBe(BigInt(row['c']!))
+    expect(trade!.virtualTokenReservesTok).toBe(BigInt(row['vt']!))
+    expect(trade!.virtualQuoteReservesWei).toBe(BigInt(row['vq']!))
+    expect(trade!.realTokenReservesTok).toBe(BigInt(row['rt']!))
+    expect(trade!.realQuoteReservesWei).toBe(BigInt(row['rq']!))
+    // Ve tuketicinin gercekten hesapladigi sey kurulabiliyor:
+    const walletDelta = trade!.isBuy
+      ? -(trade!.quoteAmountWei + trade!.protocolFeeWei + trade!.creatorFeeWei)
+      : trade!.quoteAmountWei - trade!.protocolFeeWei - trade!.creatorFeeWei
+    expect(walletDelta).not.toBe(0n)
+  })
+
   it('listTrades en yeniden eskiye ve is_dev NOKTASALDIR', async () => {
     const trades = await listTrades(pool, TOKEN)
     expect(trades.length).toBeGreaterThan(0)

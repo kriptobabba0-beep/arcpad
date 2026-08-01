@@ -14,7 +14,7 @@ import { applyEvents, type ApplyCounts } from './apply'
 import type { IndexerConfig } from './config'
 import { nextRange } from './cursor'
 import type { DecodedEvent, Pacer, RpcClient, WatchSet } from './logs'
-import { createPacer, fetchRange } from './logs'
+import { asRpcError, createPacer, fetchRange } from './logs'
 import { assertRangeApplied } from './verify'
 
 /**
@@ -374,10 +374,26 @@ const PERMANENT = new Set([
   'UnknownCurve',
 ])
 
+/**
+ * ARC'IN KENDI HIZ SINIRI KODU. OLCULDU (canli, 2026-08-02): ardisik
+ * `eth_call`lar 250ms araliklarla yapildiginda alti cagrinin ikisi
+ *
+ *   {"code":-32011,"message":"request limit reached"}
+ *
+ * ile dondu. BU KOD OLMADAN DONGU HIZ SINIRINDA HALT EDIYORDU: `isTransient`
+ * bilinmeyen hatalari -- dogru olarak -- kalici sayar, ve -32011 hicbir
+ * desene uymadigi icin indexer bir hiz siniri yuzunden operator mudahalesi
+ * bekleyerek duruyordu. Canli koşmadan gorulemeyen bir kusur; fixture'lar
+ * bunu uretemez.
+ */
+const RATE_LIMIT_CODE = -32011
+
 export function isTransient(error: unknown): boolean {
   const name = (error as { name?: string } | null)?.name
   if (name !== undefined && PERMANENT.has(name)) return false
-  const message = String((error as { message?: string } | null)?.message ?? '')
+  const { code, message } = asRpcError(error)
+  if (code === RATE_LIMIT_CODE) return true
+  if (/request limit reached|rate limit|too many requests/i.test(message)) return true
   if (/\b(429|502|503|504)\b/.test(message)) return true
   if (/timeout|socket|ECONN|EAI_AGAIN|fetch failed|network/i.test(message)) return true
   // Bilinmeyen bir hata GECICI SAYILMAZ. Varsayilan yon onemli: gecici saymak,

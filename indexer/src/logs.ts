@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import type { Address, Hex } from 'viem'
 import { hexToString } from 'viem'
 import { toSeq } from '@arcpad/db'
@@ -336,11 +337,38 @@ export function createPacer(opts?: { concurrency?: number; minIntervalMs?: numbe
       else queue.push(start)
     })
 
+  /**
+   * IC ICE `run` KILITLENIR VE SESSIZ ASILIR -- BU YUZDEN YASAK.
+   *
+   * OLCULDU: canli entegrasyon testinin ilk hali istemciyi `pacer.run(...)`
+   * ile sarmalayip AYNI pacer'i indexer'a da veriyordu. `concurrency: 1` iken
+   * dis `run` tek slotu tutar, ic `run` ayni slotu bekler ve hicbiri
+   * ilerlemez. Hicbir hata cikmaz: surec ASILIR. `beforeAll` iki kez 300
+   * saniyede timeout oldu ve sebep ancak vitest'in disinda gorundu.
+   *
+   * Bir bayrak yetiyor cunku bu havuz TEK bir olay dongusunde, tek yonlu bir
+   * cagri zincirinde kullaniliyor: `run` icinden yapilan her cagri, o `run`
+   * bitmeden calisir. Kilitlenmeyi bir HATAYA cevirmek, onu bes dakikalik bir
+   * sessizlikten bir satirlik teshise indirir.
+   */
+  // `AsyncLocalStorage` SART: duz bir bayrak ES ZAMANLI cagrilari da ic ice
+  // sanardi. `fetchRange` uc sorguyu `Promise.all` ile baslatir; ilki slotu
+  // alip beklerken ikincisi `run`a girer ve bir bayrak onu -- yanlislikla --
+  // ic ice sayardi. Olculdu: bayrakli hal suite'te 20 testi kirdi. Depolama,
+  // yalnizca AYNI async zincirindeki cagrilari isaretler.
+  const nesting = new AsyncLocalStorage<true>()
+
   return {
     async run<T>(fn: () => Promise<T>): Promise<T> {
+      if (nesting.getStore() === true) {
+        throw new Error(
+          'Pacer.run ic ice cagrildi: bu KILITLENIR (concurrency=1, dis cagri slotu tutar). ' +
+            'Ya istemciyi sarmalayin YA DA pacer i gecirin -- ikisini birden degil.',
+        )
+      }
       await acquire()
       try {
-        return await fn()
+        return await nesting.run(true, fn)
       } finally {
         release()
       }

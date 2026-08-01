@@ -22,18 +22,39 @@ import {
   fixtureNames,
   LIVE,
   loadAllFixtures,
+  loadFixtureFile,
   loadSmoke,
   rawLogs,
   smokeLogs,
 } from './fixtures'
 
-// Yerel fixture'larin adresleri (Foundry deterministik adresleri).
-const FIX = {
-  factory: '0x2e234dae75c793f67a35089c9d99245e1c58470b' as Address,
-  escrow: '0x5615deb798bb3e4dfa0139dfa1b3d433cc23b72f' as Address,
-  curve: '0xdc3fb2dd7a51fa3282758917ee98d9e006aabf87' as Address,
-  token: '0x79f1b7ac99b0dacf3a009e4fbf07ee1e16f97887' as Address,
+/**
+ * Yerel fixture'larin adresleri, FIXTURE'IN KENDISINDEN TURETILIR.
+ *
+ * ELLE YAZILMISLARDI VE KIRILDILAR: `contracts/` tarafindaki bir degisiklik
+ * fixture'lari yeniden uretti, Foundry'nin deterministik adresleri kaydi ve
+ * bu dosyadaki dort sabit birden bayatladi (`fetchRange` bos dondu, cunku
+ * adres filtresi artik hicbir seyle eslesmiyordu). Adresler artik loglardan
+ * OKUNUYOR: `Launched`in yayincisi factory, topic'leri token ve curve,
+ * `Deposited`in yayincisi escrow. Bir sonraki yeniden uretim bu testleri
+ * kirmaz -- kirmasi da gerekmez, cunku olculen sey adresler degil DAVRANIS.
+ */
+function fixtureAddresses(): { factory: Address; escrow: Address; curve: Address; token: Address } {
+  const launch = loadFixtureFile('launch')
+  const launched = launch.logs.find((l) => l.topics[0] === TOPIC0.launched)
+  if (launched === undefined) throw new Error('launch.json icinde Launched yok')
+  const buy = loadFixtureFile('buy_exact_tokens_out')
+  const deposited = buy.logs.find((l) => l.topics[0] === TOPIC0.deposited)
+  if (deposited === undefined) throw new Error('buy fixture icinde Deposited yok')
+  return {
+    factory: launched.address.toLowerCase() as Address,
+    token: `0x${launched.topics[1]!.slice(26)}`.toLowerCase() as Address,
+    curve: `0x${launched.topics[2]!.slice(26)}`.toLowerCase() as Address,
+    escrow: deposited.address.toLowerCase() as Address,
+  }
 }
+
+const FIX = fixtureAddresses()
 
 const EMPTY_WATCH: WatchSet = {
   factory: FIX.factory,
@@ -381,6 +402,9 @@ describe('yanit uzerindeki sert iddialar', () => {
 
   describe('blockTimestamp yedegi', () => {
     const stripped = rawLogs('launch', { block: LAUNCH_BLOCK, stripTimestamp: true })
+    // Fixture'daki log SAYISI `contracts/` tarafindan degisebilir (degisti de:
+    // `FeeScheduleAssigned` eklendi). Iddia sayidan degil ORANDAN kuruluyor:
+    // kac log olursa olsun, TEK bir blok icin TEK bir ek cagri.
 
     it('yedek yol GERCEKTEN kosar ve SESSIZ DEGILDIR', async () => {
       const node = new FakeNode([], {
@@ -403,7 +427,7 @@ describe('yanit uzerindeki sert iddialar', () => {
       await decodeAll(node, stripped, LAUNCH_BLOCK, LAUNCH_BLOCK, createPacer(), {
         onTimestampFallback: () => undefined,
       })
-      expect(stripped.length).toBe(2)
+      expect(stripped.length).toBeGreaterThan(1)
       expect(node.requests).toHaveLength(1)
     })
 
@@ -567,7 +591,11 @@ describe('cozme (canli Arc degerleri)', () => {
   })
 
   it('dizge offset i data disini gosteren bir Launched reddedilir', async () => {
-    const [, launched] = rawLogs('launch', { block: LAUNCH_BLOCK })
+    // KONUMLA DEGIL TOPIC ILE bulunur: fixture'a yeni bir log eklendiginde
+    // (eklendi) konum kayar ve test baska bir logu sinamaya baslardi.
+    const launched = rawLogs('launch', { block: LAUNCH_BLOCK }).find(
+      (l) => l.topics[0] === TOPIC0.launched,
+    )
     // Ilk offset'i (name) devasa yap.
     const evil: RawLog = {
       ...launched!,

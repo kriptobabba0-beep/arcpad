@@ -292,6 +292,31 @@ export interface TradeRow {
   isBuy: boolean
   tokenAmountTok: bigint
   quoteAmountWei: bigint
+  /**
+   * UCRET PARCALARI. AYRI AYRI donerler ve TOPLANMIS bir alan YOKTUR:
+   * ucret `feeOn(q,95) + feeOn(q,30)`tir, `feeOn(q,125)` DEGIL, ve fark canli
+   * zincirde olculdu (ticaret #1'de bir wei). Toplami burada hesaplayip tek
+   * alan olarak donmek, o farki gizleyen bir yol acardi.
+   *
+   * Tuketici icin ANLAMI: bir alicinin cuzdanindan cikan tutar
+   * `quoteAmountWei + protocolFeeWei + creatorFeeWei`, satista ise giren tutar
+   * `quoteAmountWei - protocolFeeWei - creatorFeeWei`. Bu hesap ancak parcalar
+   * gorunurse yapilabilir.
+   */
+  protocolFeeWei: bigint
+  creatorFeeWei: bigint
+  /**
+   * ISLEM SONRASI DORT REZERV. `Trade` dordunu de tasir (BondingCurve.sol
+   * :133-135) ve `trades` onlari AYNEN saklar, yani her ticaretin ANINDAKI
+   * fiyati zincire tekrar sorulmadan turetilebilir:
+   *   gerceklesen fiyat = quote/token, o andaki isaret fiyati = vQ/vT.
+   * Bunlar olmadan bir fiyat grafigi ancak rezervleri yeniden oynatarak
+   * kurulabilirdi.
+   */
+  virtualTokenReservesTok: bigint
+  virtualQuoteReservesWei: bigint
+  realTokenReservesTok: bigint
+  realQuoteReservesWei: bigint
   /** `trader` O ANDAKI ucret creator'i mi. NOKTASAL -- guncel creator'a gore degil. */
   isDev: boolean
 }
@@ -319,11 +344,23 @@ export async function listTrades(
     is_buy: boolean
     token_amount_tok: string
     quote_amount_wei: string
+    protocol_fee_wei: string
+    creator_fee_wei: string
+    virtual_token_reserves_tok: string
+    virtual_quote_reserves_wei: string
+    real_token_reserves_tok: string
+    real_quote_reserves_wei: string
     is_dev: boolean
   }>(
     `SELECT t.event_seq::text AS event_seq, t.tx_hash, t.block_time, t.trader, t.is_buy,
             t.token_amount_tok::text AS token_amount_tok,
             t.quote_amount_wei::text AS quote_amount_wei,
+            t.protocol_fee_wei::text AS protocol_fee_wei,
+            t.creator_fee_wei::text AS creator_fee_wei,
+            t.virtual_token_reserves_tok::text AS virtual_token_reserves_tok,
+            t.virtual_quote_reserves_wei::text AS virtual_quote_reserves_wei,
+            t.real_token_reserves_tok::text AS real_token_reserves_tok,
+            t.real_quote_reserves_wei::text AS real_quote_reserves_wei,
             t.trader = creator_at(t.token, t.event_seq) AS is_dev
        FROM trades t
       WHERE t.token = $1 AND ($2::bigint IS NULL OR t.event_seq < $2)
@@ -338,6 +375,12 @@ export async function listTrades(
     isBuy: r.is_buy,
     tokenAmountTok: BigInt(r.token_amount_tok),
     quoteAmountWei: BigInt(r.quote_amount_wei),
+    protocolFeeWei: BigInt(r.protocol_fee_wei),
+    creatorFeeWei: BigInt(r.creator_fee_wei),
+    virtualTokenReservesTok: BigInt(r.virtual_token_reserves_tok),
+    virtualQuoteReservesWei: BigInt(r.virtual_quote_reserves_wei),
+    realTokenReservesTok: BigInt(r.real_token_reserves_tok),
+    realQuoteReservesWei: BigInt(r.real_quote_reserves_wei),
     isDev: r.is_dev,
   }))
 }

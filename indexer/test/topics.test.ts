@@ -43,13 +43,49 @@ describe('topic0 kimlikleri', () => {
     }
   })
 
-  // ILK YON: her fixture logu bizim tanidigimiz bir olaydir. Bir imza yanlis
-  // yazilirsa hesaplanan selector hicbir gercek logla ortusmez.
-  it('yerel fixture larin her logu TOPIC0 dan birini tasir', () => {
+  /**
+   * INDEXER'IN BILEREK ISLEMEDIGI OLAYLAR.
+   *
+   * Bir olayi "tanimiyoruz" ile "islemiyoruz" ayrimi BURADA yazili olmak
+   * zorunda: cekme katmani bilinmeyen bir `topic0`i sessizce atlar, yani liste
+   * olmasa yeni bir olay hicbir yerde gorunmeden dusrulurdu.
+   *
+   * `FeeScheduleAssigned(address,address)` -- `contracts/` tarafi Faz 2'nin
+   * mezuniyet sonrasi ucret tablosunu baglarken ekledi ve fixture'lara girdi.
+   * Indexer onu BUGUN islemez: egri ustu ticaret ucretleri `Trade`in kendi
+   * parcalarindan gelir, ve mezuniyet sonrasi havuz bu planin KAPSAMI
+   * DISINDADIR (plan, "Kapsam disi"). Faz 2 indexlenmeye baslandiginda bu
+   * satir SILINIR ve bir handler yazilir.
+   */
+  const DELIBERATELY_UNHANDLED: Record<string, string> = {
+    '0xe027304f2e5e4d74279f1d1b4ac8f3d1916482aa45475d7dd67699ee58d8d479':
+      'FeeScheduleAssigned(address,address) -- Faz 2 havuzu, kapsam disi',
+  }
+
+  // ILK YON: her fixture logu ya bizim tanidigimiz bir olaydir ya da BILEREK
+  // islemedigimiz, ADIYLA yazili bir olaydir. Bir imza yanlis yazilirsa
+  // hesaplanan selector hicbir gercek logla ortusmez; yeni bir olay eklendiginde
+  // ise bu test kirilir ve ekleyeni KARAR VERMEYE zorlar.
+  it('yerel fixture larin her logu ya tanidik ya da BILEREK islenmiyor', () => {
     for (const name of fixtureNames()) {
       for (const log of loadFixtureFile(name).logs) {
-        expect(KIND_BY_TOPIC0.get(log.topics[0]!), `${name} logIndex ${log.logIndex}`).toBeDefined()
+        const known = KIND_BY_TOPIC0.get(log.topics[0]!) !== undefined
+        const declared = DELIBERATELY_UNHANDLED[log.topics[0]!] !== undefined
+        expect(known || declared, `${name} logIndex ${log.logIndex} topic0=${log.topics[0]}`).toBe(
+          true,
+        )
       }
+    }
+  })
+
+  // Ve "bilerek islenmiyor" listesi OLU OLMAMALI: icindeki her giris gercek
+  // bir fixture logunda GORUNMELI, yoksa liste bir mazerete donusur.
+  it('bilerek islenmeyen olaylarin her biri gercekten fixture larda var', () => {
+    const seen = new Set(
+      fixtureNames().flatMap((name) => loadFixtureFile(name).logs.map((l) => l.topics[0])),
+    )
+    for (const topic of Object.keys(DELIBERATELY_UNHANDLED)) {
+      expect(seen.has(topic as `0x${string}`)).toBe(true)
     }
   })
 

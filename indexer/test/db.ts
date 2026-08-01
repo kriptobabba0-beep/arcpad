@@ -46,7 +46,11 @@ export const LIVE_DEPLOYMENT: Deployment = {
   chainId: 5_042_002n,
   factory: '0x0d75a4ffb8cd6db4237557e9519591b94d6ab439' as Address,
   escrow: '0xeed4431ead3e27f16d97f677a9c4c1a963df8dc6' as Address,
-  protocolTreasury: '0xe92c64c4f36216ea773f2622f6d5f8530ae92fd2' as Address,
+  // ZINCIRDEN OKUNDU (canli, 2026-08-02: `factory.protocolTreasury()`).
+  // ONCEKI DEGER YANLISTI -- buraya creator'in adresi yazilmisti ve hicbir
+  // birim testi bunu goremezdi, cunku hicbiri zincire sormuyordu. Canli test
+  // ilk kosusunda `DeploymentMismatch` ile patladi.
+  protocolTreasury: '0xebbecfda308ea307e173c6ec19a9c48f53d4b10c' as Address,
   virtualTokenReservesTok: 1_073_000_000n * 10n ** 18n,
   virtualQuoteReservesWei: 4_292n * 10n ** 15n,
   saleSupplyTok: 793_100_000n * 10n ** 18n,

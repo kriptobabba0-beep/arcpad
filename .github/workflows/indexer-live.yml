@@ -1,0 +1,60 @@
+name: indexer-live
+
+# CANLI ARC TESTNET ENTEGRASYON TESTI.
+#
+# AYRI BIR DOSYADIR, `node.yml`e EKLENMEDI: o dosya su anda baska bir izlekte
+# duzenleniyor ve paylasilan bir checkout'ta ayni dosyaya iki taraftan yazmak
+# gereksiz bir catisma yaratirdi. Islev ayni: ayri, ENGELLEMEYEN bir job.
+#
+# `continue-on-error` ADIM SEVIYESINDE, job seviyesinde DEGIL. Fark olculmus
+# bir arizadan geliyor (Faz 0 devir listesi, satir 41): job seviyesinde
+# konuldugunda basarisizlik YESIL gorunur ve kapinin degeri sifira duser.
+# Adim seviyesinde konuldugunda adim KIRMIZI kalir, yalnizca job'un sonucu
+# etkilenmez.
+
+on:
+  schedule:
+    # Gunde bir kez. Canli zincire karsi kosan bir testi her push'ta
+    # kosturmak, testnet RPC'sine gereksiz yuk bindirir ve hiz sinirine
+    # tosladiginda kendi kendini flake yapar (Arc'in -32011'i olculdu).
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: arcpad
+          POSTGRES_PASSWORD: arcpad
+          POSTGRES_DB: arcpad
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # ADIM SEVIYESINDE continue-on-error. Test ATLAMAZ: ARC_RPC_URL yoksa
+      # dosya cokerek "kosmadi"yi gorunur kilar.
+      - name: Live integration test
+        continue-on-error: true
+        run: pnpm --filter @arcpad/indexer test:live
+        env:
+          DATABASE_URL: postgres://arcpad:arcpad@localhost:5432/arcpad
+          ARC_RPC_URL: ${{ secrets.ARC_RPC_URL || 'https://rpc.testnet.arc.network' }}
+          ARC_FACTORY_ADDRESS: '0x0d75a4ffb8cd6db4237557e9519591b94d6ab439'

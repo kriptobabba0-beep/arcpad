@@ -539,23 +539,29 @@ describe('config', () => {
  * burada yazili: baska hicbir alan disarida degil, ozellikle hicbir MIKTAR,
  * SIRA ya da ADRES.
  */
-const CLOCK_COLUMNS: Record<string, string> = {
-  sync_state: 'updated_at',
-  token_stats: 'volume_24h_refreshed_at',
-  schema_migrations: 'applied_at',
-  schema_state: 'updated_at',
+const CLOCK_COLUMNS: Record<string, readonly string[]> = {
+  sync_state: ['updated_at'],
+  // `volume_24h_wei` SEMANIN TEK `now()` BAGIMLI DEGERIDIR: 24 saatlik bir
+  // PENCERE toplamidir ve iki kosu arasindaki saniyelerde bile pencere kenari
+  // gecilebilir. Canli smoke tam olarak ~24 saat oncesine dustugu icin bu
+  // testte GERCEKTEN gecildi (bir kosuda dolu, sonrakinde sifir). Deger
+  // karsilastirmadan cikariliyor; DAVRANISI ayrica ve DETERMINISTIK olarak
+  // olculuyor (`run.test.ts`, "pencere DISINDAKI ticaretler sayilmaz").
+  token_stats: ['volume_24h_refreshed_at', 'volume_24h_wei'],
+  schema_migrations: ['applied_at'],
+  schema_state: ['updated_at'],
 }
 
 function withoutClock(dump: Record<string, unknown[]>): Record<string, unknown[]> {
   const out: Record<string, unknown[]> = {}
   for (const [table, rows] of Object.entries(dump)) {
-    const column = CLOCK_COLUMNS[table]
+    const columns = CLOCK_COLUMNS[table]
     out[table] =
-      column === undefined
+      columns === undefined
         ? rows
         : rows.map((row) => {
             const copy = { ...(row as Record<string, unknown>) }
-            delete copy[column]
+            for (const column of columns) delete copy[column]
             return copy
           })
   }
