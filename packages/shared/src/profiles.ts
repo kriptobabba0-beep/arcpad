@@ -8,12 +8,14 @@ import { encodeAbiParameters, type Hex, keccak256 } from 'viem'
  *
  * AD VE ALANLAR Faz 4'un `web/lib/profile.ts` tanimiyla BIREBIR AYNIDIR; iki
  * taraf arasinda bir cevirici katman olmamasi bilincli bir karardir.
+ *
+ * TANIM ARTIK `curve.ts`TE: bu modul `node:fs` okur ve tarayici girisinden
+ * ERISILEMEZ, ama kota motorunun ayni tipi adlandirmasi gerekiyor. Buradan
+ * yeniden disa aktariliyor, yani mevcut her importer aynen calisir; TEK bir
+ * tanim vardir, ikiz degil.
  */
-export type CurveProfile = {
-  virtualTokenReserves: bigint
-  virtualQuoteReserves: bigint
-  saleSupply: bigint
-}
+export type { CurveProfile } from './curve'
+import type { CurveProfile } from './curve'
 
 /**
  * `keccak256(abi.encode(T, V, S))`, PROFIL BASINA, ELLE YAZILMIS.

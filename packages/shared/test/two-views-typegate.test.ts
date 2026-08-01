@@ -3,7 +3,17 @@ import { createRequire } from 'node:module'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+
+/**
+ * EACH CASE SPAWNS A REAL `tsc`, which costs seconds -- and there are now TWO
+ * files in this package that do it, so they contend for the same cores under
+ * vitest's default parallelism. MEASURED: adding the second file pushed cases
+ * in BOTH files past the 5s default and turned a green suite red for a reason
+ * that had nothing to do with the types. The budget is PER FILE: every other
+ * test in this package keeps the strict default.
+ */
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 })
 
 /**
  * THE TWO-VIEWS RULE, ENFORCED BY THE COMPILER -- AND MEASURED.
@@ -151,6 +161,7 @@ export const total = b.wei + b.units
       'assign',
       `${IMPORTS}
 import type { NativeUsdc } from '../../src/balance'
+
 const erc20 = erc20Usdc(100n * 10n ** 6n)
 export const wrong: NativeUsdc = erc20
 `,
