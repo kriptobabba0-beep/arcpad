@@ -5,6 +5,7 @@ import {Test, Vm} from "forge-std/Test.sol";
 import {BondingCurve} from "../src/BondingCurve.sol";
 import {FeeEscrow} from "../src/FeeEscrow.sol";
 import {LaunchFactory} from "../src/LaunchFactory.sol";
+import {FeeSchedule} from "../src/FeeSchedule.sol";
 import {LaunchToken} from "../src/LaunchToken.sol";
 
 /// SAHTECI. Gercek bir launch'in her alanini kopyalayan, kendi icinde
@@ -131,6 +132,9 @@ contract ContractLauncher {
 }
 
 contract LaunchFactoryTest is Test {
+    /// Faz 2: factory'nin yedinci constructor argumani. KODU OLMALI.
+    FeeSchedule internal FEE_SCHEDULE;
+
     // Uretim profili (spec 5.3, 18 decimal native gorunum).
     uint256 internal constant T = 1_073_000_000e18;
     uint256 internal constant V = 4_292e18;
@@ -150,15 +154,16 @@ contract LaunchFactoryTest is Test {
     LaunchFactory internal factory;
 
     function setUp() public {
+        FEE_SCHEDULE = new FeeSchedule();
         escrow = new FeeEscrow();
-        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S);
+        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         vm.deal(ALICE, 100e18);
         vm.deal(BOB, 100e18);
         vm.deal(BUYER, 1_000_000e18);
     }
 
     function _newFactory(uint256 t_, uint256 v_, uint256 s_) internal returns (LaunchFactory) {
-        return new LaunchFactory(address(escrow), TREASURY, GOVERNOR, t_, v_, s_);
+        return new LaunchFactory(address(escrow), TREASURY, GOVERNOR, t_, v_, s_, address(FEE_SCHEDULE));
     }
 
     /// Fuzz edilen bir dizeyi token sinirlarina sigdirir; bos ise yedegi verir.
@@ -841,8 +846,121 @@ contract LaunchFactoryTest is Test {
         //   T = 1e27, S = T - 2  ->  D = floor((T-2)*2/T) = 1
         //                            S + D = N - 1  (tavanin altinda, tabanin ustunde)
         //                            M = V = 4e18,  R = V(T-2)/2  devasa
-        LaunchFactory ok = _newFactory(N, 4e18, N - 2);
-        assertEq(ok.SALE_SUPPLY(), N - 2);
+        //
+        // FAZ 2 BU KABUL TARAFINI DA ULASILAMAZ KILDI. `D == 1` yalnizca
+        // `T - S` COK KUCUKKEN olur (burada 2), ve o zaman
+        // `scaled = (T-S)*1e12 = 2e12` iken `Vq_final = V*T/(T-S)` devasa
+        // olur; `scaled <= Vq_final >> 64` saglanir ve `isSeedable` false
+        // doner. Cikis yolu V'yi kucultmektir ama piyasa degeri tabani
+        // V >= 4e18 ister -- ve tarama (T, S, V) uzerinde BOS kume verdi.
+        // Yani `D == 1` bir daha deploy EDILEMEZ; sinirin ustu artik
+        // `ProfileNotSeedable` tarafindan tutuluyor ve pinlenen budur.
+        vm.expectRevert(LaunchFactory.ProfileNotSeedable.selector);
+        _newFactory(N, 4e18, N - 2);
+    }
+
+    // ---------------------------------------------------------------
+    // Faz 2: feeSchedule ve feeScheduleOf
+    // ---------------------------------------------------------------
+
+    /// `feeScheduleOf` IKI IS YAPAR VE IKINCISI VARLIK SEBEBIDIR: hook'a
+    /// SABIT GAZLI, sahteciilige kapali bir kanoniklik kaniti verir.
+    /// `feeScheduleOf[token] != 0` <=> bu factory o token'i uretti.
+    function test_feeScheduleOfIsWrittenForEveryLaunchAndZeroForAForgedToken() public {
+        vm.prank(ALICE);
+        (address token,) = factory.launch("Arc", "ARC", "ipfs://a");
+        assertEq(factory.feeScheduleOf(token), address(FEE_SCHEDULE), "launch schedule'i dondurmadi");
+        assertEq(factory.feeSchedule(), address(FEE_SCHEDULE));
+
+        // Ikinci bir launch da AYNI schedule'i alir -- tablo factory basina
+        // sabittir, launch basina degil.
+        vm.prank(ALICE);
+        (address token2,) = factory.launch("Arc2", "ARC2", "ipfs://b");
+        assertEq(factory.feeScheduleOf(token2), address(FEE_SCHEDULE));
+
+        // SAHTE token: bu factory uretmedi, dolayisiyla SIFIR.
+        assertEq(factory.feeScheduleOf(address(0xF04CED)), address(0), "sahte token schedule tasiyor");
+        assertEq(factory.feeScheduleOf(address(0)), address(0));
+
+        // Ve iki yol AYNI cevabi verir: mapping'in kanoniklik kaniti olmasi
+        // tam olarak budur.
+        assertTrue(factory.isCanonical(token));
+        assertTrue(factory.feeScheduleOf(token) != address(0));
+        assertFalse(factory.isCanonical(address(0xF04CED)));
+        assertEq(factory.feeScheduleOf(address(0xF04CED)), address(0));
+    }
+
+    /// `FeeScheduleAssigned` `Launched`DAN ONCE yayilir -- defter yazimi her
+    /// sonraki olaydan ve her dis cagridan once biter.
+    function test_theScheduleAssignmentIsEmittedBeforeLaunched() public {
+        vm.recordLogs();
+        vm.prank(ALICE);
+        (address token,) = factory.launch("Arc", "ARC", "ipfs://a");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        uint256 assignedAt = type(uint256).max;
+        uint256 launchedAt = type(uint256).max;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].topics[0] == keccak256("FeeScheduleAssigned(address,address)")) assignedAt = i;
+            if (logs[i].topics[0] == keccak256("Launched(address,address,address,string,string,string,bytes32)")) {
+                launchedAt = i;
+            }
+        }
+        assertTrue(assignedAt != type(uint256).max, "FeeScheduleAssigned yayilmadi");
+        assertTrue(launchedAt != type(uint256).max, "Launched yayilmadi");
+        assertLt(assignedAt, launchedAt, "atama Launched'dan SONRA yayilmis");
+        assertEq(logs[assignedAt].topics[1], bytes32(uint256(uint160(token))));
+    }
+
+    /// KOD KONTROLU treasury/governor'da YOKKEN burada VARDIR ve fark
+    /// yapisaldir: schedule bir odeme ALICISI degil, CAGRILAN bir kontrattir.
+    function test_theFeeScheduleMustBeNonZeroAndHaveCode() public {
+        vm.expectRevert(LaunchFactory.ZeroFeeSchedule.selector);
+        new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(0));
+
+        vm.expectRevert(LaunchFactory.FeeScheduleHasNoCode.selector);
+        new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(0xDEAD));
+
+        // KONTROL: kodu olan bir adresle GECER.
+        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
+        assertEq(ok.feeSchedule(), address(FEE_SCHEDULE));
+    }
+
+    /// TEK-IHLAL TANIGI, `ProfileNotSeedable` ICIN. Deponun
+    /// `GraduationRaiseTooSmall` dersi aynen gecerlidir: tek bir tanik iki
+    /// korumayi birden ihlal ediyorsa hangisinin reddettigi OLCULEMEZ.
+    /// Bu uclu OBUR BES korumadan da gecer ve YALNIZCA seedability'yi ihlal
+    /// eder; her biri asagida elle dogrulanir.
+    ///
+    /// Turetme: T = 2e27, S = 585_786_437_626_904_951_198_311_276, V = 30e18
+    ///   Vt_final = T - S      = 1_414_213_562_373_095_048_801_688_724
+    ///   R        = V*S/(T-S)  = 12_426_406_871_192_851_464
+    ///   Vq_final = V + R      = 42_426_406_871_192_851_464
+    ///   sinir    = (Vt_final * 1e12) >> 64
+    ///            = 76_675_366_...   ->  Vq_final ONUN ALTINDA, yani
+    ///   `USDC = currency0` dalinda FullMath.mulDiv TASARDI.
+    function test_aProfileViolatingOnlyTheSeedabilityGuardIsRejectedByIt() public {
+        uint256 t7 = 2_000_000_000e18;
+        uint256 s7 = 585_786_437_626_904_951_198_311_276;
+        uint256 v7 = 30e18;
+        uint256 d7 = (s7 * (t7 - s7)) / t7;
+
+        // OBUR BES KORUMA: hepsi GECIYOR.
+        assertLt(s7, t7, "S < T");
+        assertGt(d7, 0, "D > 0");
+        assertLe(s7 + d7, N, "S + D tavanin altinda");
+        assertGe(s7 + d7, factory.MIN_SALE_AND_SEED(), "S + D tabanin ustunde");
+        assertGe((v7 * N) / t7, factory.MIN_OPENING_MARKET_CAP(), "piyasa degeri tabani gecildi");
+        assertGe((v7 * s7) / (t7 - s7), factory.MIN_GRADUATION_RAISE(), "raise tabani gecildi");
+
+        // Geriye TEK sebep kalir.
+        vm.expectRevert(LaunchFactory.ProfileNotSeedable.selector);
+        _newFactory(t7, v7, s7);
+
+        // KONTROL: ayni T ve S, seedable bir V ile KABUL. Bu olmadan test
+        // "herhangi bir sebeple reddedildi"yi de gecerdi.
+        LaunchFactory ok = _newFactory(t7, 60e18, s7);
+        assertEq(ok.SALE_SUPPLY(), s7);
     }
 
     /// TEK-IHLAL TANIGI, `D == 0` korumasi icin. Onceki tanıklarin hepsi
@@ -1130,7 +1248,15 @@ contract LaunchFactoryTest is Test {
         _newFactory(t7, 8e18, s7);
 
         // Ayni T ve S, V buyutulunce KABUL.
-        LaunchFactory ok = _newFactory(t7, 30e18, s7);
+        //
+        // V = 30e18 DEGIL 60e18, VE SEBEBI FAZ 2'DIR: 30e18 ile
+        // `Vq_final = 42_426_406_871_192_851_464` cikar ve bu
+        // `((T-S)*1e12) >> 64 = 76_675_366_...` sinirinin ALTINDA kalir, yani
+        // profil `ProfileNotSeedable` ile reddedilir. Bu bir test hilesi
+        // degil, olculen bir kisittir: o profil GERCEKTEN havuz acamazdi.
+        // Ayni (T, S) icin seedable olan en kucuk V 54_210_108_624_275_221_701;
+        // 60e18 onun rahatca ustunde ve raise tabanini da gecer.
+        LaunchFactory ok = _newFactory(t7, 60e18, s7);
         assertEq(ok.SALE_SUPPLY(), s7);
     }
 
@@ -1177,10 +1303,31 @@ contract LaunchFactoryTest is Test {
 
         // Tam tabanda: R == MIN_GRADUATION_RAISE.
         assertEq((floor_ * half) / (t7 - half), floor_, "S = T/2 must reduce the raise to exactly V");
-        LaunchFactory atFloor = _newFactory(t7, floor_, half);
-        assertEq(atFloor.VIRTUAL_QUOTE_RESERVES(), floor_);
 
-        // Bir wei altinda: REDDEDILIR.
+        // FAZ 2 BU TANIGIN KABUL TARAFINI ULASILAMAZ KILDI, VE BU BIR
+        // KAYIPTIR -- ORTULMUYOR, PINLENIYOR.
+        //
+        // `ProfileNotSeedable` gercek bir kisit ekler ve bu profil onu
+        // GECEMEZ. Turetme (arama ile de dogrulandi: cozum kumesi BOS):
+        //   S = T/2 oldugu icin R == V, yani Vq_final = 2*floor_
+        //                              = 24_322_866_738_120_757_412
+        //   seedability ise Vq_final > ((T-S)*1e12) >> 64
+        //                              = 36_139_711_015_459_319_298 ister
+        //   -> T < ~8,97e26 gerekir; ama `S + D = 0,75T` bandi T ~ 1,3333e27
+        //      ister. IKI ARALIK KESISMEZ.
+        // (T, S) ailesi genellestirilip R == floor_ TAM olacak sekilde tarandi
+        // -- band, piyasa degeri ve seedability'yi AYNI ANDA saglayan hicbir
+        // ucluk yok.
+        //
+        // Yani taban artik TEK YONDEN pinlenir, ve bu test o gercegi kayda
+        // gecirir: tam tabanda `ProfileNotSeedable`, bir wei altinda
+        // `GraduationRaiseTooSmall`. IKI FARKLI RED, ve ikisinin FARKLI
+        // olmasi SIRAYI da pinler -- raise kontrolu seedability'den ONCE
+        // kosar, aksi halde ikisi de ayni hatayi verirdi.
+        vm.expectRevert(LaunchFactory.ProfileNotSeedable.selector);
+        _newFactory(t7, floor_, half);
+
+        // Bir wei altinda: REDDEDILIR, VE BASKA BIR SEBEPLE.
         vm.expectRevert(LaunchFactory.GraduationRaiseTooSmall.selector);
         _newFactory(t7, floor_ - 1, half);
     }
@@ -1210,13 +1357,13 @@ contract LaunchFactoryTest is Test {
     /// iki iddia bunu ayrica sabitler.
     function test_constructorRejectsAZeroEscrowOrTreasury() public {
         vm.expectRevert(LaunchFactory.ZeroEscrowAddress.selector);
-        new LaunchFactory(address(0), TREASURY, GOVERNOR, T, V, S);
+        new LaunchFactory(address(0), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
 
         vm.expectRevert(LaunchFactory.ZeroTreasuryAddress.selector);
-        new LaunchFactory(address(escrow), address(0), GOVERNOR, T, V, S);
+        new LaunchFactory(address(escrow), address(0), GOVERNOR, T, V, S, address(FEE_SCHEDULE));
 
         vm.expectRevert(LaunchFactory.ZeroGovernorAddress.selector);
-        new LaunchFactory(address(escrow), TREASURY, address(0), T, V, S);
+        new LaunchFactory(address(escrow), TREASURY, address(0), T, V, S, address(FEE_SCHEDULE));
 
         assertTrue(
             LaunchFactory.ZeroEscrowAddress.selector != BondingCurve.ZeroEscrow.selector,
@@ -1237,11 +1384,11 @@ contract LaunchFactoryTest is Test {
     /// launch'inda, ancak BIR ALICININ isleminde goruluyor.
     function test_constructorRejectsACodelessEscrow() public {
         vm.expectRevert(LaunchFactory.EscrowHasNoCode.selector);
-        new LaunchFactory(address(0xE0A), TREASURY, GOVERNOR, T, V, S);
+        new LaunchFactory(address(0xE0A), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
 
         // KABUL EDILEN TARAF: kodu olan bir escrow gecer ve gercekten ticaret
         // yapar -- kontrolun fazla siki olmadigini gosterir.
-        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S);
+        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         vm.prank(ALICE);
         (address token, address curve) = ok.launch("Arc Coin", "ARC", "ipfs://cid");
         vm.prank(BUYER);
@@ -1271,20 +1418,20 @@ contract LaunchFactoryTest is Test {
 
         // (a) uye YOK (ve fallback de yok)
         vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
-        new LaunchFactory(noMember, TREASURY, GOVERNOR, T, V, S);
+        new LaunchFactory(noMember, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
 
         // (b) uye REVERT ediyor
         vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
-        new LaunchFactory(reverting, TREASURY, GOVERNOR, T, V, S);
+        new LaunchFactory(reverting, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
 
         // (c) YAPISAL OLARAK IMKANSIZ cevap
         vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
-        new LaunchFactory(lying, TREASURY, GOVERNOR, T, V, S);
+        new LaunchFactory(lying, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
 
         // ...ve gercekci operator hatasinin kendisi: baska bir arcpad
         // kontratini yapistirmak.
         vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
-        new LaunchFactory(someToken, TREASURY, GOVERNOR, T, V, S);
+        new LaunchFactory(someToken, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
     }
 
     /// YOKLAMA FAZLA KISITLAMIYOR -- iki kabul tanigi.
@@ -1303,12 +1450,12 @@ contract LaunchFactoryTest is Test {
         assertGt(escrow.owed(ALICE), 0);
         assertEq(escrow.owed(address(0)), 0, "sifir alici anahtari yazilamaz");
 
-        LaunchFactory used = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S);
+        LaunchFactory used = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         assertEq(used.escrow(), address(escrow));
 
         // (2) vekil.
         EscrowProxy proxy = new EscrowProxy(address(new FeeEscrow()));
-        LaunchFactory proxied = new LaunchFactory(address(proxy), TREASURY, GOVERNOR, T, V, S);
+        LaunchFactory proxied = new LaunchFactory(address(proxy), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         assertEq(proxied.escrow(), address(proxy));
 
         // ...ve vekilli factory gercekten ticaret yapar: yoklama kozmetik
@@ -1351,7 +1498,7 @@ contract LaunchFactoryTest is Test {
             assertGt(escrow.owed(keys[i]), 0, "on kosul: her anahtara alacak yazilmali");
         }
 
-        LaunchFactory f = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S);
+        LaunchFactory f = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         assertEq(f.escrow(), address(escrow), "escrow makul bir anahtarda alacagi oldugu icin reddedildi");
 
         // ...ve YAZILAMAYAN tek anahtar hala sifir. Yoklamanin dayandigi sey
@@ -1371,7 +1518,7 @@ contract LaunchFactoryTest is Test {
         escrow.deposit{value: amount}(recipient);
         assertGt(escrow.owed(recipient), 0, "on kosul: alacak yazilmali");
 
-        LaunchFactory f = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S);
+        LaunchFactory f = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         assertEq(f.escrow(), address(escrow), "escrow bir aliciya alacak yazdigi icin reddedildi");
 
         // VE SEBEBIN KENDISI: sifir alici anahtari YAZILAMAZ, dolayisiyla
@@ -1389,7 +1536,7 @@ contract LaunchFactoryTest is Test {
     /// gostermemek icin buradadir.
     function test_theLedgerProbeDoesNotSeeAPermissiveFallback() public {
         PermissiveFallback wrong = new PermissiveFallback();
-        LaunchFactory accepted = new LaunchFactory(address(wrong), TREASURY, GOVERNOR, T, V, S);
+        LaunchFactory accepted = new LaunchFactory(address(wrong), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         assertEq(accepted.escrow(), address(wrong), "acik hucre kapandiysa bu testi guncelle");
 
         // VE KACIRILANIN SONUCU OLCULUYOR. Bu sekil FAIL-CLOSED DEGILDIR:
@@ -1410,7 +1557,7 @@ contract LaunchFactoryTest is Test {
     /// gelir ve bu sabittir.
     function test_aZeroEscrowIsReportedAsZeroNotAsCodeless() public {
         vm.expectRevert(LaunchFactory.ZeroEscrowAddress.selector);
-        new LaunchFactory(address(0), TREASURY, GOVERNOR, T, V, S);
+        new LaunchFactory(address(0), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         assertEq(address(0).code.length, 0, "address(0) violates BOTH escrow guards");
     }
 
@@ -1459,7 +1606,8 @@ contract LaunchFactoryTest is Test {
         // koruma onu DISLARDI. Kabul edilen kume "EOA"lar degil,
         // "escrow OLMAYAN, sifir OLMAYAN her adres"tir.
         Seeder safeLike = new Seeder();
-        LaunchFactory f2 = new LaunchFactory(address(escrow), address(safeLike), GOVERNOR, T, V, S);
+        LaunchFactory f2 =
+            new LaunchFactory(address(escrow), address(safeLike), GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         vm.prank(ALICE);
         (, address curve2) = f2.launch("Arc Coin", "ARC", "ipfs://cid");
         vm.prank(BUYER);
@@ -1487,13 +1635,13 @@ contract LaunchFactoryTest is Test {
     /// dolayisiyla sifir kontrolu ONCE gelir ve bu sabittir.
     function test_constructorRejectsTheEscrowAsTheTreasury() public {
         vm.expectRevert(LaunchFactory.TreasuryIsTheEscrow.selector);
-        new LaunchFactory(address(escrow), address(escrow), GOVERNOR, T, V, S);
+        new LaunchFactory(address(escrow), address(escrow), GOVERNOR, T, V, S, address(FEE_SCHEDULE));
 
         vm.expectRevert(LaunchFactory.ZeroTreasuryAddress.selector);
-        new LaunchFactory(address(escrow), address(0), GOVERNOR, T, V, S);
+        new LaunchFactory(address(escrow), address(0), GOVERNOR, T, V, S, address(FEE_SCHEDULE));
 
         // Ve escrow'un KENDISI disinda her sey gecer -- koruma dardir.
-        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S);
+        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         assertEq(ok.protocolTreasury(), TREASURY);
     }
 
@@ -1506,12 +1654,12 @@ contract LaunchFactoryTest is Test {
     /// birden olabilir.
     function test_constructorRejectsTheEscrowAsGovernorButAcceptsTheTreasuryAsGovernor() public {
         vm.expectRevert(LaunchFactory.GovernorIsTheEscrow.selector);
-        new LaunchFactory(address(escrow), TREASURY, address(escrow), T, V, S);
+        new LaunchFactory(address(escrow), TREASURY, address(escrow), T, V, S, address(FEE_SCHEDULE));
 
         vm.expectRevert(LaunchFactory.ZeroGovernorAddress.selector);
-        new LaunchFactory(address(escrow), TREASURY, address(0), T, V, S);
+        new LaunchFactory(address(escrow), TREASURY, address(0), T, V, S, address(FEE_SCHEDULE));
 
-        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, TREASURY, T, V, S);
+        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, TREASURY, T, V, S, address(FEE_SCHEDULE));
         assertEq(ok.governor(), TREASURY);
         assertEq(ok.protocolTreasury(), TREASURY);
     }

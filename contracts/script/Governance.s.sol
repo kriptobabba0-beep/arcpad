@@ -5,6 +5,7 @@ import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 import {FeeEscrow} from "../src/FeeEscrow.sol";
 import {LaunchFactory} from "../src/LaunchFactory.sol";
+import {FeeSchedule} from "../src/FeeSchedule.sol";
 import {DeployLib} from "./DeployLib.sol";
 import {Profile, Profiles} from "./Profiles.sol";
 
@@ -461,7 +462,15 @@ contract Governance is Script {
 
         bytes memory factoryInitcode = abi.encodePacked(
             type(LaunchFactory).creationCode,
-            abi.encode(escrow, governor, governor, p.virtualTokenReserves, p.virtualQuoteReserves, p.saleSupply)
+            abi.encode(
+                escrow,
+                governor,
+                governor,
+                p.virtualTokenReserves,
+                p.virtualQuoteReserves,
+                p.saleSupply,
+                DeployLib.predict(DeployLib.FEE_SCHEDULE_SALT, type(FeeSchedule).creationCode)
+            )
         );
         factory = _predictWithSalt(REHEARSAL_FACTORY_SALT, factoryInitcode);
     }
@@ -479,7 +488,15 @@ contract Governance is Script {
 
         factoryInitcode = abi.encodePacked(
             type(LaunchFactory).creationCode,
-            abi.encode(escrow, governor, governor, p.virtualTokenReserves, p.virtualQuoteReserves, p.saleSupply)
+            abi.encode(
+                escrow,
+                governor,
+                governor,
+                p.virtualTokenReserves,
+                p.virtualQuoteReserves,
+                p.saleSupply,
+                DeployLib.predict(DeployLib.FEE_SCHEDULE_SALT, type(FeeSchedule).creationCode)
+            )
         );
         factory = _predictWithSalt(REHEARSAL_FACTORY_SALT, factoryInitcode);
         if (factory.code.length == 0) factory = DeployLib.deploy(REHEARSAL_FACTORY_SALT, factoryInitcode);

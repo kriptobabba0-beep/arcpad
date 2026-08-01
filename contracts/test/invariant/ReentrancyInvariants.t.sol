@@ -7,6 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {BondingCurve} from "../../src/BondingCurve.sol";
 import {FeeEscrow} from "../../src/FeeEscrow.sol";
 import {LaunchFactory} from "../../src/LaunchFactory.sol";
+import {FeeSchedule} from "../../src/FeeSchedule.sol";
 import {LAUNCH_TOKEN_TOTAL_SUPPLY} from "../../src/LaunchToken.sol";
 import {
     DirectCurveFactory,
@@ -47,6 +48,9 @@ import {ReentrancyHandler} from "./ReentrancyHandler.sol";
 ///      iki tarafi birden kaydirir -- `CurveTradingHandler`in bas notundaki
 ///      ayni sinirlama. O katman `CurveMath*.t.sol` tarafindan korunur.
 abstract contract ReentrancyInvariantsBase is Test {
+    /// Faz 2: factory'nin yedinci constructor argumani. KODU OLMALI.
+    FeeSchedule internal FEE_SCHEDULE;
+
     /// Spec 5.3: iki kutsanmis profil YALNIZCA `V`'de ayrisir.
     uint256 internal constant T = 1_073_000_000e18;
     uint256 internal constant S = 793_100_000e18;
@@ -86,6 +90,7 @@ abstract contract ReentrancyInvariantsBase is Test {
     function _selectors() internal pure virtual returns (bytes4[] memory);
 
     function setUp() public {
+        FEE_SCHEDULE = new FeeSchedule();
         virtualQuote = _virtualQuote();
 
         escrow = new FeeEscrow();
@@ -99,7 +104,9 @@ abstract contract ReentrancyInvariantsBase is Test {
         // gercek bir `receive()` calistirir; kodsuz bir treasury o noktayi
         // YAPISAL OLARAK olu birakirdi -- Faz 1b'nin escrow handler'inin
         // olculmus kor noktasinin aynisi.
-        factory = new LaunchFactory(address(escrow), address(actor1), address(this), T, virtualQuote, S);
+        factory = new LaunchFactory(
+            address(escrow), address(actor1), address(this), T, virtualQuote, S, address(FEE_SCHEDULE)
+        );
 
         // Uc curve URUN YOLUYLA: creator'lari aktorlerdir, dolayisiyla
         // creator ucreti de silahli bir alicida birikir.

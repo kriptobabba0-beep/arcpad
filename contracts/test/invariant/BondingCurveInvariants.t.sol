@@ -7,6 +7,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {BondingCurve} from "../../src/BondingCurve.sol";
 import {FeeEscrow} from "../../src/FeeEscrow.sol";
 import {LaunchFactory} from "../../src/LaunchFactory.sol";
+import {FeeSchedule} from "../../src/FeeSchedule.sol";
 import {LaunchToken, LAUNCH_TOKEN_TOTAL_SUPPLY} from "../../src/LaunchToken.sol";
 import {CurveTradingHandler} from "./CurveTradingHandler.sol";
 
@@ -36,6 +37,9 @@ import {CurveTradingHandler} from "./CurveTradingHandler.sol";
 ///      yani tamamlanma-oncesi aritmetigin derinligi kaybolur. Ayirmak
 ///      ikisini de tam boyda birakir.
 abstract contract BondingCurveInvariantsBase is Test {
+    /// Faz 2: factory'nin yedinci constructor argumani. KODU OLMALI.
+    FeeSchedule internal FEE_SCHEDULE;
+
     BondingCurve internal curve;
     IERC20 internal token;
     FeeEscrow internal escrow;
@@ -77,6 +81,7 @@ abstract contract BondingCurveInvariantsBase is Test {
     function _selectors() internal pure virtual returns (bytes4[] memory);
 
     function setUp() public {
+        FEE_SCHEDULE = new FeeSchedule();
         eoas[0] = address(0xA11CE);
         eoas[1] = address(0xB0B);
         eoas[2] = address(0xCAFE);
@@ -690,7 +695,7 @@ abstract contract BondingCurveInvariantsBase is Test {
     ///      test kontratidir, boylece D3'un iki fazli setter'i kampanyanin
     ///      kurulumunda GERCEKTEN yurunur.
     function _launchViaFactory(uint256 v) internal {
-        factory = new LaunchFactory(address(escrow), TREASURY, address(this), T, v, S);
+        factory = new LaunchFactory(address(escrow), TREASURY, address(this), T, v, S, address(FEE_SCHEDULE));
         vm.prank(LAUNCHER);
         (, address curveAddr) = factory.launch("arcpad", "ARC", "ipfs://arcpad");
         curve = BondingCurve(curveAddr);

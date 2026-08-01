@@ -710,7 +710,7 @@ contract SurfaceTest is Test {
     ///      `setProfile` ya da bir `pause` bu kumeye bir GIRIS EKLER ve fazlalik
     ///      hatadir -- iki yonlu esitligin butun anlami budur.
     function test_launchFactoryExposesExactlyTheseFunctions() public view {
-        string[] memory expected = new string[](20);
+        string[] memory expected = new string[](22);
         expected[0] = "GRADUATION_TARGET_DELAY()";
         expected[1] = "MIN_GRADUATION_RAISE()";
         expected[2] = "MIN_OPENING_MARKET_CAP()";
@@ -731,6 +731,9 @@ contract SurfaceTest is Test {
         expected[17] = "proposeGraduationTarget(address)";
         expected[18] = "protocolTreasury()";
         expected[19] = "setProtocolTreasury(address)";
+        // FAZ 2: ucret kademesi tablosu ve token basina dondurulmus atamasi.
+        expected[20] = "feeSchedule()";
+        expected[21] = "feeScheduleOf(address)";
         _assertSetEquals(_functionSignatures("LaunchFactory"), expected, "LaunchFactory fonksiyonlari");
     }
 
@@ -750,7 +753,7 @@ contract SurfaceTest is Test {
     ///      kontrolu yalnizca ilk ikisindedir); izinsizlik ABI'de gorunmez,
     ///      `LaunchFactory.t.sol` onu davranissal olarak olcer.
     function test_launchFactoryFunctionMutabilityAndReturns() public view {
-        string[] memory expected = new string[](20);
+        string[] memory expected = new string[](22);
         expected[0] = "GRADUATION_TARGET_DELAY() view -> (uint256)";
         expected[1] = "MIN_GRADUATION_RAISE() view -> (uint256)";
         expected[2] = "MIN_OPENING_MARKET_CAP() view -> (uint256)";
@@ -771,10 +774,12 @@ contract SurfaceTest is Test {
         expected[17] = "proposeGraduationTarget(address) nonpayable -> ()";
         expected[18] = "protocolTreasury() view -> (address)";
         expected[19] = "setProtocolTreasury(address) nonpayable -> ()";
+        expected[20] = "feeSchedule() view -> (address)";
+        expected[21] = "feeScheduleOf(address) view -> (address)";
         _assertSetEquals(_functionDescriptors("LaunchFactory"), expected, "LaunchFactory tanimlayicilari");
 
         string[] memory ctor = new string[](1);
-        ctor[0] = "constructor(address,address,address,uint256,uint256,uint256) nonpayable";
+        ctor[0] = "constructor(address,address,address,uint256,uint256,uint256,address) nonpayable";
         _assertSetEquals(_constructorDescriptor("LaunchFactory"), ctor, "LaunchFactory constructor");
     }
 
@@ -788,7 +793,7 @@ contract SurfaceTest is Test {
     ///      ve governance'in dort korumasi. `TreasuryIsTheEscrow` F1'in
     ///      olculebilir izidir.
     function test_launchFactoryExposesExactlyTheseErrors() public view {
-        string[] memory expected = new string[](20);
+        string[] memory expected = new string[](23);
         expected[0] = "DegenerateProfile()";
         expected[1] = "EmptyName()";
         expected[2] = "EmptySymbol()";
@@ -821,6 +826,10 @@ contract SurfaceTest is Test {
         // --- CurveMath katmani: bugun ULASILAMAZ, yine de yuzeyde ---
         expected[18] = "InsufficientTokenReserve()";
         expected[19] = "ZeroReserve()";
+        // FAZ 2: `feeSchedule` argumani ve tek yeni profil kontrolu.
+        expected[20] = "ZeroFeeSchedule()";
+        expected[21] = "FeeScheduleHasNoCode()";
+        expected[22] = "ProfileNotSeedable()";
         _assertSetEquals(_errorDescriptors("LaunchFactory"), expected, "LaunchFactory hatalari");
     }
 
@@ -833,16 +842,17 @@ contract SurfaceTest is Test {
     ///      kalir cunku ona gore filtre yapilmaz. Ikisi de `previous`/`current`
     ///      tasir: bir denetci rotasyon gecmisini yalnizca loglardan kurar.
     function test_launchFactoryExposesExactlyTheseEvents() public view {
-        string[] memory expected = new string[](4);
+        string[] memory expected = new string[](5);
         expected[0] = "GraduationTargetChanged(address,address) indexed:(previous,current)";
         expected[1] = "GraduationTargetProposed(address,uint256) indexed:(target)";
         expected[2] = "Launched(address,address,address,string,string,string,bytes32) indexed:(token,curve,creator)";
         expected[3] = "ProtocolTreasuryChanged(address,address) indexed:(previous,current)";
+        expected[4] = "FeeScheduleAssigned(address,address) indexed:(token,schedule)";
         _assertSetEquals(_eventDescriptors("LaunchFactory"), expected, "LaunchFactory olaylari");
     }
 
     function test_launchFactoryAbiCensus() public view {
-        _assertEntryCensus("LaunchFactory", 20, 20, 4, 1, 0, 0);
+        _assertEntryCensus("LaunchFactory", 22, 23, 5, 1, 0, 0);
     }
 
     // ---------------------------------------------------------------

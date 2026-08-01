@@ -5,6 +5,7 @@ import {BondingCurve} from "./BondingCurve.sol";
 import {IFeeEscrow} from "./interfaces/IFeeEscrow.sol";
 import {LaunchToken, LAUNCH_TOKEN_TOTAL_SUPPLY} from "./LaunchToken.sol";
 import {CurveMath} from "./libraries/CurveMath.sol";
+import {GraduationMath} from "./libraries/GraduationMath.sol";
 
 /// @title LaunchFactory
 /// @notice Token ve curve ureten TEK yol, ve bir token'in kimliginin
@@ -254,6 +255,40 @@ contract LaunchFactory {
     address public pendingGraduationTarget;
     uint256 public pendingGraduationTargetEta;
 
+    /// @notice Bu factory'nin URETTIGI HER token'a atanacak ucret kademesi
+    ///         tablosu. IMMUTABLE ve GECIKMESIZDIR.
+    ///
+    /// @dev GECIKMENIN OLMAMASI `graduationTarget` ile TUTARSIZLIK DEGILDIR.
+    ///      Gecikme, GERIYE DONUK etkisi olan tek knob'da vardir: hedef, ZATEN
+    ///      VAR OLAN ve henuz mezun olmamis curve'leri etkiler, cunku curve
+    ///      hedefi `graduate()` ANINDA okur. Schedule oyle degildir -- her
+    ///      launch kendi schedule'ini `feeScheduleOf`a ANINDA dondurur, yani
+    ///      bu uyeyi tasiyan yeni bir factory yalnizca SONRAKI launch'lari
+    ///      etkiler. Tabloyu guncellemek = yeni bir `FeeSchedule` (ve yeni bir
+    ///      factory) deploy etmek; spec'in kendi yukseltme yolu budur.
+    address public immutable feeSchedule;
+
+    /// @notice token -> o token'in launch ANINDA dondurulmus ucret tablosu.
+    ///
+    /// @dev IKI IS YAPAR VE IKINCISI VARLIK SEBEBIDIR:
+    ///        (1) Tabloyu launch aninda DONDURUR.
+    ///        (2) HOOK'A SABIT GAZLI, SAHTECILIGE KAPALI BIR KANONIKLIK KANITI
+    ///            VERIR: `feeScheduleOf[token] != address(0)` <=> bu factory o
+    ///            token'i uretti.
+    ///
+    ///      (2) olmadan hook'un elindeki tek yol `isCanonical` cagirmakti, ve
+    ///      bu kontratin kendi NatSpec'i o yolun SINIRSIZ GAZLI BIR GRIEFING
+    ///      YUZEYI oldugunu OLCEREK kaydetti (3.000.000 gaz butcesiyle
+    ///      dogrudan cagrida 2.958.151 tuketim). Tek bir `SLOAD` o sinifin
+    ///      tamamini hook'un disinda birakir.
+    ///
+    /// @dev HOOK'A TASINAMAZ. Bir hook immutable'i tabloyu KALICI OLARAK
+    ///      dondururdu, cunku hook adresi `PoolKey`in parcasidir -- tabloyu
+    ///      degistirmek havuzun kimligini degistirmek olurdu. Ayrica anlik
+    ///      goruntunun LAUNCH aninda alinmasi gerekir, ki o an yalnizca
+    ///      factory kosar.
+    mapping(address token => address) public feeScheduleOf;
+
     // ---------------------------------------------------------------
     // Olaylar ve hatalar
     // ---------------------------------------------------------------
@@ -270,6 +305,13 @@ contract LaunchFactory {
         string uri,
         bytes32 salt
     );
+
+    /// @notice Bir token'a ucret tablosu atandi -- launch aninda, kalici olarak.
+    /// @dev Indexer bu olayla, `feeScheduleOf`u okumadan, hangi token'in hangi
+    ///      tabloya bagli oldugunu yeniden kurabilir. Tablo degistiginde (yeni
+    ///      bir factory) eski token'lar ESKI tabloda kalir ve bu olay o
+    ///      ayrimin zincirdeki kaydidir.
+    event FeeScheduleAssigned(address indexed token, address indexed schedule);
 
     /// @notice Bir hedef onerildi ve `eta`da inebilir hale gelecek.
     /// @dev GECIKMENIN KAMUYA ACIK YARISI. Bir indexer/keeper yalnizca bunu
@@ -347,6 +389,18 @@ contract LaunchFactory {
     error ZeroEscrowAddress();
     error ZeroTreasuryAddress();
     error ZeroGovernorAddress();
+    error ZeroFeeSchedule();
+    error FeeScheduleHasNoCode();
+
+    /// @notice Profil, HER IKI para birimi siralamasinda temsil edilebilir bir
+    ///         havuz acilis fiyati uretmiyor.
+    /// @dev FAZ 2'NIN GETIRDIGI TEK YENI PROFIL KONTROLU, ve sihirli sayi
+    ///      ICERMEZ: fiili fonksiyonu (`GraduationMath.isSeedable`) cagirir.
+    ///      `Vq_final` ve `Vt_final` yalnizca profile baglidir (token adresine
+    ///      DEGIL), dolayisiyla bu deploy aninda TAM olarak hesaplanabilir --
+    ///      ve hesaplanmazsa ariza GRADUATION aninda, her denemede, o
+    ///      profilden uretilmis HER curve icin ortaya cikardi.
+    error ProfileNotSeedable();
 
     /// @dev `protocolTreasury == escrow`. OLCULDU VE BLOKLAMA LISTESI
     ///      GEREKTIRMEZ: iki adres argumani KOMSUDUR
@@ -591,7 +645,8 @@ contract LaunchFactory {
         address governor_,
         uint256 virtualTokenReserves_,
         uint256 virtualQuoteReserves_,
-        uint256 saleSupply_
+        uint256 saleSupply_,
+        address feeSchedule_
     ) {
         if (escrow_ == address(0)) revert ZeroEscrowAddress();
         if (escrow_.code.length == 0) revert EscrowHasNoCode();
@@ -628,6 +683,32 @@ contract LaunchFactory {
             revert GraduationRaiseTooSmall();
         }
 
+        if (feeSchedule_ == address(0)) revert ZeroFeeSchedule();
+        // KOD KONTROLU BURADA GEREKLIDIR, treasury/governor'da OLMADIGI HALDE:
+        // `feeSchedule` bir odeme ALICISI degil, CAGRILAN bir kontrattir. Kodsuz
+        // bir adres her `tierFor` cagrisinda bos donerdi ve hook ucreti sessizce
+        // sifir hesaplardi -- EOA'nin mesru oldugu treasury durumunun tersi.
+        if (feeSchedule_.code.length == 0) revert FeeScheduleHasNoCode();
+
+        // SIRA BAGLAYICIDIR: bu kontrol piyasa degeri ve graduation raise
+        // tabanlarindan SONRA gelir. Ucurumun kendi tanigi o tabanlari da
+        // ihlal ettigi icin, once gelseydi hangi korumanin reddettigi
+        // olculemezdi -- deponun `GraduationRaiseTooSmall` dersinin aynisi.
+        //
+        // ARGUMANLAR. Payda `virtualTokenReserves_ - saleSupply_`dir, yani
+        // `vT0 - S`. TOPLAM ARZ DEGILDIR ve olamaz: curve'un kapanistaki
+        // `virtualTokenReserves`i budur, ve `N - S` ondan 13.988 token
+        // asagidadir. Pay ise `V + R_formula`dir; fiili `Vq_final` `+1`'ler
+        // yuzunden HER ZAMAN bunun USTUNDEDIR ve tasma `Vq_final` KUCUKKEN
+        // olur, dolayisiyla alt sinirla kontrol etmek gercek yolun kesinlikle
+        // guvenli oldugunu verir.
+        if (!GraduationMath.isSeedable(
+                virtualQuoteReserves_
+                    + CurveMath.graduationRaise(saleSupply_, virtualQuoteReserves_, virtualTokenReserves_),
+                virtualTokenReserves_ - saleSupply_
+            )) revert ProfileNotSeedable();
+
+        feeSchedule = feeSchedule_;
         escrow = escrow_;
         protocolTreasury = protocolTreasury_;
         governor = governor_;
@@ -706,6 +787,12 @@ contract LaunchFactory {
         // gozlenmiyor; "bulgu sayisi" ile izlenebilecegi fikri de gecersiz.
         // Hucre RAPORDA DEGIL BURADA acik yaziliyor: uydurma bir assertion,
         // kapali olmayan bir hucreyi kapali gosterirdi.
+        // SCHEDULE'I LAUNCH ANINDA DONDUR. Yeri BAGLAYICIDIR: `Launched`
+        // olayindan ONCE ve `bind`den ONCE, yani mevcut CEI disiplinine uyar --
+        // her defter yazimi her dis cagridan once biter.
+        feeScheduleOf[token] = feeSchedule;
+        emit FeeScheduleAssigned(token, feeSchedule);
+
         emit Launched(token, curve, msg.sender, name_, symbol_, uri_, salt);
 
         BondingCurve(curve).bind(token);

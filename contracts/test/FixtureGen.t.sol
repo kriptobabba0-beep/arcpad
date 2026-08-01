@@ -6,6 +6,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {BondingCurve} from "../src/BondingCurve.sol";
 import {FeeEscrow} from "../src/FeeEscrow.sol";
 import {LaunchFactory} from "../src/LaunchFactory.sol";
+import {FeeSchedule} from "../src/FeeSchedule.sol";
 import {LaunchToken} from "../src/LaunchToken.sol";
 
 /// SAHTE TOKEN. `LaunchToken`'in alan alan kopyasi ARTI bir `mint()` yolu.
@@ -154,6 +155,9 @@ contract RogueFactory {
 ///      gercek log'dan kurar), ama fixture'lardaki MUTLAK degerler gercek
 ///      zincirdekilerle AYNI OLMAZ.
 contract FixtureGenTest is Test {
+    /// Faz 2: factory'nin yedinci constructor argumani. KODU OLMALI.
+    FeeSchedule internal FEE_SCHEDULE;
+
     // -----------------------------------------------------------------
     // Profil -- TESTNET, ve bu secim tasiyicidir
     // -----------------------------------------------------------------
@@ -209,13 +213,17 @@ contract FixtureGenTest is Test {
     address public protocolTreasury = TREASURY;
     address public graduationTarget;
 
+    bytes32 internal constant FEE_SCHEDULE_ASSIGNED_TOPIC0 =
+        0xe027304f2e5e4d74279f1d1b4ac8f3d1916482aa45475d7dd67699ee58d8d479;
+
     function setUp() public {
+        FEE_SCHEDULE = new FeeSchedule();
         vm.roll(FIXTURE_BLOCK);
         vm.warp(FIXTURE_TIMESTAMP);
         vm.createDir("./fixtures", true);
 
         escrow = new FeeEscrow();
-        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S);
+        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
 
         vm.deal(CREATOR, 1_000e18);
         vm.deal(TRADER, 1_000e18);
@@ -238,7 +246,10 @@ contract FixtureGenTest is Test {
         (address token, address curve) = factory.launch("Arc Coin", "ARC", "ipfs://arcpad/smoke");
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
-        assertEq(logs.length, 2, "launch tam olarak iki log uretmeli");
+        // FAZ 2: UC LOG. `FeeScheduleAssigned` `Launched`den ONCE gelir,
+        // cunku defter yazimi (feeScheduleOf) her dis cagridan ve her sonraki
+        // olaydan once biter.
+        assertEq(logs.length, 3, "launch tam olarak UC log uretmeli");
 
         assertEq(logs[0].emitter, token, "ilk log token'dan gelmeli (mint)");
         assertEq(logs[0].topics[0], TRANSFER_TOPIC0, "ilk log Transfer olmali");
@@ -246,11 +257,26 @@ contract FixtureGenTest is Test {
         assertEq(logs[0].topics[2], bytes32(uint256(uint160(curve))), "mint hedefi curve");
 
         assertEq(logs[1].emitter, address(factory), "ikinci log factory'den gelmeli");
-        assertEq(logs[1].topics[0], LAUNCHED_TOPIC0, "ikinci log Launched olmali");
-        assertEq(logs[1].topics.length, 4, "Launched uc indeksli parametre tasir");
+        assertEq(logs[1].topics[0], FEE_SCHEDULE_ASSIGNED_TOPIC0, "ikinci log FeeScheduleAssigned olmali");
+        assertEq(logs[1].topics[1], bytes32(uint256(uint160(token))), "atama token'a indeksli");
+        assertEq(logs[1].topics[2], bytes32(uint256(uint160(address(FEE_SCHEDULE)))), "atama schedule'a indeksli");
 
-        // CANLI: tx 0x1b5ad264..., blok 54663376, sifir EIP-7708 logu.
-        _assertMatchesLiveArc(0, "launch", 0, logs);
+        assertEq(logs[2].emitter, address(factory), "ucuncu log factory'den gelmeli");
+        assertEq(logs[2].topics[0], LAUNCHED_TOPIC0, "ucuncu log Launched olmali");
+        assertEq(logs[2].topics.length, 4, "Launched uc indeksli parametre tasir");
+
+        // CANLI YAKALAMA BU SENARYO ICIN ARTIK ESKIDIR, VE BU SESSIZCE
+        // GECILMIYOR -- ACIKCA PINLENIYOR.
+        //
+        // `fixtures/arc-live/smoke-receipts.json` 0x0d75a4fF...'deki ALTI
+        // ARGUMANLI factory'den yakalandi ve o factory `FeeScheduleAssigned`
+        // yaymiyordu: canli makbuzda IKI kontrat logu var (Transfer,
+        // Launched), bizde artik UC. Fark BEKLENENDIR ve Task 7 yedi
+        // argumanli factory'yi deploy edip yakalamayi yenileyene kadar surer.
+        // Asagidaki iddia o ara durumu tasir: canli akisin IKI logu, bizim
+        // birinci ve UCUNCU logumuzla AYNI SIRADA eslesmeli. Eslesmezse
+        // graduation oncesi akista gercek bir sapma var demektir.
+        _assertLaunchMatchesSupersededCapture(logs);
         _dump("launch", logs);
     }
 
@@ -573,6 +599,34 @@ contract FixtureGenTest is Test {
     /// @dev SISTEM LOGLARI ELENIR AMA VARLIKLARI IDDIA EDILIR: aksi halde
     ///      canli yakalamadan EIP-7708 loglarini silmek bu testi yesil
     ///      birakirdi ve acik hucre kaybolurdu.
+    /// @dev `launch` icin ozel karsilastirma. Genel `_assertMatchesLiveArc`
+    ///      log SAYILARININ esit olmasini bekler; Faz 2 factory'ye bir olay
+    ///      ekledigi icin bu senaryoda esit DEGILLER. Yakalama yenilenene
+    ///      kadar dogrulanabilecek olan sey, canli akisin iki logunun bizim
+    ///      birinci ve ucuncu logumuza SIRASIYLA denk gelmesidir.
+    function _assertLaunchMatchesSupersededCapture(Vm.Log[] memory logs) private view {
+        string memory json = vm.readFile(ARC_LIVE_CAPTURE);
+        string memory base = "$.receipts[0]";
+        require(
+            keccak256(bytes(vm.parseJsonString(json, string.concat(base, ".scenario")))) == keccak256(bytes("launch")),
+            "canli yakalamada senaryo indeksi kaymis"
+        );
+        require(
+            !vm.keyExistsJson(json, string.concat(base, ".logs[2]")),
+            "canli makbuzda artik ikiden fazla log var -- yakalama yenilenmis olabilir, bu yardimci kaldirilmali"
+        );
+        assertEq(
+            vm.parseJsonString(json, string.concat(base, ".logs[0].topics[0]")),
+            _hex(abi.encodePacked(logs[0].topics[0])),
+            "canli birinci log (Transfer) ayrisiyor"
+        );
+        assertEq(
+            vm.parseJsonString(json, string.concat(base, ".logs[1].topics[0]")),
+            _hex(abi.encodePacked(logs[2].topics[0])),
+            "canli ikinci log (Launched) bizim ucuncu logumuzla ayrisiyor"
+        );
+    }
+
     function _assertMatchesLiveArc(
         uint256 receiptIndex,
         string memory expectScenario,

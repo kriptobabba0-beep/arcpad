@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import {VmSafe} from "forge-std/Vm.sol";
 import {FeeEscrow} from "../src/FeeEscrow.sol";
 import {LaunchFactory} from "../src/LaunchFactory.sol";
+import {FeeSchedule} from "../src/FeeSchedule.sol";
 import {Profile} from "./Profiles.sol";
 
 /// @dev Safe'in yalnizca yoklamanin ihtiyac duydugu iki uyesi.
@@ -24,6 +25,9 @@ struct Plan {
     bytes factoryInitcode;
     address escrow;
     address factory;
+    bytes32 feeScheduleSalt;
+    bytes feeScheduleInitcode;
+    address feeSchedule;
 }
 
 library DeployLib {
@@ -49,9 +53,12 @@ library DeployLib {
     bytes32 internal constant CREATE2_FACTORY_CODEHASH =
         0x2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989;
 
-    /// @dev `LaunchFactory` constructor'inin ABI-encode edilmis alti argumani:
-    ///      6 * 32 bayt. Initcode'un KUYRUGUDUR.
-    uint256 internal constant FACTORY_ARG_BYTES = 192;
+    /// @dev `LaunchFactory` constructor'inin ABI-encode edilmis YEDI argumani:
+    ///      7 * 32 bayt. Initcode'un KUYRUGUDUR. Faz 2'de `feeSchedule`
+    ///      eklendigi icin 192'den 224'e cikti; kuyruk uzunlugu ile decode
+    ///      imzasi AYNI ANDA guncellenmek zorundadir, aksi halde `abi.decode`
+    ///      kaymis bir kuyruktan sessizce anlamsiz degerler okurdu.
+    uint256 internal constant FACTORY_ARG_BYTES = 224;
 
     /// @dev Salt'lar SECILMEZ, TURETILIR.
     ///      keccak256("arcpad.FeeEscrow.v1")
@@ -60,6 +67,7 @@ library DeployLib {
     ///        = 0xbe555c18d58e8926d5c280a3e9cbc89e2f14c6032e597b69644113c7092390e4
     bytes32 internal constant ESCROW_SALT = keccak256("arcpad.FeeEscrow.v1");
     bytes32 internal constant FACTORY_SALT = keccak256("arcpad.LaunchFactory.v1");
+    bytes32 internal constant FEE_SCHEDULE_SALT = keccak256("arcpad.FeeSchedule.v1");
 
     uint256 internal constant MIN_SAFE_THRESHOLD = 2;
     uint256 internal constant MIN_SAFE_OWNERS = 3;
@@ -118,9 +126,24 @@ library DeployLib {
         plan.escrowInitcode = type(FeeEscrow).creationCode;
         plan.escrow = predict(ESCROW_SALT, plan.escrowInitcode);
 
+        // `FeeSchedule` de CONSTRUCTOR ARGUMANSIZDIR, yani escrow gibi adresi
+        // ayni salt ile her zincirde aynidir. Factory'DEN ONCE gelmek
+        // ZORUNDADIR: factory'nin constructor'i onun KODUNU kontrol eder.
+        plan.feeScheduleSalt = FEE_SCHEDULE_SALT;
+        plan.feeScheduleInitcode = type(FeeSchedule).creationCode;
+        plan.feeSchedule = predict(FEE_SCHEDULE_SALT, plan.feeScheduleInitcode);
+
         plan.factoryInitcode = abi.encodePacked(
             type(LaunchFactory).creationCode,
-            abi.encode(plan.escrow, treasury, governor, p.virtualTokenReserves, p.virtualQuoteReserves, p.saleSupply)
+            abi.encode(
+                plan.escrow,
+                treasury,
+                governor,
+                p.virtualTokenReserves,
+                p.virtualQuoteReserves,
+                p.saleSupply,
+                plan.feeSchedule
+            )
         );
         plan.factory = predict(FACTORY_SALT, plan.factoryInitcode);
     }
@@ -178,8 +201,8 @@ library DeployLib {
         for (uint256 i = 0; i < FACTORY_ARG_BYTES; ++i) {
             tail[i] = initcode[start + i];
         }
-        (address escrow_, address treasury_, address governor_, uint256 t, uint256 v, uint256 s) =
-            abi.decode(tail, (address, address, address, uint256, uint256, uint256));
+        (address escrow_, address treasury_, address governor_, uint256 t, uint256 v, uint256 s, address schedule_) =
+            abi.decode(tail, (address, address, address, uint256, uint256, uint256, address));
 
         if (escrow_ != plan.escrow) revert InitcodeDoesNotEncodeThePlan("escrow");
         if (treasury_ != plan.treasury) revert InitcodeDoesNotEncodeThePlan("treasury");
@@ -187,6 +210,7 @@ library DeployLib {
         if (t != plan.profile.virtualTokenReserves) revert InitcodeDoesNotEncodeThePlan("T");
         if (v != plan.profile.virtualQuoteReserves) revert InitcodeDoesNotEncodeThePlan("V");
         if (s != plan.profile.saleSupply) revert InitcodeDoesNotEncodeThePlan("S");
+        if (schedule_ != plan.feeSchedule) revert InitcodeDoesNotEncodeThePlan("feeSchedule");
     }
 
     /// @dev EOA REDDEDILIR VE SEBEBI YAPISALDIR: bir EOA'nin `getThreshold()`

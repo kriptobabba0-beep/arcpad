@@ -6,6 +6,7 @@ import {Deploy} from "../../script/Deploy.s.sol";
 import {DeployLib, ISafeProbe, Plan} from "../../script/DeployLib.sol";
 import {Profile, Profiles} from "../../script/Profiles.sol";
 import {LaunchFactory} from "../../src/LaunchFactory.sol";
+import {FeeSchedule} from "../../src/FeeSchedule.sol";
 
 /// @dev Safe'in yoklanan iki uyesi. `_owners` DINAMIK BIR DIZIDIR ve bu
 ///      kasithdir: fixture'in kendisi `vm.etch`in storage'i tasimadigi tuzagina
@@ -771,13 +772,21 @@ contract DeployTest is Test {
     function constructFactory(Profile memory p) external returns (address) {
         return address(
             new LaunchFactory(
-                _deployedEscrow(), TREASURY, GOVERNOR, p.virtualTokenReserves, p.virtualQuoteReserves, p.saleSupply
+                _deployedEscrow(),
+                TREASURY,
+                GOVERNOR,
+                p.virtualTokenReserves,
+                p.virtualQuoteReserves,
+                p.saleSupply,
+                address(new FeeSchedule())
             )
         );
     }
 
     function deployPlanFactory(Plan memory p) external returns (address) {
         DeployLib.deploy(p.escrowSalt, p.escrowInitcode);
+        // Faz 2: schedule factory'DEN ONCE inmek zorunda.
+        DeployLib.deploy(p.feeScheduleSalt, p.feeScheduleInitcode);
         return DeployLib.deploy(p.factorySalt, p.factoryInitcode);
     }
 

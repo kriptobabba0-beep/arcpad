@@ -25,10 +25,15 @@ contract Deploy is Script {
 
         vm.startBroadcast();
         address escrowAddr = DeployLib.deploy(p.escrowSalt, p.escrowInitcode);
+        // SIRA ZORUNLUDUR: factory'nin constructor'i `feeSchedule`in KODUNU
+        // kontrol eder (`FeeScheduleHasNoCode`). Once schedule inmezse
+        // factory'nin CREATE2'si revert eder.
+        address scheduleAddr = DeployLib.deploy(p.feeScheduleSalt, p.feeScheduleInitcode);
         address factoryAddr = DeployLib.deploy(p.factorySalt, p.factoryInitcode);
         vm.stopBroadcast();
 
         require(escrowAddr == p.escrow, "escrow address diverged from the plan");
+        require(scheduleAddr == p.feeSchedule, "feeSchedule address diverged from the plan");
         require(factoryAddr == p.factory, "factory address diverged from the plan");
 
         DeployLib.assertAsDeployed(p);
@@ -73,6 +78,9 @@ contract Deploy is Script {
         console2.log("factory salt        ", vm.toString(p.factorySalt));
         console2.log("factory initcodeHash", vm.toString(keccak256(p.factoryInitcode)));
         console2.log("factory ADDRESS     ", p.factory);
+        console2.log("schedule salt       ", vm.toString(p.feeScheduleSalt));
+        console2.log("schedule initcodeHsh", vm.toString(keccak256(p.feeScheduleInitcode)));
+        console2.log("schedule ADDRESS    ", p.feeSchedule);
         console2.log("tx 1 -> call", DeployLib.CREATE2_FACTORY, "with salt ++ FeeEscrow initcode");
         console2.log("tx 2 -> call", DeployLib.CREATE2_FACTORY, "with salt ++ LaunchFactory initcode");
     }
