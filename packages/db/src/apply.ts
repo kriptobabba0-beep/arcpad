@@ -375,10 +375,19 @@ export async function applyTransfer(db: Queryable, e: TransferEvent): Promise<nu
   // ifadedeki baska bir CTE'ye GORUNMEZ (hepsi ayni anlik goruntuyu okur), yani
   // yukaridaki yazimlarin sonucunu orada saymak eski sayiyi verirdi. `n === 0`
   // iken hic calismaz, boylece ikinci oynatim TAM OLARAK sifir yazim yapar.
+  // CURVE HARIC TUTULUR VE BU ZORUNLUDUR.
+  //
+  // `LaunchToken` TUM arzi (1e27) constructor'da curve'e basar, yani launch
+  // aninda curve TEK holder'dir. Onu saymak, hicbir kullanicisi olmayan bir
+  // token'in "1 holder" gostermesi demekti -- kullaniciya YANLIS BIR RAKAM.
+  // Dogru deger 0'dir ve `apply-transfer.test.ts` bunu launch fixture'inda
+  // olcer.
   await db.query(
     `UPDATE token_stats s
        SET holder_count = (SELECT count(*) FROM holders h
-                           WHERE h.token = s.token AND h.balance_tok > 0)
+                           LEFT JOIN curve_state c ON c.token = h.token
+                           WHERE h.token = s.token AND h.balance_tok > 0
+                             AND (c.curve IS NULL OR h.holder <> c.curve))
      WHERE s.token = $1`,
     [lower(e.token)],
   )
