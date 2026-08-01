@@ -109,6 +109,16 @@ jobs:
           KEEPER_CHAIN_KEY: ${{ vars.KEEPER_CHAIN_KEY }}
           KEEPER_DRILL_TARGET: "0x000000000000000000000000000000000000dEaD"
           KEEPER_DRILL_CALLER: ${{ vars.KEEPER_DRILL_CALLER }}
+          # TATBIKATIN BEKLEME SURESI, KEEPER'IN POLL ARALIGINDAN TURER
+          # (`drillObserve` `waitMs`), ve ikisi AYRISIRSA is yanlis cevap verir:
+          # keeper 30 saniyede bir poll ederken tatbikat 3 x 5 sn bekleyip
+          # "NO HEARTBEAT ... there was no watcher" derdi -- yani CALISAN bir
+          # izleyiciyi olu ilan eder. Bu ayrisma varsayimsal degil: canli Arc
+          # public RPC'sine karsi 5 saniyelik varsayilan aralik OLCULEREK
+          # calismaz (bkz. runbook bolum 6, "Arc's public RPC"), dolayisiyla
+          # keeper 30 saniyede kosar. Deger buraya ACIKCA yazilir ki iki taraf
+          # ayni sayiyi soylesin.
+          KEEPER_POLL_INTERVAL_MS: ${{ vars.KEEPER_POLL_INTERVAL_MS || '30000' }}
           # PENCERE. `vars.KEEPER_DRILL_SINCE` rota'nin Safe islemini
           # gondermeden hemen once yazdigi ISO damgasidir. Ayarli degilse
           # is BUGUNUN baslangicini kullanir -- yani kanit BU KOSUYA ait

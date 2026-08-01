@@ -1,9 +1,10 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
-import { loadKeeperConfig, loadWatcherConfig } from '../src/config'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { loadKeeperConfig, loadWatcherConfig, REPO_ROOT, resolveFromRepoRoot } from '../src/config'
+import { drillSinkPath } from '../src/drill'
 
 const BOOK_DIR = fileURLToPath(new URL('../../contracts/deploy/testdata', import.meta.url))
 const GOVERNANCE = fileURLToPath(
@@ -116,8 +117,36 @@ describe('loadWatcherConfig', () => {
       { ...base, KEEPER_ALERT_LOG: 'keeper/alerts.log', KEEPER_ALERT_REPEAT_MS: '900000' },
       BOOK_DIR,
     )
-    expect(config.alertLogPath).toBe('keeper/alerts.log')
+    // GORELI YOL DEPO KOKUNE GORE COZULUR. Onceki hal ham dizeyi tutuyordu ve
+    // bu, runbook'un kendi komutunun OLCULEN arizasiydi:
+    // `pnpm --filter` calisma dizinini `keeper/` yapar, `keeper/alerts.log`
+    // `<root>/keeper/keeper/alerts.log`a cozulur, o dizin yoktur, ve keeper
+    // TEK bir kalp atisindan sonra ENOENT ile OLUR.
+    expect(config.alertLogPath).toBe(resolve(REPO_ROOT, 'keeper/alerts.log'))
+    expect(config.alertLogPath).toBe(
+      fileURLToPath(new URL('../../keeper/alerts.log', import.meta.url)),
+    )
     expect(config.alertRepeatMs).toBe(900_000)
+  })
+
+  it('MUTLAK alarm yolu oldugu gibi birakilir -- CI $RUNNER_TEMP/alerts.log gonderir', () => {
+    const absolute = join(tmpdir(), 'arcpad-drill-alerts.log')
+    const config = loadWatcherConfig({ ...base, KEEPER_ALERT_LOG: absolute }, BOOK_DIR)
+    expect(config.alertLogPath).toBe(absolute)
+  })
+
+  it('goreli yol CALISMA DIZININDEN BAGIMSIZDIR -- runbook komutunun arizasi buydu', () => {
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(join(REPO_ROOT, 'keeper'))
+    try {
+      const config = loadWatcherConfig({ ...base, KEEPER_ALERT_LOG: 'keeper/alerts.log' }, BOOK_DIR)
+      // `pnpm --filter` calisma dizinini `keeper/` yapar. Cozum cwd'ye
+      // baglansaydi `<root>/keeper/keeper/alerts.log` cikardi -- OLCULEN
+      // ENOENT tam olarak o yoldu.
+      expect(config.alertLogPath).toBe(resolve(REPO_ROOT, 'keeper/alerts.log'))
+      expect(config.alertLogPath).not.toContain(join('keeper', 'keeper'))
+    } finally {
+      cwd.mockRestore()
+    }
   })
 
   // Uretimde varsayilan (contracts/deploy) dogru olandir. Bu knob staging
@@ -502,5 +531,66 @@ describe('bos ve BOSLUK env degerleri: her degisken, iki bicim', () => {
       // Varsayilan Arc testnet zinciri aranir; `addresses.0.json` ASLA.
       expect(message, JSON.stringify(blank)).not.toContain('addresses.0.json')
     }
+  })
+})
+
+describe('resolveFromRepoRoot', () => {
+  it('ayarlanmamis yol undefined kalir', () => {
+    expect(resolveFromRepoRoot(undefined)).toBeUndefined()
+  })
+
+  it('mutlak yola DOKUNMAZ', () => {
+    const absolute = join(tmpdir(), 'alerts.log')
+    expect(resolveFromRepoRoot(absolute)).toBe(absolute)
+  })
+
+  it('goreli yolu DEPO KOKUNE gore cozer, cwd"ye DEGIL', () => {
+    const cwd = vi.spyOn(process, 'cwd').mockReturnValue(join(REPO_ROOT, 'keeper'))
+    try {
+      expect(resolveFromRepoRoot('keeper/alerts.log')).toBe(resolve(REPO_ROOT, 'keeper/alerts.log'))
+    } finally {
+      cwd.mockRestore()
+    }
+  })
+
+  it('REPO_ROOT gercekten depo kokudur', () => {
+    // `<root>/keeper/package.json` oradan gorulmeli.
+    expect(readFileSync(join(REPO_ROOT, 'keeper', 'package.json'), 'utf8')).toContain(
+      '@arcpad/keeper',
+    )
+  })
+})
+
+/**
+ * IKI GIRIS NOKTASI, TEK DOSYA.
+ *
+ * Keeper `$KEEPER_ALERT_LOG`a YAZAR (`loadWatcherConfig().alertLogPath`),
+ * tatbikat AYNI degiskenden OKUR (`drillSinkPath`). Ayristiklarinda ariza
+ * SESSIZ DEGIL, TERSINE olur: tatbikat "there was no watcher" der -- yani
+ * CALISAN bir izleyiciyi olu ilan eder ve rota'yi yanlis runbook daline
+ * gonderir. OLCULDU: yazan taraf duzeltilip okuyan taraf birakildiginda,
+ * icinde alti kalp atisi olan bir lavaboya karsi tatbikat tam olarak bunu
+ * soyledi.
+ */
+describe('alarm lavabosu yolu: keeper ve tatbikat AYNI dosyayi secer', () => {
+  const base = { ARC_CHAIN_ID: '31337', KEEPER_GOVERNANCE_FILE: GOVERNANCE }
+
+  it.each([
+    'keeper/alerts.log',
+    'alerts.log',
+    './keeper/alerts.log',
+    join(tmpdir(), 'arcpad-abs-alerts.log'),
+  ])('%s -> iki taraf da ayni yolu verir', (value) => {
+    const env = { ...base, KEEPER_ALERT_LOG: value }
+    expect(drillSinkPath(env)).toBe(loadWatcherConfig(env, BOOK_DIR).alertLogPath)
+  })
+
+  it('ayarlanmamis ve bosluk: iki taraf da undefined', () => {
+    for (const blank of ['', ' ', '\t']) {
+      const env = { ...base, KEEPER_ALERT_LOG: blank }
+      expect(drillSinkPath(env), JSON.stringify(blank)).toBeUndefined()
+      expect(loadWatcherConfig(env, BOOK_DIR).alertLogPath).toBeUndefined()
+    }
+    expect(drillSinkPath({ ...base })).toBeUndefined()
   })
 })

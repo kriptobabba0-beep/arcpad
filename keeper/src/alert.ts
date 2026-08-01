@@ -78,9 +78,67 @@ export function renderEvent(event: AlertEvent): string {
  * Bu lavabo tek bir akisa, tek bir dosyaya, `renderEvent`in TEK bicimiyle
  * yazar. Boruyu birlestirme isi operatorden alinir.
  */
-export function fileSink(path: string): AlertSink {
+export function fileSink(path: string, opts?: { now?: () => number }): AlertSink {
+  const now = opts?.now ?? Date.now
+  let lastComplaintAt: number | null = null
   return (event) => {
-    appendFileSync(path, `${renderEvent(event)}\n`, 'utf8')
+    try {
+      appendFileSync(path, `${renderEvent(event)}\n`, 'utf8')
+    } catch (cause) {
+      // ALARM YOLU IZLEYICIYI OLDUREMEZ. OLCULDU, ve runbook'un KENDI komutuydu:
+      //
+      //   $ KEEPER_ALERT_LOG=keeper/alerts.log pnpm --filter @arcpad/keeper start
+      //   keeper ready ...
+      //   HEARTBEAT keeper.graduationWindow at=2026-08-01T02:48:00.576Z
+      //   Error: ENOENT: no such file or directory,
+      //          open 'D:\pumpfunforarc\keeper\keeper\alerts.log'
+      //   [surec olur, exit 1]
+      //
+      // Tek bir kalp atisi, sonra olum. `heartbeat()` `runWatcher` icinde HER
+      // `try`in DISINDA cagrilir (graduationWindow.ts:1122), yani o dosyanin
+      // "ASLA REJECT ETMEZ" sozu bu yol icin YANLISTI: yazma hatasi `poll`u
+      // reddettirir, `main().catch` yakalar, ve DONGU BITER.
+      //
+      // Yolun kendisi ayrica duzeltildi (bkz. `config.ts`, artik depo kokune
+      // gore cozulur) ve acilista denenir (`assertAlertLogWritable`). AMA
+      // BUNLAR YETMEZ: disk dolabilir, izin degisebilir, log rotasyonu dizini
+      // altimizdan alabilir. Alarm lavabosunun BIR SURE SONRA bozulmasi, tek
+      // savunma hattinin olmesi anlamina GELMEMELIDIR.
+      //
+      // SESSIZCE YUTULMAZ. `consoleSink` hala calisiyor olabilir, ama bu
+      // fonksiyon onu goremez; bu yuzden sikayet DOGRUDAN stderr'e ve `PAGE `
+      // onekiyle yazilir -- harici olu-adam anahtarinin filtresi tam olarak o
+      // onektir. Tekrari dakikada bire indirilir: her olayda bir satir, bozuk
+      // bir diskte konsolu doldurup gercek sayfalari gorunmez yapardi.
+      const at = now()
+      if (lastComplaintAt === null || at - lastComplaintAt >= SINK_COMPLAINT_INTERVAL_MS) {
+        lastComplaintAt = at
+        console.error(
+          `PAGE keeper.graduationWindow at=${new Date(at).toISOString()} alert-sink-write-failed: the file sink at ${path} cannot be written, so $KEEPER_ALERT_LOG is NOT a record of this run and the drill that reads it will report "there was no watcher". The watcher itself is still running and stdout/stderr still carry every event: ${cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause)}`,
+        )
+      }
+    }
+  }
+}
+
+/** Lavabo sikayetinin tekrar araligi. Bkz. `fileSink`. */
+export const SINK_COMPLAINT_INTERVAL_MS = 60_000
+
+/**
+ * ACILISTA, BIR KEZ, YUKSEK SESLE. `parseGovernanceAllowlist`in doldurulmamis
+ * bir governance dosyasini reddetmesiyle ayni gerekce: yapilandirma hatasi
+ * calisma aninda sizmak yerine baslangicta patlamalidir.
+ *
+ * Bos bir dize ekler -- dosya varsa icerigini DEGISTIRMEZ, yoksa yaratir.
+ * Boylece hem "dizin yok" hem "izin yok" hemen burada, YOLU ADIYLA duser.
+ */
+export function assertAlertLogWritable(path: string): void {
+  try {
+    appendFileSync(path, '', 'utf8')
+  } catch (cause) {
+    throw new Error(
+      `cannot write the alert sink at ${path} (KEEPER_ALERT_LOG). The keeper writes every PAGE/OK/HEARTBEAT there and the weekly drill reads it; refusing to start rather than discovering this on the first heartbeat. Relative paths resolve against the repo root, not the working directory: ${cause instanceof Error ? cause.message : String(cause)}`,
+    )
   }
 }
 

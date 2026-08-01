@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { isAbsolute, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ARC_TESTNET_CHAIN_ID, loadAddressBook } from '@arcpad/shared'
 import { type Address, getAddress, isAddress } from 'viem'
@@ -257,7 +257,7 @@ export function loadWatcherConfig(env: NodeJS.ProcessEnv, bookDir?: string): Wat
     logScanChunk,
     allowlist: parseGovernanceAllowlist(JSON.parse(raw) as unknown, chainKey),
     // `=== ''` bosluktan ibaret bir degeri KACIRIRDI; tek yardimci her ikisini de alir.
-    alertLogPath: blankToUndefined(env['KEEPER_ALERT_LOG']),
+    alertLogPath: resolveFromRepoRoot(blankToUndefined(env['KEEPER_ALERT_LOG'])),
     alertRepeatMs,
   }
 }
@@ -323,6 +323,42 @@ function coerceAddress(value: unknown, field: string): Address {
     throw new Error(`${field}: expected an address, got ${JSON.stringify(value)}`)
   }
   return getAddress(value)
+}
+
+/** Depo koku. Bu dosya `<root>/keeper/src/config.ts`tir. */
+export const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))
+
+/**
+ * GORELI ALARM YOLU DEPO KOKUNE GORE COZULUR, CALISMA DIZININE GORE DEGIL.
+ *
+ * OLCULDU, ve runbook section 8'in KENDI komutuydu:
+ *
+ *   $ KEEPER_ALERT_LOG=keeper/alerts.log pnpm --filter @arcpad/keeper start
+ *   keeper ready ...
+ *   HEARTBEAT keeper.graduationWindow at=2026-08-01T02:48:00.576Z
+ *   Error: ENOENT: no such file or directory,
+ *          open 'D:\pumpfunforarc\keeper\keeper\alerts.log'
+ *
+ * `pnpm --filter <paket>` komutu PAKET dizininde calistirir, yani calisma
+ * dizini `<root>/keeper`tir ve `keeper/alerts.log` `<root>/keeper/keeper/...`
+ * olur. O dizin yoktur; keeper TEK bir kalp atisi yayip OLUYORDU.
+ *
+ * Bu dosyadaki diger iki yol (`DEFAULT_CURSOR_PATH`, `DEFAULT_GOVERNANCE_PATH`)
+ * ZATEN `import.meta.url` uzerinden cozuluyordu; goreli olan tek yol buydu ve
+ * `.env.example` bunu bir UYARI olarak yaziyordu ("keeper'i depo kokunden
+ * BASKA bir yerden baslatirsaniz cozulmez"). Uyari dogruydu -- ve belgelenmis
+ * baslatma komutu tam olarak o durumu uretiyordu, yani uyariyi kabul etmek
+ * calismayan bir yapilandirmayi kabul etmekti.
+ *
+ * MUTLAK YOL DEGISMEZ. CI zaten `$RUNNER_TEMP/alerts.log` gonderiyor
+ * (.github/workflows/graduation-drill.yml); o yol bu fonksiyondan
+ * DOKUNULMADAN gecer. Depo kokunden `keeper/alerts.log` ile baslatan bir
+ * operator de ONCEKIYLE AYNI dosyayi alir. Degisen tek sey, baska bir yerden
+ * baslatildiginda artik DOGRU dosyaya yazmasidir.
+ */
+export function resolveFromRepoRoot(path: string | undefined): string | undefined {
+  if (path === undefined) return undefined
+  return isAbsolute(path) ? path : resolve(REPO_ROOT, path)
 }
 
 /**

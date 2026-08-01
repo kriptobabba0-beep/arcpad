@@ -159,6 +159,7 @@ The list of curves and the amount at risk are **already in your page**; you do n
 | `chain-time-frozen` | The chain timestamp has not moved for ten poll intervals. The budget is deliberately loose because **Arc documents that block timestamps may not increase**, so short pauses are normal and do not page. | Same checks as `chain-head-stale`. |
 | `log-scan-failed` / `log-scan-incomplete` | The log scan threw, or the slot and the logs disagree about how many launches exist. The window is still being classified correctly; **only the exposure number is untrustworthy.** | Read the direction in the page. `UNDER-reporting`: compare `launchCount()` on the explorer with the count in the page; the RPC's log index is behind or truncating. `OVER-reporting`: **stop the keeper, delete `keeper/.cursor`, restart.** The scan rebuilds from `startBlock`. Nothing is lost — the cursor is a cache, not a record. |
 | `classify-threw` | The window could not be classified. The page carries the **raw slot values** instead; read them against §9 and act on those. | Report it: this is a watcher bug, not a chain event. |
+| `alert-sink-write-failed` | `$KEEPER_ALERT_LOG` cannot be written — disk full, permissions, the directory rotated away. **The watcher is still running and stdout/stderr still carry everything**, but the file the drill reads is no longer a record of this run, so the next `observe` will report "there was no watcher". This line goes to stderr with the `PAGE ` prefix and repeats at most once a minute. | `df -h`, and `ls -ld "$(dirname "$KEEPER_ALERT_LOG")"`. Fix the path or the disk and restart; nothing is lost from the console stream. |
 | Nothing at all, for hours | The process is **dead**. It cannot page about itself. | The external dead-man's switch — see below. |
 
 **The in-process canary does not catch `SIGKILL`, and this is the one thing you must not assume it does.** A killed process emits nothing, including its own alarm. The mercy for that case is external: the alert sink receives a `HEARTBEAT keeper.graduationWindow` line every poll, and the sink's own "no heartbeat received in N minutes" rule is what fires. **Configure that rule when you configure the sink; a heartbeat nobody is counting is decoration.** The in-process canary covers *wedged but alive*, which is the more common and more insidious case.
@@ -173,6 +174,45 @@ cast call $ARC_FACTORY_ADDRESS "protocolTreasury()(address)"           --rpc-url
 ```
 
 A non-zero `pendingGraduationTarget` that is not in `expected-governance.json` is a §2.
+
+### Arc's public RPC rate-limits reads, and the poll interval must respect it
+
+**Measured 2026-08-01 against `https://rpc.testnet.arc.network` and the live factory `0x0d75a4fFb8CD6dB4237557E9519591b94d6Ab439`.** These are the numbers, not an estimate:
+
+| What was sent | Result |
+|---|---|
+| 6 concurrent `eth_call` (exactly what one poll's slot read does) | 2 succeeded, 4 returned **HTTP 429 / `{"code":-32011,"message":"request limit reached"}`** |
+| 6 sequential `eth_call`, no delay | 2 succeeded, 4 rate-limited |
+| 12 `eth_call`, 100 ms apart | 12/12 succeeded |
+| 12 `eth_call`, 200 ms apart, six repeats | 4/12, 4/12, 4/12, 4/12, 12/12, 8/12 |
+
+**The last row is the important one: the same pacing gives different answers.** The budget is not a function of *our* request rate, so there is no "slow enough" constant to pick. Anyone tuning this by inserting sleeps is tuning against noise.
+
+Two consequences, both of which are now handled in code — do not re-derive them, but do re-measure before relying on them:
+
+1. **viem does not retry this error.** `viem@2.55.8` returns the JSON-RPC body when the HTTP status is not OK and the body carries a numeric `code` (`utils/rpc/http.js`), so Arc's 429 becomes `RpcRequestError(code -32011)`, never `HttpRequestError(status 429)`. `shouldRetry` (`utils/buildRequest.js`) then matches only `-1`, `-32005`, `-32603` and `429` and **returns early**, making the HTTP-429 branch below it unreachable. The default `retryCount: 3` never applies. `keeper/src/chainReader.ts` adds the retry that recognises `-32011`, with exponential backoff and full jitter. **It retries the rate limit and nothing else** — a revert or a wrong chain still surfaces immediately.
+
+2. **`KEEPER_POLL_INTERVAL_MS=5000` does not work against this RPC, and its failure mode is a page storm, not silence.** With retries a poll costs 5.5–13 s of wall clock; the canary's budget is `2 × pollIntervalMs`, so at 5 s it pages `watcher-heartbeat-missed` and `chain-head-stale` continuously *while the watcher is healthy*. Measured over 173 s at 5 s: **22 heartbeats and 15 pages, all of them canary false positives.** Over 200 s at 30 s: **6 heartbeats, 0 pages.**
+
+> **Run the watcher with `KEEPER_POLL_INTERVAL_MS=30000` against the public Arc endpoint.** A dedicated or paid endpoint may support less; prove it with the table above before lowering it. The drill workflow passes the same number (`vars.KEEPER_POLL_INTERVAL_MS`, default `30000`) because `drillObserve`'s wait is derived from it — if the two disagree, the drill declares a live watcher dead.
+
+If you ever see `watcher-state-read-failed` naming `request limit reached`, the retry budget has been exhausted, not bypassed: the endpoint is degraded beyond what 14 attempts can ride out. That is a real page.
+
+### First live startup, for the record
+
+Run 2026-08-01 against the production book `contracts/deploy/addresses.5042002.json` and chain 5042002 — **the first time anything loaded that book.** The whole chain passed with no changes to the book: `loadAddressBook(5042002)` → chainId/chainKey → book↔`expected-governance.json` → env agreement → `assertArcChain` → `assertFactoryMatchesGovernance` against the live factory. Then, steady state:
+
+```
+launchCount() slot                     1
+Launched logs from block 54661437      1   (block 54663376, curve 0x7938BE34...324c9C)
+cross-check                            AGREE -> exposure is EXACT
+completed-but-ungraduated curves       1
+realQuoteReserves                      12161433369060378714 wei
+rendered on a page                     12.16 USDC
+classification                         quiet (no-pending-target), zero pages
+```
+
+The `log-scan-incomplete` detector's basis — slot `launchCount` as an exact oracle for the `Launched` count — **held on a real chain for the first time here.**
 
 ---
 
@@ -220,16 +260,32 @@ Step 4 is the only executable proof, on the live chain, of the expiry bound. The
 ```bash
 # The keeper must be running with KEEPER_ALERT_LOG set -- that is what
 # produces the file the drill reads. Never make it with a shell redirect.
-KEEPER_ALERT_LOG=keeper/alerts.log pnpm --filter @arcpad/keeper start
+# 30000 is not a preference; see the measurements in section 6.
+KEEPER_ALERT_LOG=keeper/alerts.log KEEPER_POLL_INTERVAL_MS=30000 \
+  pnpm --filter @arcpad/keeper start
 
 # Then, after the Safe has proposed:
 KEEPER_DRILL_TARGET=0x000000000000000000000000000000000000dEaD \
 KEEPER_ALERT_LOG=keeper/alerts.log \
+KEEPER_POLL_INTERVAL_MS=30000 \
   pnpm --filter @arcpad/keeper drill observe
 
 # Three days later:
 pnpm --filter @arcpad/keeper drill expiry
 ```
+
+**Both paths above are resolved for you, and until 2026-08-01 neither was.** `pnpm --filter <pkg>` runs in the *package* directory, so `.env` was looked for at `keeper/.env` (absent — the command died with `ARC_RPC_URL is not set`) and `keeper/alerts.log` resolved to `keeper/keeper/alerts.log` (absent — the keeper emitted exactly one heartbeat and then died with `ENOENT` from inside `heartbeat()`, which sits outside every `try` in `runWatcher`). Both are now resolved against the repo root, absolute paths are passed through untouched, the sink is probed once at startup, and a *later* sink failure pages instead of killing the process. Verified by running the block above against the live chain: 6 heartbeats, 0 pages, sink written to `keeper/alerts.log`.
+
+`keeper/alerts.log` is already ignored by `.gitignore`'s `*.log`, so writing it inside the tree leaves nothing to clean up.
+
+### You cannot point the shipped watcher at the rehearsal factory
+
+There is a real proposal standing on the **rehearsal** factory `0xfed991C6B9AD7144Df3d670c6b9EcF3620ac6eA5` (`pendingGraduationTarget` `0x…dEaD`, `eta` 2026-08-03T22:26:20Z, expiring 2026-08-06T22:26:20Z — all four read off the chain on 2026-08-01). It looks like a free live drill. **It is not reachable**, and the reason is worth knowing:
+
+- Redirecting with `KEEPER_ADDRESS_BOOK_DIR` fails in `packages/shared`, by field name: `launchFactory: is 0xfed991C6… but CREATE2(0x4e59…56C, <FACTORY_SALT>, <factoryInitcodeHash>) derives 0x0d75a4fF…`. The book must derive its own factory address, and no edit to a book can make a non-canonical address derive.
+- **`assertFactoryMatchesGovernance` would *not* have stopped it.** Measured: the rehearsal factory reports the *same* governor Safe, so the startup pin passes against it. The pin catches a wrong **governor**, not a wrong **factory**. Every sibling factory this Safe deploys walks straight through it — which is exactly the stale-drill-directory shape the pin was written for.
+
+So the redirect hazard is closed harder than the keeper's own comments claimed, but it is closed by `packages/shared/src/addresses.ts`, not by the keeper. **If that CREATE2 check is ever relaxed, the keeper has no second line here.**
 
 In CI the keeper runs elsewhere, so the workflow's `Fetch the keeper's alert sink` step `curl`s `$KEEPER_ALERT_LOG_URL` into place first. That variable is the drill's one unconfigured input; while it is unset the job fails and names it.
 

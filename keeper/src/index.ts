@@ -1,8 +1,8 @@
-import 'dotenv/config'
 import { ARC_TESTNET_CHAIN_ID, assertArcChain, createArcClient } from '@arcpad/shared'
 import type { Address } from 'viem'
 import {
   alert,
+  assertAlertLogWritable,
   consoleSink,
   createLiveness,
   createThrottle,
@@ -13,6 +13,7 @@ import {
 } from './alert'
 import { viemChainReader } from './chainReader'
 import { loadKeeperConfig, loadWatcherConfig } from './config'
+import { loadRepoEnv } from './env'
 import {
   assertFactoryMatchesGovernance,
   fileCursorStore,
@@ -20,6 +21,12 @@ import {
 } from './watch/graduationWindow'
 
 async function main(): Promise<void> {
+  // DEPO KOKUNDEKI `.env`, CALISMA DIZINDEKI DEGIL. Bkz. `loadRepoEnv`:
+  // `pnpm --filter @arcpad/keeper start` -- runbook'un yazdigi komut --
+  // calisma dizinini `keeper/` yapar ve `import 'dotenv/config'` orada
+  // `.env` bulamazdi, yani belgelenmis baslatma komutu HIC BASLAMIYORDU.
+  loadRepoEnv()
+
   const config = loadKeeperConfig(process.env)
   const watcher = loadWatcherConfig(process.env)
   const client = createArcClient(config.rpcUrl)
@@ -41,6 +48,11 @@ async function main(): Promise<void> {
   // Onceki halde tatbikat bu dosyayi OKUYORDU ama hicbir sey YAZMIYORDU, ve
   // operatorun akla gelen ilk komutu (`> alerts.log`) tam olarak `PAGE`
   // satirlarini dusururdu -- cunku `consoleSink` onlari stderr'e ayirir.
+  //
+  // YAZILABILIRLIGI ACILISTA, BIR KEZ DENENIR. Onceki hal yolu ilk KALP
+  // ATISINDA deniyordu, ve bir ENOENT orada surecin TAMAMINI oldururdu --
+  // olculdu, runbook'un kendi komutuyla, tek bir kalp atisindan sonra.
+  if (watcher.alertLogPath !== undefined) assertAlertLogWritable(watcher.alertLogPath)
   const sink =
     watcher.alertLogPath === undefined
       ? consoleSink

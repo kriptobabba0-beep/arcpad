@@ -450,12 +450,35 @@ export type Allowlist = {
  *     zincir der ki: F.governor() == G
  *     governance dosyasi der ki: governor G olmali
  *
- * Bayat bir tatbikat dizini BASKA bir gercek factory'yi gosterirse o
- * factory'nin governor'i tutmaz ve izleyici BASLAMAZ. Yanlis yapilandirmanin
- * sessiz kalabildigi tek yol kapanir: sessizlik yerine acilista gurultu.
- *
  * Kodu olmayan bir adres de burada duser -- `eth_call` bos doner ve
  * `asAddress` ALANI ADIYLA firlatir.
+ *
+ * BU PIN NE KADAR GUCLU: OLCULDU, VE ONCEKI IDDIA FAZLA GUCLUYDU.
+ *
+ * Burada "bayat bir tatbikat dizini BASKA bir gercek factory'yi gosterirse o
+ * factory'nin governor'i tutmaz ve izleyici BASLAMAZ" yaziyordu. 2026-08-01'de
+ * canli zincire karsi denendi ve TUTMADI: bu projenin kendi tatbikat
+ * factory'si `0xfed991C6B9AD7144Df3d670c6b9EcF3620ac6eA5` uretim factory'siyle
+ * AYNI governor Safe'ini bildirir, dolayisiyla pin ONA KARSI DA GECER. Yani
+ * pin, "yanlis factory" durumunu degil yalnizca "yanlis GOVERNOR" durumunu
+ * yakalar; ayni governor tarafindan deploy edilmis her kardes factory pinin
+ * altindan gecer -- ve gercek yanlis-yapilandirma senaryosu tam olarak odur.
+ *
+ * ONU GERCEKTEN DURDURAN SEY BASKA BIR DOSYADIR: `packages/shared`in
+ * `parseAddressBook`i, `launchFactory`in `CREATE2(0x4e59...56C, FACTORY_SALT,
+ * factoryInitcodeHash)`ten TUREDIGINI dogrular. Ayni denemede yonlendirilmis
+ * defter tam olarak orada, ALANI ADIYLA reddedildi:
+ *
+ *   AddressBookError launchFactory: is 0xfed991C6... but CREATE2(...) derives
+ *   0x0d75a4fF...
+ *
+ * Bunun iki sonucu var ve ikisi de kayda gecmelidir. (1) Yonlendirme tehlikesi
+ * SANILANDAN DAHA SIKI kapali -- kanonik CREATE2 adresinde OLMAYAN hicbir
+ * factory'ye defter uzerinden isaret edilemez. (2) Bu pin o kapatmanin
+ * SEBEBI DEGILDIR, yani `parseAddressBook` degisirse buradaki koruma
+ * kendiliginden bosalir. Yukaridaki `loadWatcherConfig` yorumunda "beni
+ * kurtaran sey benim savunmam degil, baska bir ajanin dosyasi" diye yazilan
+ * sey, olculdugunde BURASI icin de dogru cikti.
  */
 export async function assertFactoryMatchesGovernance(
   client: ChainReader,

@@ -4,7 +4,8 @@ import { argv, env, exit } from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { createArcClient } from '@arcpad/shared'
 import { type Address, BaseError, ContractFunctionRevertedError, getAddress } from 'viem'
-import { blankToUndefined, loadWatcherConfig } from './config'
+import { blankToUndefined, loadWatcherConfig, resolveFromRepoRoot } from './config'
+import { loadRepoEnv } from './env'
 import { FACTORY_WATCH_ABI } from './watch/graduationWindow'
 
 /**
@@ -31,6 +32,18 @@ import { FACTORY_WATCH_ABI } from './watch/graduationWindow'
  */
 
 export type DrillOutcome = { ok: boolean; detail: string }
+
+/**
+ * TATBIKATIN OKUDUGU YOL, KEEPER'IN YAZDIGI YOLLA AYNI KURALDAN.
+ *
+ * Ayri bir fonksiyon oldugu icin `keeper/test` iki tarafi DOGRUDAN
+ * karsilastirabilir. Bu, kod-sekli testi degil DAVRANIS testidir: iki giris
+ * noktasinin ayni env icin ayni dosyayi secmesi, tatbikatin var olma sartidir.
+ * Ayrisma olculdu ve tatbikati CALISAN bir izleyiciyi "olu" ilan ettirdi.
+ */
+export function drillSinkPath(env: NodeJS.ProcessEnv): string | undefined {
+  return resolveFromRepoRoot(blankToUndefined(env['KEEPER_ALERT_LOG']))
+}
 
 /**
  * ALARM LAVABOSUNU OKUR, SIMULE ETMEZ.
@@ -186,6 +199,13 @@ export async function drillExpiry(deps: {
 const sleep = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms))
 
 export async function main(): Promise<number> {
+  // AYNI YUKLEYICI, IKINCI GIRIS NOKTASI. Bu dosya `dotenv`i HIC yuklemiyordu,
+  // yani runbook section 8'in `pnpm --filter @arcpad/keeper drill observe`
+  // komutu da depo kokundeki `.env`i gormuyordu. Bu depoda on bir kez olculen
+  // sekil tam olarak budur: bir ozellik BIR giris noktasinda kapatilir ve
+  // TUMUNDE kapali sanilir. Iki giris noktasi da ayni satiri cagirir.
+  loadRepoEnv()
+
   const phase = argv[2]
   const rpcUrl = env['ARC_RPC_URL']
   if (!rpcUrl) throw new Error('ARC_RPC_URL is not set')
@@ -195,7 +215,22 @@ export async function main(): Promise<number> {
     const rawTarget = env['KEEPER_DRILL_TARGET']
     if (!rawTarget)
       throw new Error('KEEPER_DRILL_TARGET is not set (the address the Safe proposed)')
-    const logPath = env['KEEPER_ALERT_LOG']
+    // AYNI COZUMLEME, IKINCI OKUYUCU. Keeper tarafi `loadWatcherConfig`
+    // icinde depo kokune gore cozuluyor; BURASI ham env'i okuyordu ve o fark
+    // tek basina tatbikati OLCULEREK yanlis cevap verdirtiyordu:
+    //
+    //   keeper/alerts.log icinde 6 kalp atisi VARKEN
+    //   $ ... pnpm --filter @arcpad/keeper drill observe
+    //   DRILL FAIL observe: NO HEARTBEAT in the sink since ...
+    //                       "there was no watcher"
+    //
+    // cunku `pnpm --filter` calisma dizinini `keeper/` yapar ve okuyucu
+    // `keeper/keeper/alerts.log`a bakiyordu. Yazan taraf duzeltilip okuyan
+    // taraf birakilinca ariza GORUNMEZ ama TERSINE doner: is artik yesil
+    // gorunmuyor, CALISAN bir izleyiciyi OLU ILAN EDIYOR. Bir ozelligi bir
+    // giris noktasinda kapatip tumunde kapali saymak, bu depoda on bir kez
+    // olculen sekildir; bu, on ikincisiydi.
+    const logPath = drillSinkPath(env)
     if (!logPath)
       throw new Error('KEEPER_ALERT_LOG is not set (the file the keeper writes its sink to)')
     // PENCERENIN BASI DISARIDAN GELIR ve gelmesi zorunludur: is baslarken
@@ -232,7 +267,13 @@ export async function main(): Promise<number> {
       waitMs: Number(blankToUndefined(env['KEEPER_POLL_INTERVAL_MS']) ?? 5_000),
       sleep,
     })
-    console.log(`${outcome.ok ? 'DRILL PASS' : 'DRILL FAIL'} observe: ${outcome.detail}`)
+    // YOLU HER ZAMAN YAZ. "there was no watcher" ile "yanlis dosyaya baktim"
+    // rota'yi IKI FARKLI runbook dalina gonderir, ve ikincisini birincisi
+    // sanmak bu gorevin en cok zaman yiyen anidir. Cozulmus yol satirdaysa,
+    // fark bir bakista gorulur.
+    console.log(
+      `${outcome.ok ? 'DRILL PASS' : 'DRILL FAIL'} observe (sink=${logPath}): ${outcome.detail}`,
+    )
     return outcome.ok ? 0 : 1
   }
 
