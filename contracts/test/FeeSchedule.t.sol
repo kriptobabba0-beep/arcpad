@@ -264,13 +264,63 @@ contract FeeScheduleTest is Test {
     // Degistirilemezlik
     // ---------------------------------------------------------------
 
-    /// SETTER YOKTUR ve DEPOLAMA YOKTUR. Tablo bytecode'dur; bir schedule'i
-    /// degistirmenin TEK yolu yeni bir tane deploy etmektir, ki o da yalnizca
-    /// SONRAKI launch'lari etkiler.
-    function test_thereIsNoStorageToChange() public view {
-        // Ilk uc slot'un hepsi sifir: kontratin hic storage'i yok.
-        assertEq(vm.load(address(schedule), bytes32(uint256(0))), bytes32(0));
-        assertEq(vm.load(address(schedule), bytes32(uint256(1))), bytes32(0));
-        assertEq(vm.load(address(schedule), bytes32(uint256(2))), bytes32(0));
+    /// TABLO DEGISTIRILEMEZ, ve bu OLCULUR: calisma zamani bytecode'unda
+    /// `SSTORE` (0x55), `DELEGATECALL` (0xF4) ve `SELFDESTRUCT` (0xFF)
+    /// OPCODE'LARININ HICBIRI YOKTUR. Ucu de olmadan bu kontratin davranisini
+    /// deploy sonrasi degistirmenin yolu YOKTUR.
+    ///
+    /// ILK HALI ZAYIFTI VE DEGISTIRILDI: slot 0..2'nin sifir oldugunu iddia
+    /// ediyordu, ki bu HERHANGI bir kontrat icin -- storage'i olan ama henuz
+    /// yazilmamis olan biri dahil -- gecerdi. Yani hicbir sey olcmuyordu.
+    /// Tarama PUSH FARKINDADIR: PUSH1..PUSH32 (0x60..0x7F) immediate baytlari
+    /// ATLANIR, aksi halde bir sabitin icindeki 0x55 baytini opcode sanip
+    /// YANLIS ALARM verirdi.
+    function test_theRuntimeCodeCannotWriteStorageOrBeReplaced() public view {
+        bytes memory code = address(schedule).code;
+        assertGt(code.length, 0, "kontrat deploy edilmemis -- tarama anlamsiz");
+
+        uint256 i;
+        uint256 scanned;
+        while (i < code.length) {
+            uint8 op = uint8(code[i]);
+            assertTrue(op != 0x55, "SSTORE bulundu -- tablo degistirilebilir");
+            assertTrue(op != 0xF4, "DELEGATECALL bulundu -- davranis disaridan gelebilir");
+            assertTrue(op != 0xFF, "SELFDESTRUCT bulundu -- kontrat yok edilebilir");
+            if (op >= 0x60 && op <= 0x7F) i += uint256(op) - 0x5F; // PUSH immediate'i atla
+            i += 1;
+            scanned += 1;
+        }
+        // KONTROL: tarama gercekten yurudu. Bu olmadan `code.length == 0` gibi
+        // bir durumda dongu hic donmez ve test sessizce GECERDI.
+        assertGt(scanned, 100, "tarama yurumedi -- test hicbir sey olcmuyor");
+    }
+
+    /// KONTROL GRUBU: ayni tarama, SSTORE'u KESINLIKLE olan bir kontratta
+    /// SSTORE'u BULUR. Bu olmadan yukaridaki test, taramasi bozuk oldugu icin
+    /// de gecebilirdi -- ve bozuk bir tarama her kontrati "temiz" ilan ederdi.
+    function test_theOpcodeScanActuallyFindsSstoreWhenItIsThere() public {
+        StorageWriter w = new StorageWriter();
+        bytes memory code = address(w).code;
+        bool found;
+        uint256 i;
+        while (i < code.length) {
+            uint8 op = uint8(code[i]);
+            if (op == 0x55) {
+                found = true;
+                break;
+            }
+            if (op >= 0x60 && op <= 0x7F) i += uint256(op) - 0x5F;
+            i += 1;
+        }
+        assertTrue(found, "tarama SSTORE'u kacirdi -- tarama bozuk");
+    }
+}
+
+/// @dev Yalnizca kontrol grubu icin: SSTORE tasidigi KESIN olan bir kontrat.
+contract StorageWriter {
+    uint256 public x;
+
+    function set(uint256 v) external {
+        x = v;
     }
 }
