@@ -119,6 +119,11 @@ function lint(source: string, asFile: string): { ruleId: string | null; message:
 }
 
 const IMPORTS_USE_BALANCE = "import { useBalance } from 'wagmi'\nexport const x = useBalance\n"
+const IMPORTS_DEVCHAIN = [
+  "import { startAnvil } from '@arcpad/shared/devchain'",
+  'export const x = startAnvil',
+  '',
+].join(String.fromCharCode(10))
 
 describe('only web/lib/balance.ts may import useBalance', () => {
   it('importing it from a hook is an error, and the message says why', () => {
@@ -162,6 +167,35 @@ describe('only web/lib/balance.ts may import useBalance', () => {
     const restricted = messages.filter((m) => m.ruleId === 'no-restricted-imports')
     expect(restricted).toHaveLength(1)
     expect(restricted[0]?.message).toContain(replacement)
+  })
+
+  /**
+   * THE COMPOSITION GATE.
+   *
+   * MEASURED: eslint flat config does NOT merge two `rules` entries for the
+   * same rule -- the last matching block REPLACES the earlier one. A devchain
+   * restriction added in its own block BEFORE the wagmi block was silently
+   * erased for every file under `web/app/**` and `web/components/**`, and
+   * reported nothing while looking configured. Both restrictions are asserted
+   * on the SAME file set so neither can vanish again.
+   */
+  it('a component gets BOTH restrictions, not just the last block', () => {
+    const devchain = lint(IMPORTS_DEVCHAIN, 'web/components/Foo.tsx').filter(
+      (m) => m.ruleId === 'no-restricted-imports',
+    )
+    expect(devchain).toHaveLength(1)
+    expect(devchain[0]?.message).toContain('anvil')
+
+    const wagmi = lint(IMPORTS_USE_BALANCE, 'web/components/Foo.tsx').filter(
+      (m) => m.ruleId === 'no-restricted-imports',
+    )
+    expect(wagmi).toHaveLength(1)
+    expect(wagmi[0]?.message).toContain('two views of ONE fund')
+  })
+
+  it('CONTROL: web/lib may still import the devchain harness', () => {
+    const messages = lint(IMPORTS_DEVCHAIN, 'web/lib/foo.ts')
+    expect(messages.filter((m) => m.ruleId === 'no-restricted-imports')).toEqual([])
   })
 
   it('the real tree has exactly one importer of useBalance', () => {

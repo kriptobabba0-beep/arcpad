@@ -8,6 +8,40 @@ import tseslint from 'typescript-eslint'
 const LOCALE_MESSAGE =
   'Bu depo sayi/tarih bicimlendirmesinde locale sabitler: en-US. Locale argumanini acikca gecin (bkz. CONTRIBUTING.md).'
 
+// ONE BALANCE, ONE SEAM. `web/lib/balance.ts` is the only module that may
+// reach wagmi's `useBalance`; everything else derives from what it returns.
+const WAGMI_RESTRICTED = [
+  {
+    name: 'wagmi',
+    importNames: ['useBalance'],
+    message:
+      "On Arc the native asset IS USDC: the native and the ERC-20 reading are two views of ONE fund, so a second balance read is the same money counted twice. Use `useUsdcBalance()` (web/hooks), which derives the six-decimal view from web/lib/balance.ts's single read.",
+  },
+  {
+    name: 'wagmi',
+    importNames: ['useAccount'],
+    message:
+      '`useAccount` is a deprecated alias of `useConnection` in wagmi 3.x. Import `useConnection`, or use `useArcNetwork()` which already wraps it with the wrong-network verdict.',
+  },
+  {
+    name: 'wagmi',
+    importNames: ['useAccountEffect'],
+    message:
+      '`useAccountEffect` is a deprecated alias of `useConnectionEffect` in wagmi 3.x. Import `useConnectionEffect`.',
+  },
+]
+
+// THE DEVCHAIN HARNESS IS NOT APPLICATION CODE. `@arcpad/shared/devchain`
+// spawns an `anvil` subprocess and reads compiled artifacts off disk. It lives
+// in `src/` rather than `test/` because Task 15 needs the same two helpers and
+// a relative import into another package test directory is a brittle bond --
+// the subpath makes it an explicit contract. The price is that a page could
+// import it, and this is what closes that.
+const DEVCHAIN_RESTRICTED = {
+  name: '@arcpad/shared/devchain',
+  message:
+    'The devchain harness spawns anvil and reads contracts/out/ from disk. It belongs to tests (packages/shared/test/chain, and Task 15), never to a page or a component.',
+}
 export default tseslint.config(
   {
     ignores: [
@@ -60,37 +94,34 @@ export default tseslint.config(
       ],
     },
   },
+  // ------------------------------------------------------------------
+  // no-restricted-imports, COMPOSED.
+  //
+  // MEASURED WHILE WRITING THIS: flat config does NOT merge two `rules`
+  // entries for the same rule -- the last matching block REPLACES the earlier
+  // one wholesale. A first draft gave the devchain restriction its own block
+  // BEFORE the wagmi block, and the wagmi block silently erased it for every
+  // file under `web/app/**` and `web/components/**`. The rule reported nothing
+  // and looked configured.
+  //
+  // So the narrower block REPEATS the broader one, and
+  // `web/test/balance.test.ts` runs the linter on both file sets to prove
+  // neither restriction went missing.
+  // ------------------------------------------------------------------
   {
-    // ONE BALANCE, ONE SEAM. `web/lib/balance.ts` is the only module that may
-    // reach wagmi's `useBalance`; everything else derives from what it returns.
     files: ['web/**/*.ts', 'web/**/*.tsx'],
     ignores: ['web/lib/balance.ts'],
+    rules: { 'no-restricted-imports': ['error', { paths: WAGMI_RESTRICTED }] },
+  },
+  {
+    files: [
+      'web/app/**/*.ts',
+      'web/app/**/*.tsx',
+      'web/components/**/*.ts',
+      'web/components/**/*.tsx',
+    ],
     rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          paths: [
-            {
-              name: 'wagmi',
-              importNames: ['useBalance'],
-              message:
-                "On Arc the native asset IS USDC: the native and the ERC-20 reading are two views of ONE fund, so a second balance read is the same money counted twice. Use `useUsdcBalance()` (web/hooks), which derives the six-decimal view from web/lib/balance.ts's single read.",
-            },
-            {
-              name: 'wagmi',
-              importNames: ['useAccount'],
-              message:
-                '`useAccount` is a deprecated alias of `useConnection` in wagmi 3.x. Import `useConnection`, or use `useArcNetwork()` which already wraps it with the wrong-network verdict.',
-            },
-            {
-              name: 'wagmi',
-              importNames: ['useAccountEffect'],
-              message:
-                '`useAccountEffect` is a deprecated alias of `useConnectionEffect` in wagmi 3.x. Import `useConnectionEffect`.',
-            },
-          ],
-        },
-      ],
+      'no-restricted-imports': ['error', { paths: [...WAGMI_RESTRICTED, DEVCHAIN_RESTRICTED] }],
     },
   },
 )

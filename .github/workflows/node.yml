@@ -112,3 +112,43 @@ jobs:
 
       - name: ABI parity
         run: pnpm --filter @arcpad/shared test:abi
+
+  # THE QUOTE ENGINE, RUN AGAINST REAL BYTECODE.
+  #
+  # `packages/shared/test/chain/**` starts `anvil`, deploys the compiled
+  # FeeEscrow/LaunchFactory/LaunchToken/BondingCurve, and executes several
+  # hundred planned trades against them, comparing every fee, every reserve and
+  # every refund. Task 4 proves the arithmetic; this proves the AGREEMENT.
+  #
+  # `anvil` ships with foundry, so there is no extra install step. Separate from
+  # `check` for the same reason as `abi-parity`: `check` must keep running on a
+  # runner with no Solidity toolchain, and `test:chain` is deliberately NOT part
+  # of `pnpm -r test`. The risk that buys -- a suite that runs nowhere -- is
+  # closed by a gate inside the suite that asserts this job exists.
+  chain-differential:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.6.0-rc1
+
+      - name: Build contracts
+        run: forge build --root contracts
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Curve differential
+        run: pnpm --filter @arcpad/shared test:chain

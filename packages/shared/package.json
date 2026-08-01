@@ -8,12 +8,14 @@
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts",
-    "./browser": "./src/browser.ts"
+    "./browser": "./src/browser.ts",
+    "./devchain": "./src/devchain.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:abi": "vitest run --config vitest.abi.config.ts"
+    "test:abi": "vitest run --config vitest.abi.config.ts",
+    "test:chain": "vitest run --config vitest.chain.config.ts"
   },
   "dependencies": {
     "viem": "2.55.8"
