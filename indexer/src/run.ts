@@ -128,12 +128,29 @@ export async function readFactoryProfile(
   }
 }
 
+/**
+ * IKI DAGITIM AYNI MI.
+ *
+ * KARSILASTIRMAYA GIRMEYEN IKI ALAN VAR ve ikisi de bilincli:
+ *
+ *   `startBlock`        bir KONFIGURASYON secimidir (nereden taramaya
+ *                       basladik), dagitimin kimligi degil.
+ *   `protocolTreasury`  DONDURULEBILIR. Factory onu deposit aninda CANLI
+ *                       okur, boylece bir rotasyon dagitilmis curve'lere de
+ *                       ulasir. Kimlige dahil etmek, MESRU bir hazine
+ *                       rotasyonunu `DeploymentMismatch` ile indexer'i
+ *                       durduran bir olaya cevirirdi -- ve indexer o adresi
+ *                       zaten hicbir hesapta kullanmiyor; ucret alicisi
+ *                       `Deposited.recipient`ten gelir.
+ *
+ * Kimlik: zincir, factory, escrow ve EGRI PROFILI (V/T/S). Profil degisirse
+ * ayni veritabaninda iki dunyanin verisi karisir ve geri donusu yoktur.
+ */
 export function sameDeployment(a: Deployment, b: Deployment): boolean {
   return (
     a.chainId === b.chainId &&
     a.factory.toLowerCase() === b.factory.toLowerCase() &&
     a.escrow.toLowerCase() === b.escrow.toLowerCase() &&
-    a.protocolTreasury.toLowerCase() === b.protocolTreasury.toLowerCase() &&
     a.virtualTokenReservesTok === b.virtualTokenReservesTok &&
     a.virtualQuoteReservesWei === b.virtualQuoteReservesWei &&
     a.saleSupplyTok === b.saleSupplyTok &&

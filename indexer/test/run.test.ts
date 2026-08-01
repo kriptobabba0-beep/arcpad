@@ -156,6 +156,27 @@ describe('acilis', () => {
     await expect(ensureDeployment(pool, other)).rejects.toThrow(DeploymentMismatch)
   })
 
+  /**
+   * HAZINE ROTASYONU INDEXER'I DURDURMAZ.
+   *
+   * `protocolTreasury` dondurulebilir: factory onu deposit aninda CANLI okur,
+   * boylece rotasyon dagitilmis curve'lere de ulasir. Kimlige dahil etseydik
+   * mesru bir rotasyon `DeploymentMismatch` uretir ve indexer'i durdururdu --
+   * oysa o adres indexer'in hicbir hesabina girmiyor (ucret alicisi
+   * `Deposited.recipient`ten gelir).
+   */
+  it('protocolTreasury rotasyonu uyusmazlik SAYILMAZ', async () => {
+    await putDeployment(pool, LIVE_DEPLOYMENT)
+    const rotated = {
+      ...LIVE_DEPLOYMENT,
+      protocolTreasury: '0x00000000000000000000000000000000000000aa' as const,
+    }
+    expect(sameDeployment(LIVE_DEPLOYMENT, rotated)).toBe(true)
+    await expect(ensureDeployment(pool, rotated)).resolves.toBeDefined()
+    // Ama PROFIL degisirse yine DURUR -- kimligin bel kemigi orada.
+    expect(sameDeployment(LIVE_DEPLOYMENT, { ...rotated, saleSupplyTok: 1n })).toBe(false)
+  })
+
   // `startBlock` bir KONFIGURASYON secimidir, dagitimin kimligi degil.
   it('startBlock farki uyusmazlik SAYILMAZ', async () => {
     await putDeployment(pool, LIVE_DEPLOYMENT)
