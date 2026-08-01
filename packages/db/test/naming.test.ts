@@ -499,7 +499,29 @@ describe('adlandirma kapisi', () => {
     // Kume o takasi gorur. Fail-closed'in IKI YONU de asagida OLCULUYOR --
     // "silince zaten kirilir" bir akil yurutmedir, olcum degil.
     const g = await gate(pool)
-    expect(g.examined).toBe(g.inventory.length)
+    // `expect(g.examined).toBe(g.inventory.length)` BURADAYDI ve BIR SEY
+    // OLCMUYORDU: iki taraf da `all.length`ten, ayni ifadenin icinde turuyordu
+    // -- yani `ALL_COLUMNS` bos donse bile `0 === 0` gecerdi. Sayim artik
+    // BAGIMSIZ bir sorguyla, `information_schema` uzerinden dogrulaniyor;
+    // `ALL_COLUMNS` katalogu okudugu icin bu gercekten ikinci bir olcumdur.
+    const { rows: independent } = await pool.query<{ n: number }>(`
+      SELECT count(*)::int n
+      FROM information_schema.columns ic
+      JOIN pg_class c ON c.relname = ic.table_name
+      JOIN pg_namespace ns ON ns.oid = c.relnamespace AND ns.nspname = ic.table_schema
+      WHERE ic.table_schema NOT IN ('pg_catalog', 'information_schema')
+        AND ic.table_schema NOT LIKE 'pg\\_%'
+        AND c.relkind = ANY ('{r,p,v,f}')`)
+    // ON KOSUL YAZILI: `information_schema.columns` MATVIEW'lari HIC
+    // listelemez (kapinin `pg_class`a gecmesinin sebebi de buydu), yani ikinci
+    // olcum ancak matview YOKKEN esittir. Varsayilmiyor, SINANIYOR.
+    const { rows: mv } = await pool.query<{ n: number }>(`
+      SELECT count(*)::int n FROM pg_class c
+      JOIN pg_namespace ns ON ns.oid = c.relnamespace
+      WHERE ns.nspname NOT IN ('pg_catalog', 'information_schema') AND c.relkind = 'm'`)
+    expect(mv[0]?.n).toBe(0)
+    expect(independent[0]?.n).toBeGreaterThan(0)
+    expect(g.examined).toBe(independent[0]?.n)
     expect(g.inventory).toEqual(EXPECTED_INVENTORY)
   })
 
@@ -825,9 +847,58 @@ describe('adlandirma kapisi', () => {
     )
   })
 
+  it('SINIR, ACIKCA: `id bigint` cok satirli bir tabloda GECER', async () => {
+    // DOCSTRING'IN IKINCI SINIRI, artik KENDI testiyle. Gozden geciren bunu
+    // kayda gecirdi: iki sinirdan biri (`GENERATED`) icin yazilmis bir test
+    // vardi, otekini yalnizca BASKA BIR SEY icin yazilmis bir test
+    // (`MUAF bir AD, hala kendi tipinde muaftir`, `id smallint` ile) tesadufen
+    // tutuyordu ve o testin yorumu `CHECK (id = 1)`den hic bahsetmiyordu --
+    // yani "kimsenin yazmadigi bir gerekce yuzunden gecen test".
+    //
+    // `id` muafiyeti tekil satir gerekcesine DAYANIR (`deployment`,
+    // `sync_state`, `schema_state` hepsi `CHECK (id = 1)` tasir) ama kapi o
+    // CHECK'i HIC OKUMAZ: muafiyet ADIN kendisine verilmistir. Asagidaki tablo
+    // IKI satir tasir ve SIFIR kisiti vardir, ve kapi yine de sessizdir.
+    // Kapatmak, kisitlari yorumlamak demek olurdu -- kapi bunu yapmaz; komsu
+    // savunma (parmak izi) yapar, ve alt tarafta o da olculuyor.
+    const client: PoolClient = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('CREATE TABLE many_probe (id bigint, token text)')
+      await client.query('INSERT INTO many_probe (id, token) VALUES (1, $1), (2, $2)', [
+        '0x1111111111111111111111111111111111111111',
+        '0x2222222222222222222222222222222222222222',
+      ])
+      const { rows: cons } = await client.query<{ n: number }>(
+        `SELECT count(*)::int n FROM pg_constraint WHERE conrelid = 'many_probe'::regclass`,
+      )
+      const { rows: many } = await client.query<{ n: number }>(
+        'SELECT count(*)::int n FROM many_probe',
+      )
+      // Gerekce GERCEKTEN yok: iki satir, sifir kisit.
+      expect(cons[0]?.n).toBe(0)
+      expect(many[0]?.n).toBe(2)
+
+      const g = await gate(client)
+      expect(g.undeclaredInteger).toEqual([])
+      expect(g.unsuffixed).toEqual([])
+      // Ama KUME onu gorur -- sinirin komsu yarisi. `id bigint` bir tabloya
+      // sonradan sessizce eklenemez.
+      expect(g.inventory).toContain('public:r:many_probe.id')
+      expect(g.inventory).not.toEqual(EXPECTED_INVENTORY)
+    } finally {
+      await client.query('ROLLBACK')
+      client.release()
+    }
+  })
+
   it('MUAF bir AD, hala kendi tipinde muaftir (kapi fazla siki degil)', async () => {
     // `is_buy boolean`, `token text` gecmeye devam etmeli; aksi halde sema
     // adlarinin yarisini yeniden adlandirmak gerekirdi.
+    //
+    // NOT: bu test bir POZITIF KONTROLDUR ve `id smallint` iceriyor olmasi
+    // TESADUFTUR. `id` muafiyetinin SINIR yarisi artik yukaridaki
+    // `SINIR, ACIKCA: \`id bigint\`...` testinde, kendi gerekcesiyle duruyor.
     await withColumn('CREATE TABLE probe_ok (is_buy boolean, token text, id smallint)', (g) => {
       expect(g.unsuffixed).toEqual([])
       expect(g.undeclaredInteger).toEqual([])

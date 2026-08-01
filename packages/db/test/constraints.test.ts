@@ -17,6 +17,27 @@ import {
   TOKEN,
 } from './fixtures'
 
+/**
+ * `public` icindeki ORDINARY tablolarin TAM listesi. Sayi degil KUME: eskiden
+ * `toHaveLength(14)` idi ve bir tabloyu silip baskasini eklemeye GORUNMEZDI.
+ */
+const ALL_TABLES = [
+  'creator_history',
+  'curve_state',
+  'deployment',
+  'fee_balances',
+  'fee_events',
+  'holders',
+  'launches',
+  'rejected_launches',
+  'schema_migrations',
+  'schema_state',
+  'sync_state',
+  'token_stats',
+  'token_transfers',
+  'trades',
+]
+
 interface PgError extends Error {
   code?: string
   constraint?: string
@@ -196,14 +217,15 @@ describe('kisitlar gercekten bagli mi', () => {
       SELECT c.relname AS rel FROM pg_class c
       JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
       WHERE c.relkind = 'r' ORDER BY 1`)
-    expect(allTables).toHaveLength(14)
-    const rowCounts = await Promise.all(
-      allTables.map(async ({ rel }) => {
-        const { rows } = await pool.query<{ n: number }>(`SELECT count(*)::int n FROM "${rel}"`)
-        return { rel, n: rows[0]?.n ?? 0 }
-      }),
-    )
-    expect(rowCounts).toHaveLength(14)
+    // SAYI DEGIL KUME. `toHaveLength(14)` bir tabloyu silip baskasini eklemeye
+    // GORUNMEZDI -- `EXPECTED_INVENTORY`nin her yerde yerine gectigi sekil.
+    expect(allTables.map((t) => t.rel)).toEqual(ALL_TABLES)
+    const rowCounts: { rel: string; n: number }[] = []
+    for (const { rel } of allTables) {
+      const { rows } = await pool.query<{ n: number }>(`SELECT count(*)::int n FROM "${rel}"`)
+      rowCounts.push({ rel, n: rows[0]?.n ?? 0 })
+    }
+    expect(rowCounts.map((t) => t.rel)).toEqual(ALL_TABLES)
     expect(rowCounts.filter((t) => t.n === 0)).toEqual([])
 
     const kinds = await Promise.all(
@@ -284,13 +306,16 @@ describe('kisitlar gercekten bagli mi', () => {
         SELECT c.relname AS rel FROM pg_class c
         JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = 'public'
         WHERE c.relkind = 'r' ORDER BY 1`)
-      expect(allTables).toHaveLength(14)
-      const counts = await Promise.all(
-        allTables.map(async ({ rel }) => {
-          const { rows } = await client.query<{ n: number }>(`SELECT count(*)::int n FROM "${rel}"`)
-          return { rel, n: rows[0]?.n ?? 0 }
-        }),
-      )
+      expect(allTables.map((t) => t.rel)).toEqual(ALL_TABLES)
+      // SIRAYLA, `Promise.all` DEGIL. Tek bir `PoolClient` uzerinde on dort
+      // `client.query()` ayni anda baslatiliyordu; `pg` bunu her kosuda
+      // `DeprecationWarning: Calling client.query() when the client is already
+      // executing a query` diye basiyor ve `pg@9`da HATA olacak.
+      const counts: { rel: string; n: number }[] = []
+      for (const { rel } of allTables) {
+        const { rows } = await client.query<{ n: number }>(`SELECT count(*)::int n FROM "${rel}"`)
+        counts.push({ rel, n: rows[0]?.n ?? 0 })
+      }
       // Bos tablo GORULUYOR -- eski muhafiz burada bos liste dondururdu.
       expect(counts.filter((t) => t.n === 0).map((t) => t.rel)).toEqual(['creator_history'])
     } finally {
