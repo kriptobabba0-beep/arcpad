@@ -9,6 +9,7 @@ import {TickMath} from "@uniswap/v4-core/src/libraries/TickMath.sol";
 import {FullMath} from "@uniswap/v4-core/src/libraries/FullMath.sol";
 import {LPFeeLibrary} from "@uniswap/v4-core/src/libraries/LPFeeLibrary.sol";
 import {Pool} from "@uniswap/v4-core/src/libraries/Pool.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {GraduationMath} from "../src/libraries/GraduationMath.sol";
 
 /// @title GraduationMathTest
@@ -265,6 +266,39 @@ contract GraduationMathTest is Test {
     function test_zeroBaseReserveIsRejected() public {
         vm.expectRevert(GraduationMath.ZeroReserves.selector);
         GraduationMath.sqrtPriceX96(16_453_433_369_060_378_707, 0, true);
+    }
+
+    /// `PriceOutOfRange`IN ALT UCU ULASILABILIRDIR VE BURADA YURUTULUR.
+    /// Tanik elle turetildi: `s <= MIN_SQRT_PRICE = 4_295_128_739` icin
+    ///   oran(X192) <= 1,845e19  ->  q / (b * 1e12) <= 2,94e-39
+    /// q = 1000, b = 1e30 secildi:
+    ///   scaled = 1e42, oran = 6_277_101_735_386_680_763, s = 2_505_414_483
+    /// ve `2_505_414_483 <= 4_295_128_739`. `FullMath` burada TASMAZ
+    /// (scaled > q >> 64), yani revert GERCEKTEN bu guard'dan gelir.
+    ///
+    /// OLCULEREK EKLENDI: guard'i tamamen SILEN mutant, bu test yokken 34
+    /// testin HICBIRINI kirmadan hayatta kaliyordu.
+    /// forge-config: default.allow_internal_expect_revert = true
+    function test_aPriceBelowTheMinimumIsRejected() public {
+        vm.expectRevert(GraduationMath.PriceOutOfRange.selector);
+        GraduationMath.sqrtPriceX96(1000, 1e30, true);
+    }
+
+    /// UST UC ULASILAMAZDIR VE BU BIR IDDIADIR, BIR KAPSAMA BOSLUGU DEGIL.
+    /// `s = Math.sqrt(oran)` ve `oran` bir `uint256` oldugu icin
+    ///   max s = isqrt(2^256 - 1) = 340_282_366_920_938_463_463_374_607_431_768_211_455
+    ///         ~ 3,4e38
+    /// ama
+    ///   MAX_SQRT_PRICE ~ 1,46e48
+    /// yani `s >= MAX_SQRT_PRICE` HICBIR girdi icin saglanamaz -- guard'in o
+    /// yarisi SAVUNMA AMACLI OLU KODDUR. Bunu "kapsanmadi" diye birakmak
+    /// yerine, ULASILAMAZ OLDUGUNU olcen bir iddia yaziliyor; boylece
+    /// `Math.sqrt` ya da `MAX_SQRT_PRICE` bir gun degisir de ust uc
+    /// ULASILABILIR hale gelirse, bu test kirilir ve haber verir.
+    function test_theUpperPriceBoundIsUnreachableByConstruction() public pure {
+        uint256 maxPossibleSqrt = Math.sqrt(type(uint256).max);
+        assertEq(maxPossibleSqrt, 340_282_366_920_938_463_463_374_607_431_768_211_455);
+        assertLt(maxPossibleSqrt, TickMath.MAX_SQRT_PRICE);
     }
 
     // ---------------------------------------------------------------
