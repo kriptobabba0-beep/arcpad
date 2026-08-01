@@ -22,12 +22,13 @@ const EXPECTED = [
   '004_transfers_and_holders.sql',
   '005_fees.sql',
   '006_token_stats.sql',
+  '007_views.sql',
 ]
 
 describe('runMigrations', () => {
   beforeEach(dropSchema)
 
-  it('diskteki migration listesi tam olarak beklenen alti dosyadir', async () => {
+  it('diskteki migration listesi tam olarak beklenen yedi dosyadir', async () => {
     // Sirali ve TAM. Bir testin gecici olarak yazdigi bozuk dosya temizlenmemis
     // olsaydi burasi kirmizi olurdu -- yani sizinti sessiz kalamaz.
     await expect(migrationFiles()).resolves.toEqual(EXPECTED)
@@ -36,7 +37,7 @@ describe('runMigrations', () => {
   it('iki kez kosturmak ikinci kez hicbir sey uygulamaz', async () => {
     const first = await runMigrations(pool)
     expect(first).toEqual(EXPECTED)
-    expect(first).toHaveLength(6)
+    expect(first).toHaveLength(EXPECTED.length)
 
     const second = await runMigrations(pool)
     expect(second).toEqual([])
@@ -65,7 +66,7 @@ describe('runMigrations', () => {
     expect(await catalog()).toEqual(before)
   })
 
-  it('bir migration EKSIKSE hicbiri uygulanmaz (alti dosya geri alinir)', async () => {
+  it('bir migration EKSIKSE hicbiri uygulanmaz (yedi dosya geri alinir)', async () => {
     const files = await migrationFiles()
     await expect(runMigrations(pool, [...files, 'zzz_missing.sql'])).rejects.toThrow()
 
@@ -120,7 +121,7 @@ describe('runMigrations', () => {
   // UYGULANMIS BIR MIGRATION YERINDE DUZENLENIRSE.
   //
   // Bu proje 001-006'yi YERINDE duzenlemeyi secti (semanin uygulanmis bir
-  // ornegi yok; ayni saatte yazilmis alti dosyayi yedinciyle yamalamak kalici
+  // ornegi yok; ayni saatte yazilmis yedi dosyayi sekizincisiyle yamalamak kalici
   // olarak daha kotu okunur). O secim ancak duzenleme GORULEBILIRSE guvenli:
   // aksi halde dosyayi bir kez uygulamis olan bir veritabani -- ornegin bir
   // gozden gecirenin kendi kumesi -- sonraki kosuda hicbir sey yapmadan yesil
@@ -131,10 +132,10 @@ describe('runMigrations', () => {
     const { rows } = await pool.query<{ filename: string; checksum_hex: string | null }>(
       'SELECT filename, checksum_hex FROM schema_migrations ORDER BY filename',
     )
-    expect(rows).toHaveLength(6)
+    expect(rows).toHaveLength(EXPECTED.length)
     for (const r of rows) expect(r.checksum_hex).toMatch(/^[0-9a-f]{64}$/)
     // Ozetler DOSYAYA gore; iki farkli dosya ayni ozeti tasimaz.
-    expect(new Set(rows.map((r) => r.checksum_hex)).size).toBe(6)
+    expect(new Set(rows.map((r) => r.checksum_hex)).size).toBe(EXPECTED.length)
   })
 
   it('uygulanmis bir dosya DEGISTIYSE kosmayi reddeder', async () => {
@@ -203,7 +204,7 @@ describe('runMigrations', () => {
     )
     try {
       await expect(runMigrations(pool, await migrationFiles())).rejects.toThrow(
-        /003a_between\.tmp\.sql: uygulanmamis, ama uygulanmis olan 006_token_stats\.sql/,
+        /003a_between\.tmp\.sql: uygulanmamis, ama uygulanmis olan 007_views\.sql/,
       )
     } finally {
       await unlink(join(MIGRATIONS_DIR, inserted))
@@ -214,7 +215,9 @@ describe('runMigrations', () => {
     // Kapinin fazla siki OLMADIGININ kaniti: normal evrim yolu -- `007_...` --
     // engellenmiyor.
     await runMigrations(pool)
-    const appended = '007_appended.tmp.sql'
+    // `008_`: son mesru dosya artik `007_views.sql`. `007_appended` onun ONUNE
+    // siralanirdi ve kapi onu -- DOGRU OLARAK -- araya ekleme sayardi.
+    const appended = '008_appended.tmp.sql'
     await writeFile(
       join(MIGRATIONS_DIR, appended),
       'CREATE TABLE appended_ok (x int PRIMARY KEY);\n',
@@ -238,19 +241,24 @@ describe('runMigrations', () => {
   // ---------------------------------------------------------------
   it('DUSURULMUS bir tablo yakalanir (defter kusursuz olsa bile)', async () => {
     await runMigrations(pool)
-    await pool.query('DROP TABLE token_stats')
+    // TABLO SECIMI: `token_stats`i dusurmek artik `token_overview` view'ini de
+    // CASCADE ile goturuyor ve mesajin ILK sekiz eksigi view'in sutunlariyla
+    // doluyor -- yani "NE eksik oldugunu SOYLUYOR" iddiasi, hala dogru olsa
+    // da, ADI gostermeden gecerdi. Bagimlisi olmayan bir tablo secildi:
+    // ozellik ayni, kanit gorunur.
+    await pool.query('DROP TABLE rejected_launches')
 
-    // Defter hala kusursuz: alti dosya, alti dogru ozet.
+    // Defter hala kusursuz: yedi dosya, yedi dogru ozet.
     const { rows } = await pool.query<{ n: number }>(
       'SELECT count(*)::int n FROM schema_migrations WHERE checksum_hex IS NOT NULL',
     )
-    expect(rows[0]?.n).toBe(6)
+    expect(rows[0]?.n).toBe(EXPECTED.length)
 
     const err = await runMigrations(pool).catch((e: Error) => e)
     expect(err).toBeInstanceOf(Error)
     expect((err as Error).message).toMatch(/sema, migration'larin urettiginden FARKLI/)
     // Ve NE eksik oldugunu SOYLUYOR.
-    expect((err as Error).message).toContain('token_stats')
+    expect((err as Error).message).toContain('rejected_launches')
   })
 
   it('DUSURULMUS bir sutun ve FAZLADAN bir tablo da yakalanir', async () => {
@@ -304,12 +312,12 @@ describe('runMigrations', () => {
     // `CREATE TABLE` catistigi icin yakalaniyordu. Burada catisma OLMAYAN bir
     // durum kuruluyor -- tablo GERCEKTEN yok -- ve muhafiz yine de duruyor.
     await runMigrations(pool)
-    await pool.query('DROP TABLE token_stats')
-    await pool.query('CREATE TABLE IF NOT EXISTS token_stats (token text PRIMARY KEY)')
+    await pool.query('DROP TABLE rejected_launches')
+    await pool.query('CREATE TABLE IF NOT EXISTS rejected_launches (token text PRIMARY KEY)')
     // Artik bir tablo VAR, yani hicbir CREATE catismaz; tek fark sutunlari.
     const err = await runMigrations(pool).catch((e: Error) => e)
     expect((err as Error).message).toMatch(/sema, migration'larin urettiginden FARKLI/)
-    expect((err as Error).message).toContain('token_stats')
+    expect((err as Error).message).toContain('rejected_launches')
   })
 
   // ---------------------------------------------------------------
@@ -325,7 +333,15 @@ describe('runMigrations', () => {
   // ---------------------------------------------------------------
   const fieldCases: [string, string, string][] = [
     // [alan, semayi degistiren DDL, hata mesajinda gorunmesi gereken]
-    ['col: tip', 'ALTER TABLE token_stats ALTER COLUMN trade_count TYPE bigint', 'trade_count'],
+    // SUTUN SECIMI: `trade_count` artik `token_overview`in okudugu bir sutun
+    // ve Postgres bir view'in kullandigi sutunun TIPINI degistirmeyi reddeder.
+    // Probe, view'in OKUMADIGI bir sutuna tasindi; olculen alan ayni ("col:
+    // tip" envanterde duruyor mu).
+    [
+      'col: tip',
+      'ALTER TABLE token_stats ALTER COLUMN volume_24h_refreshed_at TYPE timestamp',
+      'volume_24h_refreshed_at',
+    ],
     [
       'col: NOT NULL',
       'ALTER TABLE token_stats ALTER COLUMN market_cap_wei DROP NOT NULL',

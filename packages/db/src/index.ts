@@ -20,6 +20,28 @@ export { type Deployment, getDeployment, putDeployment } from './deployment'
 export { type Address, fromHexBytes, lower, lowerHash32, pgSafeText, toHexBytes } from './hex'
 export { MIGRATIONS_DIR, migrationFiles, runMigrations } from './migrate'
 export { createPool, type Pool, type PoolClient, type Queryable, withTransaction } from './pool'
+export {
+  type ClaimableFees,
+  type CreatorEarning,
+  type Cursor,
+  DEFAULT_STALE_AFTER_SECONDS,
+  type Fresh,
+  getClaimableFees,
+  getIndexerStatus,
+  getTokenOverview,
+  type HolderRow,
+  type IndexerStatus,
+  listCreatorEarningsByLaunch,
+  listHolders,
+  listLaunchesByCreator,
+  listTokens,
+  type ListTokensOptions,
+  listTrades,
+  type SortKey,
+  SORTS,
+  type TokenOverview,
+  type TradeRow,
+} from './queries'
 export { fromSeq, LOG_INDEX_BITS, MAX_BLOCK_NUMBER, MAX_LOG_INDEX, MAX_SEQ, toSeq } from './seq'
 export { assertContinuous, ReorgDetected } from './reorg'
 export { snapshot } from './snapshot'

@@ -131,6 +131,11 @@ const EXEMPT_NON_AMOUNT = new Set([
   'complete',
   'is_buy',
   'filename',
+  // `token_overview.fee_creator` -- ucreti O ANDA alan adres
+  // (`creator_at(...)`). Bir ADRESTIR, miktar degil, ve `creator` gibi muaf
+  // adlarla ayni sinifta. Ayri yazilmasinin sebebi `launch_creator`dan FARKLI
+  // bir soru cevaplamasi: "kim baslatti" degil "ucreti kim aliyor".
+  'fee_creator',
   // `schema_state.inventory_json` -- envanterin JSON metni. TAM AD olarak ve
   // YALNIZCA amount-olmayan tipler icin muaf.
   //
@@ -472,6 +477,42 @@ const EXPECTED_INVENTORY = [
   'public:r:trades.tx_hash',
   'public:r:trades.virtual_quote_reserves_wei',
   'public:r:trades.virtual_token_reserves_tok',
+  // ---------------------------------------------------------------
+  // TURETILMIS OKUMA MODELI (007_views.sql). Bir VIEW'in sutunlari da
+  // kapidan gecer: `relkind 'v'` incelenen kumededir, yani turetilmis bir
+  // kolon da gorunumunu ADIYLA bildirmek zorundadir. `price_wei_per_tok`
+  // adinin `price_wei_per_token` OLMAMASININ sebebi budur.
+  // ---------------------------------------------------------------
+  'public:v:token_overview.ath_market_cap_wei',
+  'public:v:token_overview.buy_count',
+  'public:v:token_overview.complete',
+  'public:v:token_overview.completed_seq',
+  'public:v:token_overview.created_at',
+  'public:v:token_overview.created_seq',
+  'public:v:token_overview.curve',
+  'public:v:token_overview.fee_creator',
+  'public:v:token_overview.graduation_raise_wei',
+  'public:v:token_overview.holder_count',
+  'public:v:token_overview.last_buy_at',
+  'public:v:token_overview.last_buy_seq',
+  'public:v:token_overview.last_trade_at',
+  'public:v:token_overview.last_trade_seq',
+  'public:v:token_overview.launch_creator',
+  'public:v:token_overview.market_cap_wei',
+  'public:v:token_overview.name',
+  'public:v:token_overview.pool_seed_supply_tok',
+  'public:v:token_overview.price_wei_per_tok',
+  'public:v:token_overview.progress_ppm',
+  'public:v:token_overview.real_quote_reserves_wei',
+  'public:v:token_overview.real_token_reserves_tok',
+  'public:v:token_overview.symbol',
+  'public:v:token_overview.token',
+  'public:v:token_overview.trade_count',
+  'public:v:token_overview.uri',
+  'public:v:token_overview.virtual_quote_reserves_wei',
+  'public:v:token_overview.virtual_token_reserves_tok',
+  'public:v:token_overview.volume_24h_wei',
+  'public:v:token_overview.volume_total_wei',
 ]
 
 describe('adlandirma kapisi', () => {
@@ -527,10 +568,14 @@ describe('adlandirma kapisi', () => {
 
   it('SAYIM fail-closed: bir sutun SILININCE kirilir', async () => {
     const before = await gate(pool)
-    await withColumn('ALTER TABLE token_stats DROP COLUMN trade_count', (g) => {
+    // SUTUN SECIMI: `token_overview` view'i `trade_count`a BAGIMLI oldugu icin
+    // onu dusurmek artik bagimlilik hatasi verir (Postgres reddeder). Probe,
+    // view'in OKUMADIGI bir sutuna tasindi -- olculen ozellik ayni: kume bir
+    // sutun eksildigini gorur.
+    await withColumn('ALTER TABLE token_stats DROP COLUMN volume_24h_refreshed_at', (g) => {
       expect(g.inventory).not.toEqual(EXPECTED_INVENTORY)
       expect(before.inventory.filter((x) => !g.inventory.includes(x))).toEqual([
-        'public:r:token_stats.trade_count',
+        'public:r:token_stats.volume_24h_refreshed_at',
       ])
     })
   })
@@ -552,7 +597,7 @@ describe('adlandirma kapisi', () => {
     const client: PoolClient = await pool.connect()
     try {
       await client.query('BEGIN')
-      await client.query('ALTER TABLE token_stats DROP COLUMN trade_count')
+      await client.query('ALTER TABLE token_stats DROP COLUMN volume_24h_refreshed_at')
       await client.query('ALTER TABLE trades ADD COLUMN fill_count bigint')
       const g = await gate(client)
       // SAYI degismedi -- eski iddia bunu gecirirdi.
@@ -587,14 +632,14 @@ describe('adlandirma kapisi', () => {
     const g = await gate(pool)
     expect(g.unclassifiedRelkinds).toEqual([])
     // Bugun semada yalnizca sirali tablolar var.
-    expect(g.reach).toEqual(['public:r'])
+    expect(g.reach).toEqual(['public:r', 'public:v'])
   })
 
   it('her numeric TAM OLARAK numeric(78,0) ve _wei/_tok ile biter', async () => {
     const g = await gate(pool)
     // Bos kumeyi gecmesini onler -- "hepsi gecti" sifir sutun uzerinde de
     // dogrudur.
-    expect(g.numerics).toBe(27)
+    expect(g.numerics).toBe(38)
     expect(g.badNumeric).toEqual([])
   })
 
@@ -729,7 +774,7 @@ describe('adlandirma kapisi', () => {
       (g) => {
         // Sayim GERCEKTEN buyudu.
         expect(g.examined).toBe(before.examined + 3)
-        expect(g.reach).toEqual(['public:m', 'public:r'])
+        expect(g.reach).toEqual(['public:m', 'public:r', 'public:v'])
         // Ve kurallar matview'a da uygulaniyor.
         expect(g.badNumeric).toEqual([{ table_name: 'mv_window', column_name: 'price_wei' }])
         expect(g.undeclaredInteger).toEqual([{ table_name: 'mv_window', column_name: 'amount' }])
@@ -750,7 +795,7 @@ describe('adlandirma kapisi', () => {
       const g = await gate(client)
       expect(g.examined).toBe(before.examined + 2)
       expect(g.schemas).toEqual(['public', 'reporting'])
-      expect(g.reach).toEqual(['public:r', 'reporting:r'])
+      expect(g.reach).toEqual(['public:r', 'public:v', 'reporting:r'])
       expect(g.banned).toEqual([{ table_name: 'rollup', column_name: 'price' }])
       expect(g.undeclaredInteger).toEqual([{ table_name: 'rollup', column_name: 'amount' }])
     } finally {
@@ -922,7 +967,7 @@ describe('adlandirma kapisi', () => {
       const g = await gate(client)
       // Ebeveyn (p) + cocuk (r) = 4 sutun.
       expect(g.examined).toBe(before.examined + 4)
-      expect(g.reach).toEqual(['public:p', 'public:r'])
+      expect(g.reach).toEqual(['public:p', 'public:r', 'public:v'])
       expect(g.moneyNamedInteger.map((r) => `${r.table_name}.${r.column_name}`).sort()).toEqual([
         'part_a.fee_wei',
         'part_parent.fee_wei',
@@ -944,7 +989,7 @@ describe('adlandirma kapisi', () => {
                           SERVER probe_fs OPTIONS (filename 'C:/Windows/win.ini', format 'csv')`)
       const g = await gate(client)
       expect(g.examined).toBe(before.examined + 2)
-      expect(g.reach).toEqual(['public:f', 'public:r'])
+      expect(g.reach).toEqual(['public:f', 'public:r', 'public:v'])
       expect(g.banned).toEqual([{ table_name: 'ft_leak', column_name: 'fee_usdc' }])
       expect(g.forbidden).toEqual([{ table_name: 'ft_leak', column_name: 'fee_usdc' }])
     } finally {
@@ -965,7 +1010,7 @@ describe('adlandirma kapisi', () => {
                           SELECT token, 1::double precision AS fee_usdc FROM launches`)
       const g = await gate(client)
       expect(g.examined).toBe(before.examined + 2)
-      expect(g.reach).toEqual(['public:r', 'rollup:m'])
+      expect(g.reach).toEqual(['public:r', 'public:v', 'rollup:m'])
       expect(g.schemas).toEqual(['public', 'rollup'])
       expect(g.banned).toEqual([{ table_name: 'mv', column_name: 'fee_usdc' }])
     } finally {
@@ -989,7 +1034,7 @@ describe('adlandirma kapisi', () => {
       await client.query('CREATE TEMP TABLE t_leak (fee_usdc double precision)')
       await client.query('CREATE TYPE money_t AS (fee_usdc double precision)')
       const g = await gate(client)
-      expect(g.reach).toEqual(['public:r'])
+      expect(g.reach).toEqual(['public:r', 'public:v'])
       expect(g.schemas).toEqual(['public'])
       expect(g.banned).toEqual([])
       // Ama o tipi KULLANAN bir sutun yakalanir:
