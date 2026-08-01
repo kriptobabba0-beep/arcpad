@@ -303,6 +303,24 @@ describe('globals.css sozlesmesi', () => {
     expect(CSS).toMatch(/\.skip-link:focus-visible\s*\{/)
   })
 
+  /**
+   * Bu iddia `contrast.test.ts`'te, cunku olctugu sey ayni sey: tarayicinin
+   * bizim adimiza cizdigi seyler. `color-scheme` form kontrollerini ve
+   * kaydirma cubugunu belirler; `icon.svg` sekme ikonunu. Ikisi de eksik
+   * oldugunda tarayici bir VARSAYILAN cizer ve varsayilan tam olarak
+   * "sablondan cikmis" izlenimidir -- 404 veren bir favicon o izlenimin en
+   * ucuz bicimi.
+   */
+  it('sekme ikonu var ve paletin icinden geliyor', () => {
+    const icon = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', 'app', 'icon.svg'),
+      'utf8',
+    )
+    expect(icon).toContain('<svg')
+    expect(icon).toContain('#0B0B0B')
+    expect(icon).toContain('#C6F24E')
+  })
+
   it('iki yuz de kendi sunucumuzdan tanimlaniyor, harici bir font hostu yok', () => {
     expect(CSS).not.toMatch(/fonts\.googleapis\.com|fonts\.gstatic\.com|@import\s+url\(/)
     expect(CSS).toContain("url('/fonts/space-grotesk-latin-ext.woff2')")

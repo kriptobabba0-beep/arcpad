@@ -9,7 +9,7 @@ import { Money } from '@/components/ui/Money'
 import { getWebConfig } from '@/lib/addresses'
 import { BRAND } from '@/lib/brand'
 import { useArcNetwork } from '@/hooks/useArcNetwork'
-import { useUsdcBalance } from './useUsdcBalanceStub'
+import { useUsdcBalance } from '@/hooks/useUsdcBalance'
 
 /**
  * K1'IN GORUNDUGU YER.
@@ -29,7 +29,18 @@ const TWO_VIEWS_NOTE =
 
 export function WalletButton() {
   const { status, address, wrongNetwork, switchToArc, isSwitching } = useArcNetwork()
-  const { balance } = useUsdcBalance()
+  /*
+   * `native.wei` -- 18 ondalikli okuma. `<Money>` onu 6 ondalikli TEK figure
+   * cevirir. Hook'un `display` alani ayni dizeyi zaten uretiyor ama ekrana
+   * giden yol `<Money>`'dir, cunku `tabular-nums`'i tasiyan odur ve bu urunde
+   * her para hucresi ayni hizalamaya sahip olmak zorunda.
+   *
+   * `.native` ve `.erc20` AYRI NESNELER olarak geliyor ve bu kasitli:
+   * `view.native + view.erc20` derlenmez (TS2365). Duz bir `{ wei, units }`
+   * olsaydi toplanabilirdi ve 1e12'lik hata bir milyon USDC'nin altinda
+   * calisma zamaninda GORUNMEZ olurdu.
+   */
+  const { native, isPending: balancePending } = useUsdcBalance()
   const connectors = useConnectors()
   // wagmi 3.7.4: `connect`/`connectors` ve `disconnect` @deprecated takma
   // adlar; sanctioned yol `mutate`. Ayni sinif S15'in `useAccount` bulgusuyla.
@@ -114,10 +125,10 @@ export function WalletButton() {
       >
         <Address value={address} label="Your wallet" className="text-text" />
         <span className="h-4 w-px bg-border" aria-hidden="true" />
-        {balance ? (
-          <Money native={balance.wei} rounding="down" unit className="text-muted" />
-        ) : (
+        {balancePending ? (
           <span className="tabular-nums text-muted">—</span>
+        ) : (
+          <Money native={native.wei} rounding="down" unit className="text-muted" />
         )}
       </button>
 
@@ -133,10 +144,10 @@ export function WalletButton() {
           <div className="flex flex-col gap-1">
             <dt className="text-[13px] text-muted">Balance</dt>
             <dd className="text-2xl font-medium">
-              {balance ? (
-                <Money native={balance.wei} rounding="down" unit />
-              ) : (
+              {balancePending ? (
                 <span className="tabular-nums text-muted">—</span>
+              ) : (
+                <Money native={native.wei} rounding="down" unit />
               )}
             </dd>
             <dd className="text-[12px] leading-snug text-muted">{TWO_VIEWS_NOTE}</dd>

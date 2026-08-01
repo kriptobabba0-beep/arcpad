@@ -71,6 +71,60 @@ describe('kabuk', () => {
     )
   })
 
+  /**
+   * `hidden` HICBIR ZAMAN kaybeden taraf olamaz.
+   *
+   * `cx` bir cakisma cozucu DEGIL (bkz. `components/ui/cx.ts`): siniflari
+   * birlestirir, hangisinin kazandigini Tailwind'in URETIM SIRASI belirler.
+   * Yani `<Pill className="hidden sm:inline-flex">` yazmak, Pill'in taban
+   * `inline-flex`'i `hidden`'dan SONRA uretildigi icin hicbir sey gizlemez --
+   * olculdu, 390px'te testnet rozeti gorunuyordu.
+   *
+   * Kural bilesene degil AGACA uygulaniyor: ayni tuzak Card, Button ya da
+   * gelecekteki herhangi bir bilesende de kurulabilir, ve o zaman da burada
+   * kirilir. Duzeltme her zaman ayni: gorunurlugu bir SARMALAYICIYA tasi.
+   */
+  it('hiclbir oge hem `hidden` hem de kosulsuz bir display yardimcisi tasimaz', () => {
+    const { container } = renderWithProviders(
+      <AppShell>
+        <p>content</p>
+      </AppShell>,
+    )
+
+    const CONFLICTING = ['block', 'inline', 'inline-block', 'flex', 'inline-flex', 'grid', 'table']
+    const offenders: string[] = []
+
+    for (const element of container.querySelectorAll<HTMLElement>('[class]')) {
+      const classes = element.className.split(/\s+/).filter(Boolean)
+      if (!classes.includes('hidden')) continue
+      const clash = classes.filter((c) => CONFLICTING.includes(c))
+      if (clash.length > 0) {
+        offenders.push(
+          `<${element.tagName.toLowerCase()} class="${element.className}"> -> ${clash}`,
+        )
+      }
+    }
+
+    expect(offenders, offenders.join('\n')).toEqual([])
+  })
+
+  it('testnet rozeti dar ekranda gizlenir, ve gizleyen sey rozetin KENDISI degildir', () => {
+    renderWithProviders(
+      <AppShell>
+        <p>content</p>
+      </AppShell>,
+    )
+
+    const pill = screen.getByText('Arc Testnet')
+    expect(pill.className).not.toContain('hidden')
+    // Gorunurluk bir ATA uzerinde durmali; rozetin uzerinde durursa hicbir
+    // sey yapmaz.
+    const hider = pill.closest('.hidden')
+    expect(hider, 'testnet rozetini `hidden` ile saran bir ata yok').not.toBeNull()
+    expect(hider?.className).toContain('sm:block')
+    expect(hider?.contains(pill)).toBe(true)
+  })
+
   it('ikon hâline dusen kontroller erisilebilir adlarini korur', () => {
     renderWithProviders(
       <AppShell>
