@@ -1,41 +1,73 @@
-import { formatUsdc } from '@arcpad/shared/browser'
+import type { ReactNode } from 'react'
+import { Card } from '@/components/ui/Card'
+import { Address } from '@/components/ui/Address'
+import { Money } from '@/components/ui/Money'
 import { getWebConfig } from '@/lib/addresses'
-import { BRAND } from '@/lib/brand'
 
+/**
+ * GECICI. Task 8 bu dosyayi Explore izgarasiyla degistirir.
+ *
+ * Iki sey ONEMLI ve o gorevden once de dogru olmali:
+ *  - `<main>` BURADA YOK. Landmark kabuktadir (`components/layout/AppShell`);
+ *    ikinci bir `main` sayfada iki ana bolge demektir ve atlama baglantisinin
+ *    hedefi belirsizlesir.
+ *  - Gosterilen her sey GERCEK yapilandirmadan gelir. Uydurulmus bir token
+ *    satiri kabugun dogru gorunmesini saglar ama yanlis seyi dogrular.
+ */
 export default function Home() {
   const { chain, addresses } = getWebConfig()
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-2xl flex-col justify-center gap-4 px-6">
-      <h1 className="text-4xl font-semibold text-accent">{BRAND.wordmark}</h1>
-      <p className="text-muted">{BRAND.tagline}</p>
-      <dl className="rounded-card border border-border bg-surface p-6 text-sm">
-        <div className="flex justify-between">
-          <dt className="text-muted">Network</dt>
-          <dd>{chain.name}</dd>
-        </div>
-        <div className="flex justify-between">
-          <dt className="text-muted">Chain ID</dt>
-          <dd>{chain.id}</dd>
-        </div>
-        <div className="flex justify-between">
-          <dt className="text-muted">Factory</dt>
-          <dd className="font-mono text-xs">{addresses.launchFactory}</dd>
-        </div>
-        <div className="flex justify-between">
-          <dt className="text-muted">Formatting check</dt>
-          <dd>${formatUsdc(1_234_500_000_000_000_000_000n)}</dd>
-        </div>
-      </dl>
-      {/*
-        Your wallet shows this balance with 18 decimals because on Arc the
-        native gas asset IS USDC. It is the SAME fund shown here with 6 -- two
-        views of one balance, never two balances.
-      */}
-      <p className="text-xs text-muted">
-        On Arc the native gas asset is USDC itself. Your wallet may show the balance with 18
+    <div className="mx-auto flex max-w-2xl flex-col gap-6 py-12">
+      <div className="flex flex-col gap-3">
+        {/* Slogan ALTBILGIDE duruyor; burada tekrar etmek onu iki kez soyler
+            ve ikisi de zayiflar. Bu baslik sayfanin isini soyler. */}
+        <h1 className="font-serif text-5xl leading-[1.05] tracking-[-0.02em]">
+          Pointed at {chain.name}
+        </h1>
+        <p className="text-sm text-muted">
+          The explore grid lands with Task 8. Below is the address book this build actually reads.
+        </p>
+      </div>
+
+      <Card className="divide-y divide-border">
+        <Row label="Network">
+          {/* Ag adi zaten "Arc Testnet" diyor; yanina bir "testnet" rozeti
+              koymak ayni seyi iki kez soyler. Rozet basliktaki kilitte. */}
+          <span>{chain.name}</span>
+        </Row>
+        <Row label="Chain ID">
+          <span className="tabular-nums">{chain.id}</span>
+        </Row>
+        <Row label="Factory">
+          <Address value={addresses.launchFactory} copy explorer label="Launch factory" />
+        </Row>
+        <Row label="Fee escrow">
+          <Address value={addresses.feeEscrow} copy explorer label="Fee escrow" />
+        </Row>
+        {/*
+          Bir bakiye AŞAĞI yuvarlanir: `rounding="down"` var olmayan parayi
+          gostermemeyi garanti eder. Girdi 18 ondalikli native, cikti 6
+          ondalikli ERC-20 gorunumu -- TEK figur, iki degil.
+        */}
+        <Row label="Graduation raise">
+          <Money native={12_161_433_369_060_378_706n} rounding="down" unit />
+        </Row>
+      </Card>
+
+      <p className="text-[12px] leading-relaxed text-muted">
+        On Arc the native gas asset is USDC itself. Your wallet may show this balance with 18
         decimals; this site shows the same balance with 6. It is one balance, shown two ways.
       </p>
-    </main>
+    </div>
+  )
+}
+
+function Row({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4 px-5 py-3.5 text-sm">
+      <span className="text-muted">{label}</span>
+      <span className="text-right">{children}</span>
+    </div>
   )
 }
