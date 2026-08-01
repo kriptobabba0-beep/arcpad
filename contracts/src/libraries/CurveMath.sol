@@ -162,9 +162,22 @@ library CurveMath {
     ///      donen `net` uzerinden `feeOn`'u kendisi cagirirsa FARKLI (daha
     ///      kucuk) bir ucret bulur ve kullanicinin odemesinin bir birimi ne
     ///      anapara ne ucret olarak muhasebelesir. Olculdu: (95, 30) bps'te
-    ///      gross in [1, 1e6] araliginin 12.345'inde yeniden hesaplama
-    ///      farkli sonuc verir (azami 2 birim eksik). Bu yuzden ucretler
+    ///      gross in [1, 1e6] araliginin 11.851'inde (%1,1851) yeniden
+    ///      hesaplama farkli sonuc verir (azami 2 birim eksik). Bu yuzden
+    ///      ucretler
     ///      DONDURULUR; cagiranin yeniden hesaplamasi icin bir sebep yoktur.
+    ///
+    ///      ONCEKI RAKAM 12.345'TI VE YANLISTI: parca basina sayiyordu, yani
+    ///      IKI ucret parcasinin DA kaydigi 493 girdiyi IKI KEZ ekliyordu
+    ///      (8.890 yalnizca-protokol + 2.469 yalnizca-creator + 2 x 493).
+    ///      Dogru sayim FARKLI GIRDI sayisidir: 11.851.
+    ///
+    ///      SINIRDAKI 11.852. GIRDI AYRICA KAYDA DEGER: `gross = 2` de farkli
+    ///      sonuc verirdi, ama o girdi `NetTooSmall()` ile REVERT eder
+    ///      (net = 1, iki ucret de 1, tasma 1 >= net), yani hic sonuc
+    ///      dondurmez ve "yeniden hesaplanabilir" bir vakasi yoktur. 11.851
+    ///      REVERT ETMEYEN girdileri sayar; 11.852 diyen bir olcum onu da
+    ///      katmis demektir.
     ///
     ///      Ornek (gross = 1_000_013, 95 + 30 bps):
     ///        duzeltme oncesi net = 987_667

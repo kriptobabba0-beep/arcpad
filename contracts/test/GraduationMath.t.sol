@@ -436,8 +436,19 @@ contract GraduationMathTest is Test {
     }
 
     /// `isSeedable` DOGRUYU SOYLER: `true` dedigi her yerde `sqrtPriceX96` IKI
-    /// SIRALAMADA DA revert etmez. Bu, ikisinin ayni sinirdan konustugunun tek
-    /// kanitidir -- ayri turetilmis iki esik sessizce ayrisabilirdi.
+    /// SIRALAMADA DA revert etmez.
+    ///
+    /// AMA "AYNI SINIRDAN KONUSUYORLAR" DEMEK YANLIS OLURDU, ve onceki yorum
+    /// oyle diyordu. Olculdu: `isSeedable`in KAPANIS MIN/MAX konjonksiyonu OLU
+    /// KODDUR -- yerine `return true` konuldugunda 491 testin hicbiri kirilmaz,
+    /// ve 400.000'den fazla ornekte o konjonksiyon sonucu BIR KEZ BILE
+    /// belirlemedi. Sebebi ustundeki iki tasma korumasinin KATI OLARAK DAHA
+    /// GUCLU olmasidir: `isSeedable` `sqrtPriceX96`in `PriceOutOfRange`
+    /// sinirindan yaklasik DOKUZ BUYUKLUK MERTEBESI daha katidir.
+    ///
+    /// Yani bu testin iddiasi tek yonludur ve oyle kalmalidir: `isSeedable`
+    /// TRUE dediginde `sqrtPriceX96` revert ETMEZ. Tersi (false dedigi her
+    /// yerde revert eder) DOGRU DEGILDIR ve iddia edilmiyor.
     function testFuzz_isSeedableAgreesWithSqrtPriceX96(uint256 quoteFinal) public pure {
         quoteFinal = bound(quoteFinal, 1, type(uint128).max);
         if (!GraduationMath.isSeedable(quoteFinal, BASE_FINAL)) return;

@@ -173,6 +173,17 @@ library GraduationMath {
     ///      bite sigar, cunku `prod1 = (a * 2^192) >> 256 = a >> 64` ve guard
     ///      `require(d > prod1)`. Iki kontrol de gereklidir cunku iki
     ///      SIRALAMANIN pay ve paydasi terstir.
+    ///
+    /// @dev KAPANISTAKI MIN/MAX KONJONKSIYONU FIILEN OLU KODDUR VE BU
+    ///      OLCULDU: yerine `return true` konuldugunda paketin 491 testinin
+    ///      HICBIRI kirilmaz, ve 400.000'den fazla ornekte konjonksiyon
+    ///      sonucu BIR KEZ BILE belirlemedi -- ustundeki iki tasma korumasi
+    ///      KATI OLARAK DAHA GUCLUDUR (yaklasik dokuz buyukluk mertebesi).
+    ///      BIRAKILIYOR cunku yonu KORUMACIDIR (yanlis tarafa dusmez) ve
+    ///      `sqrtPriceX96`in kendi `PriceOutOfRange` sinirini AYNEN yansitir;
+    ///      ama "ikisi ayni sinirdan konusur" demek YANLIS olurdu ve
+    ///      denmiyor. Bedeli deploy yolunda iki `sqrt` ve iki `mulDiv`dir --
+    ///      launch basina degil, FACTORY BASINA BIR KEZ.
     function isSeedable(uint256 quoteFinal, uint256 baseFinal) internal pure returns (bool) {
         if (quoteFinal == 0 || baseFinal == 0) return false;
         if (baseFinal > type(uint256).max / QUOTE_SCALE) return false;

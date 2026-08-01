@@ -253,13 +253,16 @@ contract FeeScheduleTest is Test {
     /// KATI AZALAN: creator payi ilk esigin ustunde hicbir yerde ARTMAZ.
     /// (Kademe 0 -> 1 ATLAMASI haric, ki o kasitlidir ve creator tesvikidir.)
     ///
-    /// UST SINIR 21e12'DIR, `1e18` DEGIL, VE FARK OLCULDU. Task 3 briefi
-    /// `1e18` yaziyordu; o sinirla araligin yalnizca %0,00199'u SON KADEMENIN
-    /// ALTINDA kalir, yani 256 kosuda kademeli bolgeye beklenen ornek sayisi
-    /// 0,0051'dir (CI'nin 5000 kosusunda 0,0997). Test o halde HER ZAMAN
-    /// `assertLe(5, 5)` iddia ederek gecerdi -- monotonlugu HIC olcmeden.
-    /// Olculdu: lane sirasini TERSINE ceviren mutant, `1e18` sinirli haliyle
-    /// bu testi HAYATTA BIRAKIYORDU; 21e12 ile OLDURUYOR.
+    /// UST SINIR 21e12'DIR, `1e18` DEGIL. GEREKCE DUZELTILDI: ilk yazimda
+    /// "tekduze bir orneklemede beklenen ornek sayisi 0,0051" diye bir
+    /// ARITMETIK veriliyordu. O aritmetik TEKDUZE bir fuzzer varsayar ve
+    /// Foundry TEKDUZE DEGILDIR -- sozlugunu hedefin PUSH sabitlerinden
+    /// tohumlar, ve burada o sabitler ESIKLERIN KENDISIDIR, dolayisiyla
+    /// duzeltilmemis sinirla bile dokuz bandin hepsine ULASILIYOR.
+    /// Yani gerekce yanlisti; DUZELTMENIN KENDISI yine de dogrudur ve
+    /// dayanagi TUREME degil OLCUMDUR: lane sirasini tersine ceviren mutant
+    /// `1e18` sinirli haliyle bu testi HAYATTA BIRAKIYORDU, 21e12 ile
+    /// OLDURUYOR. Erisim TURETILMEZ, OLCULUR.
     /// Genis aralik kapsamasi ayri bir testte durur:
     /// `testFuzz_theTopTierIsTerminal`.
     function testFuzz_creatorBpsIsNonIncreasingAboveTheFirstThreshold(uint256 a, uint256 b) public view {
