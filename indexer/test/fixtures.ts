@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
 import type { Address, Hex } from 'viem'
 import type { DecodedEvent, RawLog, RpcClient } from '../src/logs'
-import { createPacer, decodeAll } from '../src/logs'
+import { createPacer, decodeAll, fetchRange } from '../src/logs'
 
 /**
  * FIXTURE YUKLEYICI.
@@ -184,6 +184,25 @@ export const LIVE = {
   curve: '0x7938be340a14a12f94a83aea246d9d2566324c9c' as Address,
   escrow: '0xeed4431ead3e27f16d97f677a9c4c1a963df8dc6' as Address,
 } as const
+
+/**
+ * CANLI smoke'un butun olaylari, cekme katmanindan GECEREK.
+ *
+ * Uygulama testleri olay nesnelerini ELLE KURMAZ; cozucunun ciktisini alir.
+ * Elle kurmak, uygulayiciyi cozucunun yapmadigi bir sekle karsi test etmek
+ * olurdu -- yani gecen ama hicbir sey ispatlamayan bir test.
+ */
+export async function liveDecodedEvents(): Promise<DecodedEvent[]> {
+  const logs = smokeLogs()
+  const first = BigInt(logs[0]!.blockNumber)
+  const last = BigInt(logs[logs.length - 1]!.blockNumber)
+  return fetchRange(
+    new FakeNode(logs),
+    { factory: LIVE.factory, escrow: LIVE.escrow, curves: new Set(), tokens: new Set() },
+    first,
+    last,
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Sahte dugum

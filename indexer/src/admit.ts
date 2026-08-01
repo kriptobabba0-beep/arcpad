@@ -2,6 +2,7 @@ import type { Address, Hex } from 'viem'
 import { concatHex, keccak256 } from 'viem'
 import type { Deployment, Queryable } from '@arcpad/db'
 import { applyLaunch } from '@arcpad/db'
+import { writeMarketCap } from './apply/trade'
 import { LAUNCH_TOKEN_CREATION_CODE } from './launch-token.generated'
 import type { LaunchedEvent } from './logs'
 
@@ -234,7 +235,7 @@ export async function admit(
   db: Queryable,
   deployment: Deployment,
   event: LaunchedEvent,
-): Promise<'admitted'> {
+): Promise<number> {
   // KAPI 1'IN ILMEGI. Cekme katmani zaten factory adresine gore suzuyor, ama
   // `admit` cagiranina GUVENMEZ: bir sonraki katman (Task 11) watch set'i
   // yanlis kurarsa, o hata burada bir yabanci launch'i kabul ettirebilirdi.
@@ -267,7 +268,14 @@ export async function admit(
     throw new NonCanonicalLaunch(event.token, expected, 'non_canonical')
   }
 
-  await applyLaunch(db, {
+  // DONUS DEGERI: `launches`'a GERCEKTEN eklenen satir sayisi (0 ya da 1).
+  //
+  // PLAN SAPMASI: brief `admit(...) -> 'admitted'` diyor. Sabit bir dizge
+  // dondurmek, "ikinci gecis HICBIR SEY yazmadi" iddiasini olculemez yapardi:
+  // cagiran (Task 11'in dongusu ve idempotency testi) yazimin GERCEKLESIP
+  // gerceklesmedigini ancak sayidan bilebilir. Reddedilen launch yine
+  // `throw`dur, yani "kabul edildi mi" sorusunun cevabi kaybolmuyor.
+  const inserted = await applyLaunch(db, {
     kind: 'launch',
     eventSeq: event.seq,
     blockNumber: event.blockNumber,
@@ -291,5 +299,22 @@ export async function admit(
     realTokenReservesTok: deployment.saleSupplyTok,
     realQuoteReservesWei: 0n,
   })
-  return 'admitted'
+
+  // ACILIS MARKET CAP'I. `applyLaunch` `token_stats`i sifir market cap'le
+  // kurar ve o sifir bir SIRALAMA ANAHTARIDIR: Explore'un "market cap'e gore
+  // sirala" beslemesinde hic ticaret gormemis bir token en dibe duserdi, oysa
+  // acilis degeri (testnet profilinde tam 4 USDC) sifir DEGILDIR. Deger,
+  // Task 10'un `token_overview` view'iyle AYNI ifadeden gelir, yani saklanan
+  // anahtar ile gosterilen sayi ayrisamaz.
+  if (inserted > 0) {
+    await writeMarketCap(
+      db,
+      event.token,
+      deployment.virtualQuoteReservesWei,
+      deployment.virtualTokenReservesTok,
+      deployment.totalSupplyTok,
+      event.seq,
+    )
+  }
+  return inserted
 }

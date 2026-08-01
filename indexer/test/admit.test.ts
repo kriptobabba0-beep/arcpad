@@ -186,7 +186,7 @@ describe('admit', () => {
 
   it('CANLI launch kabul edilir ve dort tabloyu birden kurar', async () => {
     const event = await launchedFrom('live')
-    expect(await admit(pool, LIVE_DEPLOYMENT, event)).toBe('admitted')
+    expect(await admit(pool, LIVE_DEPLOYMENT, event)).toBe(1)
 
     const { rows } = await pool.query(
       `SELECT l.token, l.curve, l.launch_creator, l.name, l.symbol, l.uri,
@@ -223,8 +223,9 @@ describe('admit', () => {
 
   it('ayni launch i iki kez kabul etmek ikinci seferde hicbir sey yazmaz', async () => {
     const event = await launchedFrom('live')
-    await admit(pool, LIVE_DEPLOYMENT, event)
-    await admit(pool, LIVE_DEPLOYMENT, event)
+    expect(await admit(pool, LIVE_DEPLOYMENT, event)).toBe(1)
+    // IKINCI cagri HICBIR SATIR yazmaz ve bunu SAYIYLA soyler.
+    expect(await admit(pool, LIVE_DEPLOYMENT, event)).toBe(0)
     expect(await count('launches')).toBe(1)
     expect(await count('creator_history')).toBe(1)
     expect(await count('curve_state')).toBe(1)
@@ -349,7 +350,7 @@ describe('admit', () => {
       rawTopics: [`0x${'00'.repeat(32)}`],
       rawData: '0x',
     }
-    expect(await admit(pool, LIVE_DEPLOYMENT, event)).toBe('admitted')
+    expect(await admit(pool, LIVE_DEPLOYMENT, event)).toBe(1)
     const { rows } = await pool.query<{ name: string; name_hex: string }>(
       'SELECT name, name_hex FROM launches',
     )
