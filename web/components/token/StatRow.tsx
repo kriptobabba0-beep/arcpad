@@ -7,7 +7,7 @@ import { cx } from '@/components/ui/cx'
  *
  * Referans seridi: Market cap · Liquidity · 24h volume · ATH. arcpad'de
  * HAVUZ YOK (Faz 2), yani "Liquidity" ya sabit sifir ya uydurma olurdu.
- * Yerine curve'un fiilen topladigi tutar: `real_quote_reserves_wei`.
+ * Yerine curve'un fiilen topladigi tutar: `realQuoteReservesWei`.
  *
  * "BURNED" SATIRI YOK (S8). Yakma yolu yoktur -- OZ ERC-20 `to ==
  * address(0)` icin `ERC20InvalidReceiver` ile revert eder ve Arc sifir adrese
@@ -32,13 +32,13 @@ export type StatSource = {
 
 export function statsFromOverview(overview: TokenOverview): StatSource {
   return {
-    marketCapWei: BigInt(overview.market_cap_wei),
-    priceWeiPerToken: BigInt(overview.price_wei_per_token),
-    raisedWei: BigInt(overview.real_quote_reserves_wei),
-    targetWei: BigInt(overview.graduation_raise_wei),
-    volume24hWei: BigInt(overview.volume_24h_wei),
-    athMarketCapWei: BigInt(overview.ath_market_cap_wei),
-    holderCount: overview.holder_count,
+    marketCapWei: overview.marketCapWei,
+    priceWeiPerToken: overview.priceWeiPerTok,
+    raisedWei: overview.realQuoteReservesWei,
+    targetWei: overview.graduationRaiseWei,
+    volume24hWei: overview.volume24hWei,
+    athMarketCapWei: overview.athMarketCapWei,
+    holderCount: overview.holderCount,
   }
 }
 

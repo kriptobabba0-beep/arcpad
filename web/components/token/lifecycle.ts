@@ -54,15 +54,15 @@ export function rangeToBlocks(range: RangeKey): number | null {
 export const RANGE_KEYS: readonly RangeKey[] = ['5M', '1H', '6H', '1D', 'ALL']
 
 /**
- * `event_seq` -> blok numarasi.
+ * `eventSeq` -> blok numarasi.
  *
- * Faz 3'un kodlamasi: `event_seq = (block << 20) | logIndex` (LOG_INDEX_BITS
+ * Faz 3'un kodlamasi: `eventSeq = (block << 20) | logIndex` (LOG_INDEX_BITS
  * = 20). X ekseni BUNDAN turetilir, duvar saatinden DEGIL: olculdu, 553
  * ardisik blok ciftinin 271'i (%49,0) ayni timestamp'i tasiyor, yani zamana
  * oturtulan bir eksende bloklarin yarisi UST USTE duser.
  */
 export const LOG_INDEX_BITS = 20n
 
-export function blockOfSeq(eventSeq: string): number {
-  return Number(BigInt(eventSeq) >> LOG_INDEX_BITS)
+export function blockOfSeq(eventSeq: bigint): number {
+  return Number(eventSeq >> LOG_INDEX_BITS)
 }

@@ -33,7 +33,7 @@ function first(value: string | string[] | undefined): string | undefined {
  * `packages/db`'de durur; buradan gecen tek sey `SORTS`'un bir anahtaridir.
  *
  * `after` cursor'u opak bir dizedir ve DOGRULANIR: keyset cursor'u bir
- * `event_seq`tir, yani ondalik basamaklardan olusur. Bunu kontrol etmek
+ * `eventSeq`tir, yani ondalik basamaklardan olusur. Bunu kontrol etmek
  * cursor'un sorguya bir parametre olarak baglanmasindan ayri bir savunma
  * degil, ONUN ONUNDEKI savunmadir.
  */

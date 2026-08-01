@@ -11,7 +11,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react'
-import type { HexAddress, SearchSortKey, TokenOverview } from '@/components/read/types'
+import type { SearchSortKey, TokenOverview } from '@/components/read/types'
 import { Address } from '@/components/ui/Address'
 import { Button } from '@/components/ui/Button'
 import { Dialog } from '@/components/ui/Dialog'
@@ -26,6 +26,7 @@ import {
   type SearchResponse,
 } from './params'
 import { SearchResultRow, UnindexedResultRow } from './SearchResultRow'
+import { fromWire } from '@/components/read/wire'
 
 /**
  * ⌘K MODALININ ICERIGI.
@@ -55,7 +56,7 @@ type View =
   | { readonly status: 'ready'; readonly payload: SearchPayload; readonly q: string }
 
 /** Bir secilebilir satir. `row === null` -> kanonik ama indekslenmemis adres. */
-type Option = { readonly address: HexAddress; readonly row: TokenOverview | null }
+type Option = { readonly address: string; readonly row: TokenOverview | null }
 
 export type SearchDialogProps = {
   open: boolean
@@ -169,7 +170,10 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
     const pasted = view.payload.pasted
     if (pasted?.kind === 'refused') return []
     if (pasted?.kind === 'notIndexed') return [{ address: pasted.address, row: null }]
-    return view.payload.rows.map((row) => ({ address: row.token, row }))
+    return view.payload.rows.map((wire) => {
+      const row = fromWire(wire)
+      return { address: row.token, row }
+    })
   }, [view])
 
   // Yeni bir sonuc kumesi geldiginde secim BASA doner: onceki listenin

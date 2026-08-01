@@ -7,7 +7,12 @@ import {
   resolveMetadata,
   verifyCanonical,
 } from '@/components/read/boundary'
-import type { Canonicity, HexAddress, TokenOverview } from '@/components/read/types'
+import {
+  asHex,
+  type Canonicity,
+  type HexAddress,
+  type TokenOverview,
+} from '@/components/read/types'
 import { NotALaunch } from '@/components/token/CanonicalBadge'
 import { CurveChart } from '@/components/token/CurveChart'
 import { LaunchFacts } from '@/components/token/LaunchFacts'
@@ -63,15 +68,15 @@ export default async function TokenPage({ params }: { params: Promise<{ address:
 async function IndexedToken({ overview }: { overview: TokenOverview }) {
   const [metadata, trades, holders] = await Promise.all([
     resolveMetadata(overview.uri),
-    readTrades(overview.token, { cursor: null, limit: 25 }),
-    readHolders(overview.token, { cursor: null, limit: 25 }),
+    readTrades(asHex(overview.token), { cursor: null, limit: 25 }),
+    readHolders(asHex(overview.token), { cursor: null, limit: 25 }),
   ])
   const lifecycle = resolveLifecycle({ complete: overview.complete })
   const stats = statsFromOverview(overview)
 
   const saleSupply = 793_100_000n * 10n ** 18n
-  const soldTok = saleSupply - BigInt(overview.real_token_reserves_tok)
-  const percent = (Math.round(overview.progress_ppm / 1_000) / 10).toFixed(1)
+  const soldTok = saleSupply - overview.realTokenReservesTok
+  const percent = (Math.round(overview.progressPpm / 1_000) / 10).toFixed(1)
 
   return (
     <div className="flex flex-col gap-6">
@@ -83,7 +88,7 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
 
           {lifecycle.kind === 'trading' ? (
             <ProgressToGraduation
-              ppm={overview.progress_ppm}
+              ppm={overview.progressPpm}
               raisedWei={stats.raisedWei}
               targetWei={stats.targetWei}
             />
@@ -116,7 +121,7 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
             holders={holders}
             overview={{
               curve: overview.curve,
-              launch_creator: overview.launch_creator,
+              launchCreator: overview.launchCreator,
               symbol: overview.symbol,
             }}
           />

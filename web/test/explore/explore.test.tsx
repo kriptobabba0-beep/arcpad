@@ -13,7 +13,7 @@ import { CLIMBING, SMOKE } from '../fixtures/readModel'
 
 describe('progressPercent', () => {
   /**
-   * `progress_ppm` MILYONDA PAYDIR. 10.000'e bolunur, 1.000'e degil.
+   * `progressPpm` MILYONDA PAYDIR. 10.000'e bolunur, 1.000'e degil.
    * Fixture'in 253_087'si ELLE turetildi (`1e6 - ceil(kalan*1e6/S)`), yani bu
    * iddia bilesenin kendi aritmetigini tekrar etmiyor.
    */

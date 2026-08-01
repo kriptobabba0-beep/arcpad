@@ -23,9 +23,9 @@ describe('parseExploreParams', () => {
   })
 
   it.each([
-    ['market_cap_wei DESC', 'ham SQL'],
+    ['marketCapWei DESC', 'ham SQL'],
     ["'; DROP TABLE launches--", 'enjeksiyon denemesi'],
-    ['created_seq', 'gercek bir kolon adi'],
+    ['createdSeq', 'gercek bir kolon adi'],
     ['RECENTBUYS', 'buyuk harf'],
     ['', 'bos dize'],
   ])('%s (%s) varsayilana duser', (sort) => {
@@ -52,7 +52,7 @@ describe('parseExploreParams', () => {
   })
 
   it('cursor yalnizca ondalik basamaklardan olusabilir', () => {
-    // Keyset cursor'u bir `event_seq`tir. Sekli dogrulamak, onu sorguya
+    // Keyset cursor'u bir `eventSeq`tir. Sekli dogrulamak, onu sorguya
     // parametre olarak baglamanin YERINE GECMEZ; onunde durur.
     expect(parseExploreParams({ after: '4194304' }).cursor).toBe('4194304')
     expect(parseExploreParams({ after: '4194304; DROP' }).cursor).toBeNull()

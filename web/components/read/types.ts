@@ -1,137 +1,107 @@
-/**
- * OKUMA MODELININ TIPLERI, MIGRATION'LARDAN TURETILDI -- UYDURULMADI.
- *
- * Her alan `packages/db/migrations/00{2,3,4,6}_*.sql` icindeki bir kolona
- * karsilik gelir ve tipi o kolonun tipidir. `numeric(78,0)` kolonlari
- * TypeScript'te `string`tir, `bigint` degil: `pg` surucusu 78 basamakli bir
- * sayiyi Number'a ceviremeyecegi icin dize dondurur, ve bunu `bigint`
- * yazarak gizlemek, ilk `JSON.parse`ta patlayan bir yalan olurdu.
- *
- * SONEK SOZLESMESI BAGLAYICIDIR (Faz 3):
- *   `_wei` = 18 ondalikli native USDC   `_tok` = 18 ondalikli token tabani
- *   `_ppm` = milyonda pay              `_seq` = event_seq
- *   `_at`  = YALNIZCA gosterim, ASLA siralama
- * `_wei` ve `_tok` ikisi de 1e18 olcekli ama TOPLANMALARI bir kategori
- * hatasidir -- fiyat `wei/tok`tur.
- */
+import type {
+  Fresh,
+  HolderRow as DbHolderRow,
+  IndexerStatus,
+  SortKey,
+  TokenOverview,
+  TradeRow as DbTradeRow,
+} from '@arcpad/db'
 
-/** `0x` + 40 kucuk harf hex. Veritabani bunu CHECK ile zorluyor. */
+/**
+ * OKUMA MODELININ TIPLERI -- TEK KAYNAK `packages/db/src/queries.ts`.
+ *
+ * Bu dosya BIR KOPYA DEGIL. `import type` calisma zamaninda tamamen silinir
+ * (`verbatimModuleSyntax` acik), yani `pg` istemci paketine girmez; ama
+ * derleme zamaninda tip Faz 3'un kendi tanimidir. Bir kolon adi orada
+ * degistiginde burasi DERLENMEZ -- ki daha once tam tersi oldu: bu dosya
+ * migration'lardan elle turetilmisti, `queries.ts` sonradan indi ve iki taraf
+ * SESSIZCE ayrildi (snake_case/string vs camelCase/bigint).
+ *
+ * SONEK SOZLESMESI hâlâ baglayici, camelCase'e cevrilmis hâliyle:
+ *   `…Wei` = 18 ondalikli native USDC   `…Tok` = 18 ondalikli token tabani
+ *   `…Ppm` = milyonda pay               `…Seq` = event_seq
+ *   `…At`  = YALNIZCA gosterim, ASLA siralama
+ * `…Wei` ve `…Tok` ikisi de 1e18 olcekli ama TOPLANMALARI kategori hatasidir.
+ */
+export type { Fresh, IndexerStatus, SortKey, TokenOverview }
+
+/**
+ * `0x` + 40 hex.
+ *
+ * Faz 3'un satirlari adresleri DUZ `string` olarak veriyor (veritabani CHECK
+ * ile zorluyor, tip zorlamiyor). Bu daraltma yalnizca ZINCIRE ve okuma
+ * fonksiyonlarina giden sinirda kullanilir -- viem `0x${string}` ister ve bir
+ * `as` orada kacinilmazdir.
+ *
+ * Bileşen prop'lari bilerek `string` kalir: bir satiri EKRANA cizmek icin
+ * daraltmaya ihtiyac yok, ve her bileşene bir cast tasitmak, castlerin
+ * dogrulanmadigi bir yerde cogalmasi demek olurdu.
+ */
 export type HexAddress = `0x${string}`
 
 /**
- * Faz 3'un `token_overview` VIEW'i.
+ * Sinirda daraltma, DOGRULAYARAK.
  *
- * DIKKAT: bu view HENUZ YOK (bkz. `boundary.ts`'in basligi). Alan listesi
- * Faz 4 planinin "Faz 3 ile hizalama" bolumunden BIREBIR alindi, tipler ise
- * migration'lardaki kolon tiplerinden.
+ * `as HexAddress` yazmak bir iddiadir ve yanlis oldugunda sessizce gecer.
+ * Bu, sekli KONTROL eder ve bozuksa atar -- adres bir kullanicidan ya da bir
+ * veritabani satirindan geliyorsa iddia yeterli degildir.
  */
-export type TokenOverview = {
-  readonly token: HexAddress
-  readonly curve: HexAddress
-  readonly name: string
-  readonly symbol: string
-  readonly uri: string
-
-  /**
-   * ZINCIRDEKI HAM BAYTLAR, ve gosterim metninin YERINE GECMEZLER.
-   *
-   * `launches.name`/`symbol`/`uri` `pgSafeText`'ten gecmistir: Postgres'e
-   * giremeyen kod birimleri U+FFFD olmustur ve bu COKA-BIR, geri donulemez
-   * bir eslemedir. Token kimligi CREATE2 ile HAM baytlardan turetilir, yani
-   * kanonikligi gosterim metninden dogrulamak MUMKUN DEGILDIR: zincirdeki
-   * ayri iki isim ayni gosterim metnine duser.
-   *
-   * Kanoniklik hakkinda ekrana yazilan her sey bu alanlardan gelir.
-   */
-  readonly name_hex: string
-  readonly symbol_hex: string
-  readonly uri_hex: string
-  readonly salt: string
-
-  /** Launch anindaki creator. Kalicidir. */
-  readonly launch_creator: HexAddress
-  /** Ucreti FIILEN alan cuzdan. Degisebilir; `launch_creator` ile ayni degildir. */
-  readonly fee_creator: HexAddress
-
-  readonly virtual_token_reserves_tok: string
-  readonly virtual_quote_reserves_wei: string
-  readonly real_token_reserves_tok: string
-  readonly real_quote_reserves_wei: string
-
-  readonly complete: boolean
-  readonly completed_seq: string | null
-  readonly pool_seed_supply_tok: string | null
-
-  readonly market_cap_wei: string
-  readonly price_wei_per_token: string
-  readonly progress_ppm: number
-  readonly graduation_raise_wei: string
-
-  readonly holder_count: number
-  readonly volume_total_wei: string
-  readonly volume_24h_wei: string
-  readonly ath_market_cap_wei: string
-  readonly trade_count: number
-  readonly buy_count: number
-
-  readonly last_trade_seq: string | null
-  readonly last_buy_seq: string | null
-  readonly last_trade_at: string | null
-  readonly last_buy_at: string | null
-  readonly created_seq: string
-  readonly created_at: string
+export function asHex(value: string): HexAddress {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(value)) {
+    throw new Error(`not a 20-byte hex address: ${value}`)
+  }
+  return value.toLowerCase() as HexAddress
 }
 
-/** `trades` tablosunun bir satiri, arti indexer'in turettigi `is_dev`. */
-export type TradeRow = {
-  readonly event_seq: string
-  readonly block_number: string
-  readonly log_index: number
-  readonly tx_hash: string
-  /** YALNIZCA gosterim ve 24s penceresi. Siralama `event_seq` uzerindedir. */
-  readonly block_time: string
-  readonly token: HexAddress
-  readonly curve: HexAddress
-  readonly trader: HexAddress
-  readonly is_buy: boolean
-  readonly token_amount_tok: string
-  /** CURVE tutari. Kullanicinin cuzdanindan cikan tutar bu DEGILDIR. */
-  readonly quote_amount_wei: string
-  readonly protocol_fee_wei: string
-  /** Creator sifirsa SIFIRDIR ve protokol payina katlanmaz. */
-  readonly creator_fee_wei: string
-  readonly virtual_token_reserves_tok: string
-  readonly virtual_quote_reserves_wei: string
-  readonly real_token_reserves_tok: string
-  readonly real_quote_reserves_wei: string
-  readonly source: 'curve' | 'pool'
-  /**
-   * INDEXER TURETIR, arayuz HESAPLAMAZ.
-   *
-   * `trader === overview.fee_creator` karsilastirmasi yanlistir: creator
-   * degistirilebilir (Faz 1d) ve bugunun creator'iyla eski bir islemi
-   * karsilastirmak gecmisi yanlis boyar. Faz 3 bunu `creator_at(token, seq)`
-   * ile NOKTASAL olarak cozer.
-   */
-  readonly is_dev: boolean
+/**
+ * ISLEM SATIRI = Faz 3'un satiri + UCRET VE REZERV ALANLARI.
+ *
+ * ============ BU BIR BOSLUK, VE DERLEME ZAMANINDA DURUYOR ============
+ *
+ * `listTrades` bugun sekiz alan seciyor: eventSeq, txHash, blockTime, trader,
+ * isBuy, tokenAmountTok, quoteAmountWei, isDev. Ucretleri SECMIYOR.
+ *
+ * Ama `walletDeltaWei` -- Task 11'in merkezi gereksinimi, "cuzdandan cikan
+ * tutari goster, curve tutarini degil" -- onlarsiz HESAPLANAMAZ: alimda
+ * kullanicinin odedigi `quote + protokol + creator`, satimda aldigi
+ * `quote - ucretler`. Yalnizca `quoteAmountWei` gostermek, brief'in acikca
+ * yasakladigi sey.
+ *
+ * Kolonlar VERITABANINDA VAR (`003_trades_and_curve_state.sql`:
+ * `protocol_fee_wei`, `creator_fee_wei`, `virtual_*`); yalnizca SELECT'te
+ * yoklar. Bu yuzden burada ZORUNLU alan olarak duruyorlar: Task 7'nin
+ * adaptoru yazildiginda `listTrades`'in cikti tipi bu tipe ATANAMAZ ve derleme
+ * kirilir. Bir yorum degil, bir kapi.
+ *
+ * Grafik de ayni sebeple etkileniyor: `realisedSeries` her islemin sakladigi
+ * rezerv anlik goruntusunden fiyat turetir.
+ */
+export type TradeRow = DbTradeRow & {
+  readonly protocolFeeWei: bigint
+  /** Creator sifirsa SIFIRDIR ve protokol payina KATLANMAZ. */
+  readonly creatorFeeWei: bigint
+  readonly virtualTokenReservesTok: bigint
+  readonly virtualQuoteReservesWei: bigint
 }
 
-/** `holders` tablosunun bir satiri. Curve adresi sorguda HARIC tutulur. */
-export type HolderRow = {
-  readonly token: HexAddress
-  readonly holder: HexAddress
-  readonly balance_tok: string
-  readonly last_seq: string
-}
+/** Faz 3'un satiri. Curve sorguda HARIC tutulur (`h.holder <> c.curve`). */
+export type HolderRow = DbHolderRow
 
 /**
  * SIRALAMA ANAHTARLARI BIR BEYAZ LISTEDIR.
  *
- * URL'den gelen bir dize hicbir zaman bir SQL ifadesine donusmez. Deger
- * burada bir ANAHTAR olarak cozulur; ifadenin kendisi `packages/db`'de durur.
+ * URL'den gelen dize hicbir zaman bir SQL ifadesine donusmez; buradan gecen
+ * tek sey `SORTS`'un bir ANAHTARIDIR. Dizi olarak ayrica duruyor cunku filtre
+ * seridi uzerinde donmek zorunda -- ama asagidaki iki iddia, listenin Faz
+ * 3'un anahtar kumesiyle AYNI kalmasini derleme zamaninda zorunlu kilar.
  */
 export const SORT_KEYS = ['recentBuys', 'newest', 'oldest', 'marketCap', 'volume'] as const
-export type SortKey = (typeof SORT_KEYS)[number]
+
+// Iki yonlu: eksik bir anahtar da, uydurma bir anahtar da burada kirilir.
+const _sortKeysCoverDb: SortKey extends (typeof SORT_KEYS)[number] ? true : never = true
+const _dbCoversSortKeys: (typeof SORT_KEYS)[number] extends SortKey ? true : never = true
+void _sortKeysCoverDb
+void _dbCoversSortKeys
 
 /** `relevance` YALNIZCA arama icindir ve `q` bos oldugunda secilemez. */
 export const SEARCH_SORT_KEYS = ['relevance', ...SORT_KEYS] as const
@@ -139,6 +109,14 @@ export type SearchSortKey = (typeof SEARCH_SORT_KEYS)[number]
 
 export type PageParams = { readonly cursor: string | null; readonly limit: number }
 
+/**
+ * SAYFA = satirlar + imlec + toplam.
+ *
+ * Faz 3'un `listTokens`'i `Fresh<TokenOverview[]>` doner: `nextCursor` ve
+ * `total` YOK. Ikisi de bizim sorumlulugumuzda -- imlec son satirin siralama
+ * anahtarindan turer, toplam ayri bir sayimdir. Task 7'nin adaptoru bunu
+ * doldurur; bugun stub bos sayfa doner.
+ */
 export type Page<T> = {
   readonly rows: readonly T[]
   readonly nextCursor: string | null
@@ -148,14 +126,15 @@ export type Page<T> = {
 /**
  * VERITABANI DUSTUGUNDE SAYFA 500 VERMEZ.
  *
- * Bir istisna yukari sizarsa Next hata sinirini cizer ve token sayfasinin
- * TAMAMI kaybolur -- al-sat paneli dahil, ki o rezervleri ZINCIRDEN okur ve
- * veritabanina hic ihtiyaci yoktur. Sonucu bir deger yapmak, "eksik veriyle
- * ciz" davranisini bir istisna yakalama refleksine degil tip sistemine
- * baglar.
+ * Istisna yukari sizarsa Next hata sinirini cizer ve token sayfasinin TAMAMI
+ * kaybolur -- al-sat paneli dahil, ki o rezervleri ZINCIRDEN okur.
+ *
+ * `indexer` HER BASARILI OKUMADA tasinir, cunku "veri var" ile "veri GUNCEL"
+ * ayri sorulardir: bayat ama mevcut bir fiyati canliymis gibi gostermek,
+ * hic gostermemekten daha pahaliya mal olur.
  */
 export type ReadResult<T> =
-  | { readonly ok: true; readonly data: T }
+  | { readonly ok: true; readonly data: T; readonly indexer: IndexerStatus }
   | { readonly ok: false; readonly reason: 'unavailable' | 'notFound' }
 
 /** Kanoniklik uc degerlidir ve ikisi AYNI ekrana gider. */

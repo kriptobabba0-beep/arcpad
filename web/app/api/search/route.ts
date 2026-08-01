@@ -1,5 +1,6 @@
 import { readSearch, readTokenOverview, verifyCanonical } from '@/components/read/boundary'
 import type { HexAddress } from '@/components/read/types'
+import { toWire } from '@/components/read/wire'
 import {
   asAddressQuery,
   parseSearchParams,
@@ -69,7 +70,7 @@ async function resolvePastedAddress(address: HexAddress): Promise<SearchPayload>
   const overview = await readTokenOverview(address)
   if (overview.ok) {
     return {
-      rows: [overview.data],
+      rows: [toWire(overview.data)],
       nextCursor: null,
       total: 1,
       pasted: { kind: 'indexed', address },
@@ -129,7 +130,7 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   return Response.json({
-    rows: result.data.rows,
+    rows: result.data.rows.map(toWire),
     nextCursor: result.data.nextCursor,
     total: result.data.total,
     pasted: null,

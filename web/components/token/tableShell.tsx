@@ -189,7 +189,7 @@ export type KeysetRows<T> = {
 }
 
 /**
- * KEYSET SAYFALAMA, EKLEYEREK. Offset YOK ve olmamali: `event_seq DESC` uzerinde
+ * KEYSET SAYFALAMA, EKLEYEREK. Offset YOK ve olmamali: `eventSeq DESC` uzerinde
  * bir OFFSET, aradan yeni bir islem girdiginde okunmus bir satiri ikinci
  * sayfada TEKRAR gosterir. Imlec son satiri isaret ettigi icin araya giren
  * satir listeyi kaydirmaz.

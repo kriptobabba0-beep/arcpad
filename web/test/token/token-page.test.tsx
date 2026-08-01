@@ -24,14 +24,14 @@ describe('ilerleme -- pay TOKEN satisi uzerinden', () => {
   /**
    * IKI KAYNAK AYNI SAYIYI VERMEK ZORUNDA.
    *
-   * Fixture'in `progress_ppm`'i ELLE turetildi (`1e6 - ceil(kalan*1e6/S)`);
+   * Fixture'in `progressPpm`'i ELLE turetildi (`1e6 - ceil(kalan*1e6/S)`);
    * `progressPpm` Task 4'un zincirle diferansiyel test edilmis portudur. Ayni
    * kaldiklarini olcmek, "indexer bir sey, arayuz baska bir sey soyluyor"
    * sinifini kapatir.
    */
   it('elle turetilen 253_087 ile Task 4’un portu ayni sonucu verir', () => {
-    expect(CLIMBING.progress_ppm).toBe(253_087)
-    expect(progressPpm(BigInt(CLIMBING.real_token_reserves_tok), PROFILE.saleSupply)).toBe(253_087)
+    expect(CLIMBING.progressPpm).toBe(253_087)
+    expect(progressPpm(CLIMBING.realTokenReservesTok, PROFILE.saleSupply)).toBe(253_087)
   })
 
   /**
@@ -43,8 +43,8 @@ describe('ilerleme -- pay TOKEN satisi uzerinden', () => {
    * olarak burada olur.
    */
   it('canli curve toplanan quote ile %100’u ASAR, token tabanli olan tam 100’dur', () => {
-    const raised = BigInt(SMOKE.real_quote_reserves_wei)
-    const target = BigInt(SMOKE.graduation_raise_wei)
+    const raised = SMOKE.realQuoteReservesWei
+    const target = SMOKE.graduationRaiseWei
     expect(raised - target).toBe(8n)
 
     /*
@@ -68,9 +68,9 @@ describe('ilerleme -- pay TOKEN satisi uzerinden', () => {
   it('payi da paydasi da yazar', () => {
     render(
       <ProgressToGraduation
-        ppm={CLIMBING.progress_ppm}
-        raisedWei={BigInt(CLIMBING.real_quote_reserves_wei)}
-        targetWei={BigInt(CLIMBING.graduation_raise_wei)}
+        ppm={CLIMBING.progressPpm}
+        raisedWei={CLIMBING.realQuoteReservesWei}
+        targetWei={CLIMBING.graduationRaiseWei}
       />,
     )
     expect(screen.getByText('25.3%')).toBeInTheDocument()
@@ -135,10 +135,10 @@ describe('grafik', () => {
    * timestamp'i tasiyor. Zamana oturtulan bir eksende bloklarin yarisi UST
    * USTE duser ve grafik yalan soyler.
    */
-  it('event_seq >> 20 blok numarasini verir', () => {
-    expect(blockOfSeq('4194304')).toBe(4) // 4 << 20
-    expect(blockOfSeq('4194305')).toBe(4) // ayni blok, log 1
-    expect(blockOfSeq('5242880')).toBe(5)
+  it('eventSeq >> 20 blok numarasini verir', () => {
+    expect(blockOfSeq(4194304n)).toBe(4) // 4 << 20
+    expect(blockOfSeq(4194305n)).toBe(4) // ayni blok, log 1
+    expect(blockOfSeq(5242880n)).toBe(5)
   })
 
   it('ayni bloktaki iki islemden SON olani alinir -- ortalama ALINMAZ', () => {
@@ -146,10 +146,14 @@ describe('grafik', () => {
     // onu bir islem sanir.
     const series = realisedSeries([
       BUY_ONE_USDC,
-      { ...BUY_ONE_USDC, event_seq: '4194305', virtual_quote_reserves_wei: '9999999999999999999' },
+      {
+        ...BUY_ONE_USDC,
+        eventSeq: 4_194_305n,
+        virtualQuoteReservesWei: 9_999_999_999_999_999_999n,
+      },
     ])
     expect(series).toHaveLength(1)
-    expect(series[0]?.seq).toBe('4194305')
+    expect(series[0]?.seq).toBe(4_194_305n)
   })
 
   it('referans egri acilis ve graduation fiyatlarini verir', () => {

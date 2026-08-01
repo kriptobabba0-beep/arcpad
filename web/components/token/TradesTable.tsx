@@ -42,18 +42,18 @@ export type TradesTableProps = {
 }
 
 /**
- * YAS `block_time`'DAN, VE YALNIZCA GOSTERIM ICIN.
+ * YAS `blockTime`'DAN, VE YALNIZCA GOSTERIM ICIN.
  *
- * Siralama `event_seq` uzerindedir, cunku olculdu (003_trades_and_curve_state.sql):
+ * Siralama `eventSeq` uzerindedir, cunku olculdu (003_trades_and_curve_state.sql):
  * 553 ardisik blok ciftinin %49'u AYNI timestamp'i tasiyor. Yani zaman bir
  * siralama anahtari degil; burada da yalnizca "ne kadar once" sorusunu yanitlar.
  *
- * GELECEK BIR `block_time` NEGATIF YAS URETMEZ. Sunucunun saati ile
+ * GELECEK BIR `blockTime` NEGATIF YAS URETMEZ. Sunucunun saati ile
  * kullanicinin saati arasindaki fark bir kac saniye olabilir ve "-3s" yazan bir
  * satir bir hata gibi gorunur; alt sinir sifirdir.
  */
-export function relativeAge(blockTime: string, now: number): string {
-  const at = Date.parse(blockTime)
+export function relativeAge(blockTime: Date, now: number): string {
+  const at = blockTime.getTime()
   if (Number.isNaN(at)) return '—'
   const seconds = Math.max(0, Math.floor((now - at) / 1000))
   if (seconds < 60) return `${seconds}s`
@@ -79,12 +79,12 @@ export function relativeAge(blockTime: string, now: number): string {
  */
 export function feeSentence(row: TradeRow): string {
   const { curveWei, protocolWei, creatorWei } = feeBreakdown(row)
-  const total = formatUsdcAmount(walletDeltaWei(row), { rounding: row.is_buy ? 'up' : 'down' })
-  const curve = formatUsdcAmount(curveWei, { rounding: row.is_buy ? 'up' : 'down' })
+  const total = formatUsdcAmount(walletDeltaWei(row), { rounding: row.isBuy ? 'up' : 'down' })
+  const curve = formatUsdcAmount(curveWei, { rounding: row.isBuy ? 'up' : 'down' })
   const protocol = formatUsdcAmount(protocolWei, { rounding: 'up' })
   const creator = formatUsdcAmount(creatorWei, { rounding: 'up' })
 
-  return row.is_buy
+  return row.isBuy
     ? `Paid ${total} USDC: ${curve} to the curve, plus ${protocol} protocol fee and ${creator} creator fee.`
     : `Received ${total} USDC: ${curve} from the curve, less ${protocol} protocol fee and ${creator} creator fee.`
 }
@@ -104,10 +104,7 @@ export function feeSentence(row: TradeRow): string {
 export function rowPrice(row: TradeRow): string {
   try {
     return formatPriceWeiPerToken(
-      priceWeiPerToken(
-        BigInt(row.virtual_quote_reserves_wei),
-        BigInt(row.virtual_token_reserves_tok),
-      ),
+      priceWeiPerToken(row.virtualQuoteReservesWei, row.virtualTokenReservesTok),
     )
   } catch (error) {
     if (error instanceof CurveMathError || error instanceof RangeError) return '—'
@@ -118,12 +115,12 @@ export function rowPrice(row: TradeRow): string {
 /**
  * SON ISLEMLER.
  *
- * USDC KOLONU `walletDeltaWei`'DIR, `quote_amount_wei` DEGIL. `Trade` olayi uc
+ * USDC KOLONU `walletDeltaWei`'DIR, `quoteAmountWei` DEGIL. `Trade` olayi uc
  * alani ayri tasidigi icin iki farkli sayi hesaplanabilir; ekranda dogru olan,
  * kullanicinin banka ekstresiyle uyusandir. Formul TEK yerde durur
  * (`walletDelta.ts`) ve Task 12'nin onay ekrani ayni fonksiyonu cagirir.
  *
- * `is_dev` `row.is_dev`'DEN GELIR. Bu bilesen `fee_creator`'i PROP OLARAK BILE
+ * `isDev` `row.isDev`'DEN GELIR. Bu bilesen `feeCreator`'i PROP OLARAK BILE
  * ALMAZ, ve bu bilerek: creator degistirilebilir (Faz 1d), dolayisiyla bugunun
  * creator'iyla eski bir islemi karsilastirmak gecmisi yanlis boyar. Alani
  * indexer noktasal olarak (`creator_at(token, seq)`) turetir; arayuzun elinde
@@ -180,7 +177,7 @@ export function TradesTable({
           {keyset.rows.map((row) => {
             const sentence = feeSentence(row)
             return (
-              <tr role="row" key={row.event_seq} className={BODY_ROW_CLASS}>
+              <tr role="row" key={row.eventSeq} className={BODY_ROW_CLASS}>
                 <Cell label="Type">
                   {/*
                     YON HEM OK HEM SOZCUK. Renk tek basina anlam tasimazsa
@@ -190,15 +187,15 @@ export function TradesTable({
                     duyar.
                   */}
                   <span
-                    className={cx('font-medium', row.is_buy ? 'text-positive' : 'text-negative')}
+                    className={cx('font-medium', row.isBuy ? 'text-positive' : 'text-negative')}
                   >
-                    <span aria-hidden="true">{row.is_buy ? '▲' : '▼'}</span>{' '}
-                    {row.is_buy ? 'Buy' : 'Sell'}
+                    <span aria-hidden="true">{row.isBuy ? '▲' : '▼'}</span>{' '}
+                    {row.isBuy ? 'Buy' : 'Sell'}
                   </span>
                 </Cell>
 
                 <Cell label="Amount" numeric>
-                  {formatTokenAmount(BigInt(row.token_amount_tok))}
+                  {formatTokenAmount(row.tokenAmountTok)}
                 </Cell>
 
                 <Cell label="Price" numeric>
@@ -211,14 +208,14 @@ export function TradesTable({
                   bicimine bagli degil.
                 */}
                 <Cell label="USDC" numeric title={sentence}>
-                  <Money native={walletDeltaWei(row)} rounding={row.is_buy ? 'up' : 'down'} />
+                  <Money native={walletDeltaWei(row)} rounding={row.isBuy ? 'up' : 'down'} />
                   <VisuallyHidden>{` ${sentence}`}</VisuallyHidden>
                 </Cell>
 
                 <Cell label="Trader">
                   <span className="inline-flex items-center gap-2">
                     <Address value={row.trader} label="Trader" explorer />
-                    {row.is_dev ? <Pill tone="accent">dev</Pill> : null}
+                    {row.isDev ? <Pill tone="accent">dev</Pill> : null}
                   </span>
                 </Cell>
 
@@ -228,8 +225,8 @@ export function TradesTable({
                     "59s" ile "1m" arasindaki sinir tam oraya dusebilir. Bu bir
                     hidrasyon HATASI degil, zamana bagli bir degerin dogasi.
                   */}
-                  <time dateTime={row.block_time} suppressHydrationWarning>
-                    {relativeAge(row.block_time, at)}
+                  <time dateTime={row.blockTime.toISOString()} suppressHydrationWarning>
+                    {relativeAge(row.blockTime, at)}
                   </time>
                 </Cell>
               </tr>

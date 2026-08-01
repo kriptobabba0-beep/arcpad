@@ -5,7 +5,7 @@ import type { HexAddress, HolderRow, Page, ReadResult, TradeRow } from '@/compon
 import { HoldersTable } from '@/components/token/HoldersTable'
 import { TableTabs } from '@/components/token/TableTabs'
 import { relativeAge, TradesTable } from '@/components/token/TradesTable'
-import { BUY_ONE_USDC, CLIMBING, SELL_ONE_USDC } from '../fixtures/readModel'
+import { BUY_ONE_USDC, CLIMBING, SELL_ONE_USDC, ok } from '../fixtures/readModel'
 
 /**
  * SON ISLEMLER VE HOLDERS TABLOLARI.
@@ -25,38 +25,38 @@ import { BUY_ONE_USDC, CLIMBING, SELL_ONE_USDC } from '../fixtures/readModel'
 
 const CURVE = CLIMBING.curve
 /** Launch anindaki creator. KALICIDIR -- holders'taki `dev` rozeti buna bakar. */
-const LAUNCH_CREATOR = CLIMBING.launch_creator
+const LAUNCH_CREATOR = CLIMBING.launchCreator
 /** Creator DEGISTI (Faz 1d). Ucreti bugun bu cuzdan aliyor. */
 const NEW_CREATOR = '0x00000000000000000000000000000000000000dd' as HexAddress
 const RANDOM_TRADER = '0x00000000000000000000000000000000000000cc' as HexAddress
 
 /** Alimin oldugu an. Yas testleri buna gore sabitlenir. */
-const TRADE_AT = Date.parse(BUY_ONE_USDC.block_time)
+const TRADE_AT = BUY_ONE_USDC.blockTime.getTime()
 
 /**
  * CREATOR-DEGISTI FIXTURE'I.
  *
- * Iki satir, ve ikisi de `trader === fee_creator` karsilastirmasini YANLIS
+ * Iki satir, ve ikisi de `trader === feeCreator` karsilastirmasini YANLIS
  * yapar:
- *   - `DEV_TRADE`  : ilk creator'in islemi. Bugunun `fee_creator`'i o degil,
- *                    ama islem yapildiginda oydu -> `is_dev = true`.
- *   - `LATE_TRADE` : bugunun `fee_creator`'inin, creator OLMADAN ONCEKI islemi
- *                    -> `is_dev = false`.
- * `trader === overview.fee_creator` yazan bir mutant bu iki rozeti TERS
+ *   - `DEV_TRADE`  : ilk creator'in islemi. Bugunun `feeCreator`'i o degil,
+ *                    ama islem yapildiginda oydu -> `isDev = true`.
+ *   - `LATE_TRADE` : bugunun `feeCreator`'inin, creator OLMADAN ONCEKI islemi
+ *                    -> `isDev = false`.
+ * `trader === overview.feeCreator` yazan bir mutant bu iki rozeti TERS
  * cevirir; indexer'in turettigi alani okuyan kod cevirmez.
  */
 const DEV_TRADE: TradeRow = {
   ...BUY_ONE_USDC,
-  event_seq: '4194306',
+  eventSeq: 4_194_306n,
   trader: LAUNCH_CREATOR,
-  is_dev: true,
+  isDev: true,
 }
 
 const LATE_TRADE: TradeRow = {
   ...SELL_ONE_USDC,
-  event_seq: '4194307',
+  eventSeq: 4_194_307n,
   trader: NEW_CREATOR,
-  is_dev: false,
+  isDev: false,
 }
 
 function trades(rows: readonly TradeRow[], nextCursor: string | null = null): Page<TradeRow> {
@@ -67,13 +67,10 @@ function holders(rows: readonly HolderRow[], nextCursor: string | null = null): 
   return { rows, nextCursor, total: rows.length }
 }
 
-function holder(address: string, balanceTok: string, seq = '1'): HolderRow {
-  return {
-    token: CLIMBING.token,
-    holder: address as HexAddress,
-    balance_tok: balanceTok,
-    last_seq: seq,
-  }
+function holder(address: string, balanceTok: bigint): HolderRow {
+  // Faz 3'un `HolderRow`'u IKI alan tasir: `holder` ve `balanceTok`. `token`
+  // ve `last_seq` view'de yok -- sorgu zaten tek bir token icin cagriliyor.
+  return { holder: address, balanceTok }
 }
 
 /** Bir satirin `n`. hucresi. Kolon sirasi bilerek konumsal: basliklar da oyle. */
@@ -98,7 +95,7 @@ function moneyText(cell: HTMLElement): string {
 }
 
 describe('<TradesTable> -- cuzdandan cikan tutar', () => {
-  /** MUTANT 1: alim satirinda `quote_amount_wei` goster. */
+  /** MUTANT 1: alim satirinda `quoteAmountWei` goster. */
   it('alim satiri ucret DAHIL tutari gosterir, curve tutarini degil', () => {
     render(<TradesTable rows={[BUY_ONE_USDC]} nextCursor={null} now={TRADE_AT} />)
 
@@ -178,32 +175,32 @@ describe('<TradesTable> -- yon, rozet, yas', () => {
     expect(arrow?.textContent).toBe('▲')
   })
 
-  /** MUTANT 2: `is_dev`'i `trader === overview.fee_creator` ile hesapla. */
-  it('dev rozeti `row.is_dev`ten gelir -- creator degistiginde gecmis yanlis boyanmaz', () => {
+  /** MUTANT 2: `isDev`'i `trader === overview.feeCreator` ile hesapla. */
+  it('dev rozeti `row.isDev`ten gelir -- creator degistiginde gecmis yanlis boyanmaz', () => {
     render(<TradesTable rows={[DEV_TRADE, LATE_TRADE]} nextCursor={null} now={TRADE_AT} />)
 
     const devRow = screen.getAllByRole('row')[1] as HTMLElement
     const lateRow = screen.getAllByRole('row')[2] as HTMLElement
 
-    // Bugunun `fee_creator`'i NEW_CREATOR; bu satirin trader'i O DEGIL ama
+    // Bugunun `feeCreator`'i NEW_CREATOR; bu satirin trader'i O DEGIL ama
     // islem yapildiginda creator oydu.
     expect(within(devRow).getByText('dev')).toBeInTheDocument()
-    // Bugunun `fee_creator`'i tam olarak bu adres -- ve satir yine de dev degil.
+    // Bugunun `feeCreator`'i tam olarak bu adres -- ve satir yine de dev degil.
     expect(within(lateRow).queryByText('dev')).toBeNull()
 
     expect(cellAt(devRow, 4).textContent).toContain(LAUNCH_CREATOR.slice(0, 6))
     expect(cellAt(lateRow, 4).textContent).toContain(NEW_CREATOR.slice(0, 6))
   })
 
-  it('yas `block_time`ten okunur ve gelecege dusmus bir damga negatif gostermez', () => {
-    expect(relativeAge('2026-07-31T12:00:00.000Z', TRADE_AT)).toBe('0s')
-    expect(relativeAge('2026-07-31T12:00:00.000Z', TRADE_AT + 45_000)).toBe('45s')
-    expect(relativeAge('2026-07-31T12:00:00.000Z', TRADE_AT + 90_000)).toBe('1m')
-    expect(relativeAge('2026-07-31T12:00:00.000Z', TRADE_AT + 7_200_000)).toBe('2h')
-    expect(relativeAge('2026-07-31T12:00:00.000Z', TRADE_AT + 3 * 86_400_000)).toBe('3d')
+  it('yas `blockTime`ten okunur ve gelecege dusmus bir damga negatif gostermez', () => {
+    expect(relativeAge(new Date('2026-07-31T12:00:00.000Z'), TRADE_AT)).toBe('0s')
+    expect(relativeAge(new Date('2026-07-31T12:00:00.000Z'), TRADE_AT + 45_000)).toBe('45s')
+    expect(relativeAge(new Date('2026-07-31T12:00:00.000Z'), TRADE_AT + 90_000)).toBe('1m')
+    expect(relativeAge(new Date('2026-07-31T12:00:00.000Z'), TRADE_AT + 7_200_000)).toBe('2h')
+    expect(relativeAge(new Date('2026-07-31T12:00:00.000Z'), TRADE_AT + 3 * 86_400_000)).toBe('3d')
     // Sunucu ile tarayici saati arasindaki fark "-3s" yazdirmamali.
-    expect(relativeAge('2026-07-31T12:00:00.000Z', TRADE_AT - 3_000)).toBe('0s')
-    expect(relativeAge('not a timestamp', TRADE_AT)).toBe('—')
+    expect(relativeAge(new Date('2026-07-31T12:00:00.000Z'), TRADE_AT - 3_000)).toBe('0s')
+    expect(relativeAge(new Date('not a timestamp'), TRADE_AT)).toBe('—')
   })
 
   it('yas hucresi <time dateTime> tasir -- ham damga makineye acik kalir', () => {
@@ -211,7 +208,7 @@ describe('<TradesTable> -- yon, rozet, yas', () => {
 
     const cell = cellAt(screen.getAllByRole('row')[1] as HTMLElement, 5)
     const time = cell.querySelector('time')
-    expect(time).toHaveAttribute('dateTime', BUY_ONE_USDC.block_time)
+    expect(time).toHaveAttribute('dateTime', BUY_ONE_USDC.blockTime.toISOString())
     expect(time?.textContent).toBe('1m')
   })
 
@@ -295,8 +292,8 @@ describe('<HoldersTable>', () => {
     render(
       <HoldersTable
         rows={[
-          holder(CURVE, '592376046879238259473675895'),
-          holder(RANDOM_TRADER, '164000000000000000000000'),
+          holder(CURVE, 592376046879238259473675895n),
+          holder(RANDOM_TRADER, 164000000000000000000000n),
         ]}
         nextCursor={null}
         curve={CURVE}
@@ -315,7 +312,7 @@ describe('<HoldersTable>', () => {
     const checksummed = ('0x' + CURVE.slice(2).toUpperCase()) as HexAddress
     render(
       <HoldersTable
-        rows={[holder(CURVE, '5'), holder(RANDOM_TRADER, '164000000000000000000000')]}
+        rows={[holder(CURVE, 5n), holder(RANDOM_TRADER, 164000000000000000000000n)]}
         nextCursor={null}
         curve={checksummed}
       />,
@@ -327,7 +324,7 @@ describe('<HoldersTable>', () => {
   it('yuzdelerin %100 vermemesini ACIKCA soyler', () => {
     render(
       <HoldersTable
-        rows={[holder(RANDOM_TRADER, '164000000000000000000000')]}
+        rows={[holder(RANDOM_TRADER, 164000000000000000000000n)]}
         nextCursor={null}
         curve={CURVE}
       />,
@@ -342,10 +339,10 @@ describe('<HoldersTable>', () => {
       <HoldersTable
         rows={[
           // 5e25 / 1e27 = %5,00
-          holder(LAUNCH_CREATOR, '50000000000000000000000000'),
+          holder(LAUNCH_CREATOR, 50000000000000000000000000n),
           // 1e26'nin BIR ALTI. bigint: floor(999,99...) -> %9,99
           // IEEE-754: Number(9999...9) 1e26'ya yuvarlanir -> %10,00 (yanlis).
-          holder(RANDOM_TRADER, '99999999999999999999999999'),
+          holder(RANDOM_TRADER, 99999999999999999999999999n),
         ]}
         nextCursor={null}
         curve={CURVE}
@@ -364,10 +361,10 @@ describe('<HoldersTable>', () => {
     expect(screen.getAllByRole('columnheader')[2]?.textContent).toBe('Balance (DIFF)')
   })
 
-  it('dev rozeti `launch_creator`a bakar -- degisebilen `fee_creator`a degil', () => {
+  it('dev rozeti `launchCreator`a bakar -- degisebilen `feeCreator`a degil', () => {
     render(
       <HoldersTable
-        rows={[holder(LAUNCH_CREATOR, '5000000000000000000000'), holder(NEW_CREATOR, '1000')]}
+        rows={[holder(LAUNCH_CREATOR, 5000000000000000000000n), holder(NEW_CREATOR, 1000n)]}
         nextCursor={null}
         curve={CURVE}
         launchCreator={LAUNCH_CREATOR}
@@ -381,7 +378,7 @@ describe('<HoldersTable>', () => {
   it('sayisal hucreler saga hizali ve tabular-nums; caption gizli', () => {
     const { container } = render(
       <HoldersTable
-        rows={[holder(RANDOM_TRADER, '164000000000000000000000')]}
+        rows={[holder(RANDOM_TRADER, 164000000000000000000000n)]}
         nextCursor={null}
         curve={CURVE}
       />,
@@ -417,7 +414,7 @@ describe('bos durumlar -- ucu de ayri', () => {
     // Launch'tan hemen sonra: arzin tamami curve'de, curve haric tutuluyor.
     render(
       <HoldersTable
-        rows={[holder(CURVE, '1000000000000000000000000000')]}
+        rows={[holder(CURVE, 1000000000000000000000000000n)]}
         nextCursor={null}
         curve={CURVE}
       />,
@@ -456,7 +453,7 @@ describe('bos durumlar -- ucu de ayri', () => {
   it('bir sekme dusup oteki ayakta kalabilir', () => {
     render(
       <TableTabs
-        trades={{ ok: true, data: trades([BUY_ONE_USDC]) }}
+        trades={ok(trades([BUY_ONE_USDC]))}
         holders={{ ok: false, reason: 'unavailable' }}
         overview={CLIMBING}
       />,
@@ -472,14 +469,14 @@ describe('keyset sayfalama', () => {
   it('esit bakiyeli holder iki sayfada birden gelse bile BIR KEZ cizilir', async () => {
     const user = userEvent.setup()
 
-    // `(balance_tok DESC, holder ASC)`in ikinci anahtari dusurulduğunde olan
+    // `(balanceTok DESC, holder ASC)`in ikinci anahtari dusurulduğunde olan
     // sey budur: esit bakiyeli B, birinci sayfanin sonunda VE ikinci sayfanin
     // basinda cikar.
-    const A = holder('0x00000000000000000000000000000000000000a1', '300000000000000000000000000')
-    const B = holder('0x00000000000000000000000000000000000000b2', '100000000000000000000000000')
-    const C = holder('0x00000000000000000000000000000000000000c3', '100000000000000000000000000')
+    const A = holder('0x00000000000000000000000000000000000000a1', 300000000000000000000000000n)
+    const B = holder('0x00000000000000000000000000000000000000b2', 100000000000000000000000000n)
+    const C = holder('0x00000000000000000000000000000000000000c3', 100000000000000000000000000n)
 
-    const loadMore = vi.fn(async () => ({ ok: true as const, data: holders([B, C]) }))
+    const loadMore = vi.fn(async () => ok(holders([B, C])))
 
     render(<HoldersTable rows={[A, B]} nextCursor="cursor-1" curve={CURVE} loadMore={loadMore} />)
     expect(screen.getAllByRole('row')).toHaveLength(3)
@@ -499,7 +496,7 @@ describe('keyset sayfalama', () => {
 
   it('islemler eklenerek gelir ve imlec bittiginde dugme kaybolur', async () => {
     const user = userEvent.setup()
-    const loadMore = vi.fn(async () => ({ ok: true as const, data: trades([LATE_TRADE]) }))
+    const loadMore = vi.fn(async () => ok(trades([LATE_TRADE])))
 
     render(
       <TradesTable
@@ -543,8 +540,8 @@ describe('<TableTabs>', () => {
 
     render(
       <TableTabs
-        trades={{ ok: true, data: trades([BUY_ONE_USDC, SELL_ONE_USDC]) }}
-        holders={{ ok: true, data: holders([holder(RANDOM_TRADER, '164000000000000000000000')]) }}
+        trades={ok(trades([BUY_ONE_USDC, SELL_ONE_USDC]))}
+        holders={ok(holders([holder(RANDOM_TRADER, 164000000000000000000000n)]))}
         overview={CLIMBING}
         now={TRADE_AT}
       />,
@@ -564,8 +561,8 @@ describe('<TableTabs>', () => {
   it('overview verildiginde curve holders listesinden cikar', () => {
     render(
       <TableTabs
-        trades={{ ok: true, data: trades([]) }}
-        holders={{ ok: true, data: holders([holder(CURVE, '1000')]) }}
+        trades={ok(trades([]))}
+        holders={ok(holders([holder(CURVE, 1000n)]))}
         overview={CLIMBING}
       />,
     )

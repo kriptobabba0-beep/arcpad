@@ -5,7 +5,7 @@ import { Money } from '@/components/ui/Money'
 import { Pill } from '@/components/ui/Pill'
 
 /**
- * `progress_ppm` MILYONDA PAYDIR. Yuzdeye cevirmek 10.000'e bolmektir.
+ * `progressPpm` MILYONDA PAYDIR. Yuzdeye cevirmek 10.000'e bolmektir.
  *
  * Bir ondalik tutuluyor (`25.3%`) cunku graduation'a giden yol bu urunun tek
  * ilerleme cubugudur ve tam sayiya yuvarlamak son %1'i tek bir sicramaya
@@ -18,7 +18,7 @@ export function progressPercent(ppm: number): string {
 /**
  * KART UC METRIK TASIR: market cap, graduation ilerlemesi, yas.
  *
- * `holder_count`, `volume_24h_wei` ve `is_dev` BILEREK YOK. Kart yogunlugu
+ * `holderCount`, `volume24hWei` ve `isDev` BILEREK YOK. Kart yogunlugu
  * bir kaynaktir: bes metrik, hicbirinin okunmamasi demektir. Kullanici bir
  * izgarayi tararken satin alma karari icin bu ucune bakar, otekiler token
  * sayfasinda durur.
@@ -37,7 +37,7 @@ export function TokenCard({
   /** Task 7'nin `resolveMetadata`'sindan cozulmus gorsel. Yoksa gradyana duser. */
   imageUrl?: string | null
 }) {
-  const percent = progressPercent(overview.progress_ppm)
+  const percent = progressPercent(overview.progressPpm)
 
   /*
    * KARTIN TAMAMI TEK BIR <a>, ve icinde IKINCI bir etkilesimli oge yok.
@@ -50,7 +50,7 @@ export function TokenCard({
    */
   const label =
     `${overview.name} (${overview.symbol}), ` +
-    `market cap ${overview.market_cap_wei} wei, ${percent}% to graduation`
+    `market cap ${overview.marketCapWei} wei, ${percent}% to graduation`
 
   return (
     <Link
@@ -74,7 +74,7 @@ export function TokenCard({
 
         <div className="flex items-baseline justify-between gap-2 text-[13px]">
           <span className="text-muted">MC</span>
-          <Money native={BigInt(overview.market_cap_wei)} rounding="down" />
+          <Money native={overview.marketCapWei} rounding="down" />
         </div>
 
         {overview.complete ? (
@@ -93,7 +93,7 @@ export function TokenCard({
             <span aria-hidden="true" className="block h-1 overflow-hidden rounded-pill bg-white/8">
               <span
                 className="block h-full rounded-pill bg-accent"
-                style={{ width: `${Math.min(100, overview.progress_ppm / 10_000)}%` }}
+                style={{ width: `${Math.min(100, overview.progressPpm / 10_000)}%` }}
               />
             </span>
           </div>

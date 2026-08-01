@@ -1,11 +1,13 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { asHex } from '@/components/read/types'
 import type { HexAddress, TokenOverview } from '@/components/read/types'
 import type { SearchPayload } from '@/components/search/params'
 import { SearchDialog } from '@/components/search/SearchDialog'
 import { shortenAddress } from '@/components/ui/Address'
 import { overview, PASTED_LOWER } from './fixtures'
+import { toWire } from '@/components/read/wire'
 
 /**
  * ⌘K MODALI.
@@ -60,9 +62,16 @@ function pendingAt(index: number): Pending {
   return entry
 }
 
-/** Sunucunun donecegi govde. `total` varsayilan olarak satir sayisidir. */
+/**
+ * Sunucunun donecegi govde. `total` varsayilan olarak satir sayisidir.
+ *
+ * Satirlar TEL BICIMINDE gonderilir (`toWire`), cunku gercek route da oyle
+ * gonderiyor: JSON'da `bigint` yoktur ve `Response.json()` bir bigint gorunce
+ * ATAR. Fixture'i zengin tiple gondermek, uretimde var olmayan bir yolu test
+ * etmek olurdu.
+ */
 function page(rows: readonly TokenOverview[], patch: Partial<SearchPayload> = {}): SearchPayload {
-  return { rows, nextCursor: null, total: rows.length, pasted: null, ...patch }
+  return { rows: rows.map(toWire), nextCursor: null, total: rows.length, pasted: null, ...patch }
 }
 
 const ALPHA = overview({
@@ -284,7 +293,7 @@ describe('<SearchDialog> -- yapistirilan adres', () => {
     await searchFor(
       user,
       PASTED_LOWER,
-      page([ALPHA], { pasted: { kind: 'indexed', address: ALPHA.token } }),
+      page([ALPHA], { pasted: { kind: 'indexed', address: asHex(ALPHA.token) } }),
     )
 
     expect(screen.getByRole('option')).toHaveTextContent('Alpha')
@@ -412,5 +421,10 @@ describe('<SearchDialog> -- bos durumlar ve dusus', () => {
 })
 
 /** Tip kapisi: fixture'lar gercekten `HexAddress` uretiyor mu. */
-const _addresses: readonly HexAddress[] = [ALPHA.token, BETA.token, GAMMA.token, PASTED_LOWER]
+const _addresses: readonly HexAddress[] = [
+  asHex(ALPHA.token),
+  asHex(BETA.token),
+  asHex(GAMMA.token),
+  PASTED_LOWER,
+]
 void _addresses

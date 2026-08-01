@@ -52,7 +52,7 @@ export function referenceCurve(profile: CurveProfileLike, samples = 64): CurvePo
 /**
  * ISLEMLERDEN GERCEKLESEN FIYAT SERISI.
  *
- * X ekseni `event_seq >> 20`'den turetilen BLOK numarasidir, duvar saati
+ * X ekseni `eventSeq >> 20`'den turetilen BLOK numarasidir, duvar saati
  * degil (K4, ve Faz 3'un olcumu: bloklarin ~%49'u ayni timestamp'i tasir --
  * zamana oturtulan bir eksende yarisi ust uste duser).
  *
@@ -62,26 +62,23 @@ export function referenceCurve(profile: CurveProfileLike, samples = 64): CurvePo
 export type RealisedPoint = {
   readonly block: number
   readonly priceWei: bigint
-  readonly seq: string
-  readonly at: string
+  readonly seq: bigint
+  readonly at: Date
 }
 
 export function realisedSeries(trades: readonly TradeRow[]): RealisedPoint[] {
   const lastPerBlock = new Map<number, RealisedPoint>()
 
   for (const trade of trades) {
-    const block = blockOfSeq(trade.event_seq)
+    const block = blockOfSeq(trade.eventSeq)
     const point = {
       block,
-      priceWei: priceWeiPerToken(
-        BigInt(trade.virtual_quote_reserves_wei),
-        BigInt(trade.virtual_token_reserves_tok),
-      ),
-      seq: trade.event_seq,
-      at: trade.block_time,
+      priceWei: priceWeiPerToken(trade.virtualQuoteReservesWei, trade.virtualTokenReservesTok),
+      seq: trade.eventSeq,
+      at: trade.blockTime,
     }
     const existing = lastPerBlock.get(block)
-    if (existing === undefined || BigInt(point.seq) > BigInt(existing.seq)) {
+    if (existing === undefined || point.seq > existing.seq) {
       lastPerBlock.set(block, point)
     }
   }
@@ -216,7 +213,7 @@ export function CurveChart({
           </thead>
           <tbody>
             {realised.slice(-20).map((point) => (
-              <tr key={point.seq}>
+              <tr key={String(point.seq)}>
                 <td>{point.block}</td>
                 <td>{formatPriceWeiPerToken(point.priceWei)}</td>
               </tr>

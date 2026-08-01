@@ -10,7 +10,7 @@ import { UnavailableNotice } from './tableShell'
 import { TradesTable } from './TradesTable'
 
 /** Token sayfasinin bu bilesene verdigi tek sey; `TokenOverview`'un uc alani. */
-export type TableTabsOverview = Pick<TokenOverview, 'curve' | 'launch_creator' | 'symbol'>
+export type TableTabsOverview = Pick<TokenOverview, 'curve' | 'launchCreator' | 'symbol'>
 
 export type TableTabsProps = {
   readonly trades: ReadResult<Page<TradeRow>>
@@ -110,7 +110,7 @@ export function TableTabs({
             {...(overview
               ? {
                   curve: overview.curve,
-                  launchCreator: overview.launch_creator,
+                  launchCreator: overview.launchCreator,
                   symbol: overview.symbol,
                 }
               : {})}

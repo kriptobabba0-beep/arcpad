@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import { TokenArtwork } from '@/components/layout/TokenArtwork'
-import type { HexAddress, TokenOverview } from '@/components/read/types'
+import type { TokenOverview } from '@/components/read/types'
 import { Address } from '@/components/ui/Address'
 import { cx } from '@/components/ui/cx'
 import { Money } from '@/components/ui/Money'
@@ -57,9 +57,6 @@ function useScrollIntoView(selected: boolean) {
  * Cozulemeyen tek bir hucreyi bosaltmak, yirmi satiri birden kaybetmekten
  * ucuzdur.
  */
-function toNative(value: string): bigint | null {
-  return /^\d+$/.test(value) ? BigInt(value) : null
-}
 
 export function SearchResultRow({
   row,
@@ -69,8 +66,8 @@ export function SearchResultRow({
   onHover,
 }: OptionRowProps & { row: TokenOverview }) {
   const ref = useScrollIntoView(selected)
-  const marketCap = toNative(row.market_cap_wei)
-  const progressPct = Math.min(100, Math.round(row.progress_ppm / 10_000))
+  const marketCap = row.marketCapWei
+  const progressPct = Math.min(100, Math.round(row.progressPpm / 10_000))
 
   return (
     <li
@@ -101,7 +98,7 @@ export function SearchResultRow({
         <span className="flex items-center gap-2 text-[12px] text-muted">
           <Address value={row.token} label="Token address" />
           <span aria-hidden="true">·</span>
-          <span>{`${row.holder_count.toLocaleString('en-US')} holders`}</span>
+          <span>{`${row.holderCount.toLocaleString('en-US')} holders`}</span>
         </span>
       </span>
 
@@ -139,7 +136,7 @@ export function UnindexedResultRow({
   selected,
   onSelect,
   onHover,
-}: OptionRowProps & { address: HexAddress }) {
+}: OptionRowProps & { address: string }) {
   const ref = useScrollIntoView(selected)
 
   return (

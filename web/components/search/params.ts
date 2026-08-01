@@ -1,9 +1,9 @@
+import type { WireTokenOverview } from '@/components/read/wire'
 import {
   SEARCH_SORT_KEYS,
   type Canonicity,
   type HexAddress,
   type SearchSortKey,
-  type TokenOverview,
 } from '@/components/read/types'
 
 /**
@@ -55,7 +55,7 @@ export type PastedVerdict =
   | { readonly kind: 'refused'; readonly address: HexAddress; readonly canonicity: Canonicity }
 
 export type SearchPayload = {
-  readonly rows: readonly TokenOverview[]
+  readonly rows: readonly WireTokenOverview[]
   readonly nextCursor: string | null
   readonly total: number
   /** Metin aramasi yapildiysa `null`. Adres yapistirildiysa hukum. */
@@ -116,7 +116,7 @@ export function parseSearchParams(params: URLSearchParams): SearchQuery {
   const rawAge = params.get('age')
   const ageDays = rawAge !== null && rawAge in AGE_DAYS ? (AGE_DAYS[rawAge] ?? null) : null
 
-  // Keyset cursor'u bir `event_seq`tir: ondalik basamaklar. Bu kontrol,
+  // Keyset cursor'u bir `eventSeq`tir: ondalik basamaklar. Bu kontrol,
   // parametre baglamasinin YERINE gecmez, ONUNDE durur.
   const rawCursor = params.get('after')
   const cursor = rawCursor !== null && /^\d{1,20}$/.test(rawCursor) ? rawCursor : null

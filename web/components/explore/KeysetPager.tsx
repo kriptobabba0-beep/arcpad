@@ -5,7 +5,7 @@ import { buttonClassName } from '@/components/ui/Button'
  * NUMARALI SAYFALAR YOK -- DEVIASYON 2, ve gerekcesi aritmetiktir.
  *
  * Referans arayuz `1 2 … 3137` gosteriyor. Bunu dogru yapmanin tek yolu
- * `OFFSET`tir, ve bu siralama anahtari `last_buy_seq` gibi CANLI bir kolon
+ * `OFFSET`tir, ve bu siralama anahtari `lastBuySeq` gibi CANLI bir kolon
  * oldugunda satir TEKRARLAR ya da ATLAR: iki sorgu arasinda yeni bir alim
  * geldiginde butun liste bir kayar, ve 3. sayfanin ilk satiri 2. sayfanin son
  * satiriyla ayni olur. Numarali bir sayfa listesi veremeyecegimiz bir kesinlik

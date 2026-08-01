@@ -1,7 +1,7 @@
 'use client'
 
 import { formatTokenAmount } from '@arcpad/shared/browser'
-import type { HexAddress, HolderRow } from '@/components/read/types'
+import type { HolderRow } from '@/components/read/types'
 import { Address } from '@/components/ui/Address'
 import { cx } from '@/components/ui/cx'
 import { Pill } from '@/components/ui/Pill'
@@ -29,12 +29,12 @@ export type HoldersTableProps = {
    */
   readonly totalSupply?: bigint
   /** LISTEDEN CIKARILIR. Verilmezse curve satiri (varsa) listede kalir. */
-  readonly curve?: HexAddress
+  readonly curve?: string
   /**
-   * `dev` rozeti BUNA gore verilir, `fee_creator`'a gore DEGIL: launch
+   * `dev` rozeti BUNA gore verilir, `feeCreator`'a gore DEGIL: launch
    * creator'i kalicidir, ucreti alan cuzdan degistirilebilir.
    */
-  readonly launchCreator?: HexAddress
+  readonly launchCreator?: string
   readonly symbol?: string
   readonly loadMore?: LoadMore<HolderRow>
   readonly className?: string
@@ -55,8 +55,8 @@ function sameAddress(a: string, b: string): boolean {
 /**
  * AYNI HOLDER IKI KEZ CIZILMEZ.
  *
- * `holders` sorgusu `(balance_tok DESC, holder ASC)` ile sayfalanir ve IKINCI
- * anahtar Task 7'de tam da bunun icin eklendi: `balance_tok` tekil degildir,
+ * `holders` sorgusu `(balanceTok DESC, holder ASC)` ile sayfalanir ve IKINCI
+ * anahtar Task 7'de tam da bunun icin eklendi: `balanceTok` tekil degildir,
  * yani tek anahtarli bir keyset'te esit bakiyeli satirlarin sirasi sayfalar
  * arasinda kayar ve ayni holder iki sayfada birden cikar. Asil duzeltme
  * SQL'dedir; buradaki eleme son savunma hatti, cunku tekrarlanan bir holder
@@ -159,7 +159,7 @@ export function HoldersTable({
               </Cell>
 
               <Cell label="Balance" numeric>
-                {formatTokenAmount(BigInt(row.balance_tok))}
+                {formatTokenAmount(row.balanceTok)}
               </Cell>
 
               {/*
@@ -168,7 +168,7 @@ export function HoldersTable({
                 yuzdeyi gosterebilir.
               */}
               <Cell label="% of supply" numeric>
-                {supplyPercent(row.balance_tok)}%
+                {supplyPercent(row.balanceTok)}%
               </Cell>
             </tr>
           ))}

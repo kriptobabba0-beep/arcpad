@@ -36,23 +36,23 @@ export function LaunchFacts({
   overview: TokenOverview
   canonicity: Canonicity
 }) {
-  const poolSeed = overview.pool_seed_supply_tok
+  const poolSeed = overview.poolSeedSupplyTok
 
   return (
     <Card as="section" aria-label="Launch facts" className="divide-y divide-border">
       <Row label="Launched by">
-        <Address value={overview.launch_creator} explorer label="Launch creator" />
+        <Address value={overview.launchCreator} explorer label="Launch creator" />
       </Row>
 
       {/*
-        `fee_creator` YALNIZCA `launch_creator`'dan FARKLIYSA cizilir.
+        `feeCreator` YALNIZCA `launchCreator`'dan FARKLIYSA cizilir.
         `LaunchToken.creator` "kim baslatti" kaydidir ve ucreti fiilen alan
         cuzdan DEGILDIR (spec §5.7 devir yollari tanimliyor). Ikisi ayni
         oldugunda ayri bir satir, olmayan bir ayrimi varmis gibi gosterirdi.
       */}
-      {overview.fee_creator.toLowerCase() !== overview.launch_creator.toLowerCase() ? (
+      {overview.feeCreator.toLowerCase() !== overview.launchCreator.toLowerCase() ? (
         <Row label="Fee recipient">
-          <Address value={overview.fee_creator} explorer label="Fee recipient" />
+          <Address value={overview.feeCreator} explorer label="Fee recipient" />
         </Row>
       ) : null}
 
@@ -97,7 +97,7 @@ export function LaunchFacts({
       </Row>
 
       <Row label="Graduation">
-        <Money native={BigInt(overview.graduation_raise_wei)} rounding="up" unit />
+        <Money native={overview.graduationRaiseWei} rounding="up" unit />
       </Row>
     </Card>
   )

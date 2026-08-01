@@ -3,8 +3,8 @@ import type { TradeRow } from '@/components/read/types'
 /**
  * BIR ISLEM SATIRININ CUZDANDAN CIKAN / GIREN TUTARI.
  *
- * `Trade` olayi uc alani AYRI tasir (`quote_amount_wei`, `protocol_fee_wei`,
- * `creator_fee_wei`), dolayisiyla iki farkli sayi hesaplanabilir:
+ * `Trade` olayi uc alani AYRI tasir (`quoteAmountWei`, `protocolFeeWei`,
+ * `creatorFeeWei`), dolayisiyla iki farkli sayi hesaplanabilir:
  *
  *   - CURVE tutari  -- egrinin defterine giren/cikan
  *   - CUZDAN tutari -- kullanicinin fiilen odedigi/aldigi
@@ -18,14 +18,14 @@ import type { TradeRow } from '@/components/read/types'
  * iki formul olsaydi, kullanicinin imzalamadan once gordugu tutar ile
  * sonradan gecmiste gordugu tutar ayrisirdi.
  *
- * `creator_fee_wei` SIFIR OLABILIR ve bu mesrudur: `creator == address(0)`
+ * `creatorFeeWei` SIFIR OLABILIR ve bu mesrudur: `creator == address(0)`
  * ise creator payi hic alinmaz ve protokol payina KATLANMAZ -- islem 30 bps
  * daha ucuzdur. Toplama zaten bunu dogru tasir.
  */
 export function walletDeltaWei(row: TradeRow): bigint {
-  const quote = BigInt(row.quote_amount_wei)
-  const fees = BigInt(row.protocol_fee_wei) + BigInt(row.creator_fee_wei)
-  return row.is_buy ? quote + fees : quote - fees
+  const quote = row.quoteAmountWei
+  const fees = row.protocolFeeWei + row.creatorFeeWei
+  return row.isBuy ? quote + fees : quote - fees
 }
 
 /**
@@ -42,10 +42,10 @@ export function feeBreakdown(row: TradeRow): {
   readonly creatorWei: bigint
   readonly totalFeeWei: bigint
 } {
-  const protocolWei = BigInt(row.protocol_fee_wei)
-  const creatorWei = BigInt(row.creator_fee_wei)
+  const protocolWei = row.protocolFeeWei
+  const creatorWei = row.creatorFeeWei
   return {
-    curveWei: BigInt(row.quote_amount_wei),
+    curveWei: row.quoteAmountWei,
     protocolWei,
     creatorWei,
     totalFeeWei: protocolWei + creatorWei,
@@ -62,8 +62,8 @@ export const TOTAL_SUPPLY_TOK = 10n ** 27n
  * anlamli basamaklarin cogunu atar ve iki farkli holder ayni yuzdeyi
  * gosterebilir.
  */
-export function supplyPercent(balanceTok: string): string {
-  const basisPoints = (BigInt(balanceTok) * 10_000n) / TOTAL_SUPPLY_TOK
+export function supplyPercent(balanceTok: bigint): string {
+  const basisPoints = (balanceTok * 10_000n) / TOTAL_SUPPLY_TOK
   const whole = basisPoints / 100n
   const fraction = basisPoints % 100n
   return `${whole}.${fraction.toString().padStart(2, '0')}`
