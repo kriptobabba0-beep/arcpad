@@ -33,6 +33,20 @@ export default defineConfig({
           name: 'unit',
           environment: 'node',
           include: ['test/**/*.test.ts'],
+          /**
+           * Vitest'in 5 sn'lik varsayilani BU projede yetmiyor ve sebebi
+           * olculdu: `test/balance.test.ts` lint kuralini IDDIA ETMEK yerine
+           * CALISTIRIYOR, yani her vakada tam bir ESLint sureci doguruyor. Bu
+           * makinede tek bir spawn 5,5-8,8 sn suruyor (typescript-eslint'in
+           * yuklenmesi + Windows surec baslatma), yani testler varsayilan
+           * altinda ZAMAN ASIMIYLA duser -- iddialari yanlis oldugu icin
+           * degil.
+           *
+           * Yalnizca `unit` projesine verildi. Bilesen testleri 5 sn'nin cok
+           * altinda kosuyor ve orada genis bir butce, gercek bir askidaki
+           * render'i gizlerdi.
+           */
+          testTimeout: 30_000,
         },
       },
       {
