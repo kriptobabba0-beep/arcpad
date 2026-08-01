@@ -102,9 +102,20 @@ export type TradePlan = {
  * guards, and the planner exists precisely to reach them before the user pays
  * gas to find out. Sharing the name means the form and the revert decoder say
  * the same word for the same refusal.
+ *
+ * THE ZERO-INPUT NAMES ARE PER ENTRYPOINT, and that is the whole reason Faz 1c
+ * split the curve's single `ZeroAmount()` into three. Delegating the zero check
+ * to `CurveMath` instead would make the planner say `ZeroAmount` while the
+ * chain says `ZeroTokensOut` -- the form and the revert decoder would print two
+ * different words for one refusal, and `FAILURE_TABLE` would carry three cells
+ * the planner could never produce. Reconciled by guarding here, in the
+ * contract's own order: bound -> complete -> zero -> reserve.
  */
 export type TradePlanErrorName =
   | 'CurveComplete'
+  | 'ZeroQuoteIn'
+  | 'ZeroTokensOut'
+  | 'ZeroTokensIn'
   | 'NotEnoughTokensToBuy'
   | 'ProceedsTooSmall'
   /** Invariant check on `net + fees <= gross`. Proven unreachable; kept because a proof is not a runtime. */
@@ -215,6 +226,8 @@ export function planBuyExactQuoteIn(
 ): TradePlan {
   assertTradable(state)
   assertSlip(slipBps)
+  // The contract's order: bound -> complete -> `msg.value == 0`.
+  if (grossValue === 0n) throw new TradePlanError('ZeroQuoteIn')
 
   const creatorBps = creatorBpsFor(state, fees)
   const corrected = correctedNetQuoteIn(grossValue, fees.protocolFeeBps, creatorBps)
@@ -283,6 +296,8 @@ export function planBuyExactTokensOut(
 ): TradePlan {
   assertTradable(state)
   assertSlip(slipBps)
+  // Zero is checked BEFORE the reserve, exactly as the contract orders it.
+  if (tokensOut === 0n) throw new TradePlanError('ZeroTokensOut')
   if (tokensOut > state.realTokenReserves) throw new TradePlanError('NotEnoughTokensToBuy')
 
   const curveAmount = quoteBuyCost(
@@ -331,6 +346,7 @@ export function planSellExactTokensIn(
 ): TradePlan {
   assertTradable(state)
   assertSlip(slipBps)
+  if (tokensIn === 0n) throw new TradePlanError('ZeroTokensIn')
 
   const proceeds = quoteSellProceeds(
     tokensIn,

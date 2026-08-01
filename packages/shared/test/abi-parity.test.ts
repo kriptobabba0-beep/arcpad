@@ -147,18 +147,74 @@ describe('the distributed ABI matches the compiled output', () => {
  * This file is excluded from `pnpm test` on purpose, and the price of that is
  * the risk that it never runs anywhere at all. So it asserts its own CI job
  * exists. The gap this closes is in test SELECTION, not in coverage.
+ *
+ * IT IS MATCHED STRUCTURALLY -- against the set of `run:` COMMANDS extracted
+ * from the workflow -- and not by searching the file text.
+ *
+ * MEASURED: the first draft asserted the bare substring `test:abi` and
+ * SURVIVED a mutant that replaced the actual command with `true`, because the
+ * explanatory comment above the job contains those words too. Matching `'run:
+ * <cmd>'` as a substring fixed that one, but it leaves the same SHAPE in
+ * place: this workflow also mentions `pnpm -r test` inside a comment, so a
+ * future gate written that way would pass on prose again. Extracting the
+ * commands removes the shape rather than the instance.
  */
+
+/** Every command a `run:` step actually executes, one per entry. */
+function runCommands(workflow: string): string[] {
+  const commands: string[] = []
+  const lines = workflow.split('\n')
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? ''
+    // A comment line can never be a step, whatever it says.
+    if (/^\s*#/.test(line)) continue
+    const single = /^\s*(?:-\s+)?run:\s*(\S.*?)\s*$/.exec(line)
+    if (single?.[1] !== undefined) {
+      if (single[1] === '|' || single[1] === '>-' || single[1] === '|-') {
+        // Block scalar: take the indented lines that follow.
+        for (let j = i + 1; j < lines.length; j += 1) {
+          const body = lines[j] ?? ''
+          if (body.trim() === '') continue
+          if (!/^\s{2,}\S/.test(body)) break
+          commands.push(body.trim())
+        }
+        continue
+      }
+      commands.push(single[1])
+    }
+  }
+  return commands
+}
+
 describe('this file is actually run somewhere', () => {
-  it('a CI job invokes test:abi', () => {
-    const workflow = readFileSync(join(REPO_ROOT, '.github/workflows/node.yml'), 'utf8')
-    // MATCHED ON THE `run:` LINE, not on the string anywhere in the file.
-    // MEASURED: a first draft asserted the bare substring `test:abi` and
-    // SURVIVED a mutant that replaced the actual command with `true`, because
-    // the comment above the job also contains those words. A gate a COMMENT
-    // can satisfy is a gate that passes for a reason nobody wrote down.
-    expect(workflow).toContain('run: pnpm --filter @arcpad/shared test:abi')
-    expect(workflow).toContain('run: forge build --root contracts')
+  const workflow = () => readFileSync(join(REPO_ROOT, '.github/workflows/node.yml'), 'utf8')
+
+  it('the extractor finds real steps and NOT the prose around them', () => {
+    // Anti-vacuity, and the control that makes the two assertions below mean
+    // something: an extractor returning everything, or nothing, would satisfy
+    // a containment check just as happily.
+    const commands = runCommands(workflow())
+    expect(commands.length).toBeGreaterThan(5)
+    expect(commands).toContain('pnpm install --frozen-lockfile')
+    // `pnpm -r test` appears in a COMMENT in this workflow as well as in a
+    // step. The extractor must find the step and must not be satisfiable by
+    // the comment, so every extracted entry has to look like a command.
+    for (const command of commands) {
+      expect(command.startsWith('#')).toBe(false)
+    }
   })
+
+  it('a CI job RUNS test:abi, after building the contracts', () => {
+    const commands = runCommands(workflow())
+    expect(commands).toContain('pnpm --filter @arcpad/shared test:abi')
+    expect(commands).toContain('forge build --root contracts')
+    // Order matters: the parity test reads `contracts/out/`, so a build that
+    // ran afterwards would leave it comparing against a stale or absent tree.
+    expect(commands.indexOf('forge build --root contracts')).toBeLessThan(
+      commands.indexOf('pnpm --filter @arcpad/shared test:abi'),
+    )
+  })
+
   it('the package declares the script that job calls', () => {
     const pkg = JSON.parse(
       readFileSync(join(REPO_ROOT, 'packages/shared/package.json'), 'utf8'),

@@ -33,16 +33,32 @@ import { useBalance } from 'wagmi'
 /**
  * ONE balance, carried as the TWO OBJECT VIEWS rather than two bigints.
  *
- * The shape is the gate. `view.native + view.erc20` is TS2365 -- the compiler
- * refuses it, and `packages/shared/test/two-views-typegate.test.ts` runs `tsc`
- * on exactly that expression to keep it refused. Flattening this into
- * `{ wei, units }` would make the sum compile, and the runtime check CANNOT
- * cover for that: see the measured boundary in `web/test/balance.test.ts`
- * (below one million USDC the added units fall under the truncation quantum
- * and `unifyUsdcViews` cannot see them).
+ * WHAT THIS SHAPE ACTUALLY CLOSES, stated exactly -- an earlier version of this
+ * comment claimed more than the compiler delivers, and review caught it:
+ *
+ *   CLOSED   `view.native + view.erc20`            -> TS2365.
+ *   CLOSED   `view.wei`, `view.units`              -> do not exist on this type.
+ *   OPEN     `view.native.wei + view.erc20.units`  -> COMPILES.
+ *   OPEN     `unifyUsdcViews(...)` returns `UsdcBalance = { wei, units }`,
+ *            which is the flat shape the typegate compiles ON PURPOSE to show
+ *            it is dangerous -- and both it and the type are exported from
+ *            `@arcpad/shared/browser`, so `b.wei + b.units` compiles for anyone
+ *            who calls it directly.
+ *
+ * So the object shape stops the ACCIDENTAL sum -- the one where two readings
+ * sit in scope as two bigints and somebody adds them. It does not stop a
+ * deliberate two-step unwrap, and nothing in the type system can: both fields
+ * are `bigint`, and a brand does not stop `+` either (measured, same file).
+ *
+ * THE STRUCTURAL DEFENCE IS THEREFORE THE SINGLE IMPORT SEAM, not the type.
+ * There is exactly one `useBalance` in `web/`, so there is never a second
+ * reading in scope to add. `web/test/balance.test.ts` RUNS eslint to prove it,
+ * with a control, and the runtime `unifyUsdcViews` check catches what it can --
+ * which is measured, and is less than it looks: below one million USDC the
+ * added units fall under the 1e12 truncation quantum and it sees nothing.
  *
  * A caller that genuinely needs the number writes `.native.wei` or
- * `.erc20.units`, which is a deliberate act rather than an accident.
+ * `.erc20.units`, which is at least a deliberate act rather than an accident.
  */
 export type UsdcBalanceView = {
   /** The 18-decimal view. This is the view the curve is quoted in (`msg.value`). */

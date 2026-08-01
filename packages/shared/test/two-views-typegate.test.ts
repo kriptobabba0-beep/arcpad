@@ -156,6 +156,49 @@ export const total = b.wei + b.units
     expect(result.exitCode).toBe(0)
   })
 
+  /**
+   * THE LIMIT OF THE OBJECT SHAPE, COMPILED RATHER THAN GUESSED.
+   *
+   * Review found the claim above stated more absolutely than it holds. Two
+   * paths still compile, and both are recorded here so nobody has to
+   * rediscover them:
+   *
+   *   1. unwrapping both views by hand and adding the bigints, and
+   *   2. `unifyUsdcViews` itself, whose return type IS the flat shape --
+   *      exported from `browser.ts` and therefore reachable by any caller.
+   *
+   * These are CONTROLS, not failures: they are the reason the structural
+   * defence is the single `useBalance` seam (enforced by eslint, executed in
+   * `web/test/balance.test.ts`) rather than the type. If either of these ever
+   * STOPS compiling, the comments in `web/lib/balance.ts` naming them as open
+   * have become false and should be rewritten, not deleted.
+   */
+  it('CONTROL: unwrapping both views by hand and adding them COMPILES', () => {
+    const result = compile(
+      'unwrapped',
+      `${IMPORTS}
+import type { Erc20Usdc, NativeUsdc } from '../../src/balance'
+type View = { readonly native: NativeUsdc; readonly erc20: Erc20Usdc }
+const view: View = { native: nativeUsdc(100n * 10n ** 18n), erc20: erc20Usdc(100n * 10n ** 6n) }
+export const total = view.native.wei + view.erc20.units
+`,
+    )
+    expect(result.output).toBe('')
+    expect(result.exitCode).toBe(0)
+  })
+
+  it('CONTROL: unifyUsdcViews returns the FLAT shape, and its fields add', () => {
+    const result = compile(
+      'unified',
+      `${IMPORTS}
+import { unifyUsdcViews } from '../../src/balance'
+const one = unifyUsdcViews(nativeUsdc(100n * 10n ** 18n), erc20Usdc(100n * 10n ** 6n))
+export const total = one.wei + one.units
+`,
+    )
+    expect(result.output).toBe('')
+    expect(result.exitCode).toBe(0)
+  })
   it('assigning one view where the other is expected does not compile either', () => {
     const result = compile(
       'assign',

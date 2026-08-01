@@ -24,9 +24,11 @@
  *      dividing; those are not the same number and the difference always
  *      favours the user.
  *   3. `correctedNetQuoteIn` charges the fees on the PRE-CORRECTION net and
- *      does NOT recompute them afterwards. Recomputing undercharges by one unit
- *      on 1.23% of inputs at (95, 30) bps, and the party short-changed is the
- *      creator.
+ *      does NOT recompute them afterwards. Recomputing undercharges on
+ *      11,851 of the gross values in [1, 1e6] at (95, 30) bps -- 1.1851% --
+ *      by at most two units. See `correctedNetQuoteIn` for the decomposition
+ *      and for why that figure is NOT the 12,345 the frozen contract's NatSpec
+ *      states.
  *   4. Fees are SUMMED FROM PARTS and never divided from a combined rate.
  *      Measured on the live smoke, trade 1 of 4: summed `...635` versus
  *      divided-from-125 `...634`, and the escrow on chain holds the summed
@@ -163,9 +165,32 @@ export type CorrectedNet = {
  *
  * THE FEES ARE COMPUTED ON THE PRE-CORRECTION NET AND ARE NOT RECOMPUTED.
  * A caller that calls `feeOn` on the RETURNED net gets a different (smaller)
- * figure, and one unit of the user's payment accounts as neither principal nor
- * fee. Measured at (95, 30) bps: recomputation differs on 12,345 of the gross
- * values in [1, 1e6] -- 1.23% -- and the short-changed party is the creator.
+ * figure, and the difference accounts as neither principal nor fee.
+ *
+ * MEASURED HERE, and the figure DISAGREES WITH THE FROZEN CONTRACT'S NatSpec.
+ * Over gross in [1, 1e6] at (95, 30) bps, recomputation differs on
+ *
+ *     11,851 inputs -- 1.1851% --  =  8,889 protocol-only
+ *                                  +  2,469 creator-only
+ *                                  +    493 both parts move
+ *
+ * `contracts/src/libraries/CurveMath.sol:165` says `12.345` (Turkish digit
+ * grouping, i.e. 12,345). THAT NUMBER IS A PART COUNT, NOT AN INPUT COUNT:
+ * counting each moved fee PART separately gives 8,889 + 2,469 + 2x493 =
+ * 12,344, which is the same shape and lands one below the published figure.
+ * `test/curve.test.ts` walks the whole range and ASSERTS every number above --
+ * the reason the wrong one survived this long is that nothing asserted it.
+ *
+ * TWO MORE CORRECTIONS TO THE INHERITED PROSE, both measured in the same sweep:
+ *   - "the short-changed party is the creator" is true of the worked example
+ *     and FALSE of the population: the PROTOCOL is short on 9,382 inputs and
+ *     the creator on 2,962.
+ *   - "undercharges by one unit" understates it. The maximum is TWO units,
+ *     which is what the contract's own "azami 2 birim" says a line earlier.
+ *
+ * The contract is not edited from here: the correction is routed to the
+ * contracts track. Until it lands the two files disagree ON PURPOSE, and this
+ * comment is the record of which one was measured.
  *
  * The two parts are returned SEPARATELY, not their sum: the escrow takes two
  * independent deposits, and this project's rule is that a fee is SUMMED FROM

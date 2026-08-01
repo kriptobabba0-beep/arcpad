@@ -9,6 +9,13 @@ import {
   UserRejectedRequestError,
 } from 'viem'
 import { describe, expect, it } from 'vitest'
+import {
+  asTok,
+  asWei,
+  planBuyExactQuoteIn,
+  planBuyExactTokensOut,
+  planSellExactTokensIn,
+} from '@arcpad/shared/browser'
 import { type ArcpadAction, decodeArcpadError } from '../lib/decodeRevert'
 import {
   ARCPAD_ACTIONS,
@@ -91,6 +98,143 @@ describe('the dictionary is complete against the ABI', () => {
   })
 })
 
+/**
+ * THE PLANNER AND THE TABLE SAY THE SAME WORDS.
+ *
+ * A user-facing failure table is only useful if the thing that produces the
+ * failure produces the names it lists. Review found the two had drifted: the
+ * table carried `ZeroQuoteIn` / `ZeroTokensOut` / `ZeroTokensIn` with user
+ * copy, while the planner delegated its zero check to `CurveMath` and threw
+ * `ZeroAmount` -- a name that is in NEITHER `TradePlanErrorName` nor any cell.
+ * Three rows nobody could reach, and one reachable refusal with no row.
+ *
+ * This is the gate that would have caught it, so it cannot drift back.
+ */
+describe('every name the planner throws has a cell for that action', () => {
+  const V = 4_292_000_000_000_000_000n
+  const T = 1_073_000_000n * 10n ** 18n
+  const S = 793_100_000n * 10n ** 18n
+  const PROFILE = { virtualTokenReserves: T, virtualQuoteReserves: V, saleSupply: S }
+  const FEES = { protocolFeeBps: 95n, creatorFeeBps: 30n }
+
+  const fresh = (complete = false) => ({
+    virtualTokenReserves: T,
+    virtualQuoteReserves: V,
+    realTokenReserves: asTok(S),
+    realQuoteReserves: asWei(0n),
+    complete,
+    creator: '0x00000000000000000000000000000000000000c0',
+  })
+
+  /**
+   * The names are COLLECTED BY RUNNING THE PLANNERS, not hand-listed.
+   *
+   * A hand-written list is the same assumption the drift came from: it would
+   * keep agreeing with the table long after the planner stopped agreeing with
+   * either. These calls throw, and what they throw is the input to the gate.
+   */
+  function thrownNamesFor(calls: readonly (() => unknown)[]): string[] {
+    const names: string[] = []
+    for (const call of calls) {
+      let threw = false
+      try {
+        call()
+      } catch (error) {
+        threw = true
+        const named = error as { errorName?: unknown }
+        expect(typeof named.errorName, 'a planner refusal must carry errorName').toBe('string')
+        names.push(String(named.errorName))
+      }
+      expect(threw, 'this call was supposed to be a refusal and returned a plan').toBe(true)
+    }
+    return names
+  }
+
+  const REFUSALS: Record<string, readonly (() => unknown)[]> = {
+    buyExactQuoteIn: [
+      () => planBuyExactQuoteIn(fresh(true), PROFILE, FEES, 10n ** 18n, 0),
+      () => planBuyExactQuoteIn(fresh(), PROFILE, FEES, 0n, 0),
+      () => planBuyExactQuoteIn(fresh(), PROFILE, FEES, 2n, 0),
+    ],
+    buyExactTokensOut: [
+      () => planBuyExactTokensOut(fresh(true), PROFILE, FEES, 10n ** 24n, 0),
+      () => planBuyExactTokensOut(fresh(), PROFILE, FEES, 0n, 0),
+      () => planBuyExactTokensOut(fresh(), PROFILE, FEES, S + 1n, 0),
+    ],
+    sellExactTokensIn: [
+      () => planSellExactTokensIn(fresh(true), PROFILE, FEES, 1n, 0),
+      () => planSellExactTokensIn(fresh(), PROFILE, FEES, 0n, 0),
+      () => planSellExactTokensIn(fresh(), PROFILE, FEES, 1n, 0),
+    ],
+  }
+
+  it('each planner refuses with the CONTRACT name, per entrypoint', () => {
+    // Pinned so the collection itself is checked, not just its consistency
+    // with the table. `ZeroAmount` here would be the drift coming back.
+    expect(thrownNamesFor(REFUSALS.buyExactQuoteIn!)).toEqual([
+      'CurveComplete',
+      'ZeroQuoteIn',
+      'NetTooSmall',
+    ])
+    expect(thrownNamesFor(REFUSALS.buyExactTokensOut!)).toEqual([
+      'CurveComplete',
+      'ZeroTokensOut',
+      'NotEnoughTokensToBuy',
+    ])
+    expect(thrownNamesFor(REFUSALS.sellExactTokensIn!)).toEqual([
+      'CurveComplete',
+      'ZeroTokensIn',
+      'ProceedsTooSmall',
+    ])
+  })
+
+  it('every name a planner throws has a FAILURE_TABLE cell for THAT action', () => {
+    let checked = 0
+    for (const [action, calls] of Object.entries(REFUSALS)) {
+      for (const errorName of thrownNamesFor(calls)) {
+        expect(
+          Object.keys(FAILURE_TABLE),
+          `${action} throws ${errorName} and the table has no cell for it`,
+        ).toContain(`${action}:${errorName}`)
+        checked += 1
+      }
+    }
+    expect(checked).toBe(9) // anti-vacuity: three refusals on each of three
+  })
+
+  it('...and each of those cells decodes to real copy, not the fallback', () => {
+    for (const [action, calls] of Object.entries(REFUSALS)) {
+      for (const errorName of thrownNamesFor(calls)) {
+        const failure = decodeArcpadError(revertedWith(errorName), {
+          action: action as ArcpadAction,
+        })
+        expect(failure.name, `${action}:${errorName}`).toBe(errorName)
+        expect(failure.kind, `${action}:${errorName}`).not.toBe('unknown')
+      }
+    }
+  })
+
+  it('SlippageExceeded is chain-only: it has cells but no planner throws it', () => {
+    // The distinction the gate has to keep straight. A planner cannot know the
+    // price moved between quote and mine, so it never throws this -- but the
+    // chain does, and the table must still carry it on all three.
+    for (const [action, calls] of Object.entries(REFUSALS)) {
+      expect(thrownNamesFor(calls)).not.toContain('SlippageExceeded')
+      expect(Object.keys(FAILURE_TABLE)).toContain(`${action}:SlippageExceeded`)
+    }
+  })
+
+  it('no curve entrypoint reports the library-level ZeroAmount', () => {
+    // The name the planner used to leak. It stays in the ABI because
+    // `FeeEscrow` can still throw it; it must never come from the curve.
+    for (const calls of Object.values(REFUSALS)) {
+      expect(thrownNamesFor(calls)).not.toContain('ZeroAmount')
+    }
+    for (const action of Object.keys(REFUSALS)) {
+      expect(Object.keys(FAILURE_TABLE)).not.toContain(`${action}:ZeroAmount_unreachable`)
+    }
+  })
+})
 describe('wallet rejection is decided first, and is not an error', () => {
   it('a UserRejectedRequestError never reaches the contract branch', () => {
     // Deliberately given revert data TOO: if the ordering were wrong this

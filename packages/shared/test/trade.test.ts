@@ -175,6 +175,8 @@ describe('planBuyExactQuoteIn', () => {
   it('refuses a budget too small to buy anything', () => {
     expect(() => planBuyExactQuoteIn(freshCurve(), PROFILE, FEES, 2n, 0)).toThrow('NetTooSmall')
     expect(() => planBuyExactQuoteIn(freshCurve(), PROFILE, FEES, 1n, 0)).toThrow('NetTooSmall')
+    // ...and ZERO is a DIFFERENT refusal, with the contract's own name for it.
+    expect(() => planBuyExactQuoteIn(freshCurve(), PROFILE, FEES, 0n, 0)).toThrow('ZeroQuoteIn')
   })
 })
 
@@ -246,7 +248,7 @@ describe('planBuyExactTokensOut', () => {
   it('refuses a completed curve and a zero amount', () => {
     const done = { ...freshCurve(), complete: true }
     expect(() => planBuyExactTokensOut(done, PROFILE, FEES, 10n ** 24n, 0)).toThrow('CurveComplete')
-    expect(() => planBuyExactTokensOut(freshCurve(), PROFILE, FEES, 0n, 0)).toThrow('ZeroAmount')
+    expect(() => planBuyExactTokensOut(freshCurve(), PROFILE, FEES, 0n, 0)).toThrow('ZeroTokensOut')
   })
 })
 
@@ -315,7 +317,7 @@ describe('planSellExactTokensIn', () => {
 
   it('refuses zero and a completed curve', () => {
     expect(() => planSellExactTokensIn(afterOneUsdcBuy(), PROFILE, FEES, 0n, 0)).toThrow(
-      'ZeroAmount',
+      'ZeroTokensIn',
     )
     const done = { ...afterOneUsdcBuy(), complete: true }
     expect(() => planSellExactTokensIn(done, PROFILE, FEES, 1n, 0)).toThrow('CurveComplete')

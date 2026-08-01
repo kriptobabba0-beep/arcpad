@@ -297,6 +297,100 @@ describe('the guards are the contract guards', () => {
   })
 })
 
+/**
+ * THE RECOMPUTATION COUNT, ASSERTED RATHER THAN ASSERTED-IN-A-COMMENT.
+ *
+ * `curve.ts` used to carry the frozen contract's figure -- 12,345 of [1, 1e6],
+ * "1.23%" -- inherited faithfully from
+ * `contracts/src/libraries/CurveMath.sol:165`. IT IS WRONG, and it survived
+ * because NOTHING RAN IT. A comment cannot go red.
+ *
+ * This walks the whole million and pins every number, including the
+ * decomposition, because the decomposition is what shows the published figure
+ * to be a PART count rather than an INPUT count: 8,889 + 2,469 + 2x493 =
+ * 12,344, one below 12,345 and the same shape.
+ *
+ * The sweep is deterministic and exhaustive over its range -- not a sampler
+ * whose reach was assumed.
+ */
+it('SWEEP: recomputation differs on 11,851 of [1, 1e6], not 12,345', () => {
+  let differ = 0
+  let both = 0
+  let protocolOnly = 0
+  let creatorOnly = 0
+  let reverts = 0
+  let maxUndercharge = 0n
+
+  for (let gross = 1n; gross <= 1_000_000n; gross += 1n) {
+    let r
+    try {
+      r = correctedNetQuoteIn(gross, P_BPS, C_BPS)
+    } catch {
+      reverts += 1
+      continue
+    }
+    // THE FORBIDDEN RECOMPUTATION, run on purpose so the gap is a number.
+    const protocolAgain = feeOn(r.net, P_BPS)
+    const creatorAgain = feeOn(r.net, C_BPS)
+    const protocolMoved = protocolAgain !== r.protocolFee
+    const creatorMoved = creatorAgain !== r.creatorFee
+    if (protocolMoved || creatorMoved) differ += 1
+    if (protocolMoved && creatorMoved) both += 1
+    else if (protocolMoved) protocolOnly += 1
+    else if (creatorMoved) creatorOnly += 1
+    const short = r.protocolFee - protocolAgain + (r.creatorFee - creatorAgain)
+    if (short > maxUndercharge) maxUndercharge = short
+  }
+
+  expect(differ).toBe(11_851)
+  expect(protocolOnly).toBe(8_889)
+  expect(creatorOnly).toBe(2_469)
+  expect(both).toBe(493)
+  // The decomposition has to close, or the three counts above are three
+  // independent guesses rather than one partition.
+  expect(protocolOnly + creatorOnly + both).toBe(differ)
+
+  // THE PUBLISHED FIGURE, RECONSTRUCTED AS A PART COUNT. This is the line
+  // that says WHY 12,345 is wrong rather than merely that it is.
+  expect(protocolOnly + creatorOnly + 2 * both).toBe(12_344)
+  expect(differ).not.toBe(12_345)
+
+  // "undercharges by ONE unit" understates it; the contract's own
+  // "azami 2 birim" a line earlier is the correct half.
+  expect(maxUndercharge).toBe(2n)
+
+  // Exactly one input in the range reverts -- gross = 2. Counting it as a
+  // divergence is the most likely way to arrive at 11,852 instead.
+  expect(reverts).toBe(1)
+})
+
+it('SWEEP: the PROTOCOL is short more often than the creator', () => {
+  // The inherited prose says "the party short-changed is the creator". That
+  // is true of the worked example (gross = 1_000_013) and false of the
+  // population, which is a different claim and needed measuring.
+  let protocolShort = 0
+  let creatorShort = 0
+  for (let gross = 1n; gross <= 1_000_000n; gross += 1n) {
+    let r
+    try {
+      r = correctedNetQuoteIn(gross, P_BPS, C_BPS)
+    } catch {
+      continue
+    }
+    if (feeOn(r.net, P_BPS) !== r.protocolFee) protocolShort += 1
+    if (feeOn(r.net, C_BPS) !== r.creatorFee) creatorShort += 1
+  }
+  expect(protocolShort).toBe(9_382)
+  expect(creatorShort).toBe(2_962)
+  expect(protocolShort).toBeGreaterThan(creatorShort)
+
+  // ...and the worked example the prose was drawn from, where it IS the
+  // creator who comes up short. Both statements are true of different things.
+  const example = correctedNetQuoteIn(1_000_013n, P_BPS, C_BPS)
+  expect(feeOn(example.net, C_BPS)).toBe(2_963n)
+  expect(example.creatorFee).toBe(2_964n)
+  expect(feeOn(example.net, P_BPS)).toBe(example.protocolFee)
+})
 describe('a deterministic sweep over the correction, not a sampler', () => {
   /**
    * THE REACH IS MEASURED, NOT ASSUMED. Every gross in [1, 20_000] at (95, 30)
