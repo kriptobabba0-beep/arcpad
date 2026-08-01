@@ -60,11 +60,11 @@ const LATE_TRADE: TradeRow = {
 }
 
 function trades(rows: readonly TradeRow[], nextCursor: string | null = null): Page<TradeRow> {
-  return { rows, nextCursor, total: rows.length }
+  return { rows, nextCursor }
 }
 
 function holders(rows: readonly HolderRow[], nextCursor: string | null = null): Page<HolderRow> {
-  return { rows, nextCursor, total: rows.length }
+  return { rows, nextCursor }
 }
 
 function holder(address: string, balanceTok: bigint): HolderRow {
@@ -430,7 +430,7 @@ describe('bos durumlar -- ucu de ayri', () => {
 
   it('veritabani dustugunde iki sekme de aciklayici kutu gosterir', async () => {
     const user = userEvent.setup()
-    const down: ReadResult<Page<never>> = { ok: false, reason: 'unavailable' }
+    const down: ReadResult<Page<never>> = { ok: false, reason: 'unavailable', indexer: null }
 
     render(<TableTabs trades={down} holders={down} />)
 
@@ -454,7 +454,7 @@ describe('bos durumlar -- ucu de ayri', () => {
     render(
       <TableTabs
         trades={ok(trades([BUY_ONE_USDC]))}
-        holders={{ ok: false, reason: 'unavailable' }}
+        holders={{ ok: false, reason: 'unavailable', indexer: null }}
         overview={CLIMBING}
       />,
     )
@@ -515,7 +515,11 @@ describe('keyset sayfalama', () => {
 
   it('sonraki sayfa dustugunde YUKLENMIS satirlar yerinde kalir', async () => {
     const user = userEvent.setup()
-    const loadMore = vi.fn(async () => ({ ok: false as const, reason: 'unavailable' as const }))
+    const loadMore = vi.fn(async () => ({
+      ok: false as const,
+      reason: 'unavailable' as const,
+      indexer: null,
+    }))
 
     render(
       <TradesTable rows={[BUY_ONE_USDC]} nextCursor="seq-1" loadMore={loadMore} now={TRADE_AT} />,

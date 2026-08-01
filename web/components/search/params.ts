@@ -57,7 +57,14 @@ export type PastedVerdict =
 export type SearchPayload = {
   readonly rows: readonly WireTokenOverview[]
   readonly nextCursor: string | null
-  readonly total: number
+  /**
+   * BU SAYFADA GOSTERILEN satir sayisi -- TOPLAM DEGIL.
+   *
+   * Faz 3'un `Page<T>`'si toplam vermiyor ve sayfa boyutunu "total" diye
+   * adlandirmak, 24 satirlik bir sayfada "24 sonuc" diye duyurup gerisini
+   * yok saymak olurdu. Ad, tasidigi seyi soyluyor.
+   */
+  readonly shown: number
   /** Metin aramasi yapildiysa `null`. Adres yapistirildiysa hukum. */
   readonly pasted: PastedVerdict | null
 }

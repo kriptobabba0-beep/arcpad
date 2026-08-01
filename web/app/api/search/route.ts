@@ -1,6 +1,9 @@
-import { readSearch, readTokenOverview, verifyCanonical } from '@/components/read/boundary'
+import { verifyCanonical } from '@/lib/canonical'
+import { readTokenOverview } from '@/lib/read'
+import { readSearch } from '@/components/search/searchBoundary'
 import type { HexAddress } from '@/components/read/types'
 import { toWire } from '@/components/read/wire'
+import { valueOf } from '@/lib/read'
 import {
   asAddressQuery,
   parseSearchParams,
@@ -45,7 +48,7 @@ export const dynamic = 'force-dynamic'
  */
 export const runtime = 'nodejs'
 
-const EMPTY = { rows: [], nextCursor: null, total: 0 } as const
+const EMPTY = { rows: [], nextCursor: null, shown: 0 } as const
 
 /**
  * ADRES YAPISTIRMA YOLU -- KANONIKLIGIN GORUNDUGU YER.
@@ -68,11 +71,12 @@ const EMPTY = { rows: [], nextCursor: null, total: 0 } as const
  */
 async function resolvePastedAddress(address: HexAddress): Promise<SearchPayload> {
   const overview = await readTokenOverview(address)
-  if (overview.ok) {
+  const overviewRow = valueOf(overview)
+  if (overviewRow !== undefined) {
     return {
-      rows: [toWire(overview.data)],
+      rows: [toWire(overviewRow)],
       nextCursor: null,
-      total: 1,
+      shown: 1,
       pasted: { kind: 'indexed', address },
     }
   }
@@ -129,10 +133,12 @@ export async function GET(request: Request): Promise<Response> {
     return Response.json({ error: 'unavailable' }, { status: 503 })
   }
 
+  const page = valueOf(result)
+  if (page === undefined) return Response.json({ error: 'unavailable' }, { status: 503 })
   return Response.json({
-    rows: result.data.rows.map(toWire),
-    nextCursor: result.data.nextCursor,
-    total: result.data.total,
+    rows: page.rows.map(toWire),
+    nextCursor: page.nextCursor,
+    shown: page.rows.length,
     pasted: null,
   })
 }

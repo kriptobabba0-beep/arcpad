@@ -159,5 +159,9 @@ export const STALE_INDEXER: IndexerStatus = {
 
 /** Basarili bir okuma. Tazelik ZORUNLU ALAN oldugu icin varsayilanla gelir. */
 export function ok<T>(data: T, indexer: IndexerStatus = LIVE_INDEXER): ReadResult<T> {
-  return { ok: true, data, indexer }
+  // Bayatlik AYRI BIR DAL: alan adi da degisir (`staleData`), yani bir cagiran
+  // bayat dali unuttugunda derleme kirilir.
+  return indexer.stale
+    ? { ok: true, stale: true, staleData: data, indexer }
+    : { ok: true, stale: false, data, indexer }
 }

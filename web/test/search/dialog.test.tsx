@@ -71,7 +71,7 @@ function pendingAt(index: number): Pending {
  * etmek olurdu.
  */
 function page(rows: readonly TokenOverview[], patch: Partial<SearchPayload> = {}): SearchPayload {
-  return { rows: rows.map(toWire), nextCursor: null, total: rows.length, pasted: null, ...patch }
+  return { rows: rows.map(toWire), nextCursor: null, shown: rows.length, pasted: null, ...patch }
 }
 
 const ALPHA = overview({
@@ -258,7 +258,7 @@ describe('<SearchDialog> -- listbox klavye deseni', () => {
   it('sonuc sayisi `aria-live` ile duyurulur', async () => {
     const user = userEvent.setup()
     render(<SearchDialog open onClose={noop} />)
-    await searchFor(user, 'a', page([ALPHA, BETA, GAMMA], { total: 24 }))
+    await searchFor(user, 'a', page([ALPHA, BETA, GAMMA], { shown: 24 }))
 
     const status = screen.getByTestId('search-announcement')
     expect(status).toHaveAttribute('role', 'status')
@@ -410,13 +410,13 @@ describe('<SearchDialog> -- bos durumlar ve dusus', () => {
     expect(screen.getByRole('button', { name: 'Relevance' })).toBeEnabled()
   })
 
-  it('gosterilen satir sayisi toplamdan azsa bu YAZILIR', async () => {
+  it('devami varsa "ilk N gosteriliyor" YAZILIR -- toplam iddia edilmez', async () => {
     const user = userEvent.setup()
     render(<SearchDialog open onClose={noop} />)
 
-    await searchFor(user, 'a', page([ALPHA, BETA], { total: 87, nextCursor: '41' }))
+    await searchFor(user, 'a', page([ALPHA, BETA], { nextCursor: '41' }))
 
-    expect(screen.getByText(/showing 2 of 87/i)).toBeVisible()
+    expect(screen.getByText(/showing the first 2/i)).toBeVisible()
   })
 })
 

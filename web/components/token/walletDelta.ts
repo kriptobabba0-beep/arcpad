@@ -22,10 +22,14 @@ import type { TradeRow } from '@/components/read/types'
  * ise creator payi hic alinmaz ve protokol payina KATLANMAZ -- islem 30 bps
  * daha ucuzdur. Toplama zaten bunu dogru tasir.
  */
-export function walletDeltaWei(row: TradeRow): bigint {
-  const quote = row.quoteAmountWei
-  const fees = row.protocolFeeWei + row.creatorFeeWei
-  return row.isBuy ? quote + fees : quote - fees
+export function walletDeltaWei(row: TradeRow): bigint | null {
+  // `listTrades` ucret kolonlarini HENUZ SECMIYOR. Onlarsiz cuzdan tutari
+  // hesaplanamaz -- ve `quoteAmountWei`'ye dusmek CURVE tutarini "cuzdandan
+  // cikan" diye etiketlemek olurdu: eksik bir sayi degil, YANLIS bir sayi.
+  const { protocolFeeWei, creatorFeeWei } = row
+  if (protocolFeeWei === undefined || creatorFeeWei === undefined) return null
+  const fees = protocolFeeWei + creatorFeeWei
+  return row.isBuy ? row.quoteAmountWei + fees : row.quoteAmountWei - fees
 }
 
 /**
@@ -41,14 +45,14 @@ export function feeBreakdown(row: TradeRow): {
   readonly protocolWei: bigint
   readonly creatorWei: bigint
   readonly totalFeeWei: bigint
-} {
-  const protocolWei = row.protocolFeeWei
-  const creatorWei = row.creatorFeeWei
+} | null {
+  const { protocolFeeWei, creatorFeeWei } = row
+  if (protocolFeeWei === undefined || creatorFeeWei === undefined) return null
   return {
     curveWei: row.quoteAmountWei,
-    protocolWei,
-    creatorWei,
-    totalFeeWei: protocolWei + creatorWei,
+    protocolWei: protocolFeeWei,
+    creatorWei: creatorFeeWei,
+    totalFeeWei: protocolFeeWei + creatorFeeWei,
   }
 }
 

@@ -338,8 +338,14 @@ function announce(view: View): string {
   const pasted = view.payload.pasted
   if (pasted?.kind === 'refused') return 'This address is not an arcpad launch.'
   if (pasted?.kind === 'notIndexed') return '1 result, not indexed yet'
-  const total = view.payload.total
-  return total === 1 ? '1 result' : `${total.toLocaleString('en-US')} results`
+  // "N sonuc" DEGIL "N gosteriliyor" -- devaminda sayfa varsa toplam bunun
+  // uzerindedir ve toplami bilmiyoruz. Duyuru bildigimiz seyi soyler.
+  const shown = view.payload.shown
+  const more = view.payload.nextCursor !== null
+  const noun = shown === 1 ? 'result' : 'results'
+  return more
+    ? `${shown.toLocaleString('en-US')} ${noun} shown, more available`
+    : `${shown.toLocaleString('en-US')} ${noun}`
 }
 
 function Body({
@@ -424,7 +430,10 @@ function Body({
   }
 
   const shown = options.length
-  const total = pasted === null ? view.payload.total : shown
+  // Devami VAR MI sorusuna cevap `nextCursor`; KACINCI sorusuna cevabimiz yok
+  // (Faz 3 toplam vermiyor). Bilinmeyen bir toplami yazmak yerine, devami
+  // oldugu yaziliyor.
+  const hasMore = pasted === null && view.payload.nextCursor !== null
 
   return (
     <>
@@ -465,9 +474,9 @@ function Body({
         ediyor), yani pager indiginde baglanacak tek yer burasi. O gune kadar
         sessizce ilk sayfayi gostermek yerine, kacinin gosterildigi yaziliyor.
       */}
-      {total > shown ? (
+      {hasMore ? (
         <p className="px-2.5 pt-2 text-[12px] text-muted">
-          {`Showing ${shown.toLocaleString('en-US')} of ${total.toLocaleString('en-US')} — refine the query to narrow it down.`}
+          {`Showing the first ${shown.toLocaleString('en-US')} — refine the query to narrow it down.`}
         </p>
       ) : null}
     </>

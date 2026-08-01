@@ -1,12 +1,8 @@
 import { isAddress } from 'viem'
 import { notFound } from 'next/navigation'
-import {
-  readHolders,
-  readTokenOverview,
-  readTrades,
-  resolveMetadata,
-  verifyCanonical,
-} from '@/components/read/boundary'
+import { verifyCanonical } from '@/lib/canonical'
+import { resolveMetadata } from '@/lib/metadata'
+import { readHolders, readTokenOverview, readTrades, valueOf } from '@/lib/read'
 import {
   asHex,
   type Canonicity,
@@ -23,6 +19,7 @@ import { TableTabs } from '@/components/token/TableTabs'
 import { AboutPanel, TokenHeader } from '@/components/token/TokenHeader'
 import { resolveLifecycle } from '@/components/token/lifecycle'
 import { Card } from '@/components/ui/Card'
+import { StaleNotice } from '@/components/read/StaleNotice'
 
 /**
  * COZUMLEME SIRASI, ve dort dalin her biri AYRI bir ekran degil ayni sayfanin
@@ -62,7 +59,16 @@ export default async function TokenPage({ params }: { params: Promise<{ address:
     return <ChainOnly token={token} canonicity="unverifiable" notice="unavailable" />
   }
 
-  return <IndexedToken overview={result.data} />
+  const overview = valueOf(result)
+  if (overview === undefined) {
+    return <ChainOnly token={token} canonicity="unverifiable" notice="unavailable" />
+  }
+  return (
+    <>
+      {result.ok && result.stale ? <StaleNotice indexer={result.indexer} what="This page" /> : null}
+      <IndexedToken overview={overview} />
+    </>
+  )
 }
 
 async function IndexedToken({ overview }: { overview: TokenOverview }) {

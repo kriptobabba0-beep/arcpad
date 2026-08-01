@@ -12,7 +12,9 @@ import {
   type ExploreSearchParams,
 } from '@/components/explore/params'
 import { TokenGrid } from '@/components/explore/TokenGrid'
-import { readTokenList } from '@/components/read/boundary'
+import { StaleNotice } from '@/components/read/StaleNotice'
+import { fold, type IndexerStatus, type TokenOverview } from '@/components/read/types'
+import { readTokenList } from '@/lib/read'
 
 /**
  * EXPLORE. Bir SERVER COMPONENT, ve araya bir API katmani konmuyor
@@ -23,7 +25,6 @@ import { readTokenList } from '@/components/read/boundary'
  * `parseExploreParams` yalnizca `SORTS`'un bir ANAHTARINI dondurur.
  *
  * `<main>` BURADA YOK: landmark kabuktadir (`components/layout/AppShell`).
- * Ikinci bir `main`, atlama baglantisinin hedefini belirsizlestirir.
  */
 export default async function Home({
   searchParams,
@@ -40,15 +41,28 @@ export default async function Home({
     readTokenList({ sort: 'newest', ageDays: null, cursor: null, limit: 10 }),
   ])
 
-  const completeTokens = complete.ok ? complete.data.rows.filter((row) => row.complete) : []
+  /*
+   * `fold` UC DALI DA ZORUNLU KILAR. Bayat dal ayri bir varyant oldugu icin
+   * (`staleData`, `data` degil) unutulmasi bir DERLEME hatasidir -- bir
+   * `stale` boolean'i sessizce unutulabilirdi ve tam da unutulan sey olurdu.
+   */
+  const completeTokens = fold(complete, {
+    fresh: (page) => page.rows.filter((row) => row.complete),
+    stale: (page) => page.rows.filter((row) => row.complete),
+    missing: () => [] as readonly TokenOverview[],
+  })
+
+  const listStale: IndexerStatus | null = climbing.ok && climbing.stale ? climbing.indexer : null
+  const list = climbing.ok ? (climbing.stale ? climbing.staleData : climbing.data) : null
 
   return (
     <div className="flex flex-col gap-10">
       {/*
-        Ust bolum VERIYE BAGLIDIR ve bugun bos olmasi beklenir. Yine de
-        ciziliyor: bolumun kendisi urunun bir sozu -- "buraya tamamlanmis
-        curve'ler gelir" -- ve o soz bos hâlde de okunabilir olmali.
+        BAYAT VERI UYARISI EN USTTE, izgaranin degil SAYFANIN basinda: bayat
+        olan tek bir kart degil butun listedir.
       */}
+      {listStale === null ? null : <StaleNotice indexer={listStale} what="Prices and volumes" />}
+
       <CompleteSection tokens={completeTokens} />
 
       <section aria-labelledby="explore-heading" className="flex flex-col gap-4">
@@ -59,12 +73,12 @@ export default async function Home({
           <FilterBar query={query} />
         </div>
 
-        {!climbing.ok ? (
+        {list === null ? (
           <ReadUnavailable what="The launch list" />
-        ) : climbing.data.rows.length === 0 ? (
-          // Iki bos durum AYRIDIR. Filtre boslugunu urun bosluguyla ayni
-          // metne baglamak, kullaniciya urunun bos oldugunu soyler -- oysa
-          // filtresi bostur.
+        ) : list.rows.length === 0 ? (
+          // Iki bos durum AYRIDIR. Filtre boslugunu urun bosluguyla ayni metne
+          // baglamak, kullaniciya urunun bos oldugunu soyler -- oysa filtresi
+          // bostur.
           query.ageDays === null ? (
             <NoLaunchesYet />
           ) : (
@@ -72,7 +86,7 @@ export default async function Home({
           )
         ) : (
           <>
-            <TokenGrid tokens={climbing.data.rows} label="Launches" />
+            <TokenGrid tokens={list.rows} label="Launches" />
             <KeysetPager
               basePath="/"
               query={{
@@ -80,8 +94,7 @@ export default async function Home({
                 ...(query.ageDays === null ? {} : { age: String(query.ageDays) }),
               }}
               cursors={cursors}
-              nextCursor={climbing.data.nextCursor}
-              total={climbing.data.total}
+              nextCursor={list.nextCursor}
               label="Launch pages"
             />
           </>

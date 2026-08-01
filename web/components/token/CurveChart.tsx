@@ -70,6 +70,15 @@ export function realisedSeries(trades: readonly TradeRow[]): RealisedPoint[] {
   const lastPerBlock = new Map<number, RealisedPoint>()
 
   for (const trade of trades) {
+    // Rezerv anlik goruntusu YOKSA nokta cizilmez. `listTrades` bu kolonlari
+    // henuz secmiyor; olmayan bir rezervden fiyat uydurmak, grafigi gercekmis
+    // gibi gosterip yanlis cizmek olurdu.
+    if (
+      trade.virtualQuoteReservesWei === undefined ||
+      trade.virtualTokenReservesTok === undefined
+    ) {
+      continue
+    }
     const block = blockOfSeq(trade.eventSeq)
     const point = {
       block,

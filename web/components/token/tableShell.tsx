@@ -4,6 +4,7 @@ import { useCallback, useState, type ReactNode } from 'react'
 import type { Page, ReadResult } from '@/components/read/types'
 import { Button } from '@/components/ui/Button'
 import { cx } from '@/components/ui/cx'
+import { valueOf } from '@/components/read/result'
 
 /**
  * IKI TABLONUN ORTAK GOVDESI: SINIF RECETELERI, KEYSET "DAHA GETIR", BOS KUTU.
@@ -227,11 +228,11 @@ export function useKeysetRows<T>(
     void loadMore(cursor).then(
       (result) => {
         setState((s) =>
-          result.ok
+          valueOf(result) !== undefined
             ? {
                 ...s,
-                rows: [...s.rows, ...result.data.rows],
-                cursor: result.data.nextCursor,
+                rows: [...s.rows, ...(valueOf(result)?.rows ?? [])],
+                cursor: valueOf(result)?.nextCursor ?? null,
                 pending: false,
                 failed: false,
               }

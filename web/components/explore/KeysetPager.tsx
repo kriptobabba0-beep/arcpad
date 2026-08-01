@@ -33,7 +33,13 @@ export function KeysetPager({
   /** Ziyaret edilen cursor yigini, en eskiden yeniye. */
   cursors: readonly string[]
   nextCursor: string | null
-  total: number
+  /**
+   * TOPLAM SAYI OPSIYONEL, cunku Faz 3'un `Page<T>`'si onu VERMIYOR --
+   * `listTokens` yalnizca satirlari ve tazeligi dondurur. Uydurmak ya da
+   * sayfa boyutundan tahmin etmek, kullaniciya olmayan bir kesinlik vaat
+   * ederdi; verilmediginde satir hic cizilmez.
+   */
+  total?: number | undefined
   label: string
 }) {
   const build = (stack: readonly string[]): string => {
@@ -55,14 +61,18 @@ export function KeysetPager({
 
   return (
     <nav aria-label={label} className="flex items-center justify-between gap-4 pt-2">
-      <p className="text-[13px] text-muted">
-        {/*
-          Locale ACIKCA `en-US`. Sabitlenmezse ayni sayi bir kullanicida
-          "1,234", digerinde "1.234" okunur; kok eslint kuralinin reddettigi
-          sey de tam olarak locale'siz cagri.
-        */}
-        <span className="tabular-nums text-text">{total.toLocaleString('en-US')}</span> launched
-      </p>
+      {total === undefined ? (
+        <span />
+      ) : (
+        <p className="text-[13px] text-muted">
+          {/*
+            Locale ACIKCA `en-US`. Sabitlenmezse ayni sayi bir kullanicida
+            "1,234", digerinde "1.234" okunur; kok eslint kuralinin reddettigi
+            sey de tam olarak locale'siz cagri.
+          */}
+          <span className="tabular-nums text-text">{total.toLocaleString('en-US')}</span> launched
+        </p>
+      )}
 
       <div className="flex items-center gap-2">
         {hasPrev ? (

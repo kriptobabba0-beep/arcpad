@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SearchPayload } from '@/components/search/params'
+import { LIVE_INDEXER } from '../fixtures/readModel'
 import { overview, PASTED, PASTED_LOWER } from './fixtures'
 
 /**
  * `GET /api/search` -- OKUMA SINIRI SAHTELENIR, ROTA SAHTELENMEZ.
  *
- * `components/read/boundary.ts` bugun her cagriya `unavailable` donuyor (Faz
- * 3'un `queries.ts`'i depoda yok). Gercek stub'la kosulsa bu dosyada tek bir
- * yol olculebilirdi: dusus. Sahte olan sey SINIR, yani rotanin kendisi --
- * beyaz liste, adres dali, parametre baglama -- gercek kodudur.
+ * Sinir UC AYRI MODULE dagildi: `readSearch` hâlâ bir stub
+ * (`components/search/searchBoundary.ts` -- `searchTokens` `packages/db`'ye
+ * inmedi), `readTokenOverview` gercek `web/lib/read.ts`'te, `verifyCanonical`
+ * `web/lib/canonical.ts`'te. Ucu de burada sahtelenir cunku olculen sey
+ * ROTANIN KENDISIDIR: beyaz liste, adres dali, parametre baglama.
+ *
+ * `valueOf` SAHTELENMEZ -- `ReadResult`'in uc dalini cozen gercek fonksiyon
+ * kosar, yani bayat bir sonucun da dogru gectigi bu testlerle olculur.
  */
 const boundary = vi.hoisted(() => ({
   readSearch: vi.fn(),
@@ -16,7 +21,12 @@ const boundary = vi.hoisted(() => ({
   verifyCanonical: vi.fn(),
 }))
 
-vi.mock('@/components/read/boundary', () => boundary)
+vi.mock('@/components/search/searchBoundary', () => ({ readSearch: boundary.readSearch }))
+vi.mock('@/lib/canonical', () => ({ verifyCanonical: boundary.verifyCanonical }))
+vi.mock('@/lib/read', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/read')>('@/lib/read')
+  return { ...actual, readTokenOverview: boundary.readTokenOverview }
+})
 
 const { GET } = await import('@/app/api/search/route')
 
@@ -35,7 +45,7 @@ function searchParams(): Record<string, unknown> {
   return call?.[0] as Record<string, unknown>
 }
 
-const EMPTY_PAGE = { ok: true, data: { rows: [], nextCursor: null, total: 0 } } as const
+const EMPTY_PAGE = { ok: true, data: { rows: [], nextCursor: null, shown: 0 } } as const
 
 beforeEach(() => {
   boundary.readSearch.mockReset()
@@ -184,7 +194,7 @@ describe('GET /api/search -- yapistirilan adres', () => {
     expect(body).toEqual({
       rows: [],
       nextCursor: null,
-      total: 0,
+      shown: 0,
       pasted: { kind: 'refused', address: PASTED_LOWER, canonicity: 'forged' },
     })
     expect(JSON.stringify(body)).not.toContain('DOGEARC')
@@ -248,20 +258,24 @@ describe('GET /api/search -- dusus', () => {
     const response = await GET(request('?q=doge'))
 
     expect(response.status).toBe(200)
-    expect(await response.json()).toEqual({ rows: [], nextCursor: null, total: 0, pasted: null })
+    expect(await response.json()).toEqual({ rows: [], nextCursor: null, shown: 0, pasted: null })
   })
 
   it('basarili sayfa `rows`/`nextCursor`/`total` olarak gecer', async () => {
     boundary.readSearch.mockResolvedValue({
       ok: true,
-      data: { rows: [overview()], nextCursor: '41', total: 87 },
+      stale: false,
+      indexer: LIVE_INDEXER,
+      data: { rows: [overview()], nextCursor: '41' },
     })
 
     const body = await payload(await GET(request('?q=doge')))
 
     expect(body.rows).toHaveLength(1)
     expect(body.nextCursor).toBe('41')
-    expect(body.total).toBe(87)
+    // `shown` BU SAYFADAKI satir sayisidir, toplam degil -- Faz 3'un
+    // `Page<T>`'si toplam vermiyor ve uydurmak yerine adi degistirildi.
+    expect(body.shown).toBe(1)
     expect(body.pasted).toBeNull()
   })
 })

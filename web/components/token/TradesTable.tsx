@@ -78,8 +78,16 @@ export function relativeAge(blockTime: Date, now: number): string {
  * parayi gostermesin) ve ucretler her zaman YUKARI (ucret bir maliyettir).
  */
 export function feeSentence(row: TradeRow): string {
-  const { curveWei, protocolWei, creatorWei } = feeBreakdown(row)
-  const total = formatUsdcAmount(walletDeltaWei(row), { rounding: row.isBuy ? 'up' : 'down' })
+  const breakdown = feeBreakdown(row)
+  const delta = walletDeltaWei(row)
+  // Ucret kolonlari gelmediginde CUMLE DE KURULMAZ. Yarim bir dokum --
+  // "curve tutari X" deyip ucretleri atlamak -- kullanicinin odedigi tutari
+  // curve tutari sanmasina yol acar ve yanlis sayi eksik sayidan pahalidir.
+  if (breakdown === null || delta === null) {
+    return 'Fee breakdown is not available for this trade yet.'
+  }
+  const { curveWei, protocolWei, creatorWei } = breakdown
+  const total = formatUsdcAmount(delta, { rounding: row.isBuy ? 'up' : 'down' })
   const curve = formatUsdcAmount(curveWei, { rounding: row.isBuy ? 'up' : 'down' })
   const protocol = formatUsdcAmount(protocolWei, { rounding: 'up' })
   const creator = formatUsdcAmount(creatorWei, { rounding: 'up' })
@@ -102,6 +110,11 @@ export function feeSentence(row: TradeRow): string {
  * hucresini kaybeder.
  */
 export function rowPrice(row: TradeRow): string {
+  // Rezervler olmadan fiyat yok. "—" dogru cevap; `quoteAmountWei/token` ile
+  // uydurmak GERCEKLESEN fiyat degil, ortalama bir sey uretirdi.
+  if (row.virtualQuoteReservesWei === undefined || row.virtualTokenReservesTok === undefined) {
+    return '—'
+  }
   try {
     return formatPriceWeiPerToken(
       priceWeiPerToken(row.virtualQuoteReservesWei, row.virtualTokenReservesTok),
@@ -208,7 +221,16 @@ export function TradesTable({
                   bicimine bagli degil.
                 */}
                 <Cell label="USDC" numeric title={sentence}>
-                  <Money native={walletDeltaWei(row)} rounding={row.isBuy ? 'up' : 'down'} />
+                  {(() => {
+                    const delta = walletDeltaWei(row)
+                    // "—", `quoteAmountWei` DEGIL. Curve tutarini cuzdan tutari
+                    // diye etiketlemek brief'in yasakladigi hatadir.
+                    return delta === null ? (
+                      <span className="tabular-nums text-muted">—</span>
+                    ) : (
+                      <Money native={delta} rounding={row.isBuy ? 'up' : 'down'} />
+                    )
+                  })()}
                   <VisuallyHidden>{` ${sentence}`}</VisuallyHidden>
                 </Cell>
 

@@ -8,6 +8,7 @@ import { HoldersTable } from './HoldersTable'
 import type { LoadMore } from './tableShell'
 import { UnavailableNotice } from './tableShell'
 import { TradesTable } from './TradesTable'
+import { valueOf } from '@/components/read/result'
 
 /** Token sayfasinin bu bilesene verdigi tek sey; `TokenOverview`'un uc alani. */
 export type TableTabsOverview = Pick<TokenOverview, 'curve' | 'launchCreator' | 'symbol'>
@@ -56,8 +57,15 @@ export function TableTabs({
    * yazmak, "hic islem yok" ile "sayamiyoruz" arasindaki farki siler -- ve bu
    * fark, kullanicinin sayfaya guvenip guvenmeyeceginin tamami.
    */
-  const count = (result: ReadResult<Page<unknown>>): string =>
-    result.ok ? ` (${result.data.total})` : ''
+  // Sayfadaki satir sayisi -- TOPLAM DEGIL. Faz 3'un `Page<T>`'si toplam
+  // vermiyor ve sayfa boyutunu "toplam" diye yazmak uydurma bir kesinlik olur.
+  const tradePage = valueOf(trades)
+  const holderPage = valueOf(holders)
+
+  const count = (result: ReadResult<Page<unknown>>): string => {
+    const page = valueOf(result)
+    return page === undefined ? '' : ` (${page.rows.length})`
+  }
 
   return (
     <div className={cx('flex flex-col gap-3', className)}>
@@ -82,10 +90,10 @@ export function TableTabs({
         // icerigi okuyabilmeli.
         tabIndex={0}
       >
-        {trades.ok ? (
+        {tradePage !== undefined ? (
           <TradesTable
-            rows={trades.data.rows}
-            nextCursor={trades.data.nextCursor}
+            rows={tradePage.rows}
+            nextCursor={tradePage.nextCursor}
             tradePanelHref={tradePanelHref}
             {...(overview ? { symbol: overview.symbol } : {})}
             {...(loadMoreTrades ? { loadMore: loadMoreTrades } : {})}
@@ -103,10 +111,10 @@ export function TableTabs({
         hidden={tab !== IDS.holders}
         tabIndex={0}
       >
-        {holders.ok ? (
+        {holderPage !== undefined ? (
           <HoldersTable
-            rows={holders.data.rows}
-            nextCursor={holders.data.nextCursor}
+            rows={holderPage.rows}
+            nextCursor={holderPage.nextCursor}
             {...(overview
               ? {
                   curve: overview.curve,
