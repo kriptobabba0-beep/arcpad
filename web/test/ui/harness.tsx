@@ -1,7 +1,9 @@
 import { arcTestnet } from '@arcpad/shared/browser'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, type RenderResult } from '@testing-library/react'
+import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared-runtime'
 import type { ReactElement } from 'react'
+import { vi } from 'vitest'
 import { http } from 'viem'
 import { mainnet } from 'viem/chains'
 import { createConfig, WagmiProvider } from 'wagmi'
@@ -53,6 +55,29 @@ export function createTestConfig(options: HarnessOptions = {}) {
   })
 }
 
+/**
+ * UYGULAMA YONLENDIRICISI, SAHTELENMIS.
+ *
+ * `useRouter()` bir baglam olmadan "invariant expected app router to be
+ * mounted" ile ATAR -- ve bu, kabuk testlerinin kirilma bicimiydi: arama
+ * modali kabuga baglaninca `SearchDialog`'un `useRouter()`'i her render'da
+ * kostu, modal KAPALI olsa bile.
+ *
+ * Sahte olmasi bilincli: bir test navigasyonun GERCEKTEN olmasini degil,
+ * DOGRU adrese CAGRILDIGINI olcmelidir. `push`'un kendisi bir `vi.fn()`, yani
+ * bir iddiaya konu olabilir.
+ */
+export function createStubRouter() {
+  return {
+    push: vi.fn(),
+    replace: vi.fn(),
+    refresh: vi.fn(),
+    back: vi.fn(),
+    forward: vi.fn(),
+    prefetch: vi.fn(),
+  }
+}
+
 export function renderWithProviders(ui: ReactElement, options: HarnessOptions = {}): RenderResult {
   const config = createTestConfig(options)
   const queryClient = new QueryClient({
@@ -62,10 +87,12 @@ export function renderWithProviders(ui: ReactElement, options: HarnessOptions = 
   })
 
   return render(
-    <WagmiProvider config={config} reconnectOnMount>
-      <QueryClientProvider client={queryClient}>
-        <ToastProvider>{ui}</ToastProvider>
-      </QueryClientProvider>
-    </WagmiProvider>,
+    <AppRouterContext.Provider value={createStubRouter() as never}>
+      <WagmiProvider config={config} reconnectOnMount>
+        <QueryClientProvider client={queryClient}>
+          <ToastProvider>{ui}</ToastProvider>
+        </QueryClientProvider>
+      </WagmiProvider>
+    </AppRouterContext.Provider>,
   )
 }

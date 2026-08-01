@@ -3,7 +3,7 @@ import { buttonClassName } from '@/components/ui/Button'
 import { Pill } from '@/components/ui/Pill'
 import { getWebConfig } from '@/lib/addresses'
 import { BRAND } from '@/lib/brand'
-import { SearchTrigger } from './SearchTrigger'
+import { SearchBar } from './SearchBar'
 import { WalletButton } from './WalletButton'
 
 /**
@@ -66,7 +66,13 @@ export function Header() {
         </nav>
 
         <div className="ml-auto flex items-center gap-2">
-          <SearchTrigger />
+          {/*
+            Tetikleyici ve ⌘K dinleyicisi `SearchTrigger`'da, icerik Task 9'un
+            `SearchDialog`'unda, ikisini birlestiren istemci siniri
+            `SearchBar`'da. Bolunmenin sebebi: kabuk, veritabanina ve
+            `verifyCanonical`'a bagli olan aramadan ONCE ayakta olmali.
+          */}
+          <SearchBar />
           {/*
             `aria-label` KOSULSUZ. Dar ekranda "Create" metni gizlenir ve
             geriye yalnizca `aria-hidden` bir `+` kalir -- yani baglantinin
