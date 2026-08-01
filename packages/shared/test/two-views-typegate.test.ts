@@ -1,0 +1,145 @@
+import { execFileSync } from 'node:child_process'
+import { createRequire } from 'node:module'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+
+/**
+ * THE TWO-VIEWS RULE, ENFORCED BY THE COMPILER -- AND MEASURED.
+ *
+ * `balance.ts` claims that making the two USDC views OBJECTS (rather than
+ * branded bigints) is what makes summing them a compile error. That claim is
+ * only worth the comment if something runs the compiler, so this does: it
+ * writes three tiny programs and runs `tsc --noEmit` on each.
+ *
+ * The control program exists because a harness that always fails proves
+ * nothing. If the compile of a NON-summing program stopped succeeding, the
+ * "summing fails" cases would still pass and would mean nothing at all.
+ */
+
+const HERE = dirname(fileURLToPath(import.meta.url))
+const WORK_DIR = join(HERE, '.typegate')
+const TSC = join(dirname(createRequire(import.meta.url).resolve('typescript')), '..', 'bin', 'tsc')
+
+type CompileResult = { exitCode: number; output: string }
+
+function compile(name: string, source: string): CompileResult {
+  const file = join(WORK_DIR, `${name}.ts`)
+  writeFileSync(file, source, 'utf8')
+  try {
+    const stdout = execFileSync(process.execPath, [TSC, '--project', WORK_DIR], {
+      encoding: 'utf8',
+      cwd: WORK_DIR,
+    })
+    return { exitCode: 0, output: stdout }
+  } catch (error) {
+    const e = error as { status?: number; stdout?: string; stderr?: string }
+    return { exitCode: e.status ?? -1, output: `${e.stdout ?? ''}${e.stderr ?? ''}` }
+  } finally {
+    rmSync(file, { force: true })
+  }
+}
+
+beforeAll(() => {
+  mkdirSync(WORK_DIR, { recursive: true })
+  // Extends the SAME base config the package compiles under, so the gate
+  // cannot pass because of a laxer flag set than production uses.
+  writeFileSync(
+    join(WORK_DIR, 'tsconfig.json'),
+    JSON.stringify(
+      {
+        extends: '../../../../tsconfig.base.json',
+        compilerOptions: { noEmit: true },
+        include: ['*.ts'],
+      },
+      null,
+      2,
+    ),
+    'utf8',
+  )
+})
+
+afterAll(() => {
+  rmSync(WORK_DIR, { recursive: true, force: true })
+})
+
+const IMPORTS = "import { erc20Usdc, nativeUsdc } from '../../src/balance'\n"
+
+describe('summing the two USDC views does not compile', () => {
+  // CONTROL. Without this, every assertion below could be satisfied by a
+  // broken harness (wrong tsc path, unresolvable import, bad tsconfig).
+  it('CONTROL: the same imports, without a sum, compile clean', () => {
+    const result = compile(
+      'control',
+      `${IMPORTS}
+const native = nativeUsdc(100n * 10n ** 18n)
+const erc20 = erc20Usdc(100n * 10n ** 6n)
+export const both = { wei: native.wei, units: erc20.units }
+`,
+    )
+    expect(result.output).toBe('')
+    expect(result.exitCode).toBe(0)
+  })
+
+  // NOTE: the fixture must contain no suppression directive. An earlier draft
+  // carried a comment SAYING that `@ts-expect-error` was not used -- writing
+  // the token is using it, so tsc suppressed the very diagnostic under test
+  // and this case passed with exit 0. It was caught only by running it.
+  it('adding a native view to an ERC-20 view is TS2365', () => {
+    const result = compile(
+      'sum',
+      `${IMPORTS}
+const native = nativeUsdc(100n * 10n ** 18n)
+const erc20 = erc20Usdc(100n * 10n ** 6n)
+export const total = native + erc20
+`,
+    )
+    expect(result.exitCode).not.toBe(0)
+    expect(result.output).toContain('TS2365')
+    expect(result.output).toContain("Operator '+' cannot be applied")
+    // The diagnostic must name BOTH views, so the person who hits it learns
+    // which two things they tried to add.
+    expect(result.output).toContain('NativeUsdc')
+    expect(result.output).toContain('Erc20Usdc')
+  })
+
+  it('assigning one view where the other is expected does not compile either', () => {
+    const result = compile(
+      'assign',
+      `${IMPORTS}
+import type { NativeUsdc } from '../../src/balance'
+const erc20 = erc20Usdc(100n * 10n ** 6n)
+export const wrong: NativeUsdc = erc20
+`,
+    )
+    expect(result.exitCode).not.toBe(0)
+    expect(result.output).toContain('Erc20Usdc')
+  })
+
+  /**
+   * THE MEASUREMENT THAT PICKED THE DESIGN.
+   *
+   * Branding a bigint (`bigint & {brand}`) is the obvious way to type a unit,
+   * and it DOES NOT WORK: an intersection with `bigint` is still BigIntLike,
+   * so `+` is allowed and the 1e12 mistake compiles clean. If a future
+   * TypeScript starts rejecting it, this test goes red -- and at that point
+   * the comment in `balance.ts` explaining why the views are objects has
+   * become false and should be rewritten, not deleted.
+   */
+  it('records WHY the views are objects: branded bigints still add', () => {
+    const result = compile(
+      'branded',
+      `declare const nb: unique symbol
+declare const eb: unique symbol
+type BrandedNative = bigint & { readonly [nb]: true }
+type BrandedErc20 = bigint & { readonly [eb]: true }
+declare const a: BrandedNative
+declare const b: BrandedErc20
+export const total = a + b
+`,
+    )
+    expect(result.output).toBe('')
+    expect(result.exitCode).toBe(0)
+  })
+})

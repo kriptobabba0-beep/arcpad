@@ -1,0 +1,3 @@
+# Scratch programs written and compiled by test/two-views-typegate.test.ts.
+# The test removes the directory in afterAll; this covers a killed run.
+test/.typegate/

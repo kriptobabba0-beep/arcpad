@@ -3,15 +3,48 @@ export {
   addressBookPath,
   AddressBookError,
   assertEnvMatchesBook,
+  CREATE2_FACTORY,
   DEFAULT_BOOK_DIR,
   type Deployment,
+  ESCROW_SALT,
+  FACTORY_SALT,
+  GOVERNANCE_PATH,
   loadAddressBook,
   parseAddressBook,
   toDeployment,
 } from './addresses'
-export { ARC_TESTNET_CHAIN_ID, arcTestnet, USDC_ERC20_ADDRESS } from './chain'
+export {
+  assertErc20Callable,
+  assertNotUsdcNativeSwap,
+  type Erc20Usdc,
+  erc20Usdc,
+  isNativeSentinel,
+  isUsdcErc20,
+  NATIVE_SENTINELS,
+  type NativeUsdc,
+  nativeUsdc,
+  readUsdcBalance,
+  unifyUsdcViews,
+  type UsdcBalance,
+  type UsdcBalanceSource,
+  UsdcViewError,
+  type UsdcViewErrorKind,
+} from './balance'
+export {
+  ARC_CHAINS,
+  ARC_TESTNET_CHAIN_ID,
+  type ArcChain,
+  type ArcChainConfig,
+  arcTestnet,
+  buildArcChain,
+  getArcChain,
+  MULTICALL3_ADDRESS,
+  USDC_ERC20_ADDRESS,
+} from './chain'
 export { assertArcChain, type ChainIdSource, createArcClient } from './client'
 export {
+  CHAIN_KEYS,
+  chainKeyFor,
   type CurveProfile,
   isProfileName,
   PROFILE_DIGESTS,
@@ -20,6 +53,7 @@ export {
   profileDigest,
   PROFILES_TOML_PATH,
   readProfiles,
+  type RegisteredChainId,
   REPO_ROOT,
 } from './profiles'
 export {

@@ -4,5 +4,11 @@
     "rootDir": ".",
     "noEmit": true
   },
-  "include": ["src", "test", "vitest.config.ts"]
+  "include": ["src", "test", "vitest.config.ts"],
+  // `test/.typegate/` holds the throwaway programs that
+  // `two-views-typegate.test.ts` compiles on purpose -- one of them is
+  // REQUIRED to fail. The test removes them, but a killed run would otherwise
+  // leave `pnpm typecheck` red for a reason that has nothing to do with the
+  // source.
+  "exclude": ["test/.typegate"]
 }
