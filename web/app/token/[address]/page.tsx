@@ -1,6 +1,12 @@
 import { isAddress } from 'viem'
 import { notFound } from 'next/navigation'
-import { readTokenOverview, resolveMetadata, verifyCanonical } from '@/components/read/boundary'
+import {
+  readHolders,
+  readTokenOverview,
+  readTrades,
+  resolveMetadata,
+  verifyCanonical,
+} from '@/components/read/boundary'
 import type { Canonicity, HexAddress, TokenOverview } from '@/components/read/types'
 import { NotALaunch } from '@/components/token/CanonicalBadge'
 import { CurveChart } from '@/components/token/CurveChart'
@@ -8,6 +14,7 @@ import { LaunchFacts } from '@/components/token/LaunchFacts'
 import { LifecycleNotice } from '@/components/token/LifecycleNotice'
 import { ProgressToGraduation } from '@/components/token/ProgressToGraduation'
 import { StatRow, statsFromOverview } from '@/components/token/StatRow'
+import { TableTabs } from '@/components/token/TableTabs'
 import { AboutPanel, TokenHeader } from '@/components/token/TokenHeader'
 import { resolveLifecycle } from '@/components/token/lifecycle'
 import { Card } from '@/components/ui/Card'
@@ -54,7 +61,11 @@ export default async function TokenPage({ params }: { params: Promise<{ address:
 }
 
 async function IndexedToken({ overview }: { overview: TokenOverview }) {
-  const metadata = await resolveMetadata(overview.uri)
+  const [metadata, trades, holders] = await Promise.all([
+    resolveMetadata(overview.uri),
+    readTrades(overview.token, { cursor: null, limit: 25 }),
+    readHolders(overview.token, { cursor: null, limit: 25 }),
+  ])
   const lifecycle = resolveLifecycle({ complete: overview.complete })
   const stats = statsFromOverview(overview)
 
@@ -94,10 +105,21 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
           </Card>
 
           {/*
-            Task 11'in <TableTabs>'i ve Task 12'nin <TradePanel>'i BURAYA
-            baglanacak. Bugun BOS BIR KUTU DEGIL, HIC OLMAYAN BIR KUTU:
-            yer tutucu bir cerceve, kullaniciya gelmeyecek bir sey vaat eder.
+            Iki okuma AYRI: bir tabin okumasi dusse otekinin tabi calismaya
+            devam eder. Tek bir `Promise.all` reddi ikisini birden karartirdi.
+
+            Task 12'nin <TradePanel>'i hâlâ BURADA DEGIL, ve bu bilincli: bos
+            bir cerceve, kullaniciya gelmeyecek bir sey vaat eder.
           */}
+          <TableTabs
+            trades={trades}
+            holders={holders}
+            overview={{
+              curve: overview.curve,
+              launch_creator: overview.launch_creator,
+              symbol: overview.symbol,
+            }}
+          />
         </div>
 
         <div className="flex flex-col gap-6">
