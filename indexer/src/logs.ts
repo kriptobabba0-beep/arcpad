@@ -314,9 +314,23 @@ export function createPacer(opts?: { concurrency?: number; minIntervalMs?: numbe
       const start = (): void => {
         active += 1
         const wait = Math.max(0, lastStart + minIntervalMs - Date.now())
-        lastStart = Date.now() + wait
-        if (wait === 0) resolve()
-        else setTimeout(resolve, wait)
+        // ARALIK, ISTEGIN GERCEKTEN BASLADIGI ANDAN olculur -- PLANLANDIGI
+        // andan degil.
+        //
+        // Onceki hali `lastStart = Date.now() + wait` yaziyordu, yani slotu
+        // ILERIDE bir zamana rezerve ediyordu. Zamanlayici gec atesledigi ya
+        // da olay dongusu takildigi anda o rezervasyon GECMISTE kalir ve
+        // sirada bekleyen istekler `wait = 0` hesaplayip PATLAMA halinde
+        // cikar. Arc hem es zamanli hem ARDISIK istekleri sinirladigi icin
+        // bu, hiz sinirina tosladigimiz tam an olurdu; testte ise gecici bir
+        // takilmadan sonra kirilan bir olcum olarak gorunur (yuk altinda
+        // flake).
+        const begin = (): void => {
+          lastStart = Date.now()
+          resolve()
+        }
+        if (wait === 0) begin()
+        else setTimeout(begin, wait)
       }
       if (active < concurrency) start()
       else queue.push(start)

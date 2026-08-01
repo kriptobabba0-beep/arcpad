@@ -4,6 +4,7 @@ import { snapshot } from '@arcpad/db'
 import { applyEvents, applyTransferEvent } from '../src/apply'
 import type { DecodedEvent, TransferEvent } from '../src/logs'
 import { fetchRange, ForbiddenEmitter } from '../src/logs'
+import { assertRangeApplied, LedgerGap } from '../src/verify'
 import { FakeNode, LIVE, liveDecodedEvents, loadSmoke, smokeLogs } from './fixtures'
 import { LIVE_DEPLOYMENT, pool, resetSchema, seedDeployment } from './db'
 
@@ -67,11 +68,27 @@ describe('apply/transfer', () => {
   // ---------------------------------------------------------------
 
   /**
-   * Arzin TAMAMI muhasebede duruyor. Bu, mint'in yakalandiginin ve hicbir
-   * bakiyenin uydurulmadiginin kontroludur -- ama ASAGIDAKI iki testin
-   * gosterdigi gibi "her `Transfer` yakalandi"nin kaniti DEGILDIR.
+   * BU TOPLAM BIR KAPI DEGILDIR. Yerine ne gectigi `src/verify.ts`'te yaziyor.
+   *
+   * Buraya not dusuluyor cunku planin metni onu "butun `Transfer`'larin
+   * yakalandigini kanitlayan TEK kontrol" diye tarif ediyordu ve o cumle
+   * OLCULEREK yanlislandi -- iki yonden birden:
+   *
+   *   1. Mint DISINDAKI bir `Transfer` dusurulurse toplam DEGISMEZ (asagidaki
+   *      test). Transfer bir bakiyeden dusup digerine ekler.
+   *   2. Bir delta IKI KEZ uygulanirsa da toplam DEGISMEZ (negatif kontrol
+   *      testinin sonu). Yani ne kayip ne cift sayim gorunur.
+   *
+   * Toplamin GERCEKTEN gosterdigi sey dar ama degersiz degil: mint yakalandi,
+   * hicbir bakiye uydurulmadi, ve `holders` ile arz arasinda bir kacak yok.
+   * Bu isimle ve bu yorumla duruyor ki kimse onu bir kapi sanip yeniden
+   * yuklemesin.
+   *
+   * KAPI: `assertRangeApplied` (olay kimliklerini deftere karsi tutar, bkz.
+   * `src/verify.ts`) + `token_transfers.token` yabanci anahtari +
+   * `balance_tok >= 0` CHECK'i.
    */
-  it('bakiyeler toplami TOTAL_SUPPLY a esittir', async () => {
+  it('bakiyeler toplami TOTAL_SUPPLY a esittir (bir KAPI degil -- src/verify.ts)', async () => {
     await applyEvents(pool, LIVE_DEPLOYMENT, await liveDecodedEvents())
     expect(await balanceSum()).toBe(TOTAL_SUPPLY)
   })
@@ -125,6 +142,32 @@ describe('apply/transfer', () => {
       'SELECT count(*)::text AS n FROM token_transfers',
     )
     expect(rows[0]!.n).toBe('4')
+
+    // VE ISTE TOPLAMIN YERINI ALAN KONTROL: ayni kayip, defter kapsamiyla
+    // BAKILDIGINDA gorunur. Dusurulen transfer bir holder'in SON transferiydi
+    // (fill alicisi bir daha hic hareket etmedi), yani `balance_tok >= 0`
+    // CHECK'i de onu goremezdi -- toplam demoted edildikten sonra ortada
+    // kalan tam olarak bu bosluktu.
+    await expect(assertRangeApplied(pool, events)).rejects.toThrow(LedgerGap)
+    const gap = (await assertRangeApplied(pool, events).catch((e: unknown) => e)) as LedgerGap
+    expect(gap.table).toBe('token_transfers')
+    expect(gap.missing).toEqual([victim.seq])
+  })
+
+  it('eksiksiz bir aralikta kapsam kontrolu SESSIZDIR', async () => {
+    const events = await liveDecodedEvents()
+    await applyEvents(pool, LIVE_DEPLOYMENT, events)
+    await expect(assertRangeApplied(pool, events)).resolves.toBeUndefined()
+  })
+
+  // `Completed` bir defter satiri TASIMAZ; kapsam kontrolu onu atlar. Bunu
+  // olcmek zorunlu, cunku atlamayi unutan bir hal her tamamlanan curve'de
+  // yanlis alarm verirdi.
+  it('kapsam kontrolu Completed i defter satiri saymaz', async () => {
+    const events = await liveDecodedEvents()
+    await applyEvents(pool, LIVE_DEPLOYMENT, events)
+    expect(events.some((e) => e.kind === 'completed')).toBe(true)
+    await expect(assertRangeApplied(pool, events)).resolves.toBeUndefined()
   })
 
   // ---------------------------------------------------------------

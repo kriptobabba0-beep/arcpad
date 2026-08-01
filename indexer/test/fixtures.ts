@@ -177,6 +177,60 @@ export function smokeLogs(): RawLog[] {
     })
 }
 
+/**
+ * Bir adrese GIREN native tutar, Arc'in EIP-7708 loglarindan toplanir.
+ *
+ * Bu, zincirin kendi bakiye hareketidir: `0xfff...ffe` her native hareket
+ * icin bir `Transfer` yayar, yani bir adresin aldigi toplam, o loglarin
+ * toplamidir. Indexer bu loglari BILEREK gormez (yasakli yayinci); burada
+ * yalnizca testin ZINCIR TARAFINI olcmesi icin kullaniliyor.
+ */
+export function nativeValueInto(logs: readonly RawLog[], address: string): bigint {
+  const target = address.toLowerCase()
+  let total = 0n
+  for (const log of logs) {
+    if (log.address.toLowerCase() !== '0xfffffffffffffffffffffffffffffffffffffffe') continue
+    if (log.topics[0] !== TRANSFER_TOPIC0) continue
+    if (`0x${log.topics[2]?.slice(26) ?? ''}`.toLowerCase() !== target) continue
+    total += BigInt(log.data)
+  }
+  return total
+}
+
+const TRANSFER_TOPIC0 = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
+
+/**
+ * ESCROW'A BAGIS: karsiliginda `Deposited` OLMAYAN bir native hareket.
+ *
+ * Zincirde bu `USDC.transfer(escrow, x)`tir; `FeeEscrow`'un NatSpec'i (kisit
+ * 1) basarili oldugunu ve `receive()`in HIC calismadigini kaydediyor -- yani
+ * para girer, defter bunu HIC duymaz, ve o para TALEP EDILEMEZ.
+ *
+ * Yuk gercek bir 7708 logundan alinir; yalnizca `to` ve tutar degisir.
+ */
+export function donationLog(
+  to: string,
+  amountWei: bigint,
+  block: bigint,
+  logIndex: number,
+): RawLog {
+  const template = smokeLogs().find(
+    (l) => l.address.toLowerCase() === '0xfffffffffffffffffffffffffffffffffffffffe',
+  )
+  if (template === undefined) throw new Error('canli makbuzda 7708 logu yok')
+  return {
+    ...template,
+    topics: [
+      template.topics[0]!,
+      template.topics[1]!,
+      `0x${'0'.repeat(24)}${to.slice(2).toLowerCase()}`,
+    ],
+    data: `0x${amountWei.toString(16).padStart(64, '0')}`,
+    blockNumber: `0x${block.toString(16)}`,
+    logIndex: `0x${logIndex.toString(16)}`,
+  }
+}
+
 /** Canli smoke'un OLCULMUS adresleri. Adres kitabindan degil, makbuzdan. */
 export const LIVE = {
   factory: '0x0d75a4ffb8cd6db4237557e9519591b94d6ab439' as Address,

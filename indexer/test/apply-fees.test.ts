@@ -1,9 +1,18 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import type { Address } from 'viem'
 import { snapshot, withTransaction } from '@arcpad/db'
 import { applyClaimedEvent, applyDepositedEvent, applyEvents, applyRange } from '../src/apply'
 import type { ClaimedEvent, DepositedEvent } from '../src/logs'
-import { createPacer, decodeAll } from '../src/logs'
-import { FakeNode, LIVE, liveDecodedEvents, rawLogs } from './fixtures'
+import { createPacer, decodeAll, fetchRange } from '../src/logs'
+import {
+  donationLog,
+  FakeNode,
+  LIVE,
+  liveDecodedEvents,
+  nativeValueInto,
+  rawLogs,
+  smokeLogs,
+} from './fixtures'
 import { LIVE_DEPLOYMENT, pool, resetSchema, seedDeployment } from './db'
 
 /** Canli escrow'un OLCULMUS `totalOwed`i (smoke sonrasi, zincirden). */
@@ -29,6 +38,13 @@ async function balances(): Promise<
        FROM fee_balances ORDER BY recipient`,
   )
   return rows
+}
+
+async function ledgerSum(): Promise<bigint> {
+  const { rows } = await pool.query<{ total: string }>(
+    'SELECT coalesce(sum(claimable_wei), 0)::text AS total FROM fee_balances',
+  )
+  return BigInt(rows[0]!.total)
 }
 
 describe('apply/fees', () => {
@@ -258,16 +274,51 @@ describe('apply/fees', () => {
    * defteri DEGISTIRMEZ -- yani arayuz escrow bakiyesini "talep edilebilir
    * ucret" diye gosterirse yanlis bir rakam gosterir.
    */
-  it('defter bilmedigi bir bagisla DEGISMEZ -- toplam bir ALT SINIRDIR', async () => {
-    await applyEvents(pool, LIVE_DEPLOYMENT, await liveDecodedEvents())
-    const before = await balances()
-    // Zincirde escrow'a duz bir transfer: HICBIR `Deposited` yayilmaz, yani
-    // indexer'in gorecegi hicbir olay yoktur ve defter oldugu gibi kalir.
-    expect(await balances()).toEqual(before)
-    const { rows } = await pool.query<{ total: string }>(
-      'SELECT sum(claimable_wei)::text AS total FROM fee_balances',
+  it('escrowa yapilan bir bagis defteri DEGISTIRMEZ -- toplam bir ALT SINIRDIR', async () => {
+    const logs = smokeLogs()
+    const watch = {
+      factory: LIVE.factory,
+      escrow: LIVE.escrow,
+      curves: new Set<Address>(),
+      tokens: new Set<Address>(),
+    }
+    const first = BigInt(logs[0]!.blockNumber)
+    const last = BigInt(logs[logs.length - 1]!.blockNumber)
+
+    // (1) ZINCIR TARAFI. Escrow'a giren native tutar, sekiz GERCEK 7708
+    //     logundan toplaniyor -- ve bugun defterle TAM ESIT, cunku giren her
+    //     kurus `deposit()`ten geldi.
+    expect(nativeValueInto(logs, LIVE.escrow)).toBe(LIVE_TOTAL_OWED)
+
+    // (2) DEFTER TARAFI. Ayni araligi uretim yolundan gecirip okuyoruz.
+    await applyRange(
+      pool,
+      LIVE_DEPLOYMENT,
+      await fetchRange(new FakeNode(logs), watch, first, last),
     )
-    expect(BigInt(rows[0]!.total)).toBe(LIVE_TOTAL_OWED)
+    expect(await ledgerSum()).toBe(LIVE_TOTAL_OWED)
+
+    // (3) BAGIS. Escrow'a bir native hareket daha, KARSILIGINDA `Deposited`
+    //     YOK. Zincirin gordugu tutar artiyor.
+    const DONATION = 7n * 10n ** 17n
+    const withDonation = [...logs, donationLog(LIVE.escrow, DONATION, last, 99)]
+    expect(nativeValueInto(withDonation, LIVE.escrow)).toBe(LIVE_TOTAL_OWED + DONATION)
+
+    // (4) AYNI ARALIK, BASTAN. Indexer bagisi HIC gormez: yasakli yayinci
+    //     adres filtresine takilir ve ortada bir `Deposited` yoktur.
+    await resetSchema()
+    await seedDeployment()
+    const events = await fetchRange(new FakeNode(withDonation), watch, first, last)
+    await applyRange(pool, LIVE_DEPLOYMENT, events)
+
+    const afterSum = await ledgerSum()
+    expect(afterSum).toBe(LIVE_TOTAL_OWED)
+    // FARK TAM OLARAK BAGIS KADAR, ve o para TALEP EDILEMEZ. Arayuz escrow'un
+    // bakiyesini "talep edilebilir ucret" diye gosterseydi kullaniciya bu
+    // kadar FAZLA bir rakam gosterirdi.
+    expect(nativeValueInto(withDonation, LIVE.escrow) - afterSum).toBe(DONATION)
+    // Ve dogru invariant `totalOwed <= balance`tir, `==` degil.
+    expect(afterSum).toBeLessThan(nativeValueInto(withDonation, LIVE.escrow))
   })
 
   // `claim.json` fixture'i: `Claimed`in COZME yolu gercek baytlarla.

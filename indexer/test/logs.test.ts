@@ -614,6 +614,35 @@ describe('pacing', () => {
     expect(started[2]! - started[1]!).toBeGreaterThanOrEqual(18)
   })
 
+  /**
+   * TAKILMADAN SONRA PATLAMA YOK.
+   *
+   * Onceki hal slotu `Date.now() + wait` ile ILERIYE rezerve ediyordu; olay
+   * dongusu takildiginda o rezervasyon gecmiste kalir ve bekleyen istekler
+   * arka arkaya `wait = 0` hesaplayip PATLAMA halinde cikardi. Arc hem es
+   * zamanli hem ARDISIK istekleri sinirladigi icin patlama tam da hiz sinirina
+   * tosladigimiz an olurdu.
+   *
+   * Burada ilk istek 60ms surer (bir RPC takilmasi gibi) ve ardindan uc istek
+   * kuyrukta bekler; ARALARINDAKI her bosluk hala >= minInterval olmali.
+   */
+  it('bir takilmadan sonra istekler patlamaz', async () => {
+    const pacer = createPacer({ minIntervalMs: 25 })
+    const starts: number[] = []
+    const task = (ms: number) =>
+      pacer.run(async () => {
+        starts.push(Date.now())
+        await new Promise((r) => setTimeout(r, ms))
+      })
+    await Promise.all([task(60), task(0), task(0), task(0)])
+    expect(starts).toHaveLength(4)
+    for (let i = 1; i < starts.length; i += 1) {
+      // 60ms'lik ilk istekten sonraki bosluk da dahil, hicbiri sinirin
+      // altina dusmez.
+      expect(starts[i]! - starts[i - 1]!).toBeGreaterThanOrEqual(23)
+    }
+  })
+
   it('cekme katmani gecirilen pacer i GERCEKTEN kullanir', async () => {
     let calls = 0
     const counting = {
