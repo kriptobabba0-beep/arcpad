@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "tsx src/index.ts",
+    "sync-launch-token": "tsx scripts/sync-launch-token.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },

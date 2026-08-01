@@ -77,6 +77,16 @@ export interface LaunchedEvent extends LogRef {
   symbolHex: Hex
   uriHex: Hex
   salt: Hex
+  /**
+   * LOGUN KENDISI, cozulmemis.
+   *
+   * `rejected_launches` reddedilen bir launch'i YALNIZCA onaltilik olarak
+   * saklar (`raw_addr`, `raw_topics_hex`, `raw_data_hex`) ve bunlar cozulmus
+   * alanlardan YENIDEN KURULAMAZ -- kurulabilseydi tablonun varlik sebebi
+   * ortadan kalkardi. Bu yuzden ham log, reddi yazan katmana kadar tasinir.
+   */
+  rawTopics: readonly Hex[]
+  rawData: Hex
 }
 
 export interface TradeEvent extends LogRef {
@@ -571,6 +581,8 @@ function decodeLaunched(log: RawLog, ref: LogRef): LaunchedEvent {
     symbolHex,
     uriHex,
     salt: word(log.data, 3),
+    rawTopics: log.topics,
+    rawData: log.data,
   }
 }
 
