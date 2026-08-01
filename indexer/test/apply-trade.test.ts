@@ -19,7 +19,7 @@ async function applyLive(): Promise<{
   return { events, counts }
 }
 
-async function row<T>(sql: string, values: readonly unknown[] = []): Promise<T> {
+async function row<T>(sql: string, values: unknown[] = []): Promise<T> {
   const { rows } = await pool.query(sql, values)
   return rows[0] as T
 }

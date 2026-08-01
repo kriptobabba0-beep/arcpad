@@ -1,4 +1,5 @@
-import type { Deployment, Queryable } from '@arcpad/db'
+import type { Deployment, Pool, Queryable } from '@arcpad/db'
+import { withTransaction } from '@arcpad/db'
 import { admit } from '../admit'
 import type { DecodedEvent } from '../logs'
 import { applyClaimedEvent, applyDepositedEvent } from './fees'
@@ -99,6 +100,36 @@ export async function applyEvents(
     counts.total += n
   }
   return counts
+}
+
+/**
+ * BIR ARALIGI TEK BIR ISLEMDE uygular. TASK 11'IN DONGUSU BUNU CAGIRMALI.
+ *
+ * NEDEN AYRI BIR GIRIS NOKTASI VAR -- OLCULDU, tahmin edilmedi:
+ *
+ * `applyTransfer` ve `applyFeeEvent` IKI ifadedir (defter INSERT'i + artimli
+ * UPDATE) ve boyle olmak ZORUNDADIR: Postgres CHECK kisitlarini `ON CONFLICT
+ * DO UPDATE`'in ONERILEN satirinda degerlendirir, yani negatif bir delta
+ * catisma cozulmeden patlar. Sonucu sudur: bir islem DISINDA cagrildiklarinda
+ * her ifade kendi islemidir ve ikinci ifade patlarsa BIRINCI ISLENMIS OLARAK
+ * KALIR. O andan sonra defter satiri "bu olay zaten uygulandi" der ve delta
+ * BIR DAHA HIC uygulanmaz -- sessiz, kalici bir muhasebe hatasi.
+ *
+ * Bu bir varsayim degil: `apply-fees.test.ts`'in ilk kosusunda gerceklesti
+ * (basarisiz bir `Claimed`den sonra ayni olay bir daha yazilamadi) ve
+ * "islemsiz bir cagri, basarisiz bir yazimdan sonra defteri kilitler" testi
+ * onu kalici olarak olcuyor.
+ *
+ * `Queryable` alan `applyEvents` YERINDE DURUYOR cunku islemin ICINDEN
+ * cagrilmasi gereken yer odur; bu sarmalayici, "islem acmayi unutmak" halini
+ * bir SECIM olmaktan cikarir.
+ */
+export async function applyRange(
+  pool: Pool,
+  deployment: Deployment,
+  events: readonly DecodedEvent[],
+): Promise<ApplyCounts> {
+  return withTransaction(pool, async (tx) => applyEvents(tx, deployment, events))
 }
 
 export { applyClaimedEvent, applyDepositedEvent } from './fees'
