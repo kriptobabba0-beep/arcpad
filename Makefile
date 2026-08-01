@@ -1,4 +1,4 @@
-.PHONY: install build test fmt fmt-check lint fork-test slither dev clean
+.PHONY: install build test fixtures fmt fmt-check lint fork-test slither dev clean
 
 install:
 	corepack enable pnpm || pnpm --version
@@ -12,6 +12,18 @@ build:
 test:
 	forge test --root contracts --no-match-path 'test/fork/*' -vv
 	pnpm -r test
+
+# Faz 3 indexer fixture'lari. `make test` bu testi ZATEN kosar (FixtureGen
+# `test/fork/*` disindadir), yani fixture'lar her kosuda yeniden uretilir; bu
+# hedef yalnizca onlari TEK BASINA uretmenin kisa yoludur.
+#
+# Kapinin ikinci yarisi CI'dadir (.github/workflows/contracts.yml) ve `git
+# diff`ten IBARET DEGILDIR: `git diff` IZLENMEYEN dosyalari GORMEZ (olculdu --
+# fixture'lar henuz commit'lenmemisken, 5 dosyanin icerigini degistiren bir
+# mutant altinda `git diff --exit-code` yine de 0 dondu). Bu yuzden CI ayrica
+# `git status --porcelain` ile bos-olmayan bir calisma agacini reddeder.
+fixtures:
+	forge test --root contracts --match-contract FixtureGen
 
 fmt:
 	forge fmt --root contracts

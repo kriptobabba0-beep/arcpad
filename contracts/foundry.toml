@@ -47,7 +47,19 @@ auto_detect_remappings = true
 # yeterli tutulur ve test/script/Profiles.t.sol UCUNU birden olcer: `out/`
 # okunabilir, `deploy/` okunabilir, `src/` HALA REDDEDILIR. Ucuncusu, iznin
 # GENISLEMEDIGINI olcen tek iddiadir.
-fs_permissions = [{ access = "read", path = "./out" }, { access = "read", path = "./deploy" }]
+#
+# FAZ 3 EKI. `./fixtures` girisi Task 4'un fixture ureticisi icindir ve
+# `read-write` OLMAK ZORUNDA (`vm.writeFile` + `vm.createDir`). `./out` ve
+# `./deploy` AYNEN KALIR: yukaridaki olcum, `fs_permissions` bir kez
+# tanimlandiginda ortuk artifact izninin kalktigini soyluyor, yani birini
+# dusurmek Surface.t.sol'u (27 iddia) ya da Profiles.t.sol'u kirar. Giris
+# ASAGIDAKI [profile.ci] listesine DE eklenir; profiller listeyi MIRAS ALMAZ,
+# DEGISTIRIR.
+fs_permissions = [
+  { access = "read", path = "./out" },
+  { access = "read", path = "./deploy" },
+  { access = "read-write", path = "./fixtures" },
+]
 
 [profile.default.fuzz]
 runs = 256
@@ -90,7 +102,22 @@ auto_detect_remappings = true
 # TAMAMEN degistirir. `./deploy`u yalnizca default'a eklemek, Profiles.t.sol'u
 # `FOUNDRY_PROFILE=ci` altinda kirardi -- P9 mutantinin olctugu tuzagin aynisi,
 # yonu ters cevrilmis hali.
-fs_permissions = [{ access = "read", path = "./out" }, { access = "read", path = "./deploy" }]
+#
+# FAZ 3 EKI. `./fixtures` BURAYA DA yazilir, ayni MIRAS-DEGIL-DEGISTIRME
+# gerekcesiyle, ve bu YONDE de OLCULDU (2026-08-01): girisi YALNIZCA bu
+# listeden dusurup `FOUNDRY_PROFILE=ci forge test --match-contract FixtureGen`
+# kosuldugunda setUp
+#   `vm.createDir: the path fixtures is not allowed to be accessed for write
+#    operations`
+# ile duser (0 gecti / 1 dustu), AYNI ANDA default profil 8/8 GECER. Yani
+# default'un listesi ci'ye MIRAS KALMAZ. Kirilma GURULTULUDUR, sessiz degil --
+# CI `FOUNDRY_PROFILE: ci` ile kostugu icin drift kapisi yesil gorunmez, ama
+# kapinin kendisi de hic calismaz.
+fs_permissions = [
+  { access = "read", path = "./out" },
+  { access = "read", path = "./deploy" },
+  { access = "read-write", path = "./fixtures" },
+]
 
 [profile.ci.fuzz]
 runs = 5000

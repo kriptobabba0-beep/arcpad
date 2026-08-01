@@ -44,6 +44,33 @@ jobs:
         env:
           FOUNDRY_PROFILE: ci
 
+      # FIXTURE'LAR KONTRATTAN SAPAMAZ -- ve bu, o iddianin tek
+      # CALISTIRILABILIR halidir. Faz 3'un indexer'i `contracts/fixtures/*.json`
+      # ile test edilir; elle yazilmis bir yuk kontrattan sapabilir ve saptigi
+      # gun testler yesil kalir. Burada fixture'lar gercek yurutmeden yeniden
+      # uretilir ve calisma agaci degismis olmamalidir.
+      #
+      # IKI ADIM, VE IKINCISI OLCULEREK ZORUNLU CIKTI: `git diff` IZLENMEYEN
+      # dosyalari GORMEZ. Fixture'lar henuz commit'lenmemisken, icerigi degisen
+      # 5 dosyaya ragmen `git diff --exit-code -- contracts/fixtures` 0 dondu
+      # (olculdu 2026-08-01). Yani tek basina `git diff`, fixture'lari SILEN ya
+      # da yeni bir senaryo EKLEYEN bir degisikligi de gecirirdi.
+      #
+      # `FOUNDRY_PROFILE: ci` BILINCLIDIR: `fs_permissions` profiller arasinda
+      # MIRAS ALINMAZ, DEGISTIRILIR; kapinin gercekten CI profilinde de yazma
+      # izni buldugunu ancak boyle olceriz.
+      - name: Fixtures are not stale
+        run: |
+          forge test --root contracts --match-contract FixtureGen
+          git diff --exit-code -- contracts/fixtures
+          if [ -n "$(git status --porcelain -- contracts/fixtures)" ]; then
+            echo "::error::contracts/fixtures changed after regeneration"
+            git status --porcelain -- contracts/fixtures
+            exit 1
+          fi
+        env:
+          FOUNDRY_PROFILE: ci
+
   # `continue-on-error: true` KALDIRILDI. Bu is Arc'a dokunan TEK kontroldur ve o
   # bayrakla birlikte gecse de gecmese de yesil gorunuyordu -- yani kapi olarak
   # degeri sifirdi. Arc'in kendi dokumani anvil'in Arc'in precompile'larini,
