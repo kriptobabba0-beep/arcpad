@@ -60,4 +60,37 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // ONE BALANCE, ONE SEAM. `web/lib/balance.ts` is the only module that may
+    // reach wagmi's `useBalance`; everything else derives from what it returns.
+    files: ['web/**/*.ts', 'web/**/*.tsx'],
+    ignores: ['web/lib/balance.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'wagmi',
+              importNames: ['useBalance'],
+              message:
+                "On Arc the native asset IS USDC: the native and the ERC-20 reading are two views of ONE fund, so a second balance read is the same money counted twice. Use `useUsdcBalance()` (web/hooks), which derives the six-decimal view from web/lib/balance.ts's single read.",
+            },
+            {
+              name: 'wagmi',
+              importNames: ['useAccount'],
+              message:
+                '`useAccount` is a deprecated alias of `useConnection` in wagmi 3.x. Import `useConnection`, or use `useArcNetwork()` which already wraps it with the wrong-network verdict.',
+            },
+            {
+              name: 'wagmi',
+              importNames: ['useAccountEffect'],
+              message:
+                '`useAccountEffect` is a deprecated alias of `useConnectionEffect` in wagmi 3.x. Import `useConnectionEffect`.',
+            },
+          ],
+        },
+      ],
+    },
+  },
 )

@@ -57,9 +57,28 @@ export {
   REPO_ROOT,
 } from './profiles'
 export {
+  checkMetadataText,
+  type MetadataCheck,
+  type MetadataField,
+  METADATA_LIMITS,
+  normaliseMetadataText,
+  sanitiseForDisplay,
+  truncateToBytes,
+  utf8ByteLength,
+} from './text'
+export {
   ERC20_USDC_DECIMALS,
   erc20ToNative,
+  formatPriceWeiPerToken,
+  formatTokenAmount,
   formatUsdc,
+  formatUsdcAmount,
+  formatUsdcCompact,
   NATIVE_USDC_DECIMALS,
   nativeToErc20,
+  type ParsedUsdcAmount,
+  type ParseReason,
+  parseUsdcAmount,
+  type Rounding,
+  USDC_VIEW_SCALE,
 } from './usdc'

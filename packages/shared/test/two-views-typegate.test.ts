@@ -104,6 +104,48 @@ export const total = native + erc20
     expect(result.output).toContain('Erc20Usdc')
   })
 
+  /**
+   * THE SHAPE `web/lib/balance.ts` HANDS TO COMPONENTS.
+   *
+   * A balance carried as `{ wei: bigint; units: bigint }` lets `b.wei +
+   * b.units` compile, and the runtime check CANNOT cover for it: adding the
+   * ERC-20 view into the native one moves `wei` by less than one truncation
+   * quantum for any balance below 1e6 USDC, so `unifyUsdcViews` sees nothing
+   * (measured in `web/test/balance.test.ts`). Carrying the two OBJECT views
+   * instead makes the same mistake a compile error, and this is the test that
+   * says so by compiling it.
+   */
+  it('the balance VIEW shape refuses to add its two fields', () => {
+    const result = compile(
+      'balanceview',
+      `${IMPORTS}
+import type { Erc20Usdc, NativeUsdc } from '../../src/balance'
+type UsdcBalanceView = { readonly native: NativeUsdc; readonly erc20: Erc20Usdc }
+const view: UsdcBalanceView = { native: nativeUsdc(100n * 10n ** 18n), erc20: erc20Usdc(100n * 10n ** 6n) }
+export const total = view.native + view.erc20
+`,
+    )
+    expect(result.exitCode).not.toBe(0)
+    expect(result.output).toContain('TS2365')
+  })
+
+  /**
+   * THE CONTROL FOR THAT CHOICE: the FLAT shape compiles the sum clean. This
+   * is not a nicety -- it is the measurement that rules out flattening, and if
+   * a future TypeScript starts rejecting it the comment above becomes false.
+   */
+  it('records WHY the shape is not flattened: two bigint fields still add', () => {
+    const result = compile(
+      'flatbalance',
+      `type FlatBalance = { readonly wei: bigint; readonly units: bigint }
+declare const b: FlatBalance
+export const total = b.wei + b.units
+`,
+    )
+    expect(result.output).toBe('')
+    expect(result.exitCode).toBe(0)
+  })
+
   it('assigning one view where the other is expected does not compile either', () => {
     const result = compile(
       'assign',

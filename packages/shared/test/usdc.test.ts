@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { erc20ToNative, formatUsdc, nativeToErc20 } from '../src/usdc'
+import {
+  erc20ToNative,
+  formatPriceWeiPerToken,
+  formatTokenAmount,
+  formatUsdc,
+  formatUsdcCompact,
+  nativeToErc20,
+  parseUsdcAmount,
+  USDC_VIEW_SCALE,
+} from '../src/usdc'
 
 describe('USDC iki gorunum arasinda donusum', () => {
   it('18 decimal native degeri 6 decimal ERC-20 gorunumune indirir', () => {
@@ -56,5 +65,126 @@ describe('formatUsdc', () => {
     // deger tam 1 olarak yuvarlanir. formatUsdc goruntuleme icindir; zincir
     // uzeri muhasebe bu fonksiyona dayanmamalidir.
     expect(formatUsdc(1_000_000_000_000_000_001n, { maxFractionDigits: 18 })).toBe('1.00')
+  })
+})
+
+describe('parseUsdcAmount quantises input to six decimals', () => {
+  it('accepts a whole number and scales it to the native view', () => {
+    expect(parseUsdcAmount('1')).toEqual({ ok: true, value: 1_000_000_000_000_000_000n })
+  })
+
+  it('accepts exactly six decimals -- the finest input the ERC-20 view can echo', () => {
+    expect(parseUsdcAmount('0.000001')).toEqual({ ok: true, value: 1_000_000_000_000n })
+    expect(parseUsdcAmount('12.161433')).toEqual({ ok: true, value: 12_161_433_000_000_000_000n })
+  })
+
+  /**
+   * THE QUANTISATION ITSELF. A seventh decimal is REJECTED, not truncated:
+   * truncating would sign a transaction for an amount the user did not type
+   * and cannot see echoed back.
+   *
+   * This is also the test that kills `parseUnits(text, 6) -> parseUnits(text,
+   * 18)`: under 18 decimals `1.2345678` is a perfectly good input.
+   */
+  it('rejects a seventh decimal rather than silently truncating it', () => {
+    expect(parseUsdcAmount('1.2345678')).toEqual({ ok: false, reason: 'tooManyDecimals' })
+    expect(parseUsdcAmount('0.0000001')).toEqual({ ok: false, reason: 'tooManyDecimals' })
+  })
+
+  it.each([
+    ['', 'empty'],
+    ['   ', 'empty'],
+    ['-1', 'negative'],
+    ['-0.5', 'negative'],
+    ['1e3', 'exponent'],
+    ['1E3', 'exponent'],
+    ['1,5', 'notANumber'],
+    ['NaN', 'notANumber'],
+    ['Infinity', 'notANumber'],
+    ['0x10', 'notANumber'],
+    ['1.2.3', 'notANumber'],
+    ['.', 'notANumber'],
+    ['+1', 'notANumber'],
+  ])('rejects %j with reason %s', (text, reason) => {
+    expect(parseUsdcAmount(text)).toEqual({ ok: false, reason })
+  })
+
+  it('rejects rather than throws -- a form field shows a message, not a stack', () => {
+    for (const bad of ['', '-1', '1e3', '1.2345678', 'NaN']) {
+      expect(() => parseUsdcAmount(bad)).not.toThrow()
+    }
+  })
+
+  it('every accepted value is a whole multiple of the quantum', () => {
+    // Derived by hand: the smallest accepted input is 1e12 wei, so no accepted
+    // value can ever land inside NetTooSmall's 3-wei ceiling.
+    for (const text of ['0', '0.000001', '0.999999', '1', '1000.5', '12.313451']) {
+      const parsed = parseUsdcAmount(text)
+      expect(parsed.ok).toBe(true)
+      if (!parsed.ok) throw new Error('unreachable')
+      expect(parsed.value % USDC_VIEW_SCALE).toBe(0n)
+    }
+  })
+})
+
+describe('formatUsdcCompact', () => {
+  it('prints the opening market cap of every sanctioned profile as $4.00', () => {
+    // LaunchFactory.MIN_OPENING_MARKET_CAP == 4e18, and a fresh curve sits
+    // exactly on it: V * supplyConstant / T = 4292e15 * 1e27 / 1073e24.
+    expect(formatUsdcCompact(4_000_000_000_000_000_000n)).toBe('$4.00')
+  })
+
+  it('prints four significant digits with a suffix above one thousand', () => {
+    expect(formatUsdcCompact(57_530_000_000_000_000_000_000_000n)).toBe('$57.53M')
+    expect(formatUsdcCompact(4_000_000_000_000_000_000_000n)).toBe('$4.000K')
+    expect(formatUsdcCompact(999_900_000_000_000_000_000_000n)).toBe('$999.9K')
+    expect(formatUsdcCompact(1_234_000_000_000_000_000_000_000_000n)).toBe('$1.234B')
+  })
+
+  it('rounds DOWN -- a market cap is a claim about money that exists', () => {
+    expect(formatUsdcCompact(57_539_999_999_999_999_999_999_999n)).toBe('$57.53M')
+    expect(formatUsdcCompact(4_009_999_999_999_999_999n)).toBe('$4.00')
+  })
+
+  it('crosses the suffix boundary at exactly one thousand', () => {
+    expect(formatUsdcCompact(999_999_999_999_999_999_999n)).toBe('$999.99')
+    expect(formatUsdcCompact(1_000_000_000_000_000_000_000n)).toBe('$1.000K')
+  })
+})
+
+describe('formatTokenAmount', () => {
+  it('shows a token base amount at six decimals, rounded down', () => {
+    // 200_723_953_120_761_740_526_324_105 _tok is 200_723_953.120761... tokens.
+    expect(formatTokenAmount(200_723_953_120_761_740_526_324_105n)).toBe('200,723,953.120761')
+    expect(formatTokenAmount(0n)).toBe('0.000000')
+    expect(formatTokenAmount(1n)).toBe('0.000000')
+  })
+})
+
+/**
+ * The subscript is written as a CODE POINT, not as a literal glyph: a
+ * reviewer cannot tell U+2088 from U+2085 at a glance, and the whole point
+ * of the expectation is the digit inside it.
+ */
+const sub = (n: number) => String.fromCodePoint(0x2080 + n)
+
+describe('formatPriceWeiPerToken', () => {
+  it('compresses the zero run', () => {
+    expect(formatPriceWeiPerToken(4_000_000_000n)).toBe(`0.0${sub(8)}4`)
+    expect(formatPriceWeiPerToken(4_000_000_000_000n)).toBe(`0.0${sub(5)}4`)
+  })
+
+  it('leaves a short zero run alone', () => {
+    // 0.04 USDC per token: writing `0.0<sub>1</sub>4` would be harder to read
+    // than the number it replaces.
+    expect(formatPriceWeiPerToken(40_000_000_000_000_000n)).toBe('0.04')
+  })
+
+  it('falls back to plain six-decimal formatting at or above 1 USDC per token', () => {
+    expect(formatPriceWeiPerToken(1_500_000_000_000_000_000n)).toBe('1.500000')
+  })
+
+  it('prints zero as zero', () => {
+    expect(formatPriceWeiPerToken(0n)).toBe('0')
   })
 })
