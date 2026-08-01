@@ -12,7 +12,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:abi": "vitest run --config vitest.abi.config.ts"
   },
   "dependencies": {
     "viem": "2.55.8"

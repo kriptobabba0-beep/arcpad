@@ -71,3 +71,44 @@ jobs:
 
       - name: Build web
         run: pnpm --filter @arcpad/web build
+
+  # THE ABI PARITY GATE, IN ITS OWN JOB.
+  #
+  # `packages/shared/src/abi/*` is the one copy of the ABI the frontend ships,
+  # and it is committed rather than generated at build time so that `web` builds
+  # without a Solidity toolchain. The price of committing it is drift, and this
+  # job is what makes drift impossible to merge: it builds the contracts and
+  # compares BOTH DIRECTIONS -- a removed entry and an ADDED entry are both
+  # failures.
+  #
+  # Separate from `check` because `check` must keep running on a runner with no
+  # Foundry; `test:abi` is deliberately NOT part of `pnpm -r test` for the same
+  # reason. The risk that buys is a test that never runs anywhere, and
+  # `abi-parity.test.ts` closes it by asserting this job exists.
+  abi-parity:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.6.0-rc1
+
+      - name: Build contracts
+        run: forge build --root contracts
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: ABI parity
+        run: pnpm --filter @arcpad/shared test:abi
