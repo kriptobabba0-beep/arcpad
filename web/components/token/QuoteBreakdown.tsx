@@ -196,6 +196,27 @@ export function QuoteBreakdown({
           </>
         )}
 
+        {/*
+          KELEPCE VE IADE, ISLEMDEN ONCE.
+
+          OLCULEREK EKLENDI. `planBuyExactQuoteIn` butceyi curve'un alabilecegi
+          tutara kelepceler ve artani `plan.refund` olarak tasir -- ve bu doküm
+          IKISINI DE YAZMIYORDU. Curve'un tepesinde 20 USDC yazan bir kullanici
+          "You spend 20.000000 USDC" satirini goruyor, imzaliyor, ve parasinin
+          cogu geri geliyordu: dogru davranis, HABER VERILMEDEN. Bir launchpad'de
+          bir kullaniciya imzaladigi tutardan baskasinin cekilecegini SONRADAN
+          ogretmek, dogru olsa bile guveni bozar.
+
+          Yalnizca `buyExactQuoteIn` kelepceleyebilir; oteki iki giris noktasi
+          `clamped` alanini hicbir zaman kurmaz. Normal bir alimda iade 1 wei
+          olur ve `clamped` false'tur, yani bu satir cikmaz.
+        */}
+        {plan.clamped ? (
+          <Row id="clamp" label="Filled to the remaining supply — the rest is refunded">
+            <Usdc native={plan.refund} rounding="down" />
+          </Row>
+        ) : null}
+
         <Row id="impact" label="Price impact" tone={highImpact ? 'negative' : undefined}>
           {formatSignedPercent(impactPpm)}
         </Row>

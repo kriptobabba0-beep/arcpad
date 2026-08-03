@@ -8,7 +8,13 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "preflight": "tsx scripts/preflight.ts"
+    "preflight": "tsx scripts/preflight.ts",
+    "release-gate": "tsx scripts/release-gate.ts",
+    "e2e": "playwright test --project=local-chain --project=audit",
+    "e2e:local": "playwright test --project=local-chain",
+    "e2e:db": "playwright test --project=local-db",
+    "e2e:audit": "playwright test --project=audit",
+    "e2e:arc": "playwright test --project=arc"
   },
   "dependencies": {
     "@arcpad/db": "workspace:*",
@@ -21,6 +27,8 @@
     "wagmi": "3.7.4"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
+    "@playwright/test": "1.62.1",
     "@tailwindcss/postcss": "4.3.3",
     "@testing-library/jest-dom": "7.0.0",
     "@testing-library/react": "16.3.2",

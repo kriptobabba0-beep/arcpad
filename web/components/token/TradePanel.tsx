@@ -16,6 +16,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { encodeFunctionData } from 'viem'
 import { useReadContract, useSimulateContract } from 'wagmi'
 import type { HexAddress } from '@/components/read/types'
+import { FailureNotice, readFailure } from '@/components/errors'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Money } from '@/components/ui/Money'
@@ -410,12 +411,37 @@ export function TradeForm({
 
         {realised !== null ? <Realised realised={realised} symbol={symbol} /> : null}
 
+        {/*
+          BASARISIZLIK METNI TASK 14'UN YUZEYINDEN GELIR, PANELIN KENDI
+          KUTUSUNDAN DEGIL.
+
+          BURASI OLCULEREK BULUNDU. Panel `decodeArcpadError`'un ham ciktisini
+          KENDI kirmizi kutusuna basiyordu, ve o kutu KULLANICI REDDI icin de
+          ciziliyordu: `role="alert"`, `text-negative`, "Transaction
+          cancelled". Yani kullanicinin bilerek verdigi karar ona bir HATA
+          olarak gosteriliyordu -- Task 14'un `tone: 'neutral'` dali tam olarak
+          bunu engellemek icin yazilmisti ve HICBIR SAYFA `FailureNotice`'i
+          cizmiyordu. Bileseninin testi vardi; ULASILABILIR degildi. Tarayici
+          acilmadan gorunmedi (`web/e2e/local/launch-and-trade.spec.ts`, adim 7).
+
+          `readFailure` cozucunun ciktisini metne cevirir ve tonu o belirler:
+          `neutral` -> cerceve yok, zemin yok, kirmizi yok. Baglami da burasi
+          verir; `symbol` olmadan metin "tokens" der, `gasReserveWei` olmadan
+          fon yetersizligi tek kalem gorunur.
+        */}
         {failure !== null ? (
-          <div role="alert" className="text-[12px] leading-snug" data-testid="tx-failed">
-            <p className="font-medium text-negative">{failure.title}</p>
-            <p className="text-muted">{failure.detail}</p>
-            {failure.remedy === undefined ? null : <p className="text-muted">{failure.remedy}</p>}
-          </div>
+          <FailureNotice
+            failure={readFailure(failure, {
+              symbol,
+              realTokenReservesTok: state.realTokenReserves,
+              ...(amount === null ? {} : { tradeAmountWei: amount }),
+              ...(spendable === null ? {} : { gasReserveWei: usdcBalance - spendable }),
+              ...(plan === null ? {} : { sentValueWei: plan.value }),
+            })}
+            {...(hash === undefined ? {} : { hash })}
+            {...(onSwitch === undefined ? {} : { onSwitchNetwork: onSwitch })}
+            className="text-[12px]"
+          />
         ) : null}
       </div>
     </Card>
@@ -574,12 +600,37 @@ export function TradePanel({ token, curve, lifecycle, profile, symbol }: TradePa
     // dongusune sokardi.
   }, [confirmedSeq])
 
-  // KAPALI BIR CURVE'DE PANEL HIC CIZILMEZ: uc giris noktasi da
-  // `CurveComplete()` ile revert eder. Zincirin `complete`'i veritabaninin
-  // `lifecycle`'indan ONCE gelir, yani ikisi de kontrol edilir.
-  if (lifecycle.kind !== 'trading') return null
+  /*
+   * KAPALI BIR CURVE'DE FORM HIC CIZILMEZ -- AMA MAKBUZ KALIR.
+   *
+   * Uc giris noktasi da `CurveComplete()` ile revert eder, dolayisiyla form
+   * gitmelidir. Zincirin `complete`'i veritabaninin `lifecycle`'indan ONCE
+   * gelir, yani ikisi de kontrol edilir.
+   *
+   * MAKBUZUN KALMASI OLCULEREK EKLENDI. Onceden burasi `null` donuyordu ve
+   * SONUCU suydu: curve'u KAPATAN islem -- bir kullanicinin yapacagi EN BUYUK
+   * alim, ve tek IADE aldigi islem -- onaylandiktan hemen sonra
+   * `router.refresh()` sunucuyu `complete` durumunda yeniden cizdiriyor, panel
+   * DOM'dan kalkiyor ve makbuz onunla birlikte gidiyordu. Kullanici 12 USDC
+   * harciyor, bir kismi iade ediliyor, ve iadeyi gosteren tek satir kayboluyor.
+   *
+   * Tarayici acilmadan gorunmedi: birim testleri paneli `complete` durumunda
+   * `null` donduruyor diye YESILDI -- iddia edilen sey buydu.
+   */
+  const closedReceipt =
+    trade.realised === null ? null : (
+      <Card className="flex flex-col gap-3 px-4 py-4" data-testid="trade-receipt">
+        <Realised realised={trade.realised} symbol={symbol} />
+        <p className="text-[12px] text-muted">
+          The curve is complete, so there is nothing left to buy or sell here. This is your receipt
+          for the trade that closed it.
+        </p>
+      </Card>
+    )
+
+  if (lifecycle.kind !== 'trading') return closedReceipt
   if (state === undefined || fees === undefined) return null
-  if (state.complete) return null
+  if (state.complete) return closedReceipt
 
   const connection: ConnectionState = network.wrongNetwork
     ? 'wrongNetwork'

@@ -1,3 +1,4 @@
+import type { CurveProfile } from '@arcpad/shared/browser'
 import { isAddress } from 'viem'
 import { notFound } from 'next/navigation'
 import { verifyCanonical } from '@/lib/canonical'
@@ -9,7 +10,7 @@ import {
   type HexAddress,
   type TokenOverview,
 } from '@/components/read/types'
-import { NotALaunch } from '@/components/token/CanonicalBadge'
+import { CanonicalBadge, NotALaunch } from '@/components/token/CanonicalBadge'
 import { CurveChart } from '@/components/token/CurveChart'
 import { LaunchFacts } from '@/components/token/LaunchFacts'
 import { LifecycleNotice } from '@/components/token/LifecycleNotice'
@@ -17,7 +18,10 @@ import { ProgressToGraduation } from '@/components/token/ProgressToGraduation'
 import { StatRow, statsFromOverview } from '@/components/token/StatRow'
 import { TableTabs } from '@/components/token/TableTabs'
 import { AboutPanel, TokenHeader } from '@/components/token/TokenHeader'
+import { TradePanel } from '@/components/token/TradePanel'
 import { resolveLifecycle } from '@/components/token/lifecycle'
+import { type ChainToken, readChainToken } from '@/lib/chainToken'
+import { getCurveProfile } from '@/lib/profile'
 import { Card } from '@/components/ui/Card'
 import { StaleNotice } from '@/components/read/StaleNotice'
 
@@ -47,16 +51,34 @@ export default async function TokenPage({ params }: { params: Promise<{ address:
 
   const result = await readTokenOverview(token)
 
-  if (!result.ok && result.reason === 'notFound') {
-    const canonicity = await verifyCanonical(token)
-    if (canonicity !== 'canonical') return <NotALaunch address={token} />
-    return <ChainOnly token={token} canonicity={canonicity} notice="not-indexed" />
-  }
-
   if (!result.ok) {
-    // `unavailable`. Sayfa 500 VERMEZ ve al-sat paneli calismaya devam eder --
-    // o rezervleri ZINCIRDEN okur ve veritabanina hic ihtiyaci yoktur.
-    return <ChainOnly token={token} canonicity="unverifiable" notice="unavailable" />
+    /*
+     * IKI DUSUS, TEK DAL, ve `unavailable` icin de KANONIKLIK SORULUR.
+     *
+     * Onceden `unavailable` dali kanonikligi HIC sormuyor, `unverifiable`
+     * yaziyordu. Sonucu olculdu: `DATABASE_URL` tanimsizken -- ki `getPool()`
+     * o durumda `notFound` degil `unavailable` verir -- sayfa gercek bir
+     * launch icin bile yalnizca bir uyari kutusu ve bir adres ciziyordu. Yani
+     * "veritabani dustugunde islem yapmaya devam edilir" ozelligi ekranda
+     * ULASILAMAZDI. Zincir hâlâ ayakta ve `isCanonical` hâlâ cevap veriyor;
+     * sormamak icin bir sebep yok.
+     *
+     * SAHTE ADRES YINE DE CIZILMEZ: `ChainOnly` launch yuzeyini yalnizca
+     * `canonical` icin acar. `unverifiable` (RPC de dustu) `NotALaunch`'a
+     * DUSURULMEZ -- "dogrulayamadik" ile "sahte" ayni cumle degildir ve
+     * indexer'in dusmesi bir kullaniciya "bu bir launch degil" dedirtmez.
+     */
+    const canonicity = await verifyCanonical(token)
+    if (result.reason === 'notFound' && canonicity !== 'canonical') {
+      return <NotALaunch address={token} />
+    }
+    return (
+      <ChainOnly
+        token={token}
+        canonicity={canonicity}
+        notice={result.reason === 'notFound' ? 'not-indexed' : 'unavailable'}
+      />
+    )
   }
 
   const overview = valueOf(result)
@@ -72,15 +94,28 @@ export default async function TokenPage({ params }: { params: Promise<{ address:
 }
 
 async function IndexedToken({ overview }: { overview: TokenOverview }) {
-  const [metadata, trades, holders] = await Promise.all([
+  const [metadata, trades, holders, profile] = await Promise.all([
     resolveMetadata(overview.uri),
     readTrades(asHex(overview.token), { cursor: null, limit: 25 }),
     readHolders(asHex(overview.token), { cursor: null, limit: 25 }),
+    // PROFIL FACTORY'DEN, ve dusmesi sayfayi dusurmez: al-sat paneli o zaman
+    // cizilmez, geri kalan her sey cizilir. Uydurulmus bir yedek KONMAZ --
+    // testnet ile uretim yalnizca `V`de ve tam 1000 kat ayrisir.
+    getCurveProfile().then(
+      ({ profile: p }) => p,
+      (error: unknown) => {
+        console.error(
+          'curve profile unavailable; the token page draws without a trade panel',
+          error,
+        )
+        return null
+      },
+    ),
   ])
   const lifecycle = resolveLifecycle({ complete: overview.complete })
   const stats = statsFromOverview(overview)
 
-  const saleSupply = 793_100_000n * 10n ** 18n
+  const saleSupply = profile?.saleSupply ?? 793_100_000n * 10n ** 18n
   const soldTok = saleSupply - overview.realTokenReservesTok
   const percent = (Math.round(overview.progressPpm / 1_000) / 10).toFixed(1)
 
@@ -104,11 +139,13 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
 
           <Card className="px-4 py-4">
             <CurveChart
-              profile={{
-                virtualTokenReserves: 1_073_000_000n * 10n ** 18n,
-                virtualQuoteReserves: 4_292n * 10n ** 15n,
-                saleSupply,
-              }}
+              profile={
+                profile ?? {
+                  virtualTokenReserves: 1_073_000_000n * 10n ** 18n,
+                  virtualQuoteReserves: 4_292n * 10n ** 15n,
+                  saleSupply,
+                }
+              }
               soldTok={soldTok}
               currentPriceWei={stats.priceWeiPerToken}
               progressPercent={percent}
@@ -134,6 +171,25 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
         </div>
 
         <div className="flex flex-col gap-6">
+          {/*
+            AL-SAT PANELI, ve 375px'te GRAFIKTEN ONCE.
+            `order-first lg:order-none`: telefonda niyet islem yapmaktir, masaustunde
+            sag kolon zaten ilk ekranda gorunur.
+
+            BU BAGLANTI FAZ 4'UN EN BUYUK BOSLUGUYDU. `TradePanel` 12. gorevde
+            yazildi, 645 birim testinin bir kismi onu olcuyor ve HICBIR SAYFA
+            ONU CIZMIYORDU -- bir bilesenin testi, o bilesenin ULASILABILIR
+            oldugunu soylemez. Tarayici acilmadan gorunmedi.
+          */}
+          {profile === null ? null : (
+            <TradePanel
+              token={asHex(overview.token)}
+              curve={asHex(overview.curve)}
+              lifecycle={lifecycle}
+              profile={profile}
+              symbol={overview.symbol}
+            />
+          )}
           <AboutPanel
             {...(metadata?.description === undefined ? {} : { description: metadata.description })}
             {...(metadata === null
@@ -148,19 +204,20 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
 }
 
 /**
- * ZINCIRDEN CIZILEN DAL.
+ * ZINCIRDEN CIZILEN DAL, ARTIK GERCEKTEN ZINCIRDEN.
  *
- * `TokenHeader`, `StatRow`, `ProgressToGraduation` ve al-sat paneli
- * `CurveState` + `CurveProfile` ile de cizilebilir. Yalnizca hacim, holder
- * sayisi, ATH ve islem listesi indexer'a baglidir ve onlar "—" gosterir --
- * SIFIR degil.
+ * `TokenHeader`, `StatRow` ve islem listesi indexer'in satirina baglidir;
+ * ISIM, SEMBOL, REZERVLER, ILERLEME, FIYAT VE UC GIRIS NOKTASI degildir. Bu
+ * dal onlari `LaunchToken` + `BondingCurve` uzerinden okur ve al-sat panelini
+ * cizer -- yani "veritabani dustugunde islem yapmaya devam edilir" iddiasi
+ * artik EKRANDA ULASILABILIR. Onceden bu bilesen yalnizca bir uyari kutusu ve
+ * bir adres ciziyordu, dolayisiyla iddia dogru ama GORUNMEZDI.
  *
- * TODO(task-7): bu dal bugun yalnizca seridi cizip duruyor. Zincir okumasi
- * `web/hooks/useCurveState.ts` (Task 12) ve `web/lib/profile.ts`'in
- * `getCurveProfile()`'ina baglanacak; ikisi de bu dalgada baska bir izin
- * sahibinde.
+ * ISIM VE SEMBOL YALNIZCA `canonical` ICIN OKUNUR. Kanonik olmayan bir adres
+ * icin bu bilesen eskisi gibi yalnizca adresi ve provenance'i yazar: sahte bir
+ * token'in `name()`'ini cizmek, sahtekarligin isleyis bicimidir.
  */
-function ChainOnly({
+async function ChainOnly({
   token,
   canonicity,
   notice,
@@ -169,6 +226,9 @@ function ChainOnly({
   canonicity: Canonicity
   notice: 'not-indexed' | 'unavailable'
 }) {
+  const identified = canonicity === 'canonical' ? await profileOrNull() : null
+  const chain = identified === null ? null : await readChainToken(token, identified)
+
   return (
     <div className="flex flex-col gap-6">
       <div
@@ -195,10 +255,101 @@ function ChainOnly({
         )}
       </div>
 
-      <p className="text-sm text-muted">
-        Token <span className="tabular-nums">{token}</span>
-      </p>
-      <p className="text-[13px] text-muted">Provenance: {canonicity}</p>
+      {chain === null || identified === null ? (
+        <>
+          <p className="text-sm text-muted">
+            Token <span className="tabular-nums">{token}</span>
+          </p>
+          <p className="text-[13px] text-muted">Provenance: {canonicity}</p>
+        </>
+      ) : (
+        <ChainDrawnLaunch chain={chain} profile={identified} canonicity={canonicity} />
+      )}
+    </div>
+  )
+}
+
+async function profileOrNull(): Promise<CurveProfile | null> {
+  try {
+    const { profile } = await getCurveProfile()
+    return profile
+  } catch (error) {
+    console.error('curve profile unavailable; the chain-only branch cannot draw', error)
+    return null
+  }
+}
+
+function ChainDrawnLaunch({
+  chain,
+  profile,
+  canonicity,
+}: {
+  chain: ChainToken
+  profile: CurveProfile
+  canonicity: Canonicity
+}) {
+  const lifecycle = resolveLifecycle({ complete: chain.complete })
+  const soldTok = profile.saleSupply - chain.realTokenReserves
+  const percent = (Math.round(chain.progressPpm / 1_000) / 10).toFixed(1)
+
+  return (
+    <div className="flex flex-col gap-6" data-testid="chain-drawn-launch">
+      <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h1 className="font-serif text-3xl leading-none">{chain.name}</h1>
+        <p className="text-sm uppercase tracking-[0.08em] text-muted">{chain.symbol}</p>
+        <CanonicalBadge status={canonicity} />
+      </header>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="order-last flex flex-col gap-6 lg:order-none">
+          <StatRow
+            stats={{
+              marketCapWei: chain.marketCapWei,
+              priceWeiPerToken: chain.priceWeiPerTok,
+              raisedWei: chain.realQuoteReserves,
+              targetWei: chain.graduationRaiseWei,
+              // INDEXER OLCUMLERI. `null` -> "—", ve SIFIR DEGIL: bir sayfanin
+              // "0 holder" demesi ile "bilmiyoruz" demesi ayni sey degildir.
+              volume24hWei: null,
+              athMarketCapWei: null,
+              holderCount: null,
+            }}
+          />
+
+          {lifecycle.kind === 'trading' ? (
+            <ProgressToGraduation
+              ppm={chain.progressPpm}
+              raisedWei={chain.realQuoteReserves}
+              targetWei={chain.graduationRaiseWei}
+            />
+          ) : (
+            <LifecycleNotice lifecycle={lifecycle} />
+          )}
+
+          <Card className="px-4 py-4">
+            <CurveChart
+              profile={profile}
+              soldTok={soldTok}
+              currentPriceWei={chain.priceWeiPerTok}
+              progressPercent={percent}
+            />
+          </Card>
+
+          <p className="text-[13px] text-muted" data-testid="no-trade-history">
+            No trade history — the indexer has not answered for this token.
+          </p>
+        </div>
+
+        <div className="order-first flex flex-col gap-6 lg:order-none">
+          <TradePanel
+            token={chain.token}
+            curve={chain.curve}
+            lifecycle={lifecycle}
+            profile={profile}
+            symbol={chain.symbol}
+          />
+        </div>
+      </div>
     </div>
   )
 }

@@ -1,7 +1,6 @@
 import { type ChildProcess, spawn } from 'node:child_process'
-import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import {
   type Address,
   createPublicClient,
@@ -52,9 +51,40 @@ import type { CurveProfile } from './curve'
  * and a deploy path have no business in a browser bundle.
  */
 
-const HERE = dirname(fileURLToPath(import.meta.url))
-const REPO_ROOT = join(HERE, '..', '..', '..')
-const OUT = join(REPO_ROOT, 'contracts', 'out')
+/**
+ * `contracts/out`, FOUND BY WALKING UP FROM THE WORKING DIRECTORY.
+ *
+ * It used to be `dirname(fileURLToPath(import.meta.url))`, which is the more
+ * obvious thing and is WRONG for one consumer: Playwright transpiles the files
+ * it loads to CommonJS whenever the nearest `package.json` has no
+ * `"type": "module"` -- which `web/` does not, a Phase 0 carry-over -- and
+ * `import.meta` is a SYNTAX ERROR in CommonJS. So Task 15's browser leg could
+ * not import this module at all.
+ *
+ * Walking up is equivalent for every caller here: every one of them runs with
+ * a working directory inside this repository. It fails LOUDLY if that ever
+ * stops being true, rather than resolving to a plausible-looking wrong path.
+ */
+function findContractsOut(): string {
+  let dir = resolve(process.cwd())
+  for (let depth = 0; depth < 12; depth += 1) {
+    const candidate = join(dir, 'contracts', 'out')
+    if (existsSync(candidate)) return candidate
+    const parent = dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+  throw new Error(
+    `no contracts/out above ${process.cwd()}. The devchain harness deploys the ` +
+      'COMPILED bytecode; run `forge build --root contracts` first.',
+  )
+}
+
+let cachedOut: string | undefined
+function outDir(): string {
+  cachedOut ??= findContractsOut()
+  return cachedOut
+}
 
 /** anvil's first well-known account. A devchain key, and only ever a devchain key. */
 const DEV_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80' as const
@@ -68,7 +98,26 @@ export const ZERO_ADDRESS: Address = getAddress('0x00000000000000000000000000000
 
 export type AnvilHandle = {
   readonly rpcUrl: string
+  readonly chainId: number
   stop(): Promise<void>
+}
+
+/** anvil's own default. Named so the two call sites cannot drift. */
+export const ANVIL_DEFAULT_CHAIN_ID = 31337
+
+export type AnvilOptions = {
+  /**
+   * The chain id anvil reports to `eth_chainId`.
+   *
+   * DEFAULTS TO ANVIL'S OWN 31337 so every existing caller is unchanged. Task
+   * 15's browser leg needs 5042002 instead, and NOT for tidiness: `getArcChain`
+   * is a fail-closed registry with one entry, so a web build pointed at a
+   * 31337 node throws on the FIRST render and no page is reachable at all.
+   * Adding a devchain entry to that registry would put a fake network into
+   * production configuration; moving the id onto anvil keeps the fiction on the
+   * side that is already fictional.
+   */
+  readonly chainId?: number
 }
 
 /**
@@ -80,13 +129,14 @@ export type AnvilHandle = {
  * chain state. The port is parsed from `Listening on 127.0.0.1:<port>`, which
  * is why `--silent` is NOT passed.
  */
-export function startAnvil(): Promise<AnvilHandle> {
+export function startAnvil(options: AnvilOptions = {}): Promise<AnvilHandle> {
+  const chainId = options.chainId ?? ANVIL_DEFAULT_CHAIN_ID
   return new Promise((resolve, reject) => {
     // The EXECUTABLE NAME, not a shell. `shell: true` on Windows concatenates
     // arguments instead of escaping them (node DEP0190), and this harness has
     // no reason to involve a shell at all.
     const binary = process.platform === 'win32' ? 'anvil.exe' : 'anvil'
-    const child: ChildProcess = spawn(binary, ['--port', '0'], {
+    const child: ChildProcess = spawn(binary, ['--port', '0', '--chain-id', String(chainId)], {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
@@ -118,7 +168,7 @@ export function startAnvil(): Promise<AnvilHandle> {
       if (!match?.[1]) return
       settled = true
       clearTimeout(timer)
-      resolve({ rpcUrl: `http://127.0.0.1:${match[1]}`, stop })
+      resolve({ rpcUrl: `http://127.0.0.1:${match[1]}`, chainId, stop })
     })
 
     child.stderr?.on('data', (chunk: Buffer) => {
@@ -137,7 +187,7 @@ export function startAnvil(): Promise<AnvilHandle> {
 type Artifact = { abi: unknown[]; bytecode: { object: Hex } }
 
 function bytecodeOf(relative: string): Hex {
-  const artifact = JSON.parse(readFileSync(join(OUT, relative), 'utf8')) as Artifact
+  const artifact = JSON.parse(readFileSync(join(outDir(), relative), 'utf8')) as Artifact
   const object = artifact.bytecode?.object
   if (typeof object !== 'string' || !object.startsWith('0x') || object.length < 4) {
     // A missing artifact FAILS. It does not skip: a skipped check reads exactly
@@ -154,11 +204,24 @@ export type DevClients = {
   readonly publicClient: PublicClient
 }
 
-export function devClients(rpcUrl: string): DevClients {
+/**
+ * The chain object handed to viem, with anvil's reported id.
+ *
+ * NOT COSMETIC. viem asserts the wallet client's chain id against
+ * `eth_chainId` before every write, so a client pinned to `foundry` (31337)
+ * talking to `anvil --chain-id 5042002` fails on the FIRST `deployContract`
+ * with a chain-mismatch error, not on some later assertion.
+ */
+export function devChain(chainId: number = ANVIL_DEFAULT_CHAIN_ID) {
+  return chainId === ANVIL_DEFAULT_CHAIN_ID ? foundry : { ...foundry, id: chainId }
+}
+
+export function devClients(rpcUrl: string, chainId: number = ANVIL_DEFAULT_CHAIN_ID): DevClients {
   const transport = http(rpcUrl)
+  const chain = devChain(chainId)
   return {
-    wallet: createWalletClient({ account: devAccount, chain: foundry, transport }),
-    publicClient: createPublicClient({ chain: foundry, transport }),
+    wallet: createWalletClient({ account: devAccount, chain, transport }),
+    publicClient: createPublicClient({ chain, transport }),
   }
 }
 
@@ -173,7 +236,7 @@ async function deploy(
     bytecode: bytecodeOf(relative),
     args: args as never,
     account: devAccount,
-    chain: foundry,
+    chain: clients.wallet.chain ?? null,
   })
   const receipt = await clients.publicClient.waitForTransactionReceipt({ hash })
   if (receipt.status !== 'success' || !receipt.contractAddress) {
@@ -202,11 +265,28 @@ async function readTriple(
 export type ArcpadDeployment = {
   readonly factory: Address
   readonly escrow: Address
+  readonly feeSchedule: Address
   readonly treasury: Address
   readonly token: Address
   readonly curve: Address
   readonly creator: Address
 }
+
+/**
+ * `FeeSchedule` TAKES NO CONSTRUCTOR ARGUMENTS, so an empty ABI is the whole
+ * interface this harness needs -- it deploys the contract and hands the
+ * address to `LaunchFactory`, which is the only consumer here.
+ *
+ * WHY THIS APPEARED. Phase 2 gave `LaunchFactory` a seventh constructor
+ * parameter (`feeSchedule_`, rejected with `FeeScheduleHasNoCode` when it is
+ * not a contract). `packages/shared/src/abi/launchFactory.ts` was updated with
+ * it; THIS FILE WAS NOT, and its suite runs under a separate vitest config
+ * (`test:chain`) that the default `pnpm --filter @arcpad/shared test` does not
+ * sweep -- so every deploy here failed with an ABI length mismatch and nothing
+ * in the routine gates said so. A property covered on one entrypoint reads as
+ * covered on all of them.
+ */
+const FEE_SCHEDULE_ABI = [] as const
 
 /**
  * Deploys the real thing and launches one token through it.
@@ -225,10 +305,17 @@ export type ArcpadDeployment = {
 export async function deployArcpad(
   rpcUrl: string,
   profile: CurveProfile,
+  chainId: number = ANVIL_DEFAULT_CHAIN_ID,
 ): Promise<ArcpadDeployment> {
-  const clients = devClients(rpcUrl)
+  const clients = devClients(rpcUrl, chainId)
 
   const escrow = await deploy(clients, 'FeeEscrow.sol/FeeEscrow.json', feeEscrowAbi, [])
+  const feeSchedule = await deploy(
+    clients,
+    'FeeSchedule.sol/FeeSchedule.json',
+    FEE_SCHEDULE_ABI,
+    [],
+  )
   const factory = await deploy(clients, 'LaunchFactory.sol/LaunchFactory.json', launchFactoryAbi, [
     escrow,
     TREASURY,
@@ -236,6 +323,7 @@ export async function deployArcpad(
     profile.virtualTokenReserves,
     profile.virtualQuoteReserves,
     profile.saleSupply,
+    feeSchedule,
   ])
 
   // THE ANTI-TRAP. If T and V were swapped at the call site above, every quote
@@ -265,7 +353,7 @@ export async function deployArcpad(
     functionName: 'launch',
     args: ['Diff', 'DIFF', 'ipfs://diff'],
     account: devAccount,
-    chain: foundry,
+    chain: clients.wallet.chain ?? null,
   })
   const receipt = await clients.publicClient.waitForTransactionReceipt({ hash })
   if (receipt.status !== 'success') throw new Error('launch reverted')
@@ -296,6 +384,7 @@ export async function deployArcpad(
   return {
     factory,
     escrow,
+    feeSchedule,
     treasury: TREASURY,
     token: getAddress(token),
     curve: getAddress(curve),
@@ -338,6 +427,12 @@ export async function deployZeroCreatorCurve(
   const clients = devClients(rpcUrl)
 
   const escrow = await deploy(clients, 'FeeEscrow.sol/FeeEscrow.json', feeEscrowAbi, [])
+  const feeSchedule = await deploy(
+    clients,
+    'FeeSchedule.sol/FeeSchedule.json',
+    FEE_SCHEDULE_ABI,
+    [],
+  )
   const factory = await deploy(clients, 'LaunchFactory.sol/LaunchFactory.json', launchFactoryAbi, [
     escrow,
     TREASURY,
@@ -345,6 +440,7 @@ export async function deployZeroCreatorCurve(
     profile.virtualTokenReserves,
     profile.virtualQuoteReserves,
     profile.saleSupply,
+    feeSchedule,
   ])
 
   // Impersonate the factory so the curve it deploys records IT as `factory`.

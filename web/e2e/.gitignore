@@ -1,0 +1,22 @@
+# RUN ARTEFACTS THIS DIRECTORY OWNS.
+#
+# A LOCAL IGNORE FILE, NOT AN EDIT TO THE ROOT ONE. Three tracks share this
+# checkout and the root `.gitignore` is being edited by another of them right
+# now; a path-limited commit cannot add a line there without either dragging
+# their work in or dropping it. An ignore file next to the thing it ignores
+# needs no coordination and is easier to read besides.
+#
+# `.state.json` carries the run's process ids and is written BEFORE anything
+# can fail, so that a setup that threw half way still leaves the teardown
+# something to kill. It is deleted on a clean teardown; a crashed run leaves
+# it, and that copy must never be committed -- it names ports and pids from
+# somebody else's machine.
+.state.json
+
+# The generated env for a human debugging a failed run. The addresses in it
+# belong to an anvil that no longer exists.
+.env.e2e
+
+# The throwaway module the database fixture writes so that `@arcpad/db`'s own
+# migration runner can be executed as real ESM. Removed in a `finally`.
+.migrate.mts

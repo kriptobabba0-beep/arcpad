@@ -440,7 +440,18 @@ describe('the transaction lifecycle', () => {
     )
   })
 
-  it('reports a failure with the resolved title, detail and remedy', () => {
+  /*
+   * IKI HAL, VE IKINCISI BIRINCININ KONTROLU.
+   *
+   * Bu blok eskiden TEK bir iddiaydi -- "basarisizligin basligi, detayi ve
+   * caresi yaziliyor" -- ve panel kullanici reddini de KIRMIZI BIR KUTUYA
+   * koyarken YESILDI. Baslik/detay/care sorgulamak, TONU hic sormaz.
+   *
+   * Simdi iki hal birlikte olculuyor: nötr olan kutu CIZMEZ, sozlesme reddi
+   * CIZER. Nötr dal kaldirilirsa ilki, ton ayrimi kaldirilirsa ikincisi kirilir
+   * -- ve ikisi ayni anda gecemez.
+   */
+  it('a wallet rejection is a DECISION: neutral tone, no box, and the amounts stay', async () => {
     const t = setup({
       failure: {
         kind: 'wallet',
@@ -453,9 +464,34 @@ describe('the transaction lifecycle', () => {
         raw: null,
       },
     })
-    const failed = t.q.getByTestId('tx-failed')
-    expect(failed.textContent).toContain('Transaction cancelled')
-    expect(failed.textContent).toContain('Try again when you are ready.')
+    await t.user.type(t.q.getByLabelText('Amount to spend'), '0.25')
+
+    const notice = t.q.getByTestId('failure-notice')
+    expect(notice.getAttribute('data-tone')).toBe('neutral')
+    expect(notice.getAttribute('data-name')).toBe('UserRejected')
+    // KUTU YOK: cerceve sinifi da kirmizi zemin de bulunmamali.
+    expect(notice.className).not.toMatch(/border|bg-negative/)
+    expect(notice.textContent).toContain('Cancelled.')
+    // Girdi KORUNUR. "Nothing was sent" derken formu bosaltmak, kullaniciya
+    // iptalin bir bedeli oldugunu ogretir.
+    expect((t.q.getByLabelText('Amount to spend') as HTMLInputElement).value).toBe('0.25')
+  })
+
+  it('a contract refusal DOES draw the box -- the control for the case above', () => {
+    const t = setup({
+      failure: {
+        kind: 'contract',
+        action: 'buyExactQuoteIn',
+        name: 'CurveComplete',
+        title: 'ignored: the copy comes from the error surface',
+        detail: 'ignored',
+        retryable: false,
+        raw: null,
+      },
+    })
+    const notice = t.q.getByTestId('failure-notice')
+    expect(notice.getAttribute('data-tone')).not.toBe('neutral')
+    expect(notice.className).toMatch(/border/)
   })
 })
 

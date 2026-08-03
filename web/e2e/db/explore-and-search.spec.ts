@@ -1,0 +1,353 @@
+import { expect, type Page, test } from '@playwright/test'
+import type { Pool } from '../../../packages/db/src/pool'
+import { openPool, OLD, reset, SEEDED, seed, type Seeded } from '../fixtures/db'
+
+/**
+ * THE INDEXED LEG: EXPLORE, ⌘K AND THE TOKEN PAGE'S TABLES.
+ *
+ * `DATABASE_URL` IS REQUIRED AND ITS ABSENCE FAILS. A skipped gate reads
+ * exactly like a passing one, and a Postgres service is one block of YAML in
+ * CI. `web/e2e/fixtures/db.ts` throws rather than returning a null pool.
+ *
+ * THE SERVER HERE IS A DIFFERENT PROCESS from the chain leg's -- same build,
+ * opposite environment. The chain leg's whole claim is that the page works
+ * with `DATABASE_URL` stripped; this leg's is what the page does when the
+ * database answers. One server could only ever have made one of the two.
+ *
+ * LOCATORS ARE ACCESSIBLE NAMES, NOT TEST IDS. Not a style preference: the
+ * cards, the pager and the tables are reached the way a screen-reader user
+ * reaches them, so a change that keeps the markup working but destroys the
+ * accessible name breaks this suite instead of shipping.
+ *
+ * EVERY ASSERTION STATES ITS PRECONDITION. "The second page differs from the
+ * first" is meaningless unless there ARE two pages, so the row count is
+ * asserted from the DATABASE before the pager is touched.
+ */
+
+const BASE = process.env.E2E_DB_BASE_URL ?? ''
+
+let pool: Pool | null = null
+let fixture: Seeded | null = null
+
+function url(path: string): string {
+  return `${BASE}${path}`
+}
+
+/** The launches grid, by the `aria-label` `TokenGrid` gives it. */
+function grid(page: Page) {
+  return page.getByRole('list', { name: 'Launches' })
+}
+
+/**
+ * The cards' accessible names, in DOM order. That order IS the sort.
+ *
+ * IT WAITS FOR THE GRID FIRST, AND THAT IS NOT A TIMING WORKAROUND.
+ *
+ * `app/(explore)/loading.tsx` opens a Suspense boundary, so the response
+ * STREAMS: the shell (banner, empty `<main>`, skeleton) is flushed first and
+ * the list arrives afterwards. `evaluateAll` does not auto-wait, so reading
+ * straight after `goto` measured the skeleton and reported zero cards on a
+ * page that was about to render thirty. The same streaming behaviour is what
+ * made a `notFound()` answer 200 earlier in this phase; it is a property of
+ * this application, not of this test.
+ */
+async function cardNames(page: Page): Promise<string[]> {
+  await expect(grid(page)).toBeVisible()
+  const links = grid(page).getByRole('link')
+  return (await links.evaluateAll((nodes) =>
+    nodes.map((node) => node.getAttribute('aria-label') ?? ''),
+  )) as string[]
+}
+
+/**
+ * Opens ⌘K and WAITS FOR IT, retrying the keypress.
+ *
+ * MEASURED: the shortcut is installed by an effect in `SearchTrigger`, so a
+ * keypress that lands before hydration goes nowhere and the dialog never
+ * opens. `expect(dialog).toBeVisible()` retries the ASSERTION but not the
+ * PRESS, which is how this surfaced as a 90-second timeout on `getByRole
+ * ('combobox')` rather than as anything to do with hydration.
+ *
+ * Retrying is not papering over a race: "the shortcut works before the
+ * JavaScript that implements it has loaded" is not a claim anybody wants to
+ * make. What IS claimed -- that it opens, traps focus and closes -- is
+ * asserted immediately after.
+ */
+async function openSearch(page: Page) {
+  const dialog = page.getByRole('dialog')
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await page.keyboard.press('ControlOrMeta+k')
+    try {
+      await dialog.waitFor({ state: 'visible', timeout: 1_500 })
+      return dialog
+    } catch {
+      /* not hydrated yet; press again */
+    }
+  }
+  await expect(dialog, 'the ⌘K shortcut never opened the dialog').toBeVisible()
+  return dialog
+}
+
+test.beforeAll(async () => {
+  expect(
+    BASE,
+    'the database leg needs E2E_DB_BASE_URL — the global setup publishes it only when ' +
+      'DATABASE_URL is set. This FAILS rather than skipping: a gate that quietly does not ' +
+      'run is not a gate.',
+  ).not.toBe('')
+  pool = await openPool()
+  await reset(pool)
+  fixture = await seed(pool)
+})
+
+test.afterAll(async () => {
+  // THE POOL IS THIS SUITE'S TO OWN. A previous round of this project left
+  // database processes running for hours; every handle opened here is closed
+  // here, whatever happened above.
+  await pool?.end().catch(() => undefined)
+})
+
+test.describe.configure({ mode: 'serial' })
+
+test('the fixture landed — the precondition every assertion below leans on', async () => {
+  const { rows } = await pool!.query<{ n: string }>('SELECT count(*)::text AS n FROM launches')
+  expect(Number(rows[0]!.n), 'the seed must have written every launch').toBe(SEEDED)
+  const trades = await pool!.query<{ n: string }>('SELECT count(*)::text AS n FROM trades')
+  expect(Number(trades.rows[0]!.n), 'the seed must have written trades').toBeGreaterThan(0)
+})
+
+test('Explore draws the indexed list, and the empty-state branches are NOT taken', async ({
+  page,
+}) => {
+  await page.goto(url('/'))
+
+  const names = await cardNames(page)
+  const main = (await page.getByRole('main').textContent()) ?? ''
+  expect(
+    names.length,
+    `the first page must carry cards. main said:\n${main.slice(0, 800)}`,
+  ).toBeGreaterThan(0)
+
+  /*
+   * THE EMPTY BRANCHES ARE RULED OUT AFTER THE GRID HAS ARRIVED.
+   *
+   * Checked before the wait they were vacuously satisfied by the streamed
+   * skeleton, which contains neither string -- the same trap that made the
+   * card count read zero. "The list rendered" only means the list once the
+   * placeholders are known to be absent from the SETTLED page.
+   */
+  await expect(page.getByText('No launches yet.')).toHaveCount(0)
+  await expect(page.getByText(/could not be read/i)).toHaveCount(0)
+})
+
+test('the five sorts are five different orders, not five different URLs', async ({ page }) => {
+  const orders = new Map<string, string[]>()
+  for (const sort of ['recentBuys', 'newest', 'oldest', 'marketCap', 'volume']) {
+    await page.goto(url(`/?sort=${sort}`))
+    const names = await cardNames(page)
+    expect(names.length, `${sort} returned nothing`).toBeGreaterThan(0)
+    orders.set(sort, names)
+  }
+
+  /*
+   * THE ASSERTION THAT MATTERS, AND WHY IT IS MONOTONICITY RATHER THAN
+   * "`oldest` IS `newest` REVERSED".
+   *
+   * The reversal claim was the first version and it is FALSE for a paged list:
+   * the fixture holds 30 rows and a page holds 24, so `newest` returns 29..06
+   * and `oldest` returns 00..23. Reversing the first gives 06..29, which is a
+   * different set — the test would have reported a defect in a correct pager.
+   *
+   * Monotonicity in the fixture's own index is the property that actually
+   * holds, at any page size, and it still kills the mutant that matters: a
+   * `sort` parameter falling through to the default would give five identical
+   * lists and one of these two directions would be violated.
+   */
+  const index = (name: string): number => Number(/Fixture (\d+)/.exec(name)?.[1] ?? '-1')
+  const newest = orders.get('newest')!.map(index)
+  const oldest = orders.get('oldest')!.map(index)
+  expect(newest.every((n) => n >= 0) && oldest.every((n) => n >= 0)).toBe(true)
+
+  for (let i = 1; i < newest.length; i += 1) {
+    expect(newest[i]!, '`newest` must descend by creation order').toBeLessThan(newest[i - 1]!)
+  }
+  for (let i = 1; i < oldest.length; i += 1) {
+    expect(oldest[i]!, '`oldest` must ascend by creation order').toBeGreaterThan(oldest[i - 1]!)
+  }
+  // And the two are genuinely different pages, not one order printed twice.
+  expect(newest[0], '`newest` and `oldest` must not start at the same row').not.toBe(oldest[0])
+})
+
+test('the three age filters actually exclude, and the exclusion is the fixture’s own', async ({
+  page,
+}) => {
+  // PRECONDITION: the fixture contains rows OUTSIDE the 24h window. Without
+  // it, "the 24h list is shorter" could hold because the page broke.
+  expect(OLD, 'the fixture must contain rows older than a day').toBeGreaterThan(0)
+
+  await page.goto(url('/?age=all'))
+  const all = await cardNames(page)
+  await page.goto(url('/?age=7'))
+  const week = await cardNames(page)
+  await page.goto(url('/?age=1'))
+  const day = await cardNames(page)
+
+  expect(day.length, 'a 24h filter must exclude the week-old rows').toBeLessThan(all.length)
+  expect(week.length).toBeGreaterThanOrEqual(day.length)
+})
+
+test('the keyset pager goes forward to NEW rows and back to the SAME ones', async ({ page }) => {
+  await page.goto(url('/?sort=newest'))
+  const first = await cardNames(page)
+  expect(first.length, 'page one must be full enough to have a second').toBeGreaterThan(0)
+
+  /*
+   * EACH NAVIGATION WAITS FOR ITS OWN CARD COUNT, NOT FOR `networkidle`.
+   *
+   * MEASURED. After a client-side navigation the PREVIOUS page's grid is still
+   * mounted while the next one streams in, so every "wait for the grid" check
+   * is satisfied by stale content and the comparison runs against the page the
+   * test just left. That produced a failure claiming "going back must land on
+   * the SAME rows" while showing page TWO's six rows -- a true observation of
+   * the wrong moment. `toHaveCount` auto-waits, and the counts are DERIVED
+   * (page size, and the fixture's remainder) rather than typed in.
+   */
+  const remainder = SEEDED - first.length
+  expect(remainder, 'the fixture must spill onto a second page').toBeGreaterThan(0)
+
+  /*
+   * THE URL IS WAITED FOR BEFORE THE CONTENT, AND THAT ORDER IS THE FIX.
+   *
+   * Waiting only on the card count was FLAKY -- it passed one run and hung on
+   * the next with the previous page's rows still mounted. The two possible
+   * causes are different defects and a count assertion cannot tell them apart:
+   * the navigation never happened (a `<Link>` clicked before hydration), or it
+   * happened and rendered the wrong page. Waiting for the URL first splits
+   * them, so a failure names which one it was.
+   */
+  const next = page.getByRole('link', { name: 'Next', exact: true })
+  await expect(next, 'the fixture must be larger than one page').toHaveCount(1)
+  await next.click()
+  await page.waitForURL((u) => u.searchParams.has('after'), { timeout: 30_000 })
+  await expect(grid(page).getByRole('link')).toHaveCount(remainder, { timeout: 30_000 })
+  const second = await cardNames(page)
+
+  // FORWARD MUST NOT REPEAT. A cursor that failed to advance would show page
+  // one again and a naive "the second page rendered" check would pass.
+  expect(second.length).toBeGreaterThan(0)
+  expect(
+    second.some((name) => first.includes(name)),
+    'the two pages must not overlap',
+  ).toBe(false)
+
+  // `Prev`, not `Previous` -- that is the control's accessible name, and this
+  // is exactly the kind of drift a locator built from an accessible name is
+  // supposed to catch. The disabled state renders a `<span aria-hidden>`
+  // rather than a link, so `toHaveCount(1)` also asserts the button is LIVE.
+  const previous = page.getByRole('link', { name: 'Prev', exact: true })
+  await expect(previous).toHaveCount(1)
+  await previous.click()
+  await page.waitForURL((u) => !u.searchParams.has('after'), { timeout: 30_000 })
+  await expect(grid(page).getByRole('link')).toHaveCount(first.length, { timeout: 30_000 })
+  expect(await cardNames(page), 'going back must land on the SAME rows').toEqual(first)
+})
+
+test('⌘K resolves a PASTED ADDRESS from the index, and refuses one that is not a launch', async ({
+  page,
+}) => {
+  await page.goto(url('/'))
+  const dialog = await openSearch(page)
+
+  await page.getByRole('combobox').fill(fixture!.tokens[0]!)
+  await expect(dialog.getByText(fixture!.names[0]!)).toBeVisible({ timeout: 15_000 })
+
+  await page.getByRole('combobox').fill(fixture!.absent)
+  /*
+   * A NAME IS NEVER DRAWN FOR AN UNVERIFIED ADDRESS. A forger can return a
+   * real launch's `name()`, `symbol()` and `uri()` verbatim; printing them
+   * would be doing the forgery's work. The refusal carries the address and
+   * nothing else, and BOTH halves are asserted -- the refusal appearing, and
+   * the previous result's name being gone.
+   */
+  /*
+   * TWO SURFACES, ASSERTED SEPARATELY, BECAUSE THERE REALLY ARE TWO.
+   *
+   * The sentence appears twice: once in the `sr-only` live region that
+   * announces the verdict, and once in the visible refusal card. A single
+   * locator hit both and Playwright refused it in strict mode -- which was the
+   * right answer, because the two are different requirements and collapsing
+   * them would let either one disappear unnoticed.
+   */
+  await expect(dialog.getByTestId('search-announcement')).toHaveText(
+    'This address is not an arcpad launch.',
+    { timeout: 15_000 },
+  )
+  await expect(dialog.getByText(/could not be derived from arcpad/i)).toBeVisible()
+  await expect(dialog.getByText(fixture!.names[0]!)).toHaveCount(0)
+})
+
+/**
+ * THE DECLARED OPEN CELL, ASSERTED AS THE HONEST BEHAVIOUR IT IS.
+ *
+ * `/api/search`'s TEXT path answers 503 on purpose: `searchTokens` lives in
+ * `@arcpad/db` and belongs to another track. The modal says search is
+ * unavailable rather than showing an empty list, because "nothing matched" and
+ * "we could not look" are different sentences and only one of them is true.
+ *
+ * It asserts the honest MESSAGE, not the absence of results -- so the day the
+ * query lands this goes red and has to be rewritten, rather than quietly
+ * continuing to pass against a working search. `web/lib/releaseGate.ts` holds
+ * the matching declaration and expires it when `@arcpad/db` commits the query.
+ */
+test('the text search says it cannot look, rather than showing an empty list', async ({ page }) => {
+  const response = await page.request.get(url('/api/search?q=fixture'))
+  expect(response.status(), 'the text path is a declared open cell answering 503').toBe(503)
+  expect(await response.json()).toEqual({ error: 'unavailable' })
+
+  await page.goto(url('/'))
+  const dialog = await openSearch(page)
+  await page.getByRole('combobox').fill('fixture')
+  await expect(dialog.getByText('Search is unavailable right now.')).toBeVisible({
+    timeout: 15_000,
+  })
+})
+
+test('the token page draws the indexed trade and holder tables', async ({ page }) => {
+  const busy = fixture!.busy
+  // PRECONDITION from the DATABASE, not from this file's idea of the fixture.
+  const { rows } = await pool!.query<{ n: string }>(
+    'SELECT count(*)::text AS n FROM trades WHERE token = $1',
+    [busy],
+  )
+  expect(
+    Number(rows[0]!.n),
+    'this token must have trades for the table to mean anything',
+  ).toBeGreaterThan(0)
+
+  await page.goto(url(`/token/${busy}`))
+  // The indexed branch, said on screen: no chain-only fallback notice.
+  await expect(page.getByTestId('unavailable-notice')).toHaveCount(0)
+  await expect(page.getByTestId('chain-drawn-launch')).toHaveCount(0)
+
+  await expect(page.getByRole('tab', { name: /Trades/ })).toBeVisible()
+  await expect(page.getByRole('tabpanel').first()).toBeVisible()
+
+  await page.getByRole('tab', { name: /Holders/ }).click()
+  await expect(page.getByRole('tabpanel').first()).toBeVisible()
+})
+
+test('a token with NO trades shows the empty state, not a zero', async ({ page }) => {
+  // The fixture gives trades to every third token, so this one has none --
+  // asserted from the database rather than inferred from the index.
+  const quiet = fixture!.tokens[1]!
+  const { rows } = await pool!.query<{ n: string }>(
+    'SELECT count(*)::text AS n FROM trades WHERE token = $1',
+    [quiet],
+  )
+  expect(Number(rows[0]!.n), 'this token must have NO trades').toBe(0)
+
+  await page.goto(url(`/token/${quiet}`))
+  // "No trades yet" and "0 trades" are different sentences; only the first is
+  // true for a launch nobody has touched.
+  await expect(page.getByText(/No trades yet/i).first()).toBeVisible()
+})

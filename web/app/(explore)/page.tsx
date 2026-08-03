@@ -58,6 +58,26 @@ export default async function Home({
   return (
     <div className="flex flex-col gap-10">
       {/*
+        SAYFANIN `h1`I -- GORSEL OLARAK GIZLI, VE BU BIR KACAMAK DEGIL.
+
+        OLCULEREK BULUNDU: axe bu rotada `page-has-heading-one` veriyordu, uc
+        genislikte de (`web/e2e/audit/a11y.spec.ts`). Sayfa iki `h2` ile
+        basliyordu -- "Complete" ve "Explore" -- ve hicbir `h1` yoktu, yani
+        ekran okuyucuyla gezen biri icin bu sayfanin BIR ADI yoktu; baslik
+        listesi iki es duzey bolumle basliyordu ve hangisinin sayfa oldugu
+        soylenmiyordu.
+
+        Gorunur bir baslik EKLENMEDI cunku tasarim bilerek "Complete"
+        seridiyle aciliyor ve onun ustune ikinci bir goruntu baslik koymak
+        duzeni bozardi. `sr-only` bir `h1`, tam olarak bu durum icin olan
+        kalip: gorsel hiyerarsi degismez, ANLAMSAL hiyerarsi tamamlanir.
+
+        Bu kusuru hicbir birim testi goremezdi ve gormedi: 645 test yesildi.
+        Tarayici acilmadan gorunmedi.
+      */}
+      <h1 className="sr-only">Explore token launches on Arc</h1>
+
+      {/*
         BAYAT VERI UYARISI EN USTTE, izgaranin degil SAYFANIN basinda: bayat
         olan tek bir kart degil butun listedir.
       */}

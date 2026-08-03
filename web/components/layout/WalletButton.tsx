@@ -54,7 +54,21 @@ export function WalletButton() {
   if (status !== 'connected' || !address) {
     return (
       <>
-        <Button variant="primary" onClick={() => setPicking(true)} disabled={isConnecting}>
+        {/*
+          `data-wallet-connect` IS LOAD-BEARING, not a test hook.
+          `TradePanel`'s connect button does
+          `document.querySelector('[data-wallet-connect]')?.click()` so that
+          there is ONE connector list in the product. Nothing carried the
+          attribute until the browser leg pressed that button and nothing
+          happened -- a defect no unit test could see, because the panel's own
+          test asserts the callback fires, not that the callback finds anything.
+        */}
+        <Button
+          variant="primary"
+          data-wallet-connect
+          onClick={() => setPicking(true)}
+          disabled={isConnecting}
+        >
           {isConnecting ? 'Connecting…' : 'Connect wallet'}
         </Button>
         <Dialog
