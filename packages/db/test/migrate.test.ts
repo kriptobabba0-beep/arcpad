@@ -23,12 +23,13 @@ const EXPECTED = [
   '005_fees.sql',
   '006_token_stats.sql',
   '007_views.sql',
+  '008_search.sql',
 ]
 
 describe('runMigrations', () => {
   beforeEach(dropSchema)
 
-  it('diskteki migration listesi tam olarak beklenen yedi dosyadir', async () => {
+  it('diskteki migration listesi tam olarak beklenen sekiz dosyadir', async () => {
     // Sirali ve TAM. Bir testin gecici olarak yazdigi bozuk dosya temizlenmemis
     // olsaydi burasi kirmizi olurdu -- yani sizinti sessiz kalamaz.
     await expect(migrationFiles()).resolves.toEqual(EXPECTED)
@@ -66,7 +67,7 @@ describe('runMigrations', () => {
     expect(await catalog()).toEqual(before)
   })
 
-  it('bir migration EKSIKSE hicbiri uygulanmaz (yedi dosya geri alinir)', async () => {
+  it('bir migration EKSIKSE hicbiri uygulanmaz (sekiz dosya geri alinir)', async () => {
     const files = await migrationFiles()
     await expect(runMigrations(pool, [...files, 'zzz_missing.sql'])).rejects.toThrow()
 
@@ -204,7 +205,7 @@ describe('runMigrations', () => {
     )
     try {
       await expect(runMigrations(pool, await migrationFiles())).rejects.toThrow(
-        /003a_between\.tmp\.sql: uygulanmamis, ama uygulanmis olan 007_views\.sql/,
+        /003a_between\.tmp\.sql: uygulanmamis, ama uygulanmis olan 008_search\.sql/,
       )
     } finally {
       await unlink(join(MIGRATIONS_DIR, inserted))
@@ -215,9 +216,9 @@ describe('runMigrations', () => {
     // Kapinin fazla siki OLMADIGININ kaniti: normal evrim yolu -- `007_...` --
     // engellenmiyor.
     await runMigrations(pool)
-    // `008_`: son mesru dosya artik `007_views.sql`. `007_appended` onun ONUNE
+    // `009_`: son mesru dosya artik `008_search.sql`. `008_appended` onun ONUNE
     // siralanirdi ve kapi onu -- DOGRU OLARAK -- araya ekleme sayardi.
-    const appended = '008_appended.tmp.sql'
+    const appended = '009_appended.tmp.sql'
     await writeFile(
       join(MIGRATIONS_DIR, appended),
       'CREATE TABLE appended_ok (x int PRIMARY KEY);\n',
@@ -492,7 +493,7 @@ describe('runMigrations', () => {
     await pool.query(
       "UPDATE schema_migrations SET checksum_hex = NULL WHERE filename = '001_deployment_and_cursor.sql'",
     )
-    const pendingFile = '008_should_not_apply.tmp.sql'
+    const pendingFile = '009_should_not_apply.tmp.sql'
     await writeFile(
       join(MIGRATIONS_DIR, pendingFile),
       'CREATE TABLE should_not_exist (x int PRIMARY KEY);\n',

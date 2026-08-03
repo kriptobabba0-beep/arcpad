@@ -1,6 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { beforeEach, describe, expect, it } from 'vitest'
-import { listTokens, listTrades, SORTS } from '../src/queries'
+import {
+  listTokens,
+  listTrades,
+  SEARCH_SORT_KEYS,
+  searchSortExpression,
+  SORTS,
+} from '../src/queries'
 import { putDeployment } from '../src/deployment'
 import { applyTrade, replayRange } from '../src/apply'
 import { toSeq } from '../src/seq'
@@ -67,6 +73,50 @@ describe('siralama kapisi', () => {
     expect(mutated).not.toBe(CODE)
     const clauses = [...mutated.matchAll(/order\s+by\s+([^;`)]+)/gi)].map((m) => m[1] ?? '')
     expect(clauses.some((c) => /_time\b|_at\b/.test(c))).toBe(true)
+  })
+
+  /**
+   * ARAMANIN ANAHTARLARI TAM OLMAK ZORUNDA -- VE BU BIR KAPI, YORUM DEGIL.
+   *
+   * `_seq` anahtarlari ZATEN birebirdir (her biri tek bir olayin `event_seq`i).
+   * MIKTAR anahtarlari degildir ve tekrarlari OLCULDU: hic islem gormemis her
+   * token'in market cap'i BIREBIR aynidir, 24 saattir islem gormemis her
+   * token'in hacmi `0`dir, ve `similarity` alti gercekci ad uzerinde yalnizca
+   * UC ayri deger uretir. Bu yuzden kural: bir arama anahtari ya bir `_seq`
+   * kolonudur ya da `search_key(..., created_seq)` ile PAKETLENMISTIR.
+   *
+   * Kapi ifadenin METNINI okur. `search_key` cagrisini bir anahtardan
+   * dusurmek -- yani ariza kipini geri getirmek -- bu testi KIRAR.
+   */
+  it('her arama anahtari ya bir _seq kolonudur ya PAKETLENMISTIR', () => {
+    expect(SEARCH_SORT_KEYS.length).toBeGreaterThan(0)
+    for (const name of SEARCH_SORT_KEYS) {
+      const { key } = searchSortExpression(name)
+      expect(key, name).not.toMatch(/_at\b/)
+      const packed = key.startsWith('search_key(') && key.includes('o.created_seq')
+      const seqOnly = /^o\.(last_buy_seq|created_seq)$/.test(key)
+      expect(packed || seqOnly, `${name}: ${key}`).toBe(true)
+    }
+  })
+
+  it('MIKTAR anahtarlarinin HEPSI paketlenmistir (ciplak kolon YOK)', () => {
+    // `SORTS`ta `market_cap_wei DESC` CIPLAKTIR ve bu bilerek boyle birakildi
+    // (imleci baska bir izin sahibinin dosyasinda yeniden turetiliyor);
+    // aramada ayni kolon paketlenmis olmak ZORUNDA. Iki tarafin farkli
+    // olmasi kaza degil, ve fark burada YAZILI.
+    for (const name of ['marketCap', 'volume', 'relevance'] as const) {
+      expect(searchSortExpression(name).key, name).toMatch(/^search_key\(/)
+    }
+    expect(SORTS.marketCap).toBe('market_cap_wei DESC')
+  })
+
+  it('NEGATIF KONTROL: paketleme dusurulurse kapi GERCEKTEN kirilir', () => {
+    // Kapinin kendisi olculur: `search_key(...)` yerine ciplak kolonu koyan
+    // bir ifade, yukaridaki iddiadan GECEMEZ.
+    const mutated = 'o.market_cap_wei'
+    const packed = mutated.startsWith('search_key(') && mutated.includes('o.created_seq')
+    const seqOnly = /^o\.(last_buy_seq|created_seq)$/.test(mutated)
+    expect(packed || seqOnly).toBe(false)
   })
 
   it('siralama ifadesi kullanici girdisinden BIRLESTIRILMEZ', () => {
