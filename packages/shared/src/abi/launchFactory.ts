@@ -46,6 +46,10 @@ export const launchFactoryAbi = [
         name: 'saleSupply_',
         type: 'uint256',
       },
+      {
+        name: 'feeSchedule_',
+        type: 'address',
+      },
     ],
     stateMutability: 'nonpayable',
   },
@@ -144,6 +148,35 @@ export const launchFactoryAbi = [
     type: 'function',
     name: 'escrow',
     inputs: [],
+    outputs: [
+      {
+        name: '',
+        type: 'address',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'feeSchedule',
+    inputs: [],
+    outputs: [
+      {
+        name: '',
+        type: 'address',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'feeScheduleOf',
+    inputs: [
+      {
+        name: 'token',
+        type: 'address',
+      },
+    ],
     outputs: [
       {
         name: '',
@@ -333,6 +366,23 @@ export const launchFactoryAbi = [
   },
   {
     type: 'event',
+    name: 'FeeScheduleAssigned',
+    inputs: [
+      {
+        name: 'token',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'schedule',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
     name: 'GraduationTargetChanged',
     inputs: [
       {
@@ -451,6 +501,11 @@ export const launchFactoryAbi = [
   },
   {
     type: 'error',
+    name: 'FeeScheduleHasNoCode',
+    inputs: [],
+  },
+  {
+    type: 'error',
     name: 'GovernorIsTheEscrow',
     inputs: [],
   },
@@ -486,6 +541,11 @@ export const launchFactoryAbi = [
   },
   {
     type: 'error',
+    name: 'ProfileNotSeedable',
+    inputs: [],
+  },
+  {
+    type: 'error',
     name: 'SaleAndSeedExceedSupply',
     inputs: [],
   },
@@ -502,6 +562,11 @@ export const launchFactoryAbi = [
   {
     type: 'error',
     name: 'ZeroEscrowAddress',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'ZeroFeeSchedule',
     inputs: [],
   },
   {

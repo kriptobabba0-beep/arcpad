@@ -109,7 +109,7 @@ describe('the distributed ABI matches the compiled output', () => {
    * with `[]` and pass. These counts were read off the artifacts, once.
    */
   it('the comparison is not comparing two empty arrays', () => {
-    expect(normalise(launchFactoryAbi)).toHaveLength(45)
+    expect(normalise(launchFactoryAbi)).toHaveLength(51)
     expect(normalise(bondingCurveAbi)).toHaveLength(57)
     expect(normalise(launchTokenAbi)).toHaveLength(28)
     expect(normalise(feeEscrowAbi)).toHaveLength(10)

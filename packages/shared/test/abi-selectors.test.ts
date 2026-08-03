@@ -85,7 +85,7 @@ describe('error selectors', () => {
     // Anti-vacuity: if the dictionary were the raw concatenation this would be
     // equal, and the "one entry per selector" claim would be untested.
     expect(ARCPAD_ERROR_ABI.length).toBeLessThan(ALL_DECLARED.length)
-    expect(ARCPAD_ERROR_ABI).toHaveLength(63)
+    expect(ARCPAD_ERROR_ABI).toHaveLength(66)
     expect(new Set(ARCPAD_ERROR_ABI.map(errorSelector)).size).toBe(ARCPAD_ERROR_ABI.length)
   })
 
