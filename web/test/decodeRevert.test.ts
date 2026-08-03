@@ -68,7 +68,7 @@ describe('the dictionary is complete against the ABI', () => {
       ...Object.keys(FAILURE_TABLE).map(errorNameOf),
       ...UNREACHABLE_BY_CONSTRUCTION,
     ])
-    expect(ARCPAD_ERROR_ABI.length).toBe(63) // anti-vacuity
+    expect(ARCPAD_ERROR_ABI.length).toBe(66) // anti-vacuity
     for (const entry of ARCPAD_ERROR_ABI) {
       expect(classified, `${entry.name} is unclassified`).toContain(entry.name)
     }
