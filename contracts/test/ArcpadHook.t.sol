@@ -222,6 +222,7 @@ contract ArcpadHookTest is Test {
     PoolKey internal key;
     bool internal quoteIsCurrency0;
     uint160 internal openingPrice;
+    bytes32 internal minedSalt;
 
     function setUp() public {
         pm = IPoolManager(address(new PoolManager(address(this))));
@@ -245,6 +246,7 @@ contract ArcpadHookTest is Test {
         vm.prank(CREATE2_DEPLOYER);
         hook = new ArcpadHook{salt: salt}(IPoolManager(address(pm)), address(factory), address(escrow), TREASURY);
         require(address(hook) == hookAddr, "mined address diverged");
+        minedSalt = salt;
 
         // Hedefi locker'a yonlendir.
         vm.prank(GOVERNOR);
@@ -353,6 +355,60 @@ contract ArcpadHookTest is Test {
 
     function test_theMinedAddressCarriesExactlyTheArcpadFlags() public view {
         assertEq(uint160(address(hook)) & Hooks.ALL_HOOK_MASK, 0x20CC);
+    }
+
+    /// SALT, ADRESIN TEK BELIRLEYICISI DEGILDIR -- `creationCode` DE
+    /// BELIRLEYICIDIR, VE FAZIN EN KOLAY UNUTULAN BAGIMLILIGI BUDUR.
+    ///
+    /// Task 7'nin script'i bulunan salt'i SABITLER. `ArcpadHook.sol`in
+    /// TEK BIR BAYTI degisirse o salt artik `0x20CC` ile biten bir adres
+    /// URETMEZ ve deploy `HookAddressNotValid` ile revert eder -- ya da,
+    /// daha kotusu, script sabit adresi VARSAYIP yanlis yere yazar.
+    ///
+    /// Bu test o bagimliligi CALISTIRARAK sabitler: madenlenen salt ile
+    /// GUNCEL creationCode'dan CREATE2 adresi ELLE yeniden turetilir ve
+    /// deploy edilmis hook'un adresine esit olmasi istenir. Ayrica alt 14
+    /// bitin `0x20CC` oldugu, yani turetmenin DOGRU adresi urettigi ve
+    /// yalnizca "bir adres" uretmedigi iddia edilir.
+    ///
+    /// KANONIK ADRES YOKTUR VE OLAMAZ: salt, constructor argumanlarina
+    /// (`PoolManager`, factory, escrow, treasury) bagimlidir ve o dortlu
+    /// ancak Task 7'nin deploy'unda sabitlenir. Dolayisiyla burada
+    /// PINLENEN sey bir literal degil, TURETMENIN KENDISIDIR -- Task 7'nin
+    /// script'i tam olarak bu formulu kullanmak zorundadir.
+    function test_theMinedSaltAndTheCurrentCreationCodeReproduceTheHookAddress() public view {
+        bytes memory initcode = abi.encodePacked(
+            type(ArcpadHook).creationCode,
+            abi.encode(IPoolManager(address(pm)), address(factory), address(escrow), TREASURY)
+        );
+        address derived = address(
+            uint160(
+                uint256(keccak256(abi.encodePacked(bytes1(0xff), CREATE2_DEPLOYER, minedSalt, keccak256(initcode))))
+            )
+        );
+        assertEq(derived, address(hook), "salt + creationCode artik bu adresi uretmiyor -- hook YENIDEN madenlenmeli");
+        assertEq(
+            uint160(derived) & Hooks.ALL_HOOK_MASK, ARCPAD_HOOK_FLAGS, "turetilen adres arcpad bayraklarini tasimiyor"
+        );
+
+        // KONTROL: turetme GERCEKTEN initcode'a duyarli. Bir bayt eklemek
+        // adresi degistirmeli; degistirmiyorsa yukaridaki esitlik bir
+        // TESADUFTUR ve hicbir sey olcmez.
+        address perturbed = address(
+            uint160(
+                uint256(
+                    keccak256(
+                        abi.encodePacked(
+                            bytes1(0xff),
+                            CREATE2_DEPLOYER,
+                            minedSalt,
+                            keccak256(abi.encodePacked(initcode, bytes1(0x00)))
+                        )
+                    )
+                )
+            )
+        );
+        assertTrue(perturbed != address(hook), "turetme initcode'a duyarsiz -- test hicbir sey olcmuyor");
     }
 
     function test_everyOtherPermissionIsFalse() public view {

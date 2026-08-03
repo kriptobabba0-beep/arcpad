@@ -168,6 +168,12 @@ contract ArcpadHook is BaseHook {
         // kaydetti: 3.000.000 gaz butcesiyle 2.958.151 tuketim. Factory'nin
         // mapping'i ayni kaniti TEK `SLOAD` ile verir.
         address schedule = IFactoryView(factory).feeScheduleOf(base);
+        // SIFIR ADRES = O TOKEN BU FACTORY'DEN GELMEDI. Bu satir olmadan
+        // OKUMA yapiliyor ama KARAR verilmiyordu: sahte bir `LaunchToken`
+        // `schedule = address(0)` ile gecer, `configOf`a sifir schedule
+        // yazilir ve ilk swap `tierFor`u KODSUZ bir adrese cagirip SIFIR
+        // ucret hesaplardi -- revert de etmeden.
+        if (schedule == address(0)) revert TokenNotFromFactory();
 
         // INVARIANT 6, IKINCI KATMAN. Curve'un CANLI durumundan yeniden
         // hesaplar. Kutuphaneden BAGIMSIZ bir turetme DEGILDIR (ayni
