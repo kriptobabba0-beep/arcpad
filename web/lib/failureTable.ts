@@ -201,6 +201,15 @@ export const UNREACHABLE_BY_CONSTRUCTION: readonly string[] = [
   'TokenTransferFailed',
   // `launch` passes `msg.sender` as the creator; it cannot be the zero address.
   'ZeroCreator',
+  // The three below are phase 2's fee-schedule guards, and every one of them
+  // reverts inside `LaunchFactory`'s CONSTRUCTOR, not inside `launch`. A
+  // deployed factory cannot return them: either the deploy succeeded, or there
+  // is no factory to call. Measured the same way as the eleven constructor
+  // guards already listed -- the `revert` sites sit between `constructor(` and
+  // its closing brace.
+  'ZeroFeeSchedule',
+  'FeeScheduleHasNoCode',
+  'ProfileNotSeedable',
   // The factory passes the curve it has just deployed.
   'ZeroCurve',
   // `tokensOut > realTokenReserves` returns `NotEnoughTokensToBuy()` first, so
