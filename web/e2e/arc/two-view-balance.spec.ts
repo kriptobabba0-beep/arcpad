@@ -51,10 +51,13 @@ const BASE = process.env.E2E_ARC_BASE_URL ?? ''
 const ERC20 = parseAbi(['function balanceOf(address) view returns (uint256)'])
 
 function arcClient() {
+  // `transport` is REQUIRED, so it cannot be spread in conditionally -- the
+  // first version did exactly that and produced an optional property, which
+  // the release gate's typecheck caught. `http()` with no argument falls back
+  // to the chain registry's own RPC, which is the right default anyway.
   return createPublicClient({
     chain: getArcChain(ARC_TESTNET_CHAIN_ID),
-    ...(RPC === '' ? {} : { transport: http(RPC) }),
-    ...(RPC === '' ? { transport: http() } : {}),
+    transport: RPC === '' ? http() : http(RPC),
   })
 }
 
