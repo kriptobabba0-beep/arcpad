@@ -131,3 +131,37 @@ fail_on_revert = false
 # Arc mainnet henuz mevcut degildir.
 [rpc_endpoints]
 arc_testnet = "${ARC_RPC_URL}"
+
+# UNISWAP V4-CORE KENDI OPTIMIZER AYARINI ZORUNLU KILAR VE BIZIMKI ONU
+# DERLEYEMEZ. Olculdu: `optimizer_runs = 800` ile `lib/v4-core/src/PoolManager.sol`
+# Yul'da "Variable memPtr_1 is 1 too deep in the stack" ile DUSER. v4-core'un
+# kendi `foundry.toml`u `optimizer_runs = 44444444` kullanir ve bu deger
+# tesadufi degil, o dosyayi derleyebilen degerdir.
+#
+# GLOBAL OLARAK DEGISTIRILEMEZ: `optimizer_runs` HER kontratin bytecode'unu
+# degistirir, yani `BondingCurve`in DONDURULMUS hash'ini de. Bu yuzden ayar
+# YALNIZCA v4-core'un kendi kaynagina daraltilir. `src/` 800'de KALIR ve
+# dondurulmus hash'in yerinde durdugu her kosuda yeniden olculur.
+[[profile.default.additional_compiler_profiles]]
+name = "v4core"
+optimizer = true
+optimizer_runs = 44444444
+via_ir = true
+evm_version = "cancun"
+bytecode_hash = "None"
+
+[[profile.default.compilation_restrictions]]
+paths = "lib/v4-core/src/**"
+optimizer_runs = 44444444
+
+[[profile.ci.additional_compiler_profiles]]
+name = "v4core"
+optimizer = true
+optimizer_runs = 44444444
+via_ir = true
+evm_version = "cancun"
+bytecode_hash = "None"
+
+[[profile.ci.compilation_restrictions]]
+paths = "lib/v4-core/src/**"
+optimizer_runs = 44444444

@@ -5,10 +5,31 @@ import {BaseHook} from "uniswap-hooks/base/BaseHook.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 
-/// @dev Faz 2'de yazilacak ArcpadHook'un izin kumesi. Havuzun bize ait
-///      oldugunu dogrulamak icin beforeInitialize; girdiden ucret kesmek
-///      icin beforeSwap + beforeSwapReturnDelta. Deploy script'i CREATE2
-///      salt'ini bu uc bayragi tasiyan bir adres bulana kadar arayacak.
+/// @dev `ArcpadHook`in izin kumesi: `0x20CC`.
+///
+/// @dev FAZ 1D BURAYA `0x2088` YAZIYORDU (`beforeInitialize` + `beforeSwap` +
+///      `beforeSwapReturnDelta`) VE O KUME YETERSIZDI. Bu bir "testi gecirmek
+///      icin" degisiklik DEGIL, olculmus bir BULGUDUR ve turetmesi sudur:
+///
+///      Spec §5.5 ucretin HER ZAMAN pairing asset'te (USDC) alinmasini ister.
+///      V4'te `beforeSwap` yalnizca SPECIFIED para birimini bilir, ve
+///      specified taraf `(exactInput == zeroForOne)` iken `currency0`dir.
+///      Dort swap sekli boylece IKIYE ayrilir:
+///        quote SPECIFIED   -> miktar swap'ten ONCE bilinir -> `beforeSwap`
+///        quote UNSPECIFIED -> miktar ancak SONRA bilinir   -> `afterSwap`
+///      Ikinci grup icin miktari uretebilecek TEK yer `afterSwap`tir; delta
+///      orada vardir. `0x2088` ile kalmak, dort seklin IKISINDE ucreti LAUNCH
+///      TOKENINDA tahsil etmek demekti -- spec'in "asla launch tokeninda"
+///      cumlesinin dogrudan ihlali.
+///
+///      TURETME CALISTIRILARAK DOGRULANDI: `ArcpadHook.t.sol` dort seklin
+///      dordunu de gercek bir `PoolManager`a karsi kosar ve dordunde de
+///      ucretin USDC cinsinden geldigini, hook'un token bakiyesinin SIFIR
+///      kaldigini olcer.
+///
+///      DEGISIKLIGIN GERI DONUSU YOKTUR: bayrak eklemek hook'un ADRESINI,
+///      dolayisiyla her `PoolKey`i ve her `PoolId`yi degistirir. Ilk
+///      graduation'dan sonra yapilamaz -- zamanlamasi bu yuzden baglayicidir.
 library ArcpadHookPermissions {
     function permissions() internal pure returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
@@ -19,11 +40,11 @@ library ArcpadHookPermissions {
             beforeRemoveLiquidity: false,
             afterRemoveLiquidity: false,
             beforeSwap: true,
-            afterSwap: false,
+            afterSwap: true,
             beforeDonate: false,
             afterDonate: false,
             beforeSwapReturnDelta: true,
-            afterSwapReturnDelta: false,
+            afterSwapReturnDelta: true,
             afterAddLiquidityReturnDelta: false,
             afterRemoveLiquidityReturnDelta: false
         });
