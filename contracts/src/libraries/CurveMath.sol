@@ -167,10 +167,27 @@ library CurveMath {
     ///      ucretler
     ///      DONDURULUR; cagiranin yeniden hesaplamasi icin bir sebep yoktur.
     ///
-    ///      ONCEKI RAKAM 12.345'TI VE YANLISTI: parca basina sayiyordu, yani
-    ///      IKI ucret parcasinin DA kaydigi 493 girdiyi IKI KEZ ekliyordu
-    ///      (8.890 yalnizca-protokol + 2.469 yalnizca-creator + 2 x 493).
-    ///      Dogru sayim FARKLI GIRDI sayisidir: 11.851.
+    ///      ONCEKI RAKAM 12.345'TI VE YANLISTI. Dogru sayim FARKLI GIRDI
+    ///      sayisidir: 11.851. Olculmus ayrisim (95, 30 bps, gross in
+    ///      [1, 1e6], REVERT ETMEYEN girdiler):
+    ///        yalnizca protokol parcasi kayar :  8.889
+    ///        yalnizca creator  parcasi kayar :  2.469
+    ///        IKI parca da kayar              :    493
+    ///        farkli GIRDI sayisi             : 11.851  = 8.889 + 2.469 + 493
+    ///        PARCA sayisi                    : 12.344  = 8.889 + 2.469 + 2x493
+    ///
+    ///      YANI 12.345 PARCA SAYISI DA DEGILDIR; parca sayisi 12.344'tur ve
+    ///      eski rakam ondan da BIR fazladir. Provenansi bilinmiyor ve
+    ///      TAHMIN EDILMIYOR. Bu satirin onceki hali "12.345 parca basina
+    ///      sayiyordu" diyip ayrisimi `8.890 + 2.469 + 2x493` olarak
+    ///      veriyordu; o toplam gercekten 12.345 eder ama `8.890` OLCULMUS
+    ///      DEGIL, toplami tutturmak icin GERI DOGRU TURETILMISTIR -- olcum
+    ///      8.889 verir. Duzeltmenin kendisi, duzelttigi hatanin bir
+    ///      ornegini tasiyordu.
+    ///
+    ///      KISA KALAN TARAF DA OLCULDU ve simetrik DEGILDIR: protokol
+    ///      9.382 girdide (8.889 + 493), creator yalnizca 2.962 girdide
+    ///      (2.469 + 493) eksik alir. Azami eksik 2 birimdir.
     ///
     ///      SINIRDAKI 11.852. GIRDI AYRICA KAYDA DEGER: `gross = 2` de farkli
     ///      sonuc verirdi, ama o girdi `NetTooSmall()` ile REVERT eder
@@ -197,7 +214,8 @@ library CurveMath {
     ///      (tanim geregi: net'ten tam olarak tasma kadar dusulur). Esitlik
     ///      EVRENSEL DEGILDIR -- duzeltme tetiklenmediginde toplam 1 birim
     ///      eksik kalabilir; olculdu: (95, 30) bps'te gross in [1, 1e6]
-    ///      araliginin %99,95'inde esit, 494'unde 1 eksik. Ucret payi
+    ///      araliginin %99,95'inde esit (999.505 / 999.998 = %99,9507),
+    ///      493'unde 1 eksik -- 494 DEGIL, olculdu. Ucret payi
     ///      buyudukce esitsizlik siklasir: (5000, 5000) bps'te yalnizca %75.
     ///
     /// @dev 3. adim gercek bir tasmanin caresidir, optimizasyon degil. Protokol
