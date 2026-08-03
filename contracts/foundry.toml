@@ -138,10 +138,43 @@ arc_testnet = "${ARC_RPC_URL}"
 # kendi `foundry.toml`u `optimizer_runs = 44444444` kullanir ve bu deger
 # tesadufi degil, o dosyayi derleyebilen degerdir.
 #
-# GLOBAL OLARAK DEGISTIRILEMEZ: `optimizer_runs` HER kontratin bytecode'unu
-# degistirir, yani `BondingCurve`in DONDURULMUS hash'ini de. Bu yuzden ayar
-# YALNIZCA v4-core'un kendi kaynagina daraltilir. `src/` 800'de KALIR ve
-# dondurulmus hash'in yerinde durdugu her kosuda yeniden olculur.
+# --------------------------------------------------------------------------
+# BU BLOGUN ONCEKI HALI DONDURULMUS BYTECODE'U KIRDI. OLCULDU, TAHMIN DEGIL.
+# --------------------------------------------------------------------------
+# `paths = "lib/v4-core/src/**"` yaziyordu ve bu satirin hemen ustundeki eski
+# yorum "`src/` 800'de KALIR" diyordu. YANLISTI. Olculen sonuc:
+#
+#   forge inspect src/BondingCurve.sol:BondingCurve bytecode | sha256sum
+#     bu kisitla      -> e73842c9b36b0b435ac5e899a1d9f40d7062b883197d4eecf115351c784596bb
+#     kisit olmadan   -> 8e2460fff48ee5b6c591d0c62041936a7c63099d2ae1d636fa3bd2b927b4982f  (DONDURULMUS)
+#
+#   artifact'lerin KENDI metadata'si (`metadata.settings.optimizer.runs`):
+#     BondingCurve 44444444 · LaunchFactory 44444444 · CurveMath 44444444
+#     LaunchToken  800      · FeeEscrow     800
+#
+# MEKANIZMA, VE TEK CUMLESI SUDUR: `lib/v4-core/src/**` GLOB'U
+# `lib/v4-core/src/libraries/FullMath.sol`I DE KAPSAR, VE `libraries/CurveMath.sol`
+# -- DONDURULMUS ALTI DOSYADAN BIRI -- ONU IMPORT EDER. Bir solc girdisinin
+# TEK bir optimizer ayari vardir, dolayisiyla `CurveMath` iceren HER derleme
+# birimi o kisiti saglamak ZORUNDADIR. Zincir bunun uzerine kurulur:
+#
+#     LaunchFactory -> BondingCurve -> CurveMath -> v4-core/libraries/FullMath  [KISITLI]
+#     LaunchFactory -> GraduationMath -> v4-core/{TickMath,PoolKey,IHooks,...}  [KISITLI]
+#
+# `LaunchToken` (yalnizca OZ ERC20) ve `FeeEscrow` (yalnizca `IFeeEscrow`)
+# v4-core'a HIC dokunmaz -- 800'de kalan tam olarak o ikisidir, ve olcum bunu
+# aynen gosterdi. Yani kisit "path'e gore" yazilmisti ama ETKISI IMPORT
+# KAPANISINA GOREYDI; ikisinin ayni sey oldugunu varsaymak hatanin kendisiydi.
+#
+# DUZELTME: kisit, 800'de GERCEKTEN DERLENEMEYEN dosyaya daraltildi. Gerekce
+# yukarida zaten yaziliydi ve tek bir dosyayi adlandiriyor: `PoolManager.sol`.
+# `FullMath.sol` kucuk, saf bir kutuphanedir ve 800'de sorunsuz derlenir --
+# dolayisiyla dondurulmus kapanisin icinde KISITLI hicbir dosya kalmaz.
+#
+# BU SATIRI GENISLETMEK ISTEYEN BIR SONRAKI KISI ICIN: glob'a
+# `lib/v4-core/src/**` yazmak DONDURULMUS HASH'I KIRAR ve testler YESIL kalir.
+# Kapiyi `make frozen-hash` calistirir ve `[profile.frozen]`e bakar (asagida);
+# once onu okuyun.
 [[profile.default.additional_compiler_profiles]]
 name = "v4core"
 optimizer = true
@@ -151,7 +184,7 @@ evm_version = "cancun"
 bytecode_hash = "None"
 
 [[profile.default.compilation_restrictions]]
-paths = "lib/v4-core/src/**"
+paths = "lib/v4-core/src/PoolManager.sol"
 optimizer_runs = 44444444
 
 [[profile.ci.additional_compiler_profiles]]
@@ -163,5 +196,69 @@ evm_version = "cancun"
 bytecode_hash = "None"
 
 [[profile.ci.compilation_restrictions]]
-paths = "lib/v4-core/src/**"
+paths = "lib/v4-core/src/PoolManager.sol"
 optimizer_runs = 44444444
+
+# ---------------------------------------------------------------------------
+# DONDURULMUS BYTECODE KAPISININ KENDI PROFILI
+# ---------------------------------------------------------------------------
+# NICIN AYRI BIR PROFIL GEREKIYOR, VE NICIN YUKARIDAKI DARALTMA TEK BASINA
+# YETMEZ. Daraltma `src/`i kurtarir ama `test/`i kurtarmaz: `ArcpadLocker.t.sol`
+# hem `PoolManager`i (KISITLI) hem `BondingCurve`u import eder, yani o test'in
+# derleme birimi 44444444 olmak ZORUNDADIR ve `BondingCurve` o birimde de
+# derlenir. Ayni kontrat bir kosuda IKI KEZ derlenir ve IKI IS DE
+# `out/BondingCurve.sol/BondingCurve.json`A YAZAR.
+#
+# YARISIN GERCEK OLDUGU OLCULDU: agaci buldugum halde ILK `forge inspect`
+# `8e2460ff...` dondu, sonraki her cagri -- ARADA HICBIR KAYNAK DEGISIKLIGI
+# OLMADAN -- `e73842c9...` dondu. Yani kapi, korumak icin var oldugu degeri
+# RASTGELE dogru raporlayabiliyordu. Bayat bir artifact uzerinden gecen bir
+# dogrulama, hic olmamasindan KOTUDUR.
+#
+# BU PROFIL O YARISI YAPISAL OLARAK IMKANSIZ KILAR, "dikkatli olalim" diyerek
+# degil:
+#   (1) `out = "out-frozen"` -- KENDI ARTIFACT DIZINI. Default/ci profilinin
+#       hicbir isi buraya yazamaz, dolayisiyla okunan dosyayi yalnizca bu
+#       profil uretmis olabilir.
+#   (2) `skip` -- v4-core'a ULASAN HER KAYNAK kaynak kumesinden cikarilir
+#       (`ArcpadHook`, `ArcpadLocker`, `test/`, `script/`). Geriye kalan
+#       kapanista `PoolManager.sol` YOKTUR, dolayisiyla uygulanabilecek bir
+#       kisit da yoktur.
+#   (3) `additional_compiler_profiles = []` ve `compilation_restrictions = []`
+#       ACIKCA BOSALTILIR. BU SATIRLARI SILMEYIN: ilk yazimda yoklardi ve
+#       `FOUNDRY_PROFILE=frozen forge config` ikisinin de `[profile.default]`
+#       dan MIRAS ALINDIGINI gosterdi (44444444'lu profil ve `PoolManager`
+#       kisiti aynen goruldu). Bugun zararsizdir -- bu profilin kaynak
+#       kumesinde `PoolManager.sol`a ULASAN hicbir dosya yok, dolayisiyla
+#       kisit HICBIR dosyayla eslesmiyor -- ama "bugun eslesmiyor" bir kapinin
+#       dayanabilecegi bir sey degildir. Bosaltilmis halleriyle bu profilde
+#       800 disinda bir ayar URETILEMEZ, eslesme olsa bile.
+#
+# `GraduationMath` skip EDILMEZ ve edilmemelidir: `LaunchFactory` onu import
+# eder, yani fabrikanin gomdugu `BondingCurve`/`LaunchToken` initcode'unun
+# dogru cikmasi icin bu profilde derlenmesi ZORUNLUDUR. v4-core'un yalnizca
+# kucuk saf kutuphanelerine (TickMath, FullMath, tipler) dokunur ve 800'de
+# derlenir -- olculdu.
+[profile.frozen]
+src = "src"
+out = "out-frozen"
+libs = ["lib"]
+test = "test"
+script = "script"
+
+solc = "0.8.26"
+evm_version = "cancun"
+via_ir = true
+
+optimizer = true
+optimizer_runs = 800
+bytecode_hash = "none"
+auto_detect_remappings = true
+
+skip = ["src/ArcpadHook.sol", "src/ArcpadLocker.sol", "test/**", "script/**"]
+
+# MIRASI KESEN IKI SATIR. Gerekce yukarida (3); olcum
+# `FOUNDRY_PROFILE=frozen forge config` ile yapilir ve `optimizer_runs`in
+# YALNIZCA 800 gorunmesi beklenir.
+additional_compiler_profiles = []
+compilation_restrictions = []

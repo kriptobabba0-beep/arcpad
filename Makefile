@@ -1,4 +1,4 @@
-.PHONY: install build test fixtures fmt fmt-check lint fork-test slither dev clean
+.PHONY: install build test fixtures fmt fmt-check lint fork-test slither dev clean frozen-hash frozen-hash-chain
 
 install:
 	corepack enable pnpm || pnpm --version
@@ -24,6 +24,28 @@ test:
 # `git status --porcelain` ile bos-olmayan bir calisma agacini reddeder.
 fixtures:
 	forge test --root contracts --match-contract FixtureGen
+
+# DONDURULMUS BYTECODE KAPISI. `forge inspect ... | sha256sum`IN YERINE GECER
+# VE SEBEBI OLCULDU: o komut `out/` icindeki artifact'i okur, o artifact'i IKI
+# ayri derleme isi yazar (`optimizer_runs` 800 ve 44444444) ve hangisinin
+# kazandigi CAGRI SIRASINA baglidir -- ayni agacta, arada hicbir kaynak
+# degisikligi olmadan, ilk cagri `8e2460ff...` ve sonraki her cagri
+# `e73842c9...` dondu. Kapi bunun yerine `[profile.frozen]`i KENDISI derler ve
+# YALNIZCA o profilin yazabildigi `out-frozen/`den okur.
+#
+# `PYTHON` secimi ayristirma aninda yapilir; `python3 || python` seklinde bir
+# yedekleme YANLIS olurdu, cunku gercek bir KIRMIZI KAPININ cikis kodunu
+# "yorumlayici yok" durumundan ayirt edemez -- `slither` hedefindeki ayni
+# gerekce.
+PYTHON := $(shell command -v python3 >/dev/null 2>&1 && echo python3 || echo python)
+
+frozen-hash:
+	$(PYTHON) contracts/tools/frozen_bytecode_gate.py
+
+# Ayni kapi + CANLI ZINCIR. Pin ile kapinin anlasmasi bir dosyadaki sayidir;
+# gercek basari kosulu zincirin de ayni seyi soylemesidir.
+frozen-hash-chain:
+	$(PYTHON) contracts/tools/frozen_bytecode_gate.py --chain
 
 fmt:
 	forge fmt --root contracts

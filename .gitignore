@@ -6,6 +6,11 @@ keystore/
 
 # Foundry
 contracts/out/
+# `[profile.frozen]`in KENDI artifact dizini. Ayri olmasi bir tercih degil,
+# dondurulmus bytecode kapisinin CALISMA KOSULU: default/ci profilinin
+# isleri `out/` icindeki ayni dosyaya yazabiliyor ve hangisinin kazandigi
+# cagri sirasina bagli. Bkz. contracts/foundry.toml, [profile.frozen].
+contracts/out-frozen/
 contracts/cache/
 contracts/broadcast/*/dry-run/
 contracts/.gas-snapshot

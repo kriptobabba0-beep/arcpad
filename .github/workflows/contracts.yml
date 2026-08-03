@@ -39,6 +39,19 @@ jobs:
       - name: Build
         run: forge build --root contracts --sizes
 
+      # DONDURULMUS BYTECODE. `Build`TAN SONRA KOSAR VE BU SIRA BILINCLIDIR:
+      # kapinin butun mesele ettigi sey, tam da default profil `out/`u yeni
+      # yazmisken bile dogru cevabi vermesidir. Kapi kendi profilini
+      # (`[profile.frozen]`, `out-frozen/`) kendisi derler ve yalnizca oradan
+      # okur; `out/`a kim ne yazarsa yazsin sonucu degismez.
+      #
+      # ELLE `forge inspect ... | sha256sum` KOSMAYIN. O komut Faz 2 boyunca
+      # SESSIZCE YANLIS CEVAP VERDI: `out/BondingCurve.sol/BondingCurve.json`i
+      # iki ayri derleme isi yaziyordu ve hangisinin kazandigi cagri sirasina
+      # bagliydi.
+      - name: Frozen bytecode gate
+        run: make frozen-hash
+
       - name: Test
         run: forge test --root contracts --no-match-path 'test/fork/*' -vv
         env:
