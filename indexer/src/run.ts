@@ -398,22 +398,37 @@ const PERMANENT = new Set([
  * Asagidaki uc kume 2026-08-04'te CANLI Arc testnet'e (`rpc.testnet.arc.network`,
  * head 55.181.581) tek tek istek atilarak OLCULDU; hicbiri tahmin degil.
  *
- *   -32011  request limit reached                       GECICI   (2026-08-02)
- *   -32601  method not supported                        KALICI
- *   -32602  invalid params / range too large (+oneri)   KALICI
- *   -32012  requested range too large                   KALICI
- *        3  execution reverted                          KALICI
+ *   -32011  request limit reached      HTTP 429           GECICI
+ *   -32005  rate limit exceeded        HTTP 429           GECICI
+ *   -32601  method not supported                          KALICI
+ *   -32602  invalid params / range too large (+oneri)     KALICI
+ *   -32012  requested range too large                     KALICI
+ *        3  execution reverted                            KALICI
+ *
+ * ARC'IN IKI AYRI HIZ SINIRI KODU VAR ve ikincisi (`-32005`) bu depoda hic
+ * kayitli DEGILDI. On dort `eth_getLogs`lik olculu bir patlamada ikisi de
+ * geldi, KARISIK: id 5 `-32005`, id 6 `-32011`, id 7 `-32005`... Yani ilk
+ * turda "Arc'in hiz siniri kodu -32011'dir" diye yazilan sey, ULASILABILEN
+ * ORNEKLEMIN tamamiydi, kumenin degil.
+ *
+ * BU YUZDEN SIRA ONEMLI: hiz siniri sinyali (HTTP 429 ve metin) HER TURLU
+ * "kalici" kararindan ONCE okunur. Ucuncu bir hiz siniri kodu daha varsa --
+ * ve yukaridaki olcum bunu dislamiyor -- kod kumesi onu tanimasa bile 429
+ * yakalar. Kalici kumeyi one almak, `-32011`de yasanan HALT'in aynisini
+ * bilinmeyen bir kodla tekrar etmenin acik kapisi olurdu.
  *
  * `-32614` gozlemlenmedi (bu kosuda -32012 dondu) ama `logs.ts` onu
  * `RANGE_ERROR_CODES`te tasiyor ve ayni sinifa girer.
  *
  * SINIFLANDIRILMAYAN, GOZLEMLENMIS BIR KOD: `-32603 internal error`, gelecege
- * duşen bir `eth_getLogs` araligi icin donuyor. Gecici mi kalici mi
+ * dusen bir `eth_getLogs` araligi icin donuyor. Gecici mi kalici mi
  * OLCULMEDI, o yuzden varsayilana (kalici) birakildi -- ve donguden
  * ULASILAMAZ, cunku `runOnce` `finalized` head'in otesini hic sormaz.
  */
-const TRANSIENT_RPC_CODES = new Set([-32011])
+const TRANSIENT_RPC_CODES = new Set([-32011, -32005])
 const PERMANENT_RPC_CODES = new Set([-32601, -32602, -32012, -32614, 3])
+const RATE_LIMIT_TEXT = /request limit reached|rate limit|too many requests/i
+const RATE_LIMIT_STATUS = 429
 
 /**
  * HTTP DURUM KODU, `status` ALANINDAN -- metinden ayiklanan rakamdan degil.
@@ -438,13 +453,20 @@ export function isTransient(error: unknown): boolean {
   // degildi. Bir alan adi degisikligi de aynisini ters yone cevirirdi.
   const { code, status, details } = asRpcError(error)
 
+  // HIZ SINIRI EN ONCE. Arc'in BILINEN iki kodu var ve ikisi de HTTP 429 ile
+  // geliyor; bilinmeyen bir ucuncusu de 429 ile gelirdi. Bu iki satiri kalici
+  // kararin ONUNE almak, `-32011`de bir kez yasanmis olan "hiz siniri
+  // yuzunden HALT"i bilinmeyen bir kodla tekrarlamayi yapisal olarak
+  // imkansiz kilar.
+  if (status === RATE_LIMIT_STATUS) return true
+  if (RATE_LIMIT_TEXT.test(details)) return true
+
   if (code !== undefined) {
     if (TRANSIENT_RPC_CODES.has(code)) return true
     if (PERMANENT_RPC_CODES.has(code)) return false
   }
   if (status !== undefined) return TRANSIENT_HTTP_STATUS.has(status)
 
-  if (/request limit reached|rate limit|too many requests/i.test(details)) return true
   // ZAMAN ASIMI. OLCULDU: viem'in `TimeoutError`i "The request timed out." /
   // "The request took too long to respond." der -- ikisinde de "timeout"
   // KELIMESI GECMEZ, yani eski desen onu KALICI sayiyordu ve URETIM istemcisi

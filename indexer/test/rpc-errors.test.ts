@@ -129,9 +129,64 @@ describe('isTransient -- GERCEK viem hatalari', () => {
     }
   })
 
-  it('-32011 (Arc in hiz siniri) GECICIDIR', async () => {
-    const c = await client(jsonRpcError(-32011, 'request limit reached'))
-    expect(isTransient(await c.fail())).toBe(true)
+  /**
+   * ARC'IN IKI HIZ SINIRI KODU, IKISI DE OLCULDU (2026-08-04, on dort
+   * `eth_getLogs`lik olculu bir patlama; ikisi KARISIK geldi ve ikisi de
+   * HTTP 429 tasiyordu):
+   *
+   *   {"code":-32005,"message":"rate limit exceeded"}
+   *   {"code":-32011,"message":"request limit reached"}
+   *
+   * `-32005` bu depoda hic kayitli DEGILDI. Ilk turda yazilan "Arc'in hiz
+   * siniri kodu -32011'dir" cumlesi, ulasilan ORNEKLEMIN tamamiydi.
+   */
+  it('Arc in IKI hiz siniri kodu da GECICIDIR', async () => {
+    for (const [code, message] of [
+      [-32011, 'request limit reached'],
+      [-32005, 'rate limit exceeded'],
+    ] as [number, string][]) {
+      const c = await client((_q, res) => {
+        // GERCEK SEKIL: govde JSON-RPC hatasi, HTTP durumu 429.
+        res.writeHead(429, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code, message } }))
+      })
+      expect(isTransient(await c.fail()), `${code}`).toBe(true)
+    }
+  })
+
+  /**
+   * BILINMEYEN BIR UCUNCU HIZ SINIRI KODU DA GECICI OLMALI -- VE ONU KURTARAN
+   * SEY 429 DEGIL, METINDIR.
+   *
+   * Bu testin ilk hali "429 kod kumesinden once okunur" diyordu ve KIRMIZI
+   * GELDI. Olculen sebep: govde gecerli bir JSON-RPC hatasi oldugunda viem
+   * `RpcRequestError` uretir ve HTTP durumunu TASIMAZ -- `status` `undefined`
+   * kalir. Arc'in hiz siniri tam olarak bu sekilde gelir (429 + JSON-RPC
+   * govdesi), yani "429 otoriterdir" cumlesi Arc'in kendi seklinde YANLIS.
+   *
+   * Ayakta kalan guvence METIN kontrolunun kalici kod kumesinden ONCE
+   * gelmesidir. Asagidaki vaka bunu olcuyor: kod KALICI kumesinde, mesaj hiz
+   * siniri diyor, sonuc GECICI.
+   *
+   * KALAN ACIK: hem kodu hem metni tanimadigimiz bir hiz siniri hala KALICI
+   * sayilir. Bu tahmin edilerek kapatilamaz; kapatan sey yeni bir olcumdur.
+   */
+  it('KALICI bir kod tasisa bile hiz siniri METNI GECICI kazandirir', async () => {
+    const c = await client((_q, res) => {
+      res.writeHead(429, { 'content-type': 'application/json' })
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          error: { code: -32602, message: 'rate limit exceeded' },
+        }),
+      )
+    })
+    const error = await c.fail()
+    // OLCUM: JSON-RPC govdesi varken HTTP durumu hataya HIC ulasmiyor.
+    expect(asRpcError(error).status).toBeUndefined()
+    expect(asRpcError(error).code).toBe(-32602)
+    expect(isTransient(error)).toBe(true)
   })
 
   /**
