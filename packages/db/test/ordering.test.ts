@@ -8,10 +8,12 @@ import {
   SORTS,
 } from '../src/queries'
 import { putDeployment } from '../src/deployment'
-import { applyTrade, replayRange } from '../src/apply'
+import type { LaunchEvent } from '../src/apply'
+import { applyLaunch, applyTrade, replayRange, setCursor } from '../src/apply'
+import { toHexBytes } from '../src/hex'
 import { toSeq } from '../src/seq'
 import { pool, resetSchema } from './setup'
-import { BUY, DEPLOYMENT, hashFor, RANGE, RANGE_TO, TOKEN } from './fixtures'
+import { addr, BUY, DEPLOYMENT, hash32, hashFor, PROFILE, RANGE, RANGE_TO, TOKEN } from './fixtures'
 
 const SOURCE = readFileSync(new URL('../src/queries.ts', import.meta.url), 'utf8')
 
@@ -203,5 +205,148 @@ describe('esit timestamp, kesin sira', () => {
     expect(page.rows).toHaveLength(1)
     // Imlec bir `_seq`tir, bir zaman degil.
     expect(typeof page.rows[0]!.createdSeq).toBe('bigint')
+  })
+})
+
+/**
+ * EXPLORE'UN SAYFALAMASI, OLCULEREK -- BIR DIZGEYE BAKARAK DEGIL.
+ *
+ * Yukaridaki "MIKTAR anahtarlarinin HEPSI paketlenmistir" testi `SORTS.marketCap`
+ * dizgesini INCELIYOR ve farki YAZIYOR; ama bir dizgeyi okumak, o dizgenin
+ * kullaniciya ne yaptigini OLCMEZ. Bu depodaki her ciddi kusur CALISTIRARAK
+ * bulundu, ve bu da oyle bulunmali.
+ *
+ * OLCULEN SENARYO GERCEKTIR: `web/app/(explore)/page.tsx` `readTokenList`i
+ * `limit: 24` ile cagirir, `web/lib/read.ts` bir sonraki imleci SON SATIRIN
+ * `marketCapWei`inden TURETIR, ve HIC ISLEM GORMEMIS her token AYNI acilis
+ * market cap'ini tasir (testnet profilinde tam `4e18`, `admit` onu boyle
+ * yazar). Yani ilk sayfanin son satiriyla ayni cap'e sahip HER token
+ * `market_cap_wei < $cursor` kosuluyla ELENIR ve HICBIR SAYFADA gorunmez.
+ *
+ * Asagidaki iki test o kaybi SAYIYLA sabitler ve dogru anahtarin ayni veride
+ * kaybi SIFIRA indirdigini gosterir. `SORTS` bu commit'te DEGISTIRILMEDI:
+ * imlecin degeri `web/lib/read.ts`in `CURSOR_KEY` haritasinda uretiliyor ve o
+ * dosya baska bir izin sahibinde -- yalnizca `packages/db` tarafini paketlemek
+ * canli sayfayi DAHA da bozardi (`search_key(cap, seq) < 4e18` ciplak imlecle
+ * bugunkunden az satir dondurur). Duzeltme TEK PARCADIR ve iki dosyaya birden
+ * dokunmak zorundadir; burada olculen sey, o duzeltmenin ne kadarini geri
+ * kazandigidir.
+ */
+describe('Explore sayfalamasi -- esit market cap', () => {
+  const CREATOR = addr(0xc4ea)
+  const T0 = new Date('2026-07-30T12:00:00.000Z')
+  const COUNT = 6
+
+  function launch(i: number): LaunchEvent {
+    const block = 54_500_000n + BigInt(i)
+    const name = `TIE${i}`
+    return {
+      kind: 'launch',
+      eventSeq: toSeq(block, 0),
+      blockNumber: block,
+      logIndex: 0,
+      txHash: hash32(0x71e00000 + i),
+      blockTime: T0,
+      token: addr(0x71e0 + i),
+      curve: addr(0xc1e0 + i),
+      creator: CREATOR,
+      name,
+      symbol: name,
+      uri: `ipfs://tie${i}`,
+      nameHex: toHexBytes(name),
+      symbolHex: toHexBytes(name),
+      uriHex: toHexBytes(`ipfs://tie${i}`),
+      salt: hash32(0x5a1e0000 + i),
+      virtualTokenReservesTok: PROFILE.virtualTokenReservesTok,
+      virtualQuoteReservesWei: PROFILE.virtualQuoteReservesWei,
+      realTokenReservesTok: PROFILE.saleSupplyTok,
+      realQuoteReservesWei: 0n,
+    }
+  }
+
+  beforeEach(async () => {
+    await resetSchema()
+    await putDeployment(pool, DEPLOYMENT)
+    for (let i = 0; i < COUNT; i += 1) await applyLaunch(pool, launch(i))
+    await setCursor(pool, 54_500_100n, hashFor(54_500_100n))
+  })
+
+  /** Once: kume GERCEKTEN esit anahtarli mi? Degilse asagisi hicbir sey olcmez. */
+  it('hic islem gormemis alti token TEK bir market cap degeri tasir', async () => {
+    const { rows } = await pool.query<{ n: string; cap: string }>(
+      'SELECT count(*)::text AS n, market_cap_wei::text AS cap FROM token_overview GROUP BY 2',
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.n).toBe(String(COUNT))
+    expect(BigInt(rows[0]!.cap)).toBeGreaterThan(0n)
+  })
+
+  /**
+   * `web/lib/read.ts`in SAYFALAMASI, BIREBIR: imlec son satirin
+   * `marketCapWei`i, ve sayfa kisaysa durulur.
+   */
+  async function pageWithCallerDerivedCursor(limit: number): Promise<string[]> {
+    const seen: string[] = []
+    let cursor: bigint | null = null
+    for (let page = 0; page < 20; page += 1) {
+      const { rows } = await listTokens(pool, { sort: 'marketCap', limit, cursor })
+      seen.push(...rows.map((r) => r.token))
+      if (rows.length < limit) break
+      cursor = rows[rows.length - 1]!.marketCapWei
+    }
+    return seen
+  }
+
+  it('marketCap sayfalamasi alti tokenin YALNIZCA IKISINE ulasir', async () => {
+    const seen = await pageWithCallerDerivedCursor(2)
+    // Ilk sayfa iki satir verir; imlec `4e18` olur ve ikinci sayfanin kosulu
+    // `market_cap_wei < 4e18` ALTI TOKENIN HEPSINI eler.
+    expect(seen).toHaveLength(2)
+    expect(new Set(seen).size).toBe(2)
+    // KALICI KAYIP: dort token hicbir sayfada gorunmez.
+    expect(COUNT - seen.length).toBe(4)
+  })
+
+  it('volume sayfalamasi ilk sayfadan SONRA hicbir satir vermez', async () => {
+    // Hicbiri 24 saatte islem gormedi, yani hepsinin hacmi `0`. Imlec `0`
+    // olunca kosul `volume_24h_wei < 0` olur -- BOS KUME, ve `0` sinirin
+    // kendisi oldugu icin bu bir "kisa sayfa" degil, KALICI bir kesilmedir.
+    const first = await listTokens(pool, { sort: 'volume', limit: 2 })
+    expect(first.rows).toHaveLength(2)
+    const cursor = first.rows[1]!.volume24hWei
+    expect(cursor).toBe(0n)
+    const second = await listTokens(pool, { sort: 'volume', limit: 2, cursor })
+    expect(second.rows).toHaveLength(0)
+  })
+
+  /**
+   * AYNI VERI, TAM ANAHTAR. Kaybin sebebi verinin kendisi degil ANAHTAR:
+   * `search_key(market_cap_wei, created_seq)` ile ayni alti satir EKSIKSIZ
+   * gezilir. `searchTokens` bu anahtari zaten kullaniyor; Explore kullanmiyor.
+   */
+  it('paketlenmis anahtarla ayni alti token EKSIKSIZ gezilir', async () => {
+    const seen: string[] = []
+    let cursor: bigint | null = null
+    for (let page = 0; page < 20; page += 1) {
+      const params: unknown[] = []
+      let where = ''
+      if (cursor !== null) {
+        params.push(cursor.toString())
+        where = `WHERE search_key(market_cap_wei, created_seq) < $1::numeric`
+      }
+      params.push(2)
+      const { rows } = await pool.query<{ token: string; key: string }>(
+        `SELECT token, search_key(market_cap_wei, created_seq)::text AS key
+           FROM token_overview ${where}
+          ORDER BY search_key(market_cap_wei, created_seq) DESC
+          LIMIT $${params.length}`,
+        params,
+      )
+      seen.push(...rows.map((r) => r.token))
+      if (rows.length < 2) break
+      cursor = BigInt(rows[rows.length - 1]!.key)
+    }
+    expect(new Set(seen).size).toBe(COUNT)
+    expect(seen).toHaveLength(COUNT)
   })
 })
