@@ -163,14 +163,6 @@ function nextCursorFrom<T>(
   return last === undefined ? null : key(last).toString()
 }
 
-const CURSOR_KEY: Record<SortKey, (row: TokenOverview) => bigint> = {
-  recentBuys: (r) => r.lastBuySeq ?? r.createdSeq,
-  newest: (r) => r.createdSeq,
-  oldest: (r) => r.createdSeq,
-  marketCap: (r) => r.marketCapWei,
-  volume: (r) => r.volume24hWei,
-}
-
 function parseCursor(cursor: string | null): bigint | null {
   if (cursor === null || cursor === '') return null
   try {
@@ -183,17 +175,35 @@ function parseCursor(cursor: string | null): bigint | null {
   }
 }
 
+/**
+ * EXPLORE LISTESI. IMLEC BURADA YENIDEN TURETILMEZ -- ARTIK.
+ *
+ * Onceki hal bir `CURSOR_KEY: Record<SortKey, (row) => bigint>` haritasiydi ve
+ * `marketCap` icin `r.marketCapWei` dondururdu. Bu, `packages/db`de OLCULDU
+ * (`ordering.test.ts`): hic islem gormemis her token AYNI acilis market cap'ini
+ * tasidigi icin `limit: 2` ile alti tokenin YALNIZCA IKISINE ulasiliyordu ve
+ * kalan dordu HICBIR sayfada gorunmuyordu; `sort=volume`da ikinci sayfa BOS
+ * donuyordu. Sayfa `limit: 24` ile canliydi.
+ *
+ * `listTokens` artik anahtari `search_key(<miktar>, created_seq)` olarak
+ * PAKETLIYOR ve `nextCursor`'u SORGUNUN KENDISI donduruyor -- yani ORDER BY,
+ * imlec suzgeci ve donen imlec TEK bir ifadedir ve ayrisamaz. `readSearch`
+ * zaten boyleydi; iki yol artik ayni.
+ *
+ * IMLEC `Number`A DOKUNMAZ: paketlenmis `marketCap` anahtari testnet acilis
+ * cap'inde 38 basamaktir (`Number.MAX_SAFE_INTEGER` 16). `bigint` -> `toString`
+ * -> URL -> `parseCursor`'un `BigInt`i; arada `Number` YOKTUR.
+ */
 export async function readTokenList(params: ListParams): Promise<ReadResult<Page<TokenOverview>>> {
   return guard(async () => {
-    const { rows, indexer } = await listTokens(getPool(), {
+    const { rows, nextCursor, indexer } = await listTokens(getPool(), {
       sort: params.sort,
       ...(params.ageDays === null ? {} : { ageDays: params.ageDays }),
       cursor: parseCursor(params.cursor),
       limit: params.limit,
     })
-    const key = CURSOR_KEY[params.sort]
     return {
-      value: { rows, nextCursor: nextCursorFrom(rows, params.limit, key) },
+      value: { rows, nextCursor: nextCursor === null ? null : nextCursor.toString() },
       indexer,
     }
   })
@@ -216,15 +226,14 @@ export type SearchParams = {
  * sinir kalkti ve rota buradan okuyor.
  *
  * =========================================================================
- *  IMLEC BURADA YENIDEN TURETILMEZ, ve bu `readTokenList`ten AYRILDIGI YER.
+ *  IMLEC BURADA YENIDEN TURETILMEZ -- ve `readTokenList` de artik oyle.
  * =========================================================================
  *
- * `listTokens` icin `nextCursor`'u yukaridaki `CURSOR_KEY` haritasi hesaplar --
- * yani sorgunun ORDER BY ifadesi ile bu dosyadaki bir lambda AYNI seyi iki kez
- * anlatir ve sessizce ayrisabilir. `searchTokens` bu kapiyi kapatiyor:
  * `nextCursor`'u SORGUNUN KENDISI dondurur (`(${key})::text AS cursor_key`),
  * cunku `relevance` anahtari `similarity()` uzerinden hesaplanir ve TypeScript'te
  * yeniden hesaplanamaz. Burada yapilan tek sey onu dizeye cevirmektir.
+ * `readTokenList` bu sekli GEC benimsedi: onun `CURSOR_KEY` haritasi tam da bu
+ * ayrismanin canli ornegiydi ve alti tokenin dordunu kaybediyordu.
  *
  * =========================================================================
  *  IMLEC 64 BITE SIGMAZ VE `Number`A HIC DOKUNMAZ.

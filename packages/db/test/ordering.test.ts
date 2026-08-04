@@ -58,10 +58,12 @@ describe('siralama kapisi', () => {
     for (const clause of clauses) expect(clause).not.toMatch(/_at\b/)
   })
 
-  it('SORTS in her ifadesi bir _seq ya da miktar anahtaridir', () => {
-    for (const [name, expression] of Object.entries(SORTS)) {
-      expect(expression, name).toMatch(/^(last_buy_seq|created_seq|market_cap_wei|volume_24h_wei) /)
-      expect(expression, name).not.toMatch(/_at\b/)
+  it('SORTS in her ifadesi bir _seq ya da paketlenmis miktar anahtaridir', () => {
+    for (const [name, { key }] of Object.entries(SORTS)) {
+      const packed = key.startsWith('search_key(') && key.includes('created_seq')
+      const seqOnly = /^(last_buy_seq|created_seq)$/.test(key)
+      expect(packed || seqOnly, `${name}: ${key}`).toBe(true)
+      expect(key, name).not.toMatch(/_at\b/)
     }
   })
 
@@ -101,15 +103,15 @@ describe('siralama kapisi', () => {
     }
   })
 
-  it('MIKTAR anahtarlarinin HEPSI paketlenmistir (ciplak kolon YOK)', () => {
-    // `SORTS`ta `market_cap_wei DESC` CIPLAKTIR ve bu bilerek boyle birakildi
-    // (imleci baska bir izin sahibinin dosyasinda yeniden turetiliyor);
-    // aramada ayni kolon paketlenmis olmak ZORUNDA. Iki tarafin farkli
-    // olmasi kaza degil, ve fark burada YAZILI.
+  it('MIKTAR anahtarlarinin HEPSI paketlenmistir -- IKI TARAFTA DA', () => {
     for (const name of ['marketCap', 'volume', 'relevance'] as const) {
       expect(searchSortExpression(name).key, name).toMatch(/^search_key\(/)
     }
-    expect(SORTS.marketCap).toBe('market_cap_wei DESC')
+    // ARTIK EXPLORE TARAFINDA DA. Once `market_cap_wei DESC` ciplakti ve
+    // asagidaki "Explore sayfalamasi" bloku kaybi alti tokenin dordu olarak
+    // OLCTU; iki taraf artik ayni anahtari kullaniyor.
+    expect(SORTS.marketCap.key).toBe('search_key(market_cap_wei, created_seq)')
+    expect(SORTS.volume.key).toBe('search_key(volume_24h_wei, created_seq)')
   })
 
   it('NEGATIF KONTROL: paketleme dusurulurse kapi GERCEKTEN kirilir', () => {
@@ -127,7 +129,7 @@ describe('siralama kapisi', () => {
     const interpolations = [...CODE.matchAll(/ORDER BY \$\{([^}]+)\}/g)].map((m) => m[1])
     expect(interpolations.length).toBeGreaterThan(0)
     for (const expr of interpolations) expect(expr).toBe('order')
-    expect(CODE).toContain('const order = SORTS[sort]')
+    expect(CODE).toContain('const { key, desc } = SORTS[sort]')
   })
 })
 
@@ -223,14 +225,16 @@ describe('esit timestamp, kesin sira', () => {
  * yazar). Yani ilk sayfanin son satiriyla ayni cap'e sahip HER token
  * `market_cap_wei < $cursor` kosuluyla ELENIR ve HICBIR SAYFADA gorunmez.
  *
- * Asagidaki iki test o kaybi SAYIYLA sabitler ve dogru anahtarin ayni veride
- * kaybi SIFIRA indirdigini gosterir. `SORTS` bu commit'te DEGISTIRILMEDI:
- * imlecin degeri `web/lib/read.ts`in `CURSOR_KEY` haritasinda uretiliyor ve o
- * dosya baska bir izin sahibinde -- yalnizca `packages/db` tarafini paketlemek
- * canli sayfayi DAHA da bozardi (`search_key(cap, seq) < 4e18` ciplak imlecle
- * bugunkunden az satir dondurur). Duzeltme TEK PARCADIR ve iki dosyaya birden
- * dokunmak zorundadir; burada olculen sey, o duzeltmenin ne kadarini geri
- * kazandigidir.
+ * DUZELTME INDI, VE IKI PARCASI AYRILAMAZ: `SORTS` artik
+ * `search_key(market_cap_wei, created_seq)` kullaniyor VE `listTokens` imleci
+ * SORGUDAN donduruyor. Yalnizca birincisini yapmak canli sayfayi DAHA da
+ * bozardi (`search_key(cap, seq) < 4e18` ciplak bir imlecle bugunkunden AZ
+ * satir dondurur), yalnizca ikincisini yapmak hicbir sey degistirmezdi.
+ *
+ * Asagidaki testler once ESKI kaybi ayni veri uzerinde YENIDEN URETIR (ciplak
+ * kolon + cagiran tarafinda turetilen imlec, elle yazilmis SQL ile), sonra
+ * uretim yolunun ayni alti satiri EKSIKSIZ gezdigini olcer. Birincisi olmadan
+ * ikincisi, veri tekrar etmedigi icin de gecebilirdi.
  */
 describe('Explore sayfalamasi -- esit market cap', () => {
   const CREATOR = addr(0xc4ea)
@@ -282,49 +286,11 @@ describe('Explore sayfalamasi -- esit market cap', () => {
   })
 
   /**
-   * `web/lib/read.ts`in SAYFALAMASI, BIREBIR: imlec son satirin
-   * `marketCapWei`i, ve sayfa kisaysa durulur.
+   * ESKI YOL, ELLE: ciplak kolon + cagiran tarafinda turetilen imlec. Uretim
+   * kodunda artik YOK; burada duruyor cunku duzeltmenin GERI ALDIGI seyin ayni
+   * veri uzerinde olculmesi gerekiyor.
    */
-  async function pageWithCallerDerivedCursor(limit: number): Promise<string[]> {
-    const seen: string[] = []
-    let cursor: bigint | null = null
-    for (let page = 0; page < 20; page += 1) {
-      const { rows } = await listTokens(pool, { sort: 'marketCap', limit, cursor })
-      seen.push(...rows.map((r) => r.token))
-      if (rows.length < limit) break
-      cursor = rows[rows.length - 1]!.marketCapWei
-    }
-    return seen
-  }
-
-  it('marketCap sayfalamasi alti tokenin YALNIZCA IKISINE ulasir', async () => {
-    const seen = await pageWithCallerDerivedCursor(2)
-    // Ilk sayfa iki satir verir; imlec `4e18` olur ve ikinci sayfanin kosulu
-    // `market_cap_wei < 4e18` ALTI TOKENIN HEPSINI eler.
-    expect(seen).toHaveLength(2)
-    expect(new Set(seen).size).toBe(2)
-    // KALICI KAYIP: dort token hicbir sayfada gorunmez.
-    expect(COUNT - seen.length).toBe(4)
-  })
-
-  it('volume sayfalamasi ilk sayfadan SONRA hicbir satir vermez', async () => {
-    // Hicbiri 24 saatte islem gormedi, yani hepsinin hacmi `0`. Imlec `0`
-    // olunca kosul `volume_24h_wei < 0` olur -- BOS KUME, ve `0` sinirin
-    // kendisi oldugu icin bu bir "kisa sayfa" degil, KALICI bir kesilmedir.
-    const first = await listTokens(pool, { sort: 'volume', limit: 2 })
-    expect(first.rows).toHaveLength(2)
-    const cursor = first.rows[1]!.volume24hWei
-    expect(cursor).toBe(0n)
-    const second = await listTokens(pool, { sort: 'volume', limit: 2, cursor })
-    expect(second.rows).toHaveLength(0)
-  })
-
-  /**
-   * AYNI VERI, TAM ANAHTAR. Kaybin sebebi verinin kendisi degil ANAHTAR:
-   * `search_key(market_cap_wei, created_seq)` ile ayni alti satir EKSIKSIZ
-   * gezilir. `searchTokens` bu anahtari zaten kullaniyor; Explore kullanmiyor.
-   */
-  it('paketlenmis anahtarla ayni alti token EKSIKSIZ gezilir', async () => {
+  async function pageWithBareColumnCursor(column: string, limit: number): Promise<string[]> {
     const seen: string[] = []
     let cursor: bigint | null = null
     for (let page = 0; page < 20; page += 1) {
@@ -332,21 +298,77 @@ describe('Explore sayfalamasi -- esit market cap', () => {
       let where = ''
       if (cursor !== null) {
         params.push(cursor.toString())
-        where = `WHERE search_key(market_cap_wei, created_seq) < $1::numeric`
+        where = `WHERE ${column} < $1::numeric`
       }
-      params.push(2)
+      params.push(limit)
       const { rows } = await pool.query<{ token: string; key: string }>(
-        `SELECT token, search_key(market_cap_wei, created_seq)::text AS key
-           FROM token_overview ${where}
-          ORDER BY search_key(market_cap_wei, created_seq) DESC
-          LIMIT $${params.length}`,
+        `SELECT token, ${column}::text AS key FROM token_overview ${where}
+          ORDER BY ${column} DESC LIMIT $${params.length}`,
         params,
       )
       seen.push(...rows.map((r) => r.token))
-      if (rows.length < 2) break
+      if (rows.length < limit) break
       cursor = BigInt(rows[rows.length - 1]!.key)
     }
+    return seen
+  }
+
+  it('NEGATIF KONTROL: ciplak market_cap_wei alti tokenin IKISINE ulasir', async () => {
+    const seen = await pageWithBareColumnCursor('market_cap_wei', 2)
+    // Ilk sayfa iki satir verir; imlec `4e18` olur ve ikinci sayfanin kosulu
+    // `market_cap_wei < 4e18` ALTI TOKENIN HEPSINI eler.
+    expect(seen).toHaveLength(2)
+    // KALICI KAYIP: dort token hicbir sayfada gorunmezdi.
+    expect(COUNT - seen.length).toBe(4)
+  })
+
+  it('NEGATIF KONTROL: ciplak volume_24h_wei ilk sayfadan SONRA hicbir sey vermez', async () => {
+    // Hicbiri 24 saatte islem gormedi, yani hepsinin hacmi `0`. Imlec `0`
+    // olunca kosul `volume_24h_wei < 0` olur -- BOS KUME, ve `0` sinirin
+    // kendisi oldugu icin bu bir "kisa sayfa" degil, KALICI bir kesilmedir.
+    expect(await pageWithBareColumnCursor('volume_24h_wei', 2)).toHaveLength(2)
+  })
+
+  /** URETIM YOLU: imlec `listTokens`in DONDURDUGU anahtardir. */
+  async function pageWithReturnedCursor(sort: 'marketCap' | 'volume', limit: number) {
+    const seen: string[] = []
+    const keys: bigint[] = []
+    let cursor: bigint | null = null
+    for (let page = 0; page < 20; page += 1) {
+      const { rows, nextCursor } = await listTokens(pool, { sort, limit, cursor })
+      seen.push(...rows.map((r) => r.token))
+      if (nextCursor === null) break
+      keys.push(nextCursor)
+      cursor = nextCursor
+    }
+    return { seen, keys }
+  }
+
+  it('marketCap sayfalamasi artik ALTI tokenin HEPSINE ulasir', async () => {
+    const { seen, keys } = await pageWithReturnedCursor('marketCap', 2)
     expect(new Set(seen).size).toBe(COUNT)
     expect(seen).toHaveLength(COUNT)
+    // Imlec PAKETLENMIS bir anahtardir, ham market cap DEGIL: `4e18 * 2^63`
+    // mertebesinde, yani `Number`a sigmaz -- `read.ts` onu dizge olarak tasir.
+    expect(keys.length).toBeGreaterThan(0)
+    for (const k of keys) expect(k).toBeGreaterThan(BigInt(Number.MAX_SAFE_INTEGER))
+  })
+
+  it('volume sayfalamasi artik ALTI tokenin HEPSINE ulasir', async () => {
+    const { seen } = await pageWithReturnedCursor('volume', 2)
+    expect(new Set(seen).size).toBe(COUNT)
+    expect(seen).toHaveLength(COUNT)
+  })
+
+  it('kisa sayfada nextCursor NULL dur -- son sayfa boyle bilinir', async () => {
+    const { rows, nextCursor } = await listTokens(pool, { sort: 'marketCap', limit: 50 })
+    expect(rows).toHaveLength(COUNT)
+    expect(nextCursor).toBeNull()
+  })
+
+  it('_seq siralamalarinin imleci de SORGUDAN doner', async () => {
+    const { rows, nextCursor } = await listTokens(pool, { sort: 'newest', limit: 2 })
+    expect(rows).toHaveLength(2)
+    expect(nextCursor).toBe(rows[1]!.createdSeq)
   })
 })

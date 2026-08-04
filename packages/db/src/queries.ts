@@ -98,13 +98,39 @@ export async function getIndexerStatus(
  *
  * Sabit bir nesnedir ve `sort` parametresi onun ANAHTARLARIYLA sinirlidir:
  * siralama ifadesi hicbir zaman kullanici girdisinden birlestirilmez.
+ *
+ * MIKTAR ANAHTARLARI PAKETLENMISTIR, VE BU BIR DUZELTMEDIR -- OLCULEREK.
+ *
+ * Onceki hal `market_cap_wei DESC` / `volume_24h_wei DESC` seklinde CIPLAK
+ * kolonlardi ve `ordering.test.ts` kaybi SAYIYLA olcmustu: alti hic islem
+ * gormemis token AYNI acilis market cap'ini tasir (`admit` onu boyle yazar;
+ * testnet profilinde tam `4e18`), yani `limit: 2` ile sayfalayan Explore
+ * alti tokenin YALNIZCA IKISINE ulasiyordu -- kalan dordu HICBIR sayfada
+ * gorunmuyordu, gec degil HIC. `sort=volume` daha kotuydu: islem gormemis her
+ * tokenin hacmi `0`, imlec `0`, kosul `volume_24h_wei < 0`, ve ikinci sayfa
+ * BOS donuyordu.
+ *
+ * Anahtar artik `search_key(<miktar>, created_seq)` (bkz.
+ * `migrations/008_search.sql`): `created_seq` `launches` icinde UNIQUE ve
+ * negatif degildir, carpan tam olarak `bigint` araliginin genisligidir, yani
+ * paketleme BIREBIRDIR ve `anahtar < imlec` tek karsilastirmayla
+ * `(miktar, created_seq)` sozluk sirasidir. `searchTokens` bunu zaten
+ * kullaniyordu; Explore kullanmiyordu.
+ *
+ * `_seq` anahtarlari OLDUGU GIBI kalir: her biri tek bir olayin `event_seq`i
+ * oldugu icin ZATEN birebirdir ve paketlemek onlara hicbir sey katmazdi.
+ *
+ * DUZELTMENIN IKINCI YARISI `listTokens`in `nextCursor` DONDURMESIDIR ve
+ * ayrilamaz: imleci cagiran tarafta yeniden turetmek (web'in eski `CURSOR_KEY`
+ * haritasi) ciplak bir degeri paketlenmis bir anahtarla karsilastirirdi ve
+ * sayfayi bugunkunden DAHA cok bozardi.
  */
 export const SORTS = {
-  recentBuys: 'last_buy_seq DESC',
-  newest: 'created_seq DESC',
-  oldest: 'created_seq ASC',
-  marketCap: 'market_cap_wei DESC',
-  volume: 'volume_24h_wei DESC',
+  recentBuys: { key: 'last_buy_seq', desc: true },
+  newest: { key: 'created_seq', desc: true },
+  oldest: { key: 'created_seq', desc: false },
+  marketCap: { key: 'search_key(market_cap_wei, created_seq)', desc: true },
+  volume: { key: 'search_key(volume_24h_wei, created_seq)', desc: true },
 } as const
 
 export type SortKey = keyof typeof SORTS
@@ -120,17 +146,11 @@ export type Cursor = bigint | null
  *    `Record<SortKey, ...>` seklinde TUKETICI TARAFI TAM bir harita tutuyor,
  *    yani anahtar eklemek baska bir izin sahibinin derlemesini kirardi.
  *
- * 2. ARAMANIN ANAHTARLARI TAMDIR, `SORTS`INKILER DEGIL. `market_cap_wei` ve
- *    `volume_24h_wei` TEKRAR EDER -- ustelik en kotu yerde: hic islem gormemis
- *    her token AYNI acilis market cap'ine sahiptir (testnet profilinde tam
- *    `4e18`) ve 24 saattir islem gormemis her token'in hacmi `0`dir. Esit
- *    anahtar, keyset sayfalamada satir TEKRARLATIR VE ATLATIR. Burada her
- *    miktar anahtari `search_key(...)` ile `created_seq`e PAKETLENIR
- *    (`migrations/008_search.sql`), yani anahtar BIREBIRDIR ve sira TAMDIR.
- *
- *    `SORTS`taki ayni kusur bu commit'te DUZELTILMEDI, cunku `listTokens`in
- *    imleci `web/lib/read.ts`teki `CURSOR_KEY` haritasinda YENIDEN turetiliyor
- *    ve o dosya baska bir izin sahibinde; rapor edildi.
+ * 2. ARAMANIN ANAHTARLARI `SORTS`INKILERLE AYNI KURALI IZLER ama IFADELERI
+ *    FARKLIDIR: burada tablo `o` takma adiyla gelir (`o.market_cap_wei`) ve
+ *    `relevance` yalnizca burada vardir. Iki nesnenin AYRI durmasinin sebebi
+ *    budur, tam anahtar ile ciplak anahtar farki DEGIL -- o fark
+ *    `search_key` paketlemesi `SORTS`a da inince kapandi.
  *
  * `_seq` anahtarlari OLDUGU GIBI kalir: her biri tek bir olayin `event_seq`i
  * oldugu icin ZATEN birebirdir, ve paketlemek onlara hicbir sey katmazdi.
@@ -278,24 +298,45 @@ export interface ListTokensOptions {
   limit?: number
 }
 
+/** Explore listesinin sonucu: satirlar, SORGUNUN KENDI hesapladigi imlec, tazelik. */
+export interface ListResult {
+  rows: TokenOverview[]
+  /**
+   * Bir sonraki sayfanin imleci; sayfa KISAYSA `null`.
+   *
+   * SORGUDAN doner, cagiran tarafta YENIDEN TURETILMEZ -- ve bu, `SORTS`in
+   * paketlenmesinden AYRILAMAZ. Eski hal `web/lib/read.ts`teki `CURSOR_KEY`
+   * haritasiydi: `marketCap` icin `r.marketCapWei` dondururdu, yani sorgunun
+   * ORDER BY ifadesi ile TypeScript'teki bir lambda AYNI seyi iki kez anlatir
+   * ve sessizce ayrisirdi. `search_key(...)` ile paketlenmis bir anahtarin
+   * degeri ZATEN TypeScript'te yeniden hesaplanamaz.
+   */
+  nextCursor: bigint | null
+  indexer: IndexerStatus
+}
+
 /**
  * EXPLORE listesi, keyset sayfalamayla.
  *
  * `ageDays` bir PENCEREDIR ve `created_at` uzerindedir; siralama yine
- * `created_seq`/`market_cap_wei` gibi bir seq/miktar anahtarindadir. Zamanin
- * pencerede kullanilmasi guvenlidir (esitlik siralamayi degil kumeyi etkiler),
- * SIRALAMADA kullanilmasi degildir.
+ * `created_seq`/`search_key(market_cap_wei, created_seq)` gibi bir
+ * seq/paketlenmis-miktar anahtarindadir. Zamanin pencerede kullanilmasi
+ * guvenlidir (esitlik siralamayi degil kumeyi etkiler), SIRALAMADA
+ * kullanilmasi degildir.
+ *
+ * TEK IFADE UC ISI GORUR -- `ORDER BY`, imlec suzgeci ve donen `nextCursor`
+ * hep `SORTS[sort].key`tir, yani ucu sessizce ayrisamaz. `searchTokens` ayni
+ * sekli tasir.
  */
 export async function listTokens(
   db: Queryable,
   options: ListTokensOptions = {},
-): Promise<Fresh<TokenOverview[]>> {
+): Promise<ListResult> {
   const sort: SortKey = options.sort ?? 'newest'
-  const order = SORTS[sort]
+  const { key, desc } = SORTS[sort]
+  const order = `${key} ${desc ? 'DESC' : 'ASC'}`
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
   const cursor = options.cursor ?? null
-  const key = order.split(' ')[0] as string
-  const descending = order.endsWith('DESC')
 
   const where: string[] = []
   const params: unknown[] = []
@@ -306,17 +347,25 @@ export async function listTokens(
   }
   if (cursor !== null) {
     params.push(cursor.toString())
-    where.push(`${key} ${descending ? '<' : '>'} $${params.length}::numeric`)
+    where.push(`${key} ${desc ? '<' : '>'} $${params.length}::numeric`)
   }
   params.push(limit)
 
-  const { rows } = await db.query<OverviewRow>(
-    `SELECT * FROM token_overview
+  const { rows } = await db.query<OverviewRow & { cursor_key: string | null }>(
+    `SELECT *, (${key})::text AS cursor_key FROM token_overview
      ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
      ORDER BY ${order} LIMIT $${params.length}`,
     params,
   )
-  return { rows: rows.map(toOverview), indexer: await getIndexerStatus(db) }
+
+  // KISA SAYFA SON SAYFADIR (`searchTokens` ile ayni kural, ayni gerekce).
+  const last = rows[rows.length - 1]
+  const nextCursor =
+    rows.length < limit || last === undefined || last.cursor_key === null
+      ? null
+      : BigInt(last.cursor_key)
+
+  return { rows: rows.map(toOverview), nextCursor, indexer: await getIndexerStatus(db) }
 }
 
 /**
