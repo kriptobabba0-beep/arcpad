@@ -287,29 +287,85 @@ test('⌘K resolves a PASTED ADDRESS from the index, and refuses one that is not
 })
 
 /**
- * THE DECLARED OPEN CELL, ASSERTED AS THE HONEST BEHAVIOUR IT IS.
+ * THE TEXT SEARCH, WHICH USED TO BE A DECLARED 503 AND IS NOW A REAL QUERY.
  *
- * `/api/search`'s TEXT path answers 503 on purpose: `searchTokens` lives in
- * `@arcpad/db` and belongs to another track. The modal says search is
- * unavailable rather than showing an empty list, because "nothing matched" and
- * "we could not look" are different sentences and only one of them is true.
+ * This test asserted the honest "we could not look" message while
+ * `searchTokens` was missing from `@arcpad/db`, precisely so it would go RED
+ * the day the query landed rather than quietly passing against a working
+ * search. `c035a88` landed it, `web/lib/releaseGate.ts` expired the cell, and
+ * this is the rewrite that closes it.
  *
- * It asserts the honest MESSAGE, not the absence of results -- so the day the
- * query lands this goes red and has to be rewritten, rather than quietly
- * continuing to pass against a working search. `web/lib/releaseGate.ts` holds
- * the matching declaration and expires it when `@arcpad/db` commits the query.
+ * WHAT IT MEASURES THAT A UNIT TEST CANNOT: the query, the route's parameter
+ * binding, the client's debounce and the modal's rendering, over a real
+ * Postgres with real trigram indexes.
  */
-test('the text search says it cannot look, rather than showing an empty list', async ({ page }) => {
-  const response = await page.request.get(url('/api/search?q=fixture'))
-  expect(response.status(), 'the text path is a declared open cell answering 503').toBe(503)
-  expect(await response.json()).toEqual({ error: 'unavailable' })
+test('the text search returns matching rows, over the real query', async ({ page }) => {
+  const response = await page.request.get(url('/api/search?q=Fixture%2007'))
+  expect(response.status(), 'the text path answers for real now').toBe(200)
+  const body = (await response.json()) as { rows: { name: string }[]; nextCursor: string | null }
+  expect(body.rows.length, 'a name that exists must match something').toBeGreaterThan(0)
+  expect(body.rows.map((row) => row.name)).toContain('Fixture 07')
+
+  /*
+   * A QUERY THAT MATCHES NOTHING IS AN EMPTY PAGE, NOT AN ERROR.
+   *
+   * "Nothing matched" and "search is broken" are different sentences and only
+   * one of them is true; collapsing them would tell a user the product is
+   * down because their typo found no token. The route's 503 branch still
+   * exists for a real outage -- it is simply no longer the only branch.
+   */
+  const empty = await page.request.get(url('/api/search?q=zzzznotatoken'))
+  expect(empty.status(), 'no matches is a 200 with no rows').toBe(200)
+  expect(((await empty.json()) as { rows: unknown[] }).rows).toEqual([])
 
   await page.goto(url('/'))
   const dialog = await openSearch(page)
-  await page.getByRole('combobox').fill('fixture')
-  await expect(dialog.getByText('Search is unavailable right now.')).toBeVisible({
-    timeout: 15_000,
-  })
+  await page.getByRole('combobox').fill('Fixture 07')
+  await expect(dialog.getByText('Fixture 07')).toBeVisible({ timeout: 15_000 })
+  await expect(dialog.getByText('Search is unavailable right now.')).toHaveCount(0)
+})
+
+/**
+ * THE 38-DIGIT CURSOR, END TO END.
+ *
+ * The packed key is `amount * 2^63 + created_seq`, so a `marketCap` cursor is
+ * 38 digits at the testnet opening market cap and up to 97 at the limit.
+ * `parseSearchParams` whitelisted `\d{1,20}`, which would have rejected EVERY
+ * such cursor and silently served page one forever -- no error, no log, just a
+ * list that never advances. Both the width and the paging are measured here
+ * against the real query rather than against a fixture's idea of a cursor.
+ */
+test('search paging survives a cursor far wider than a double', async ({ page }) => {
+  const first = await page.request.get(url('/api/search?q=Fixture&sort=marketCap'))
+  expect(first.status()).toBe(200)
+  const page1 = (await first.json()) as {
+    rows: { name: string }[]
+    nextCursor: string | null
+  }
+  expect(page1.rows.length, 'the fixture must fill a search page').toBeGreaterThan(0)
+  expect(page1.nextCursor, 'a full page must carry a cursor').not.toBeNull()
+
+  // THE PRECONDITION THIS TEST EXISTS FOR, asserted rather than assumed.
+  expect(
+    page1.nextCursor!.length,
+    `the cursor is ${page1.nextCursor!.length} digits; a double holds 16`,
+  ).toBeGreaterThan(20)
+  expect(BigInt(page1.nextCursor!) > 0n, 'it must survive BigInt, never Number').toBe(true)
+
+  const second = await page.request.get(
+    url(`/api/search?q=Fixture&sort=marketCap&after=${page1.nextCursor!}`),
+  )
+  expect(second.status()).toBe(200)
+  const page2 = (await second.json()) as { rows: { token: string }[] }
+  expect(page2.rows.length, 'the second page must exist').toBeGreaterThan(0)
+
+  // The cursor ADVANCED. A rejected cursor would serve page one again, which
+  // is exactly what the narrow whitelist did and what nothing would have said.
+  const firstTokens = new Set((page1.rows as unknown as { token: string }[]).map((r) => r.token))
+  expect(
+    page2.rows.some((row) => firstTokens.has(row.token)),
+    'page two must not repeat page one — the cursor was honoured',
+  ).toBe(false)
 })
 
 test('the token page draws the indexed trade and holder tables', async ({ page }) => {

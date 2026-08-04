@@ -46,8 +46,17 @@ export function parseExploreParams(raw: ExploreSearchParams): ExploreQuery {
   const rawAge = first(raw.age)
   const ageDays = rawAge !== undefined && rawAge in AGE_DAYS ? (AGE_DAYS[rawAge] ?? null) : null
 
+  /*
+   * AYNI GENISLETME, AYNI SEBEP -- ve burada da sessizce kiriliyordu.
+   *
+   * Explore'un imleci her zaman bir `eventSeq` DEGILDIR: `marketCap` sirasinda
+   * `market_cap_wei`, `volume` sirasinda `volume_24h_wei`, ikisi de
+   * `numeric(78,0)`. Graduation civarindaki bir market cap zaten 20 basamagi
+   * asar, ve asan her imlec `null`a dusup kullaniciyi birinci sayfaya geri
+   * atardi. Ust sinir `numeric(78,0)`in kendi genisligidir; sinirsiz degil.
+   */
   const rawCursor = first(raw.after)
-  const cursor = rawCursor !== undefined && /^\d{1,20}$/.test(rawCursor) ? rawCursor : null
+  const cursor = rawCursor !== undefined && /^\d{1,78}$/.test(rawCursor) ? rawCursor : null
 
   return { sort, ageDays, cursor }
 }

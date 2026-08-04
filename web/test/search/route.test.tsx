@@ -6,11 +6,13 @@ import { overview, PASTED, PASTED_LOWER } from './fixtures'
 /**
  * `GET /api/search` -- OKUMA SINIRI SAHTELENIR, ROTA SAHTELENMEZ.
  *
- * Sinir UC AYRI MODULE dagildi: `readSearch` hâlâ bir stub
- * (`components/search/searchBoundary.ts` -- `searchTokens` `packages/db`'ye
- * inmedi), `readTokenOverview` gercek `web/lib/read.ts`'te, `verifyCanonical`
- * `web/lib/canonical.ts`'te. Ucu de burada sahtelenir cunku olculen sey
- * ROTANIN KENDISIDIR: beyaz liste, adres dali, parametre baglama.
+ * `readSearch` ARTIK BIR STUB DEGIL. `searchTokens` `c035a88` ile indi,
+ * `components/search/searchBoundary.ts` silindi ve okuyucu `web/lib/read.ts`'e
+ * tasindi -- yani bu dosyanin sahtelemesi de oraya tasindi. `readSearch` ve
+ * `readTokenOverview` ayni modulden, `verifyCanonical` `web/lib/canonical.ts`'ten
+ * sahtelenir cunku olculen sey ROTANIN KENDISIDIR: beyaz liste, adres dali,
+ * parametre baglama. Gercek bir Postgres baglamak, rotanin dallarini
+ * veritabaninin durumuna bagimli hale getirirdi.
  *
  * `valueOf` SAHTELENMEZ -- `ReadResult`'in uc dalini cozen gercek fonksiyon
  * kosar, yani bayat bir sonucun da dogru gectigi bu testlerle olculur.
@@ -21,11 +23,14 @@ const boundary = vi.hoisted(() => ({
   verifyCanonical: vi.fn(),
 }))
 
-vi.mock('@/components/search/searchBoundary', () => ({ readSearch: boundary.readSearch }))
 vi.mock('@/lib/canonical', () => ({ verifyCanonical: boundary.verifyCanonical }))
 vi.mock('@/lib/read', async () => {
   const actual = await vi.importActual<typeof import('@/lib/read')>('@/lib/read')
-  return { ...actual, readTokenOverview: boundary.readTokenOverview }
+  return {
+    ...actual,
+    readSearch: boundary.readSearch,
+    readTokenOverview: boundary.readTokenOverview,
+  }
 })
 
 const { GET } = await import('@/app/api/search/route')
@@ -95,6 +100,31 @@ describe('GET /api/search -- parametre baglama', () => {
     boundary.readSearch.mockClear()
     await GET(request('?q=doge&after=4210'))
     expect(searchParams().cursor).toBe('4210')
+  })
+
+  it('38 BASAMAKLI bir imlec GECER -- ve 20 basamaklik bir beyaz liste onu yerdi', async () => {
+    /*
+     * OLCULMUS BIR DEGER, UYDURULMUS DEGIL.
+     *
+     * `searchTokens`in anahtari `amount * 2^63 + created_seq` olarak paketlenir
+     * (packages/db, migration 008), yani testnet acilis market cap'inde
+     * (4e18) imlec 38 basamaktir. Bu dosyanin kontrolu `/^\d{1,20}$/` idi:
+     * `marketCap` sirasinin HER imlecini reddedip `null`a dusururdu, yani
+     * "sonraki sayfa" sessizce BIRINCI sayfayi cizerdi. Hicbir hata, hicbir
+     * log; yalnizca ilerlemeyen bir liste.
+     *
+     * Asagidaki iki iddia birlikte anlamlidir: ilki genisletmeyi olcer, ikincisi
+     * sinirin HÂLÂ VAR oldugunu -- `\d+` yazip gecmek, parametreye baglanan ama
+     * yine de veritabanini mesgul eden bir dizeyi kabul etmek olurdu.
+     */
+    const measured = '36893488147419103232000233825179664384'
+    expect(measured.length).toBe(38)
+    await GET(request(`?q=doge&sort=marketCap&after=${measured}`))
+    expect(searchParams().cursor).toBe(measured)
+
+    boundary.readSearch.mockClear()
+    await GET(request(`?q=doge&after=${'9'.repeat(98)}`))
+    expect(searchParams().cursor, 'numeric(78,0) + 2^63 tasar; 98 basamak tasmaz').toBeNull()
   })
 
   it('`age` gun sayisina cozulur; All -> null', async () => {

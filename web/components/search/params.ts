@@ -123,10 +123,26 @@ export function parseSearchParams(params: URLSearchParams): SearchQuery {
   const rawAge = params.get('age')
   const ageDays = rawAge !== null && rawAge in AGE_DAYS ? (AGE_DAYS[rawAge] ?? null) : null
 
-  // Keyset cursor'u bir `eventSeq`tir: ondalik basamaklar. Bu kontrol,
-  // parametre baglamasinin YERINE gecmez, ONUNDE durur.
+  /*
+   * IMLEC ONDALIK BASAMAKLARDIR -- VE 20 BASAMAK YETMEZ.
+   *
+   * Bu kontrol `/^\d{1,20}$/` idi ve `searchTokens` indigi anda SESSIZ bir
+   * kirilma haline geldi: arama anahtari `amount * 2^63 + created_seq` olarak
+   * paketlenir, yani testnet acilis market cap'inde imlec **38 basamaktir**
+   * (olculdu: 36893488147419103232000233825179664384) ve `numeric(78,0)` ust
+   * sinirinda 97'ye cikar. 20 basamaklik bir beyaz liste her `marketCap`
+   * imlecini REDDEDER ve `null`a dusurur -- yani "sonraki sayfa" hep BIRINCI
+   * sayfayi cizer. Hicbir hata verilmeden, sonsuz bir dongu gibi.
+   *
+   * Ust sinir hâlâ VARDIR ve keyfi degildir: `numeric(78,0)` 78 basamak tasir,
+   * paketleme 2^63 ile carptigi icin 19 basamak daha ekler, toplam 97. Sinirsiz
+   * birakmak, parametreye baglanan ama yine de sorguyu mesgul eden bir dizeyi
+   * kabul etmek olurdu (`MAX_Q_LENGTH` ile ayni gerekce).
+   *
+   * Bu kontrol parametre baglamasinin YERINE gecmez, ONUNDE durur.
+   */
   const rawCursor = params.get('after')
-  const cursor = rawCursor !== null && /^\d{1,20}$/.test(rawCursor) ? rawCursor : null
+  const cursor = rawCursor !== null && /^\d{1,97}$/.test(rawCursor) ? rawCursor : null
 
   return { q, sort, ageDays, cursor }
 }

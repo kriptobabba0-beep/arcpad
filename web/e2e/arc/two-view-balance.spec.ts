@@ -15,9 +15,13 @@ import { connectWallet, injectedWallet } from '../fixtures/wallet'
  *
  * On Arc the native gas asset IS USDC, and it has TWO VIEWS of ONE balance: an
  * 18-decimal native view (`eth_getBalance`) and a 6-decimal ERC-20 view
- * (`balanceOf` on 0x3600…0000). A wallet holding 100 USDC reads `100e18` from
- * one and `100e6` from the other. An interface that SUMS them is wrong by a
+ * (`balanceOf` on 0x3600…0000). An interface that SUMS them is wrong by a
  * factor of ~1e12 and looks entirely plausible.
+ *
+ * THE RELATION IS TRUNCATION, NOT EQUALITY, AND IT WAS MEASURED. Task 15 step 4
+ * and AGENT-CONTEXT both state `balanceOf * 1e12 === eth_getBalance`; on the
+ * live chain that is FALSE (see the assertion below for the readings). The ERC-20
+ * view cannot hold sub-micro-USDC dust, so `units === floor(wei / 1e12)`.
  *
  * THAT DEFECT CANNOT BE SEEN ON ANVIL, and this is the whole reason the suite
  * has two legs. There is no contract at 0x3600…0000 on a devchain, so the
@@ -46,6 +50,18 @@ const ENABLED = process.env.E2E_ARC === '1'
 const RPC = process.env.E2E_ARC_RPC_URL ?? ''
 const FACTORY = (process.env.E2E_ARC_FACTORY ?? '') as Address
 const KEY = (process.env.E2E_ARC_PRIVATE_KEY ?? '') as Hex
+/**
+ * A FUNDED ADDRESS TO READ. Its private key is NOT needed.
+ *
+ * The K1 claim is a READ, and measuring it needs a NON-ZERO balance -- on zero
+ * both views are zero and every relation between them holds vacuously. It does
+ * not need the account's key. The funded testnet account's key lives in an
+ * encrypted keystore that this harness cannot open, so the provider signs with
+ * the configured key (if any) and REPORTS this address, which is enough for
+ * every read path and incapable of moving anybody's money. Defaults to the
+ * signing key's own address when both are configured.
+ */
+const WATCH = (process.env.E2E_ARC_WATCH ?? '') as Address
 const BASE = process.env.E2E_ARC_BASE_URL ?? ''
 
 const ERC20 = parseAbi(['function balanceOf(address) view returns (uint256)'])
@@ -81,7 +97,7 @@ test('the Arc leg reports itself: it either ran, or it says plainly that it did 
   }
   const cell =
     'OPEN CELL — the Arc testnet leg did not run. E2E_ARC is not set, so the two-view ' +
-    'balance identity (balanceOf * 1e12 === eth_getBalance) was NOT measured. Nothing on a ' +
+    'balance relation (units === floor(wei / 1e12)) was NOT measured. Nothing on a ' +
     `devchain can measure it: there is no contract at ${USDC_ERC20_ADDRESS} on anvil, so an ` +
     'interface that SUMMED the two views would stay green on the local leg forever.'
   console.warn(`\n[e2e:arc] ${cell}\n`)
@@ -107,9 +123,18 @@ test.describe('Arc testnet', () => {
     expect(BASE, 'E2E_ARC=1 requires E2E_ARC_BASE_URL (a deployed or locally built app)').not.toBe(
       '',
     )
-    expect(KEY, 'E2E_ARC=1 requires E2E_ARC_PRIVATE_KEY (a funded testnet key)').toMatch(
-      /^0x[0-9a-fA-F]{64}$/,
-    )
+    /*
+     * A KEY OR A WATCHED ADDRESS -- THE READ CLAIMS NEED ONLY THE SECOND.
+     *
+     * The K1 property is a read. Requiring a funded PRIVATE KEY for it was the
+     * first version and it made the whole leg unrunnable wherever the key lives
+     * in a keystore, which is everywhere it should live. `E2E_ARC_WATCH` names
+     * a funded address; the write tests below still require the key.
+     */
+    expect(
+      /^0x[0-9a-fA-F]{64}$/.test(KEY) || /^0x[0-9a-fA-F]{40}$/.test(WATCH),
+      'E2E_ARC=1 requires E2E_ARC_PRIVATE_KEY (to sign) or E2E_ARC_WATCH (to read)',
+    ).toBe(true)
     expect(FACTORY, 'E2E_ARC=1 requires E2E_ARC_FACTORY').toMatch(/^0x[0-9a-fA-F]{40}$/)
 
     const code = await arcClient().getCode({ address: FACTORY })
@@ -138,7 +163,7 @@ test.describe('Arc testnet', () => {
   test('the ERC-20 view and the native view are ONE balance, and the screen shows ONE row', async ({
     page,
   }) => {
-    const account = privateKeyToAccount(KEY)
+    const watched: Address = WATCH === '' ? privateKeyToAccount(KEY).address : (WATCH as Address)
     const client = arcClient()
 
     /*
@@ -156,27 +181,66 @@ test.describe('Arc testnet', () => {
       address: USDC_ERC20_ADDRESS,
       abi: ERC20,
       functionName: 'balanceOf',
-      args: [account.address],
+      args: [watched],
     })) as bigint
-    const wei = await client.getBalance({ address: account.address })
-    const weiAgain = await client.getBalance({ address: account.address })
+    const wei = await client.getBalance({ address: watched })
+    const weiAgain = await client.getBalance({ address: watched })
     const unitsAgain = (await client.readContract({
       address: USDC_ERC20_ADDRESS,
       abi: ERC20,
       functionName: 'balanceOf',
-      args: [account.address],
+      args: [watched],
     })) as bigint
 
     if (wei !== weiAgain || units !== unitsAgain) {
       test.skip(true, 'the balance moved between reads; this is a timing artefact, not a finding')
     }
 
+    // NON-VACUITY. On a zero balance every relation below holds trivially.
     expect(units, 'the account must be funded for this leg to measure anything').toBeGreaterThan(0n)
-    // THE IDENTITY. `USDC_VIEW_SCALE` is 1e12 and lives in one place.
-    expect(units * USDC_VIEW_SCALE, 'the two views must be one balance').toBe(wei)
+
+    /*
+     * =====================================================================
+     *  THE PLAN'S IDENTITY IS FALSE, AND IT WAS MEASURED FALSE ON THE LIVE
+     *  CHAIN RATHER THAN REASONED ABOUT.
+     * =====================================================================
+     *
+     * Task 15 step 4 pins `balanceOf * 1e12 === nativeBalance`, and
+     * AGENT-CONTEXT's example says the same ("a wallet with 100 USDC reads
+     * 100e18 and 100e6"). Read against Arc testnet, on the deployer
+     * 0xe92c64C4f36216eA773f2622f6D5f8530Ae92fD2, 2026-08-04:
+     *
+     *     balanceOf       87437450                 (6 decimals)
+     *     eth_getBalance  87437450467213720651     (18 decimals)
+     *     balanceOf*1e12  87437450000000000000     -> NOT equal
+     *
+     * The ERC-20 view TRUNCATES: it cannot represent sub-micro-USDC dust, and
+     * a real account carries dust the moment it has paid for one transaction.
+     * The equality holds only for balances that are exact multiples of 1e12 --
+     * which is the shape a hand-written example has and a live account does
+     * not. The first draft of this spec asserted it and would have failed
+     * against the chain it was written for.
+     *
+     * The TRUE relation is `units === floor(wei / 1e12)`.
+     * `packages/shared/src/balance.ts` (`unifyUsdcViews`) already implements
+     * exactly that, so this is a defect in the PLAN, not in the application.
+     * Both forms are asserted -- the true one because it is the claim, the
+     * false one because somebody will otherwise re-derive it from the plan.
+     */
+    expect(units, 'the ERC-20 view is the native view floor-divided by 1e12').toBe(
+      wei / USDC_VIEW_SCALE,
+    )
+    expect(units * USDC_VIEW_SCALE <= wei, 'lower bound of the truncation window').toBe(true)
+    expect(wei < (units + 1n) * USDC_VIEW_SCALE, 'upper bound of the truncation window').toBe(true)
+    console.warn(
+      `[e2e:arc] units=${units} wei=${wei} dust=${wei - units * USDC_VIEW_SCALE} ` +
+        `(the plan's "units*1e12 === wei" is ${units * USDC_VIEW_SCALE === wei})`,
+    )
 
     await injectedWallet(page, {
       privateKey: KEY,
+      // The page sees the WATCHED address, which may not be the signing key's.
+      reportedAddress: watched,
       rpcUrl: RPC,
       chain: getArcChain(ARC_TESTNET_CHAIN_ID),
     })

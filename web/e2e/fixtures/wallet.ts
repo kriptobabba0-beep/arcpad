@@ -65,6 +65,24 @@ export type WalletOptions = {
    * the unauthorised state, and a spec that wants the connected page says so.
    */
   readonly authorized?: boolean
+  /**
+   * The address the provider REPORTS, when it differs from the key's own.
+   *
+   * WHY THIS EXISTS, AND IT IS NOT A CONVENIENCE. The Arc leg's central claim
+   * is a READ: that the 6-decimal ERC-20 view and the 18-decimal native view
+   * are one balance, and that the screen shows the 6-decimal one. Measuring it
+   * needs an account with a NON-ZERO balance -- on a zero balance both views
+   * are zero and every relation between them holds vacuously -- but it does
+   * NOT need that account's private key.
+   *
+   * The funded testnet account's key lives in an encrypted keystore and is not
+   * available to this harness. So the provider signs with a throwaway key and
+   * REPORTS the funded address, which is exactly enough for every read path.
+   * Anything that signs will be rejected by the chain (the signature will not
+   * match the reported sender), and that is the point: the write tests are
+   * gated on a real key rather than silently passing against a mismatch.
+   */
+  readonly reportedAddress?: Address
 }
 
 type RpcRequest = { method: string; params?: unknown[] }
@@ -94,6 +112,8 @@ export async function injectedWallet(page: Page, options: WalletOptions): Promis
   }).extend(publicActions)
 
   let reported = options.reportedChainId ?? options.chain.id
+  // The address the PAGE sees. Defaults to the signing key's own.
+  const shown: Address = options.reportedAddress ?? account.address
   let authorized = options.authorized ?? false
   let rejectOnce = false
   const methods: string[] = []
@@ -106,9 +126,9 @@ export async function injectedWallet(page: Page, options: WalletOptions): Promis
       switch (request.method) {
         case 'eth_requestAccounts':
           authorized = true
-          return { ok: true, result: [account.address] }
+          return { ok: true, result: [shown] }
         case 'eth_accounts':
-          return { ok: true, result: authorized ? [account.address] : [] }
+          return { ok: true, result: authorized ? [shown] : [] }
         case 'eth_chainId':
           return { ok: true, result: numberToHex(reported) }
         case 'net_version':
@@ -240,11 +260,11 @@ export async function injectedWallet(page: Page, options: WalletOptions): Promis
         emitAccountsChanged: (accounts: string[]) => emit('accountsChanged', accounts),
       }
     },
-    { binding: BINDING, address: account.address },
+    { binding: BINDING, address: shown },
   )
 
   return {
-    address: account.address,
+    address: shown,
     rejectNext: () => {
       rejectOnce = true
     },

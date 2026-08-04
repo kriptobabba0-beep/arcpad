@@ -1,9 +1,7 @@
 import { verifyCanonical } from '@/lib/canonical'
-import { readTokenOverview } from '@/lib/read'
-import { readSearch } from '@/components/search/searchBoundary'
+import { readSearch, readTokenOverview, valueOf } from '@/lib/read'
 import type { HexAddress } from '@/components/read/types'
 import { toWire } from '@/components/read/wire'
-import { valueOf } from '@/lib/read'
 import {
   asAddressQuery,
   parseSearchParams,

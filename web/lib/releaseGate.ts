@@ -158,21 +158,23 @@ export type OpenCell = {
   closedBy(headContent: string): boolean
 }
 
-export const OPEN_CELLS: readonly OpenCell[] = [
-  {
-    id: 'search-503',
-    what: '`/api/search` answers 503 for any text query; only the pasted-address path works.',
-    why:
-      'The text search needs `searchTokens` from `@arcpad/db` (pg_trgm, migration 008, ' +
-      '`SORTS.relevance`) and that package belongs to another track. ' +
-      '`web/components/search/searchBoundary.ts` returns `unavailable` on purpose: an ' +
-      'empty result list would tell the user there is nothing to find, which is a ' +
-      'different and false statement. The modal draws an explicit "search is ' +
-      'unavailable" message.',
-    witness: 'packages/db/src/index.ts',
-    closedBy: (headContent) => /\bsearchTokens\b/.test(headContent),
-  },
-]
+/**
+ * DECLARED CELLS -- CURRENTLY EMPTY, AND THAT IS THE MECHANISM WORKING.
+ *
+ * `search-503` lived here: `/api/search` answered 503 for every text query
+ * because `searchTokens` had not landed in `@arcpad/db`. Its witness was
+ * `packages/db/src/index.ts` AT HEAD, and when `c035a88` committed the query
+ * the gate turned red with "wire it up and delete the cell". It was wired
+ * (`web/lib/read.ts`'s `readSearch`), the stub `searchBoundary.ts` was deleted,
+ * and the cell went with it.
+ *
+ * The list being empty does NOT make the mechanism untested: `judgeOpenCells`
+ * is a pure function of a witness reader and `web/test/releaseGate.test.ts`
+ * exercises all three verdicts -- open, expired, unreadable -- against a
+ * synthetic cell. An allowlist that has never matched anything is an allowlist
+ * nobody knows is broken.
+ */
+export const OPEN_CELLS: readonly OpenCell[] = []
 
 export type CellVerdict = {
   readonly cell: OpenCell
@@ -186,8 +188,20 @@ export type CellVerdict = {
  * more, and an uncheckable allowance is the thing this mechanism exists to
  * prevent.
  */
-export function judgeOpenCells(readHead: (path: string) => string | null): CellVerdict[] {
-  return OPEN_CELLS.map((cell) => {
+export function judgeOpenCells(
+  readHead: (path: string) => string | null,
+  /**
+   * The cells to judge. Defaults to the declared list.
+   *
+   * IT IS A PARAMETER SO THE MECHANISM CAN BE TESTED WHEN THE LIST IS EMPTY.
+   * With the list hard-wired, every assertion about expiry would pass
+   * vacuously the moment the last cell was closed -- and the last cell has now
+   * been closed. `web/test/releaseGate.test.ts` passes a fixture; the gate
+   * itself never does.
+   */
+  cells: readonly OpenCell[] = OPEN_CELLS,
+): CellVerdict[] {
+  return cells.map((cell) => {
     const content = readHead(cell.witness)
     if (content === null) {
       return {

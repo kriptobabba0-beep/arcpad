@@ -20,6 +20,8 @@ import {
   listHolders,
   listTokens,
   listTrades,
+  type SearchSortKey,
+  searchTokens,
   type SortKey,
   type TokenOverview,
   type TradeRow,
@@ -192,6 +194,65 @@ export async function readTokenList(params: ListParams): Promise<ReadResult<Page
     const key = CURSOR_KEY[params.sort]
     return {
       value: { rows, nextCursor: nextCursorFrom(rows, params.limit, key) },
+      indexer,
+    }
+  })
+}
+
+export type SearchParams = {
+  readonly q: string
+  readonly sort: SearchSortKey
+  readonly ageDays: number | null
+  readonly cursor: string | null
+  readonly limit: number
+}
+
+/**
+ * ⌘K'NIN METIN ARAMASI.
+ *
+ * `web/components/search/searchBoundary.ts` YERINE gecer. O dosya `searchTokens`
+ * `packages/db`'ye inene kadar durdu ve her cagriya `unavailable` dondu -- bir
+ * yer tutucu degil, o gunun dogrusu. Sorgu `c035a88` ile indi, dolayisiyla
+ * sinir kalkti ve rota buradan okuyor.
+ *
+ * =========================================================================
+ *  IMLEC BURADA YENIDEN TURETILMEZ, ve bu `readTokenList`ten AYRILDIGI YER.
+ * =========================================================================
+ *
+ * `listTokens` icin `nextCursor`'u yukaridaki `CURSOR_KEY` haritasi hesaplar --
+ * yani sorgunun ORDER BY ifadesi ile bu dosyadaki bir lambda AYNI seyi iki kez
+ * anlatir ve sessizce ayrisabilir. `searchTokens` bu kapiyi kapatiyor:
+ * `nextCursor`'u SORGUNUN KENDISI dondurur (`(${key})::text AS cursor_key`),
+ * cunku `relevance` anahtari `similarity()` uzerinden hesaplanir ve TypeScript'te
+ * yeniden hesaplanamaz. Burada yapilan tek sey onu dizeye cevirmektir.
+ *
+ * =========================================================================
+ *  IMLEC 64 BITE SIGMAZ VE `Number`A HIC DOKUNMAZ.
+ * =========================================================================
+ *
+ * Anahtar `amount * 2^63 + created_seq` olarak PAKETLENIR (packages/db,
+ * migration 008): `created_seq` `[0, 2^63)` araliginda oldugu icin bu esleme
+ * konumsal ve BIREBIRDIR, yani tek bir karsilastirma `(amount, created_seq)`
+ * sozluk sirasinin ta kendisidir. Bedeli boyudur -- olculdu: testnet acilis
+ * market cap'inde `marketCap` imleci **38 basamak**, teorik ust sinir 97.
+ * `Number.MAX_SAFE_INTEGER` 16 basamaktir, yani `Number(cursor)` 17. basamaktan
+ * itibaren hassasiyet kaybeder ve keyset'i YANLIS SATIRA oturtur: tam olarak bu
+ * anahtarin onlemek icin var oldugu sessiz tekrar/atlama. `parseCursor` zaten
+ * `BigInt` kullanir; burasi onu tekrar etmez, ADIYLA anar.
+ */
+export async function readSearch(params: SearchParams): Promise<ReadResult<Page<TokenOverview>>> {
+  return guard(async () => {
+    const { rows, nextCursor, indexer } = await searchTokens(getPool(), params.q, {
+      sort: params.sort,
+      ...(params.ageDays === null ? {} : { ageDays: params.ageDays }),
+      cursor: parseCursor(params.cursor),
+      limit: params.limit,
+    })
+    return {
+      // BOS SONUC BIR SAYFADIR, `notFound` DEGIL. "Hicbir sey eslesmedi" ile
+      // "arama calismiyor" iki ayri cumledir ve yalnizca biri dogrudur;
+      // ikisini ayni yanita katlamak, calisan bir aramaya bozuk dedirtir.
+      value: { rows, nextCursor: nextCursor === null ? null : nextCursor.toString() },
       indexer,
     }
   })

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
@@ -8,6 +8,7 @@ import {
   EscapeHatchPresent,
   GATE_STEPS,
   judgeOpenCells,
+  type OpenCell,
   OPEN_CELLS,
   REQUIRED_STEPS,
 } from '@/lib/releaseGate'
@@ -219,49 +220,87 @@ describe('the workflow really runs what these tests assert', () => {
 })
 
 describe('declared open cells', () => {
-  it('the search 503 is DECLARED, not discovered', () => {
-    const cell = OPEN_CELLS.find((entry) => entry.id === 'search-503')
-    expect(cell, '`/api/search` answering 503 must be a named allowance').toBeDefined()
-    expect(cell!.why.length).toBeGreaterThan(80)
+  /**
+   * THE LIST IS EMPTY TODAY, SO THE MECHANISM IS TESTED AGAINST A SYNTHETIC
+   * CELL RATHER THAN AGAINST THE LIST.
+   *
+   * `search-503` was the only entry and it EXPIRED for real when `c035a88`
+   * committed `searchTokens`; the gate said so, the route was wired and the
+   * cell was deleted. Rewriting these tests to iterate `OPEN_CELLS` would have
+   * made all three pass vacuously the moment the list emptied -- the exact
+   * shape of the completeness check that was vacuous for one action earlier in
+   * this project. So the reader is the input, and the cell is a fixture.
+   */
+  const cell = (): OpenCell => ({
+    id: 'fixture',
+    what: 'a thing that is missing',
+    why: 'a stated reason long enough to be a reason and not a shrug, with a named owner',
+    witness: 'packages/db/src/index.ts',
+    closedBy: (headContent) => /\bsearchTokens\b/.test(headContent),
   })
 
   it('a cell stays open while its reason holds, and EXPIRES when it stops', () => {
-    // The reason: `@arcpad/db` does not export `searchTokens` at HEAD.
-    const open = judgeOpenCells(() => 'export { listTokens } from "./queries"')
+    const open = judgeOpenCells(() => 'export { listTokens } from "./queries"', [cell()])
     expect(open.every((verdict) => !verdict.expired)).toBe(true)
 
-    // THE CONTROL, and the half that matters: the day the other track commits
-    // `searchTokens`, this allowance must stop being granted.
-    const closed = judgeOpenCells(() => 'export { listTokens, searchTokens } from "./queries"')
+    // THE HALF THAT MATTERS: the day the witness satisfies the closing
+    // condition, the allowance must stop being granted.
+    const closed = judgeOpenCells(
+      () => 'export { listTokens, searchTokens } from "./queries"',
+      [cell()],
+    )
     expect(closed.some((verdict) => verdict.expired)).toBe(true)
   })
 
   it('an unreadable witness EXPIRES the cell rather than granting it', () => {
-    // A witness that moved is a reason nobody can check. An allowance nobody
-    // can check is the thing this mechanism exists to prevent.
-    const gone = judgeOpenCells(() => null)
+    // A witness that moved is a reason nobody can check, and an allowance
+    // nobody can check is the thing this mechanism exists to prevent.
+    const gone = judgeOpenCells(() => null, [cell()])
     expect(gone.every((verdict) => verdict.expired)).toBe(true)
   })
 
-  it('every cell names a witness that EXISTS at HEAD right now', () => {
-    // Otherwise the previous test is the only thing keeping a typo honest, and
-    // it would report every cell as expired for the wrong reason.
-    for (const cell of OPEN_CELLS) {
-      const content = execFileSync('git', ['show', `HEAD:${cell.witness}`], {
+  it('every DECLARED cell names a witness that exists at HEAD, and states a reason', () => {
+    // Vacuous while the list is empty, and deliberately kept: the day a cell is
+    // added, a typo in its witness must be caught here rather than reported as
+    // an expiry for the wrong reason.
+    for (const entry of OPEN_CELLS) {
+      expect(entry.why.length, `${entry.id} is granted without a reason`).toBeGreaterThan(80)
+      const content = execFileSync('git', ['show', `HEAD:${entry.witness}`], {
         cwd: REPO_ROOT,
         encoding: 'utf8',
       })
-      expect(content.length, `${cell.witness} is empty at HEAD`).toBeGreaterThan(0)
+      expect(content.length, `${entry.witness} is empty at HEAD`).toBeGreaterThan(0)
     }
   })
 
-  it('the shim the cell describes is still the one in the code', () => {
-    // A cell that describes a shim somebody already deleted is a stale note,
-    // and a stale note is indistinguishable from a lie.
-    const boundary = readFileSync(
-      join(process.cwd(), 'components/search/searchBoundary.ts'),
-      'utf8',
-    )
-    expect(boundary).toContain("reason: 'unavailable'")
+  it('the search stub is GONE, and the route reads the real query', () => {
+    /*
+     * THE CELL'S CLOSURE, ASSERTED AS CODE RATHER THAN AS A DELETED COMMENT.
+     *
+     * Deleting an allowance is only honest if the thing it excused is actually
+     * gone. `components/search/searchBoundary.ts` returned `unavailable` for
+     * every query; both halves are checked, because a route that still
+     * imported a deleted module would not compile but a route that imported a
+     * NEW stub would.
+     */
+    expect(existsSync(join(process.cwd(), 'components/search/searchBoundary.ts'))).toBe(false)
+    const route = readFileSync(join(process.cwd(), 'app/api/search/route.ts'), 'utf8')
+    expect(route).toContain("from '@/lib/read'")
+    const read = readFileSync(join(process.cwd(), 'lib/read.ts'), 'utf8')
+    expect(read).toContain('searchTokens')
+
+    /*
+     * THE CURSOR CHECK LIVES IN `test/search/route.test.tsx`, NOT HERE, AND
+     * THE FIRST ATTEMPT IS WHY.
+     *
+     * This test originally asserted that `lib/read.ts` contains no
+     * `Number(cursor)`. It failed -- on the DOC COMMENT four lines above the
+     * code, which explains why `Number(cursor)` is wrong. A source-text scan
+     * that cannot tell prose from code is the same defect as the CI gate that
+     * matched a comment, committed by the person who wrote the test warning
+     * about it. The property is behavioural, so it is measured behaviourally:
+     * a 38-digit cursor survives the URL round trip and a 98-digit one does
+     * not.
+     */
   })
 })
