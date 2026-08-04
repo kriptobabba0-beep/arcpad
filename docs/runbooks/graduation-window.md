@@ -278,11 +278,14 @@ pnpm --filter @arcpad/keeper drill expiry
 
 `keeper/alerts.log` is already ignored by `.gitignore`'s `*.log`, so writing it inside the tree leaves nothing to clean up.
 
-### You cannot point the shipped watcher at the rehearsal factory
+### You cannot point the shipped watcher at the rehearsal factory — but a harness can, and it was
 
-There is a real proposal standing on the **rehearsal** factory `0xfed991C6B9AD7144Df3d670c6b9EcF3620ac6eA5` (`pendingGraduationTarget` `0x…dEaD`, `eta` 2026-08-03T22:26:20Z, expiring 2026-08-06T22:26:20Z — all four read off the chain on 2026-08-01). It looks like a free live drill. **It is not reachable**, and the reason is worth knowing:
+There is a real proposal standing on the **rehearsal** factory `0xfed991C6B9AD7144Df3d670c6b9EcF3620ac6eA5` (`pendingGraduationTarget` `0x…dEaD`, `eta` 2026-08-03T22:26:20Z, expiring 2026-08-06T22:26:20Z — all four read off the chain on 2026-08-01 and re-read on 2026-08-03). It looks like a free live drill. **The shipped watcher cannot reach it**, and the reason is worth knowing:
 
 - Redirecting with `KEEPER_ADDRESS_BOOK_DIR` fails in `packages/shared`, by field name: `launchFactory: is 0xfed991C6… but CREATE2(0x4e59…56C, <FACTORY_SALT>, <factoryInitcodeHash>) derives 0x0d75a4fF…`. The book must derive its own factory address, and no edit to a book can make a non-canonical address derive.
+- **And no `factoryInitcodeHash` exists that would make it derive.** Measured from the deploy broadcast (`contracts/broadcast/Governance.s.sol/5042002/deployRehearsalStack-latest.json`): the rehearsal stack was deployed through the same CREATE2 factory but under **different salts** — `0x95d243550cbbe9c4f2479e433038d2b129eb6f7fbeb73ba581eb10fd1065ba2d` for the factory, `0xead6bc96d043a2953a53fce98af83d1f634ac5d1d4a83a6614eecbfb4015f40c` for the escrow — while `packages/shared` derives with the fixed `keccak("arcpad.LaunchFactory.v1")`/`keccak("arcpad.FeeEscrow.v1")`. A book can carry any hash it likes; the salt it is checked against is a constant. **See §9 — this is the one thing that can stop the watcher following a Phase 2 redeploy.**
+
+So the drill was run **outside the config loader instead**: `.superpowers/sdd/2026-07-30-arcpad-phase1d-deploy/live-drill.mts` supplies the factory address directly and leaves everything else real — the real `viemChainReader` against `https://rpc.testnet.arc.network`, the real `runWatcher`, the real `fileSink`, and the allowlist parsed from the committed `expected-governance.json`. It contains no addresses; factory, start block and sink path are required env variables, so nothing committed redirects a book or a governance record. What it observed is in **Drill status** below.
 - **`assertFactoryMatchesGovernance` would *not* have stopped it.** Measured: the rehearsal factory reports the *same* governor Safe, so the startup pin passes against it. The pin catches a wrong **governor**, not a wrong **factory**. Every sibling factory this Safe deploys walks straight through it — which is exactly the stale-drill-directory shape the pin was written for.
 
 So the redirect hazard is closed harder than the keeper's own comments claimed, but it is closed by `packages/shared/src/addresses.ts`, not by the keeper. **If that CREATE2 check is ever relaxed, the keeper has no second line here.**
@@ -314,7 +317,29 @@ What *is* executed by the unit suite: the drill's own logic and its failure mode
 
 ---
 
-## 9. Definitions, so you do not have to open the contracts
+## 9. When the factory is redeployed (Phase 2)
+
+Phase 2 gives `LaunchFactory` a `feeSchedule` constructor argument. The initcode changes, so the CREATE2 address changes, so `0x0d75a4fFb8CD6dB4237557E9519591b94d6Ab439` is superseded and `contracts/deploy/addresses.5042002.json` is regenerated.
+
+**The watcher needs no code change to follow it.** Factory address, start block, chain id and chain key all come from that book; `keeper/` contains no factory literal (the only occurrence of the live address in the package is inside a comment). Verified by running the real watcher against a *different* real factory on the live chain — see §8, Drill status.
+
+Four things do need attention, in this order.
+
+**1. The salt, and it is the only thing that can actually stop you.** `packages/shared/src/addresses.ts` pins the book's `launchFactory` to `CREATE2(0x4e59…56C, keccak("arcpad.LaunchFactory.v1"), factoryInitcodeHash)`. If Phase 2 keeps that salt, the new initcode gives a new hash, the new hash derives the new address, and the book is accepted with no change anywhere. **If Phase 2 bumps the salt — `…v1` to `…v2`, which is the natural thing to do for a redeploy — then no book can name the new factory, `parseAddressBook` rejects it by field name, and the keeper cannot start against it until `FACTORY_SALT` in `packages/shared` moves too.** This is not hypothetical: the rehearsal stack was deployed under non-canonical salts and is unreachable through a book for exactly this reason (§8).
+
+**2. Clear the drill's repo variables — do not update them.** `.github/workflows/graduation-drill.yml` passes `vars.ARC_FACTORY_ADDRESS`, `vars.ARC_START_BLOCK` and `vars.KEEPER_CHAIN_KEY` into the keeper. The book is the *source*; those variables are only a cross-check, and a disagreement throws by field name. After the redeploy the old values disagree, so the drill goes red for a configuration reason rather than a monitoring one. Blank means unset means "take the book", so clearing them is the correct action; updating them is also correct, but only if it happens in the same change as the book.
+
+**3. The cursor resets itself, and says so.** `keeper/.cursor` carries `chainId`, `factory` and `startBlock`. A cursor written for the old factory is ignored, the scan restarts from the new `startBlock`, and one `OK … cursor-reset:` line names both addresses. No operator action is required and none should be taken.
+
+> Before this, the file was keyed only by its path. The old factory's curve set would have been counted into the new factory's exposure, the old governance history would have kept firing `historic-*` findings against it, and — the sharp one — if the new `startBlock` were *below* the stale `lastScannedBlock`, `from = lastScannedBlock + 1` would have skipped the intervening range outright. `launchCount` cannot see that: it is an oracle for `Launched` only, so a skipped range drops `GraduationTargetProposed`, `GraduationTargetChanged` and `ProtocolTreasuryChanged` in silence — the exact blind spot those three streams were added to close.
+
+**4. Expect the first scan to take several polls, and expect `log-scan-failed` pages while it does.** A redeploy means a cold cursor, and a cold cursor means walking the whole range in 10,000-block chunks (Arc rejects wider `eth_getLogs` with `-32012 requested range too large`). **Measured 2026-08-03 against `https://rpc.testnet.arc.network`:** a cold scan of ~660,000 blocks exhausts the 14-attempt rate-limit budget at around chunk 15 (`Request exceeds defined limit` / `rate limit exceeded`). The scan now writes the successfully-scanned prefix before rethrowing, so every poll advances and the scan converges.
+
+> Until 2026-08-04 it wrote nothing on failure, so each poll restarted at the first chunk and **the scan could never complete**. That is worse than it sounds: `runWatcher` does not emit a heartbeat for a poll that failed, so the watcher produced pages but **zero heartbeats** — and §8's drill reads zero heartbeats as *there was no watcher*. Measured: 45 s of live running, 2 pages, 0 heartbeats, no cursor file. The window classification was correct throughout; only the liveness evidence was missing. If you ever see a `log-scan-failed` page with no heartbeats behind it, this is the shape.
+
+---
+
+## 10. Definitions, so you do not have to open the contracts
 
 | Term | Meaning |
 |---|---|

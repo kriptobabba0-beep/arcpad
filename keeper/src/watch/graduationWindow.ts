@@ -773,17 +773,62 @@ export interface CursorStore {
 }
 
 /**
- * SURUM ALANI VARDIR VE GEREKLIDIR. Imlec artik governance gecmisini de tasir;
- * eski sekildeki bir dosyayi "gecmis bos" diye okumak, YENIDEN BASLATMANIN
- * gercek bir uzlasmayi UNUTMASI demek olurdu. Tanimadigi surumu YOK sayar
- * (null doner, bastan tarar) -- tam bir yeniden tarama ucuzdur, eksik bir
- * gecmis degil. Gecerli JSON ama imlec hic degilse yine de FIRLATIR: "tahmin
- * etme" kurali korunur.
+ * IMLECIN KIME AIT OLDUGU. Dosya yolu bir KIMLIK DEGILDIR.
+ *
+ * Faz 2 `LaunchFactory`ye bir `feeSchedule` yapici argumani ekliyor, yani
+ * initcode -- ve onunla birlikte CREATE2 adresi -- degisecek. Defter yeni
+ * adresi tasiyacak, keeper onu KOD DEGISIKLIGI OLMADAN izleyecek; ama imlec
+ * dosyasinin yolu `keeper/.cursor` OLARAK KALIR. Kimliksiz bir imlecte bunun
+ * sonucu sessiz degil ama yanlistir ve UC AYRI SEKILDE bozar:
+ *
+ *   1. `curves` ESKI factory'nin curve'lerini tasir. `exposure()` onlari YENI
+ *      factory'nin riski gibi toplar.
+ *   2. `history` eski factory'nin oneri/hazine kayitlarini tasir, yani
+ *      `historic-*` bulgulari yeni factory'ye karsi surekli ates eder.
+ *   3. EN KOTUSU: `lastScannedBlock` eski taramanindir. Yeni factory'nin
+ *      `startBlock`i ondan KUCUKSE (baska bir kardes factory'yi izlemeye
+ *      gecmek tam olarak bu sekildir) `from = lastScannedBlock + 1` o araligi
+ *      ATLAR -- ve `if (from < startBlock) from = startBlock` yalnizca YUKARI
+ *      cekebilir, asagi cekemez. `launchCount` orakli SADECE `Launched`i
+ *      kapsar; atlanan aralikta kalan uc governance olayi SESSIZCE kaybolur,
+ *      ki o uc akis round 1'de tam da bu korluk icin eklenmisti.
+ *
+ * Bu yuzden kimlik ZORUNLU bir argumandir: her imlec kurulumu, hangi factory
+ * icin oldugunu SOYLEMEK ZORUNDADIR. Uyusmayan bir imlec YOK sayilir (bastan
+ * tarama), REDDEDILMEZ -- baslamayan bir izleyici, yanlis imlecli bir
+ * izleyiciden daha kotudur.
  */
-const CURSOR_VERSION = 2
+export type CursorIdentity = { chainId: number; factory: Address; startBlock: bigint }
 
-/** Yeniden baslatma genesis'ten yeniden taramasin diye. `keeper/.cursor`. */
-export function fileCursorStore(path: string): CursorStore {
+/**
+ * SURUM ALANI VARDIR VE GEREKLIDIR. Imlec artik governance gecmisini ve
+ * kimligini de tasir; eski sekildeki bir dosyayi "gecmis bos" diye okumak,
+ * YENIDEN BASLATMANIN gercek bir uzlasmayi UNUTMASI demek olurdu. Tanimadigi
+ * surumu YOK sayar (null doner, bastan tarar) -- tam bir yeniden tarama
+ * ucuzdur, eksik bir gecmis degil. Gecerli JSON ama imlec hic degilse yine de
+ * FIRLATIR: "tahmin etme" kurali korunur.
+ *
+ * 2 -> 3: kimlik alanlari eklendi. Surum artisi, bugun diskte duran kimliksiz
+ * v2 dosyalarinin da (hangi factory'ye ait olduklari BILINEMEZ) yok
+ * sayilmasini saglar.
+ */
+const CURSOR_VERSION = 3
+
+/**
+ * Yeniden baslatma genesis'ten yeniden taramasin diye. `keeper/.cursor`.
+ *
+ * @param identity Bkz. `CursorIdentity`. Uyusmazsa imlec YOK sayilir.
+ * @param onReset  Yok sayma SESSIZ OLMAZ: cagiran taraf bunu alarm akisina
+ *                 baglar. Sayfa DEGIL -- redeploy'da beklenen ve kendini
+ *                 iyilestiren bir olaydir -- ama kayda gecmelidir, cunku
+ *                 "maruziyet neden bir anda sifira dustu" sorusunun cevabi
+ *                 budur.
+ */
+export function fileCursorStore(
+  path: string,
+  identity: CursorIdentity,
+  onReset?: (reason: string) => void,
+): CursorStore {
   return {
     read(): Cursor | null {
       let raw: string
@@ -799,6 +844,15 @@ export function fileCursorStore(path: string): CursorStore {
       if (parsed['version'] !== CURSOR_VERSION) return null
       const history = parsed['history'] as Record<string, unknown> | undefined
       if (typeof history !== 'object' || history === null) return null
+
+      const mismatch = identityMismatch(parsed, identity)
+      if (mismatch !== null) {
+        onReset?.(
+          `${path} was built for ${mismatch}, so it is being ignored and the log scan restarts from block ${identity.startBlock}. This is expected after a factory redeploy; the exposure figure rebuilds over the next few polls.`,
+        )
+        return null
+      }
+
       return {
         lastScannedBlock: BigInt(parsed['lastScannedBlock']),
         curves: (parsed['curves'] as unknown[]).map((entry, i) =>
@@ -817,6 +871,9 @@ export function fileCursorStore(path: string): CursorStore {
         `${JSON.stringify(
           {
             version: CURSOR_VERSION,
+            chainId: identity.chainId,
+            factory: identity.factory,
+            startBlock: identity.startBlock.toString(),
             lastScannedBlock: cursor.lastScannedBlock.toString(),
             curves: cursor.curves,
             history: cursor.history,
@@ -828,6 +885,27 @@ export function fileCursorStore(path: string): CursorStore {
       )
     },
   }
+}
+
+/** Uyusmayan ALANI ADIYLA anlatir; `null` ise imlec bu izleyiciye aittir. */
+function identityMismatch(
+  parsed: Record<string, unknown>,
+  identity: CursorIdentity,
+): string | null {
+  const factory = parsed['factory']
+  if (typeof factory !== 'string' || getAddress(factory) !== identity.factory) {
+    return `factory ${typeof factory === 'string' ? factory : JSON.stringify(factory)}, not ${identity.factory}`
+  }
+  if (parsed['chainId'] !== identity.chainId) {
+    return `chainId ${JSON.stringify(parsed['chainId'])}, not ${identity.chainId}`
+  }
+  if (
+    typeof parsed['startBlock'] !== 'string' ||
+    BigInt(parsed['startBlock']) !== identity.startBlock
+  ) {
+    return `startBlock ${JSON.stringify(parsed['startBlock'])}, not ${identity.startBlock}`
+  }
+  return null
 }
 
 function readAddressList(value: unknown, field: string): Address[] {
@@ -894,6 +972,18 @@ export async function scanFactoryLogs(
   let from = cursor === null ? startBlock : cursor.lastScannedBlock + 1n
   if (from < startBlock) from = startBlock
 
+  const sorted = (set: Set<Address>): Address[] =>
+    [...set].sort((a, b) => (a.toLowerCase() < b.toLowerCase() ? -1 : 1))
+  const snapshot = (lastScannedBlock: bigint): Cursor => ({
+    lastScannedBlock,
+    curves: sorted(seen),
+    history: {
+      proposedTargets: sorted(proposed),
+      landedTargets: sorted(landed),
+      treasuries: sorted(treasuries),
+    },
+  })
+
   while (from <= head) {
     const to = from + chunk - 1n > head ? head : from + chunk - 1n
     let logs: ReadonlyArray<ObservedLog>
@@ -905,9 +995,32 @@ export async function scanFactoryLogs(
         toBlock: to,
       })
     } catch (cause) {
-      // IMLEC YAZILMAZ. Basarili on eki kaydetmek hizli olurdu ama bir sonraki
-      // kosuya "bu araligi taradim" demenin yollarindan biri de yarim yazilmis
-      // bir imlectir; yeniden taramak ucuz, eksik taramak degil.
+      // BASARILI ON EK KAYDEDILIR, VE BU ONCEKI KARARIN TERSIDIR.
+      //
+      // Onceki hal hicbir sey yazmiyordu, gerekcesi "yarim yazilmis bir imlec
+      // bir sonraki kosuya 'bu araligi taradim' der"di. O gerekce, kaydedilen
+      // aralik GERCEKTEN taranmis oldugu icin gecerli degil: `from` DUSEN
+      // parcanin baslangicidir, dolayisiyla `from - 1` son BASARILI blogudur ve
+      // taranmamis tek bir blok bile "tarandi" diye kaydedilmez.
+      //
+      // KARSI TARAFI OLCULDU, canli Arc testnet'e karsi, 2026-08-03:
+      //
+      //   startBlock 54519071, head ~55182283 -> 10.000'lik 67 parca.
+      //   14 denemelik geri cekilme butcesi 15. parcada tukendi
+      //   (`Request exceeds defined limit / rate limit exceeded`), tarama
+      //   FIRLATTI, imlec YAZILMADI, ve bir sonraki poll BIRINCI PARCADAN
+      //   basladi. Yani tarama HICBIR ZAMAN ilerlemez: kalp atisi HIC
+      //   yayilmaz (`runWatcher` basarisiz poll'da atmaz), maruziyet kalici
+      //   olarak UNMEASURED kalir, ve haftalik tatbikat "there was no
+      //   watcher" der -- CALISAN ve dogru sayfa cikaran bir izleyici icin.
+      //   Olculdu: 45 saniyelik canli kosumda 2 sayfa, SIFIR kalp atisi.
+      //
+      // Bu tam olarak Faz 2 redeploy'unun uretecegi durumdur: yeni factory =
+      // yeni `startBlock` = SOGUK imlec = tam aralik taramasi.
+      //
+      // Bir sey KAYDEDILMEZ: `from === startBlock` iken, yani hicbir parca
+      // tamamlanmamisken. O halde yazilacak ilerleme de yoktur.
+      if (from > startBlock) store?.write(snapshot(from - 1n))
       throw new LogScanError(from, to, cause)
     }
     for (const log of logs) {
@@ -939,17 +1052,9 @@ export async function scanFactoryLogs(
     from = to + 1n
   }
 
-  const sorted = (set: Set<Address>): Address[] =>
-    [...set].sort((a, b) => (a.toLowerCase() < b.toLowerCase() ? -1 : 1))
-
-  const curves = sorted(seen)
-  const history: GovernanceHistory = {
-    proposedTargets: sorted(proposed),
-    landedTargets: sorted(landed),
-    treasuries: sorted(treasuries),
-  }
-  store?.write({ lastScannedBlock: head, curves, history })
-  return { curves, history }
+  const complete = snapshot(head)
+  store?.write(complete)
+  return { curves: complete.curves, history: complete.history }
 }
 
 /**

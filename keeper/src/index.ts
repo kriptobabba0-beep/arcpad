@@ -39,7 +39,6 @@ async function main(): Promise<void> {
   // `assertFactoryMatchesGovernance`. Bir poll bile atilmadan once duser.
   await assertFactoryMatchesGovernance(reader, watcher.factory, watcher.allowlist)
 
-  const store = fileCursorStore(watcher.cursorPath)
   const liveness = createLiveness({ pollIntervalMs: config.pollIntervalMs }, Date.now())
   const throttle = createThrottle({ repeatAfterMs: watcher.alertRepeatMs })
 
@@ -57,6 +56,18 @@ async function main(): Promise<void> {
     watcher.alertLogPath === undefined
       ? consoleSink
       : multiSink(consoleSink, fileSink(watcher.alertLogPath))
+
+  // IMLEC LAVABODAN SONRA KURULUR, cunku BASKA BIR FACTORY'YE ait bir imleci
+  // yok saymak SESSIZ OLMAMALIDIR. Sayfa degil -- Faz 2 redeploy'unda bu
+  // beklenen ve kendini iyilestiren bir olaydir -- ama "maruziyet neden bir
+  // anda sifirdan yeniden kuruluyor" sorusunun cevabi bu satirdir.
+  const store = fileCursorStore(
+    watcher.cursorPath,
+    { chainId: watcher.chainId, factory: watcher.factory, startBlock: watcher.startBlock },
+    (reason) => {
+      alert('ok', `cursor-reset: ${reason}`, sink)
+    },
+  )
 
   console.log(
     `keeper ready chainId=${ARC_TESTNET_CHAIN_ID} pollIntervalMs=${config.pollIntervalMs} dryRun=${config.dryRun}`,

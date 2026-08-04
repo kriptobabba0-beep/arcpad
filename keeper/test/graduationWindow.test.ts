@@ -21,6 +21,7 @@ import {
   type ChainReader,
   classify,
   computeWindow,
+  type CursorIdentity,
   type CursorStore,
   exposure,
   fileCursorStore,
@@ -48,6 +49,25 @@ const EVIL_TREASURY = addr('bad7')
 const CURVE_A = addr('c0a')
 const CURVE_B = addr('c0b')
 const CURVE_C = addr('c0c')
+/** Faz 2'nin yeni `LaunchFactory`si gibi: AYNI zincir, BASKA adres. */
+const FACTORY_2 = addr('fac8')
+
+/**
+ * Imlec kimligi ZORUNLU bir argumandir (bkz. `CursorIdentity`), yani her
+ * kurulum hangi factory icin oldugunu SOYLEMEK ZORUNDADIR. Testler icin
+ * varsayilan kimlik; ayrismayi test edenler acikca ezer.
+ */
+const CHAIN_ID = 5_042_002
+const cursorAt = (
+  path: string,
+  identity?: Partial<CursorIdentity>,
+  onReset?: (reason: string) => void,
+): CursorStore =>
+  fileCursorStore(
+    path,
+    { chainId: CHAIN_ID, factory: FACTORY, startBlock: 1n, ...identity },
+    onReset,
+  )
 
 /** 2026-06-01T00:26:40Z. Gercekci bir unix zamani; ISO ciktisi okunabilir olsun diye. */
 const NOW = 1_780_000_000n
@@ -79,6 +99,11 @@ type Fixture = {
   curves?: Record<string, CurveFixture>
   /** Log taramasinin RPC hatasi atmasi. */
   failLogs?: boolean
+  /**
+   * Log taramasinin YALNIZCA bu blogu iceren parcadan itibaren dusmesi.
+   * Canli sekil budur: ilk N parca gecer, sonra hiz siniri butceyi tuketir.
+   */
+  failLogsFrom?: bigint
   /** Log taramasinin SESSIZCE bos donmesi -- dusmus bir abonelik. */
   dropLogs?: boolean
   /** Slot okumalarinin atmasi. */
@@ -143,6 +168,9 @@ function syntheticChain(fixture: Fixture = {}): SyntheticChain {
       })
       if (fixture.failLogs) {
         return Promise.reject(new Error('query returned more than 10000 results'))
+      }
+      if (fixture.failLogsFrom !== undefined && query.toBlock >= fixture.failLogsFrom) {
+        return Promise.reject(new Error('rate limit exceeded'))
       }
       if (fixture.dropLogs) return Promise.resolve([])
       const inRange = <T extends { block: bigint }>(entry: T): boolean =>
@@ -577,17 +605,54 @@ describe('knownCurves', () => {
     await expect(knownCurves(client, FACTORY, 1n)).rejects.toBeInstanceOf(LogScanError)
   })
 
-  it('tarama basarisiz olursa imleci YAZMAZ -- yeniden baslatma araligi tekrar tarar', async () => {
+  it('ILK parca duserse imlec YAZILMAZ -- yazilacak ilerleme yoktur', async () => {
     const path = join(tempDir(), '.cursor')
-    const store = fileCursorStore(path)
+    const store = cursorAt(path)
     const client = syntheticChain({ blockNumber: 30n, failLogs: true })
     await expect(knownCurves(client, FACTORY, 1n, { store })).rejects.toBeInstanceOf(LogScanError)
     expect(store.read()).toBeNull()
   })
 
+  /**
+   * BASARILI ON EK KAYDEDILIR, ve bunun olculmus bir sebebi vardir.
+   *
+   * Onceki hal hicbir sey yazmiyordu, dolayisiyla parca 15'te dusen bir tarama
+   * bir sonraki poll'da PARCA 1'DEN basliyordu. Canli Arc'ta (67 parcalik
+   * soguk tarama, hiz siniri 15. parcada geri cekilme butcesini tuketiyor) bu
+   * demek ki tarama HICBIR ZAMAN tamamlanmaz: kalp atisi HIC yayilmaz, ve
+   * haftalik tatbikat calisan bir izleyici icin "there was no watcher" der.
+   * Faz 2 redeploy'u tam olarak bu durumu uretir (yeni factory = soguk imlec).
+   *
+   * TARANMAMIS BLOK "TARANDI" DIYE KAYDEDILMEZ: kaydedilen deger DUSEN
+   * parcanin bir ONCESIDIR, ve bu test onu blok blok pinler.
+   */
+  it('ORTADA duserse BASARILI ON EK kaydedilir ve bir sonraki kosum ORADAN devam eder', async () => {
+    const path = join(tempDir(), '.cursor')
+    const store = cursorAt(path)
+    // [1,10] ve [11,20] gecer, [21,30] duser.
+    const client = syntheticChain({
+      blockNumber: 30n,
+      launched: [{ block: 4n, curve: CURVE_A }],
+      failLogsFrom: 21n,
+    })
+    await expect(knownCurves(client, FACTORY, 1n, { store, chunk: 10n })).rejects.toBeInstanceOf(
+      LogScanError,
+    )
+
+    const saved = store.read()
+    expect(saved?.lastScannedBlock).toBe(20n)
+    expect(saved?.curves).toEqual([CURVE_A])
+
+    // Bir sonraki kosum 21'DEN devam eder, 1'den DEGIL.
+    const next = syntheticChain({ blockNumber: 30n, launched: [{ block: 25n, curve: CURVE_B }] })
+    const found = await knownCurves(next, FACTORY, 1n, { store, chunk: 10n })
+    expect(next.logQueries[0]?.fromBlock).toBe(21n)
+    expect(found).toEqual([CURVE_A, CURVE_B].sort())
+  })
+
   it('imleci diske yazar ve yeniden baslatma genesis"ten taramaz', async () => {
     const path = join(tempDir(), '.cursor')
-    const store = fileCursorStore(path)
+    const store = cursorAt(path)
 
     const first = syntheticChain({ blockNumber: 20n, launched: [{ block: 4n, curve: CURVE_A }] })
     await knownCurves(first, FACTORY, 1n, { store, chunk: 100n })
@@ -614,7 +679,10 @@ describe('knownCurves', () => {
     writeFileSync(
       path,
       JSON.stringify({
-        version: 2,
+        version: 3,
+        chainId: CHAIN_ID,
+        factory: FACTORY,
+        startBlock: '1',
         lastScannedBlock: '9999',
         curves: [],
         history: { proposedTargets: [], landedTargets: [], treasuries: [] },
@@ -622,15 +690,109 @@ describe('knownCurves', () => {
       'utf8',
     )
     const client = syntheticChain({ blockNumber: 20n })
-    await expect(
-      knownCurves(client, FACTORY, 1n, { store: fileCursorStore(path) }),
-    ).rejects.toThrow(/ahead of the chain head/)
+    await expect(knownCurves(client, FACTORY, 1n, { store: cursorAt(path) })).rejects.toThrow(
+      /ahead of the chain head/,
+    )
   })
 
   it('imlec dosyasi tanimsizsa TAHMIN ETMEZ', () => {
     const path = join(tempDir(), '.cursor')
     writeFileSync(path, JSON.stringify({ nonsense: true }), 'utf8')
-    expect(() => fileCursorStore(path).read()).toThrow(/not a keeper cursor/)
+    expect(() => cursorAt(path).read()).toThrow(/not a keeper cursor/)
+  })
+
+  // -------------------------------------------------------------
+  // IMLEC KIMLIGI -- FAZ 2 REDEPLOY'UNA HAZIRLIK
+  //
+  // Faz 2 `LaunchFactory`ye bir `feeSchedule` yapici argumani ekliyor, yani
+  // adres degisiyor. Keeper adresi DEFTERDEN alir ve bunun icin kod
+  // degisikligi GEREKMEZ -- ama imlec dosyasinin YOLU degismez. Bu blok, o
+  // dosyanin ESKI factory'ye ait icerigini yeni factory'ye tasimadigini pinler.
+  // -------------------------------------------------------------
+
+  it('BASKA bir factory icin yazilmis imlec YOK SAYILIR, ve sebep loglanir', async () => {
+    const path = join(tempDir(), '.cursor')
+
+    // Eski factory: 100'e kadar tarandi, bir curve bulundu.
+    const old = cursorAt(path, { factory: FACTORY })
+    await knownCurves(
+      syntheticChain({ blockNumber: 100n, launched: [{ block: 5n, curve: CURVE_A }] }),
+      FACTORY,
+      1n,
+      { store: old, chunk: 1_000n },
+    )
+    expect(old.read()?.curves).toEqual([CURVE_A])
+
+    // Yeni factory, AYNI dosya yolu.
+    const reasons: string[] = []
+    const fresh = cursorAt(path, { factory: FACTORY_2 }, (reason) => reasons.push(reason))
+    expect(fresh.read()).toBeNull()
+    expect(reasons).toHaveLength(1)
+    expect(reasons[0]).toContain(FACTORY)
+    expect(reasons[0]).toContain(FACTORY_2)
+  })
+
+  it('KIMLIKSIZ (v2) imlec de yok sayilir -- hangi factory"ye ait oldugu BILINEMEZ', () => {
+    const path = join(tempDir(), '.cursor')
+    writeFileSync(
+      path,
+      JSON.stringify({
+        version: 2,
+        lastScannedBlock: '54701659',
+        curves: [CURVE_A],
+        history: { proposedTargets: [], landedTargets: [], treasuries: [] },
+      }),
+      'utf8',
+    )
+    expect(cursorAt(path).read()).toBeNull()
+  })
+
+  it('chainId ya da startBlock ayrisirsa da yok sayilir', () => {
+    const path = join(tempDir(), '.cursor')
+    const store = cursorAt(path)
+    store.write({
+      lastScannedBlock: 50n,
+      curves: [CURVE_A],
+      history: { proposedTargets: [], landedTargets: [], treasuries: [] },
+    })
+    expect(cursorAt(path).read()?.lastScannedBlock).toBe(50n) // AYNI kimlik: okunur
+    expect(cursorAt(path, { chainId: 31337 }).read()).toBeNull()
+    expect(cursorAt(path, { startBlock: 2n }).read()).toBeNull()
+  })
+
+  /**
+   * KIMLIK KONTROLUNUN ASIL ODEDIGI SEY BU, ve `launchCount` orakli onu
+   * GORMEZ: eski imlec YENI factory'nin `startBlock`indan ILERIDEYSE,
+   * `from = lastScannedBlock + 1` aradaki bloklari ATLAR. `from < startBlock`
+   * duzeltmesi yalnizca YUKARI ceker. Atlanan aralikta `Launched` yoksa
+   * sayilar tutar ve hicbir sey atesler etmez -- ama uc governance olayi
+   * SESSIZCE kaybolur.
+   */
+  it('eski imlec YENI factory"nin bloklarini ATLAMAZ', async () => {
+    const path = join(tempDir(), '.cursor')
+    const old = cursorAt(path, { factory: FACTORY, startBlock: 1n })
+    await knownCurves(syntheticChain({ blockNumber: 900n }), FACTORY, 1n, {
+      store: old,
+      chunk: 10_000n,
+    })
+    expect(old.read()?.lastScannedBlock).toBe(900n)
+
+    // Yeni factory 500. bloktan itibaren izleniyor; 500..900 arasinda bir
+    // GraduationTargetChanged var ve kimlik kontrolu olmasa TARANMAZDI.
+    const store = cursorAt(path, { factory: FACTORY_2, startBlock: 500n })
+    const client = syntheticChain({
+      blockNumber: 1_000n,
+      governanceLogs: [
+        {
+          block: 600n,
+          eventName: 'GraduationTargetChanged',
+          args: { previous: ZERO_ADDRESS, current: EVIL_TARGET },
+        },
+      ],
+    })
+    const scan = await scanFactoryLogs(client, FACTORY_2, 500n, { store, chunk: 10_000n })
+    expect(client.logQueries[0]?.fromBlock).toBe(500n)
+    expect(scan.history.landedTargets).toEqual([EVIL_TARGET])
   })
 })
 
@@ -1636,7 +1798,7 @@ describe('governance gecmisi', () => {
   it('gecmis imlece yazilir, yani yeniden baslatma KOR KALMAZ', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'arcpad-hist-'))
     try {
-      const store = fileCursorStore(join(dir, '.cursor'))
+      const store = cursorAt(join(dir, '.cursor'))
       const first = syntheticChain({
         blockNumber: 50n,
         governanceLogs: [changedLog(10n, EVIL_TARGET)],
@@ -1659,7 +1821,7 @@ describe('governance gecmisi', () => {
     try {
       const path = join(dir, '.cursor')
       writeFileSync(path, JSON.stringify({ lastScannedBlock: '500', curves: [CURVE_A] }), 'utf8')
-      expect(fileCursorStore(path).read()).toBeNull()
+      expect(cursorAt(path).read()).toBeNull()
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -1762,8 +1924,15 @@ describe('imlec fazla sayarsa mesaj TERSINI soylemez', () => {
       const path = join(dir, '.cursor')
       writeFileSync(
         path,
+        // v3 + AYNI kimlik: bu test reorg kaynakli fazla saymayi olcer, imlec
+        // kimliginin ayrismasini DEGIL. Kimlik ayrisirsa imlec zaten yok
+        // sayilir ve fazla sayma hic olusmaz -- yani buradaki fixture'in
+        // kimligi TUTMAK ZORUNDADIR, yoksa test kendi konusunu kaybeder.
         JSON.stringify({
-          version: 2,
+          version: 3,
+          chainId: CHAIN_ID,
+          factory: FACTORY,
+          startBlock: '1',
           lastScannedBlock: '40',
           curves: [CURVE_A, CURVE_B],
           history: { proposedTargets: [], landedTargets: [], treasuries: [] },
@@ -1774,7 +1943,7 @@ describe('imlec fazla sayarsa mesaj TERSINI soylemez', () => {
       const { sink, run } = watch(
         { blockNumber: 50n, launchCount: 1n, nowMs: localClock(NOW) },
         ALLOW_GOOD,
-        fileCursorStore(path),
+        cursorAt(path),
       )
       await run()
       const page = sink.pages().find((p) => p.includes('log-scan-incomplete'))

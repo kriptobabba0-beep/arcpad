@@ -309,14 +309,43 @@ export async function main(): Promise<number> {
   throw new Error(`unknown drill phase "${phase ?? ''}"; expected "observe" or "expiry"`)
 }
 
+/**
+ * `process.exitCode`, `process.exit()` DEGIL -- VE BU OLCULDU.
+ *
+ * `expiry` fazi zincire dokunur, yani `exit()` cagrildiginda libuv'un elinde
+ * kapanmakta olan bir soket kalir. Olculdu, 2026-08-04, canli Arc'a karsi,
+ * runbook bolum 8'in KENDI komutuyla:
+ *
+ *   $ pnpm --filter @arcpad/keeper drill expiry
+ *   DRILL FAIL expiry: applyGraduationTarget() reverted with
+ *     NoPendingGraduationTarget, not GraduationTargetProposalExpired.
+ *   Assertion failed: !(handle->flags & UV_HANDLE_CLOSING),
+ *     file src\win\async.c, line 76
+ *   Exit status 3221226505
+ *
+ * Yani tatbikat DOGRU kararini yazdiktan sonra 1 ile degil `0xC0000409`
+ * (STATUS_STACK_BUFFER_OVERRUN) ile COKUYORDU. Yon guvenli tarafta -- sifir
+ * olmayan bir kod yine sifir degildir -- ama operatorun ekraninda bir kilitle
+ * kapaniyor, ve "tatbikat coktu" ile "tatbikat DUSTU" ayni sey degildir.
+ *
+ * `exitCode` atamasi dongunun BOSALMASINI bekler; sonda bir sigorta vardir ve
+ * `unref` edilmistir, yani sigortanin kendisi sureci AYAKTA TUTMAZ -- CI'da
+ * asilma riski getirmeden yerel cokmeyi kaldirir. Olculdu: ayni komut artik
+ * ciktisini yazip 1 ile doner.
+ */
+function settle(code: number): void {
+  process.exitCode = code
+  setTimeout(() => {
+    exit(code)
+  }, 10_000).unref()
+}
+
 const entry = argv[1]
 if (entry !== undefined && fileURLToPath(import.meta.url) === resolve(entry)) {
   main()
-    .then((code) => {
-      exit(code)
-    })
+    .then(settle)
     .catch((error: unknown) => {
       console.error(error)
-      exit(1)
+      settle(1)
     })
 }

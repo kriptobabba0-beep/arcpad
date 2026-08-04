@@ -57,6 +57,8 @@ export function loadKeeperConfig(env: NodeJS.ProcessEnv): KeeperConfig {
 export interface WatcherConfig {
   factory: Address
   startBlock: bigint
+  /** Defterden. Imlecin kimligine girer; bkz. `CursorIdentity`. */
+  chainId: number
   chainKey: string
   governancePath: string
   cursorPath: string
@@ -251,6 +253,7 @@ export function loadWatcherConfig(env: NodeJS.ProcessEnv, bookDir?: string): Wat
   return {
     factory,
     startBlock,
+    chainId: book.chainId,
     chainKey,
     governancePath,
     cursorPath,
