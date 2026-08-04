@@ -372,11 +372,32 @@ export async function runOnce(
  * GECICI RPC HATALARINDA USTEL GERI CEKILME + JITTER.
  *
  * IMLEC ASLA ILERLEMEZ: bu sarmalayici yalnizca `runOnce`'i tekrar cagirir ve
- * `runOnce` imleci kendi transaction'inda tasir. Kalici hatalar (HALT sinifi:
- * `DeploymentMismatch`, `NonCanonicalLaunch`, `RemovedLog`, `LogOutOfRange`,
- * `ForbiddenEmitter`, `LedgerGap`) TEKRAR DENENMEZ -- onlar operatorun
- * mudahalesini isteyen olgulardir ve tekrar denemek yalnizca gurultuyu
- * gizler.
+ * `runOnce` imleci kendi transaction'inda tasir. Kalici hatalar (HALT sinifi)
+ * TEKRAR DENENMEZ -- onlar operatorun mudahalesini isteyen olgulardir ve
+ * tekrar denemek yalnizca gurultuyu gizler.
+ *
+ * BU KUME BU DEPONUN TANIMLADIGI HER HATA SINIFINI TASIMAK ZORUNDA, VE UCU
+ * EKSIKTI. `UnorderedLogs`, `SingleBlockTooLarge` ve `SplitDepthExceeded`
+ * burada YOKTU; yine de "kalici" cikiyorlardi -- ama ad kontroluyle degil,
+ * asagidaki BES metin sezgisinin hepsinden dusrek. Yani kimsenin yazmadigi bir
+ * sebeple dogru cevap.
+ *
+ * VE O SEBEP GERCEKTEN COKUYOR (olculdu, tahmin degil): son sezgi
+ * `\b(408|425|429|502|503|504)\b`, ve HATANIN KENDI METNI blok numarasini
+ * tasiyor.
+ *
+ *   isTransient(new SingleBlockTooLarge(429n))   -> TRUE
+ *   isTransient(new SplitDepthExceeded(429n, 503n)) -> TRUE
+ *   isTransient(new LogOutOfRange(429n, 1n, 2n)) -> false   <- adi kumede
+ *
+ * Ucuncu satir kanitin kendisidir: ayni rakam, ayni desen, farkli sonuc --
+ * korumayi yapan sey ADIN KUMEDE OLMASI. Arc'ta blok 429 bugun ulasilamaz
+ * (head ~55.000.000), yani bu bir uretim arizasi DEGIL; sinifi hangi seyin
+ * tuttugu sorusunun cevabidir, ve cevap "sans"ti.
+ *
+ * `ordering.test.ts`in kaynak-tarayan kapisi gibi, `rpc-errors.test.ts` artik
+ * `this.name = '...'` atamalarini KAYNAKTAN cikarip hepsinin burada oldugunu
+ * olcuyor -- yani YARIN eklenen bir sinif da sessizce dusemez.
  */
 const PERMANENT = new Set([
   'DeploymentMismatch',
@@ -389,6 +410,9 @@ const PERMANENT = new Set([
   'LedgerGap',
   'ReorgDetected',
   'UnknownCurve',
+  'UnorderedLogs',
+  'SingleBlockTooLarge',
+  'SplitDepthExceeded',
 ])
 
 /**
@@ -417,13 +441,45 @@ const PERMANENT = new Set([
  * yakalar. Kalici kumeyi one almak, `-32011`de yasanan HALT'in aynisini
  * bilinmeyen bir kodla tekrar etmenin acik kapisi olurdu.
  *
- * `-32614` gozlemlenmedi (bu kosuda -32012 dondu) ama `logs.ts` onu
+ * `-32614` gozlemlenmedi (bu kosuda da -32012 dondu) ama `logs.ts` onu
  * `RANGE_ERROR_CODES`te tasiyor ve ayni sinifa girer.
  *
- * SINIFLANDIRILMAYAN, GOZLEMLENMIS BIR KOD: `-32603 internal error`, gelecege
- * dusen bir `eth_getLogs` araligi icin donuyor. Gecici mi kalici mi
- * OLCULMEDI, o yuzden varsayilana (kalici) birakildi -- ve donguden
- * ULASILAMAZ, cunku `runOnce` `finalized` head'in otesini hic sormaz.
+ * SINIFLANDIRILMAYAN AMA ARTIK OLCULMUS IKI KOD (2026-08-05, ayni RPC, head
+ * 55.339.691, uretim istemcisiyle -- `createArcClient`, yani viem `http()`):
+ *
+ *   -32603 internal error   gelecege dusen bir `eth_getLogs` araligi ve
+ *                           `eth_newFilter`. UST USTE UC kez ayni yanit, yani
+ *                           kendiliginden GECMIYOR. Kalici birakildi ve artik
+ *                           bu bir olcum.
+ *   -32001 block not found  head'in USTUNDEKI bir blokta `eth_getBalance` ve
+ *                           `eth_call`. Kalici birakildi.
+ *
+ * IKISI DE DONGUDEN ULASILAMAZ ve gerekce yazili olmali: `runOnce` `finalized`
+ * head'in otesini hic sormaz, filtre yaratmaz, `eth_getBalance` cagirmaz ve
+ * `eth_call`i yalnizca `'latest'` etiketiyle yapar. Ulasilabilir olsalardi
+ * yon sorusu simetrik DEGILDIR: gecici bir seyi kalici saymak sureci
+ * OLDURUR (`-32011`in bir kez yaptigi sey), kalici bir seyi gecici saymak
+ * bes deneme + ~3,75sn geri cekilmeye mal olur ve yine firlatir.
+ *
+ * OLCUMUN URETTIGI BIR YANLIS IZ, TEKRARLANMASIN DIYE YAZILIYOR: ilk kosuda
+ * bozuk parametreli IKI `eth_getLogs` (gecersiz adres, gecersiz topic) ust
+ * uste `-32005 rate limit exceeded` dondu ve "Arc bozuk istege hiz siniri
+ * kodu veriyor" gibi gorundu. Kontrollu A/B -- gecerli/bozuk donusumlu, 1,5sn
+ * arayla, uc tur -- BUNU YALANLADI: dokuz bozuk istegin dokuzu da
+ * `-32602 "Invalid params"` dondu, aradaki gecerli istekler ise HEP basarili
+ * oldu. Yani o `-32005` gercek bir hiz siniriydi ve sadece o ana denk geldi.
+ * (Ayni kosuda 14 ES ZAMANLI `eth_getLogs`in HICBIRI reddedilmedi -- limitin
+ * esigi sabit degil, ve bu da 600ms varsayilanini ve "hiz siniri sinyalini
+ * kalici karardan ONCE oku" sirasini destekler.)
+ *
+ * `-32602` ARC'IN GENEL "gecersiz parametre" KODUDUR, yalnizca aralik kodu
+ * degil: gecersiz adres, gecersiz topic, `fromBlock: 'banana'`, `from > to` ve
+ * cozulemeyen bir imzali islem hepsi `-32602` doner. `logs.ts` onu
+ * `RANGE_ERROR_CODES`te tutmaya DEVAM ediyor -- bolme, aralik problemi
+ * olmayan bir `-32602`de yalnizca sol omurgadan asagi ~10 istek harcayip
+ * `SingleBlockTooLarge` firlatir (`to === from` dalinda durur), yani sinirli;
+ * ve bilinmeyen bir aralik metnini bolmeyi birakmak, calisan bir kurtarmayi
+ * kaybetmek olurdu.
  */
 const TRANSIENT_RPC_CODES = new Set([-32011, -32005])
 const PERMANENT_RPC_CODES = new Set([-32601, -32602, -32012, -32614, 3])

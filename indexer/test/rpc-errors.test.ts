@@ -1,9 +1,10 @@
+import { readFileSync } from 'node:fs'
 import { createServer, type RequestListener, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { createPublicClient, http } from 'viem'
 import { afterEach, describe, expect, it } from 'vitest'
 import { loadConfig } from '../src/config'
-import { asRpcError } from '../src/logs'
+import { asRpcError, SingleBlockTooLarge } from '../src/logs'
 import { isTransient } from '../src/run'
 
 /**
@@ -117,11 +118,20 @@ describe('isTransient -- GERCEK viem hatalari', () => {
   })
 
   it('canli Arc ta olculen KALICI kodlar kalicidir', async () => {
+    // Hepsi CANLI Arc'tan, uretim istemcisiyle. Son ikisi 2026-08-05'te
+    // eklendi (head 55.339.691): `-32603` gelecege dusen bir `eth_getLogs`
+    // araligi ve `eth_newFilter` icin, UST USTE UC kez ayni yanitla --
+    // yani kendiliginden gecmiyor; `-32001` head'in ustundeki bir blokta
+    // `eth_getBalance`/`eth_call` icin. IKISI DE dongude ULASILAMAZ
+    // (`runOnce` `finalized`in otesini sormaz, filtre yaratmaz,
+    // `eth_getBalance` cagirmaz), ama artik TAHMIN degil OLCUM olarak kalici.
     const measured: [number, string][] = [
       [-32601, 'method not supported'],
       [-32602, 'Invalid params'],
       [-32012, 'requested range too large'],
       [3, 'execution reverted'],
+      [-32603, 'internal error'],
+      [-32001, 'block not found: 0x398b5eb'],
     ]
     for (const [code, message] of measured) {
       const c = await client(jsonRpcError(code, message), '/rpc.testnet.arc.network')
@@ -243,6 +253,79 @@ describe('isTransient -- GERCEK viem hatalari', () => {
     const c = await client(jsonRpcError(-32011, 'request limit reached'))
     const error = Object.assign((await c.fail()) as Error, { name: 'ReorgDetected' })
     expect(isTransient(error)).toBe(false)
+  })
+})
+
+/**
+ * HALT SINIFININ KAPISI -- ADLAR KAYNAKTAN OKUNUR, ELLE YAZILMAZ.
+ *
+ * Ucu (`UnorderedLogs`, `SingleBlockTooLarge`, `SplitDepthExceeded`) `PERMANENT`
+ * kumesinde YOKTU ve yine de "kalici" cikiyorlardi -- ad kontroluyle degil,
+ * `isTransient`'in BES metin sezgisinin hepsinden dusrek. O sebep yazili
+ * degildi ve GERCEKTEN COKUYOR: son sezgi `\b(408|425|429|502|503|504)\b`, ve
+ * hatanin KENDI metni blok numarasini tasiyor. Asagidaki iki test bunu
+ * OLCUYOR: ayni rakam, adi kumede olan bir sinifta KALICI, olmayan bir sinifta
+ * GECICI kaliyordu.
+ *
+ * Elle yazilmis bir ad listesi bu kusuru bir kez kapatir; kapiyi KAYNAKTAN
+ * turetmek YARIN eklenecek sinifi da kapatir. `ordering.test.ts`in kaynak
+ * tarayan kapisiyla ayni sekil, ayni gerekce.
+ */
+describe('HALT sinifi -- kaynaktan turetilen kapi', () => {
+  const SOURCES = [
+    '../src/logs.ts',
+    '../src/run.ts',
+    '../src/admit.ts',
+    '../src/verify.ts',
+    '../src/apply/trade.ts',
+    '../../packages/db/src/reorg.ts',
+  ]
+
+  /** Her `this.name = 'X'` atamasi bir hata sinifinin CALISMA ZAMANI adidir. */
+  function declaredNames(): string[] {
+    const out = new Set<string>()
+    for (const rel of SOURCES) {
+      const text = readFileSync(new URL(rel, import.meta.url), 'utf8')
+      for (const m of text.matchAll(/this\.name = '([A-Za-z]+)'/g)) out.add(m[1] as string)
+    }
+    return [...out].sort()
+  }
+
+  it('kapinin girdisi BOS DEGIL -- ve bugun on uc sinif var', () => {
+    const names = declaredNames()
+    expect(names.length).toBeGreaterThanOrEqual(13)
+    // Ucu eksikti; adlariyla anilmalari kapinin neyi kapattigini yaziyor.
+    expect(names).toContain('UnorderedLogs')
+    expect(names).toContain('SingleBlockTooLarge')
+    expect(names).toContain('SplitDepthExceeded')
+  })
+
+  it('TANIMLANAN HER hata sinifi ADIYLA kalicidir', async () => {
+    const c = await client(jsonRpcError(-32011, 'request limit reached'))
+    const base = (await c.fail()) as Error
+    for (const name of declaredNames()) {
+      // Govde bir HIZ SINIRI -- yani ad kontrolu olmasaydi GECICI cikardi.
+      // Testin ayirt edici olmasi tam olarak buradan geliyor.
+      const error = Object.assign(Object.create(Object.getPrototypeOf(base) as object), base, {
+        name,
+      }) as Error
+      expect(isTransient(error), name).toBe(false)
+    }
+  })
+
+  /**
+   * NEGATIF KONTROL: kapinin kapattigi ariza GERCEK. Blok 429 ile kurulmus bir
+   * `SingleBlockTooLarge`, adi kumeden dusurulurse GECICI cikar.
+   */
+  it('NEGATIF KONTROL: 429 numarali blok, ad kumede yoksa GECICI olur', () => {
+    const halt = new SingleBlockTooLarge(429n)
+    expect(halt.message).toMatch(/\b429\b/)
+    // Bugun: adi kumede, yani kalici.
+    expect(isTransient(halt)).toBe(false)
+    // Ad dusurulunce ayni nesne gecici olur -- metin sezgisi onu yakaliyor.
+    expect(isTransient(Object.assign(new SingleBlockTooLarge(429n), { name: 'Bilinmeyen' }))).toBe(
+      true,
+    )
   })
 })
 
