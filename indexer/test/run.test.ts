@@ -440,14 +440,28 @@ describe('gecici hata politikasi', () => {
     await seedDeployment()
   })
 
-  it('429 ve 5xx GECICIDIR, bilinmeyen hata DEGILDIR', () => {
+  /**
+   * BU TEST YALNIZCA DUZ TRANSPORT'U KAPSAR ve bunu bilerek soyluyor.
+   *
+   * Elle yazilan `new Error('429 ...')`, GERCEK yolun sekli DEGILDIR: uretimde
+   * hata viem'in urettigi bir nesnedir ve icinde `URL:` ile `Request body:`
+   * satirlari GECER. Tam olarak bu fark yuzunden buradaki dort satir yesilken
+   * canlida siniflandirma TERSINE calisiyordu (bkz. `rpc-errors.test.ts`).
+   * Gercek nesneler orada test edilir; burada kalan sey, canli entegrasyon
+   * testinin kendi `fetch` tabanli transportunun attigi duz `Error` seklidir.
+   */
+  it('duz transportta 429/5xx GECICIDIR, bilinmeyen hata DEGILDIR', () => {
     expect(isTransient(new Error('429 Too Many Requests'))).toBe(true)
     expect(isTransient(new Error('503 Service Unavailable'))).toBe(true)
     expect(isTransient(new Error('fetch failed'))).toBe(true)
     expect(isTransient(new Error('socket hang up'))).toBe(true)
+    // `AbortSignal.timeout` -- canli testin transportu bunu atar.
+    expect(isTransient(new Error('The operation was aborted due to timeout'))).toBe(true)
     // Bilinmeyen bir hatayi gecici saymak, gercek bir kusuru bes kez
     // tekrarlayip gizlemek olurdu.
     expect(isTransient(new Error('something odd'))).toBe(false)
+    // Ve bir KALICI kod, mesaji ne derse desin kalicidir.
+    expect(isTransient(Object.assign(new Error('execution reverted'), { code: 3 }))).toBe(false)
   })
 
   it('HALT sinifi hatalar TEKRAR DENENMEZ', () => {

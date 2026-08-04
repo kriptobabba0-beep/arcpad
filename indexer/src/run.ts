@@ -392,27 +392,75 @@ const PERMANENT = new Set([
 ])
 
 /**
- * ARC'IN KENDI HIZ SINIRI KODU. OLCULDU (canli, 2026-08-02): ardisik
- * `eth_call`lar 250ms araliklarla yapildiginda alti cagrinin ikisi
+ * SINIFLANDIRMA KODA GORE YAPILIR, METNE GORE DEGIL -- CUNKU METIN BIZIM
+ * ISTEGIMIZI DE TASIYOR.
  *
- *   {"code":-32011,"message":"request limit reached"}
+ * Asagidaki uc kume 2026-08-04'te CANLI Arc testnet'e (`rpc.testnet.arc.network`,
+ * head 55.181.581) tek tek istek atilarak OLCULDU; hicbiri tahmin degil.
  *
- * ile dondu. BU KOD OLMADAN DONGU HIZ SINIRINDA HALT EDIYORDU: `isTransient`
- * bilinmeyen hatalari -- dogru olarak -- kalici sayar, ve -32011 hicbir
- * desene uymadigi icin indexer bir hiz siniri yuzunden operator mudahalesi
- * bekleyerek duruyordu. Canli koşmadan gorulemeyen bir kusur; fixture'lar
- * bunu uretemez.
+ *   -32011  request limit reached                       GECICI   (2026-08-02)
+ *   -32601  method not supported                        KALICI
+ *   -32602  invalid params / range too large (+oneri)   KALICI
+ *   -32012  requested range too large                   KALICI
+ *        3  execution reverted                          KALICI
+ *
+ * `-32614` gozlemlenmedi (bu kosuda -32012 dondu) ama `logs.ts` onu
+ * `RANGE_ERROR_CODES`te tasiyor ve ayni sinifa girer.
+ *
+ * SINIFLANDIRILMAYAN, GOZLEMLENMIS BIR KOD: `-32603 internal error`, gelecege
+ * duşen bir `eth_getLogs` araligi icin donuyor. Gecici mi kalici mi
+ * OLCULMEDI, o yuzden varsayilana (kalici) birakildi -- ve donguden
+ * ULASILAMAZ, cunku `runOnce` `finalized` head'in otesini hic sormaz.
  */
-const RATE_LIMIT_CODE = -32011
+const TRANSIENT_RPC_CODES = new Set([-32011])
+const PERMANENT_RPC_CODES = new Set([-32601, -32602, -32012, -32614, 3])
+
+/**
+ * HTTP DURUM KODU, `status` ALANINDAN -- metinden ayiklanan rakamdan degil.
+ * viem `HttpRequestError.status` tasir; OLCULDU: 429/500/502/503 icin dolu.
+ *
+ * 500 BURADA, ama asagidaki metin yedeginde DEGIL: "500" bir protokol
+ * limitinde de gecebilir (adres filtresi 500'de parcalaniyor), ve orada
+ * `status` yoktur.
+ */
+const TRANSIENT_HTTP_STATUS = new Set([408, 425, 429, 500, 502, 503, 504])
 
 export function isTransient(error: unknown): boolean {
   const name = (error as { name?: string } | null)?.name
   if (name !== undefined && PERMANENT.has(name)) return false
-  const { code, message } = asRpcError(error)
-  if (code === RATE_LIMIT_CODE) return true
-  if (/request limit reached|rate limit|too many requests/i.test(message)) return true
-  if (/\b(429|502|503|504)\b/.test(message)) return true
-  if (/timeout|socket|ECONN|EAI_AGAIN|fetch failed|network/i.test(message)) return true
+
+  // `details`, `message` DEGIL. OLCULDU (2026-08-04): viem bicimlendirilmis
+  // mesaja `URL: https://rpc.testnet.arc.network` ve `Request body: {...}`
+  // koyar; eski `/network/i` deseni RPC ADRESININ KENDISINE tutuyordu ve
+  // canliya atilan ON ALTI istegin HEPSI -- reddedilen `eth_call` ve
+  // desteklenmeyen metod dahil -- GECICI cikiyordu. Yani bu fonksiyonun
+  // yazili varsayilani ("bilinmeyen KALICIDIR") uretimde HIC gecerli
+  // degildi. Bir alan adi degisikligi de aynisini ters yone cevirirdi.
+  const { code, status, details } = asRpcError(error)
+
+  if (code !== undefined) {
+    if (TRANSIENT_RPC_CODES.has(code)) return true
+    if (PERMANENT_RPC_CODES.has(code)) return false
+  }
+  if (status !== undefined) return TRANSIENT_HTTP_STATUS.has(status)
+
+  if (/request limit reached|rate limit|too many requests/i.test(details)) return true
+  // ZAMAN ASIMI. OLCULDU: viem'in `TimeoutError`i "The request timed out." /
+  // "The request took too long to respond." der -- ikisinde de "timeout"
+  // KELIMESI GECMEZ, yani eski desen onu KALICI sayiyordu ve URETIM istemcisi
+  // (`createArcClient`, viem varsayilani 10sn x 4 deneme = ~41sn, OLCULDU)
+  // asili bir RPC'de dongoyu DURDURUYORDU. Bugun bu kusur gorunmuyordu cunku
+  // yukaridaki `/network/i` kazasi onu ortuyordu: yanlis bir sebeple gecen
+  // bir davranis.
+  if (/timed out|timeout|took too long/i.test(details)) return true
+  if (/fetch failed|socket|ECONN|EAI_AGAIN|ETIMEDOUT|EPIPE|network error/i.test(details)) {
+    return true
+  }
+  // YEDEK: `status` tasimayan bir transport icin. `details` artik SUNUCUNUN
+  // metni oldugu ve URL/istek govdesi ICERMEDIGI icin ciplak rakam aramak
+  // burada guvenli; ayni desen `message` uzerinde D1'in ta kendisiydi.
+  if (/\b(408|425|429|502|503|504)\b/.test(details)) return true
+
   // Bilinmeyen bir hata GECICI SAYILMAZ. Varsayilan yon onemli: gecici saymak,
   // gercek bir kusuru bes kez tekrarlayip sessizce gizlemek olurdu.
   return false

@@ -36,6 +36,23 @@ export interface IndexerConfig {
   minRequestIntervalMs: number
 }
 
+/**
+ * ISTEKLER ARASI EN KUCUK BOSLUK -- VARSAYILANI 0 OLAMAZ.
+ *
+ * Arc ES ZAMANLI VE ARDISIK istekleri sinirlar. OLCULEN IKI NOKTA:
+ *   250ms araliklarla alti `eth_call` -> IKISI `-32011 request limit reached`
+ *                                        (2026-08-02)
+ *   900ms araliklarla on alti karisik istek -> HICBIRI reddedilmedi
+ *                                        (2026-08-04)
+ * Canli entegrasyon testi 600ms kullaniyor ve temiz kosuyor; varsayilan o.
+ *
+ * Onceki varsayilan 0'di, yani URETIM hic beklemeden istek atiyordu -- pacing
+ * mekanizma olarak test edilmisti ama DEGERI hicbir olcume dayanmiyordu.
+ * Maliyet ihmal edilebilir: bir aralik dort sorgudur (2,4sn) ve zincir ayni
+ * 1.000 blogu ~350sn'de uretir.
+ */
+const DEFAULT_MIN_REQUEST_INTERVAL_MS = 600
+
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/
 
 function required(env: NodeJS.ProcessEnv, key: string): string {
@@ -86,6 +103,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IndexerConfig 
     pollMs: number(env, 'INDEXER_POLL_MS', 500),
     volumeRefreshBatch: number(env, 'INDEXER_VOLUME_REFRESH_BATCH', 500),
     maxAttempts: number(env, 'INDEXER_MAX_ATTEMPTS', 5),
-    minRequestIntervalMs: number(env, 'INDEXER_MIN_REQUEST_INTERVAL_MS', 0),
+    minRequestIntervalMs: number(
+      env,
+      'INDEXER_MIN_REQUEST_INTERVAL_MS',
+      DEFAULT_MIN_REQUEST_INTERVAL_MS,
+    ),
   }
 }

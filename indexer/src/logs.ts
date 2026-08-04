@@ -395,8 +395,29 @@ const SUGGESTED = /retry with the range (\d+)-(\d+)/
 /** Bolme derinligi tavani. 1.000 bloktan tek bloga 10 seviye yeter; 32 boldur. */
 const MAX_SPLIT_DEPTH = 32
 
-interface RpcErrorShape {
+export interface RpcErrorShape {
   code?: number
+  /** HTTP durum kodu -- transport bildiriyorsa. viem `HttpRequestError.status`. */
+  status?: number
+  /**
+   * YALNIZCA SUNUCUNUN URETTIGI METIN. Siniflandirma BUNUN uzerinde yapilir.
+   *
+   * `message` (asagida) viem'in BICIMLENDIRDIGI bloktur ve icinde
+   * `URL: <rpcUrl>` ile `Request body: {...}` GECER -- yani BIZIM gonderdigimiz
+   * seyler. Onun uzerinde desen aramak, kendi konfigurasyonumuzu siniflandirma
+   * girdisine cevirir. OLCULDU (2026-08-04, canli): Arc'in RPC'si
+   * `https://rpc.testnet.arc.network` adresinde ve `isTransient`'in
+   * `/network/i` deseni ADRESIN KENDISINE tutuyordu, boylece BUTUN hatalar --
+   * `-32601 method not supported`, `-32602 invalid params`, `3 execution
+   * reverted` dahil -- GECICI sayiliyordu. Dosyanin yazili varsayilani
+   * ("bilinmeyen hata KALICIDIR") uretimde TERSINE donmustu.
+   *
+   * Duz bir transport (`{code, message}`) `details`/`shortMessage` tasimaz;
+   * o durumda `message`'a duseriz, cunku orada `message` ZATEN sunucunun
+   * metnidir.
+   */
+  details: string
+  /** Bicimlendirilmis tam metin -- YALNIZCA GUNLUKLEME icin. */
   message: string
 }
 
@@ -408,19 +429,30 @@ interface RpcErrorShape {
  */
 export function asRpcError(error: unknown): RpcErrorShape {
   let code: number | undefined
+  let status: number | undefined
   const messages: string[] = []
+  const details: string[] = []
   let node: unknown = error
   for (let depth = 0; node !== null && node !== undefined && depth < 10; depth += 1) {
     const obj = node as Record<string, unknown>
     if (code === undefined && typeof obj['code'] === 'number') code = obj['code']
-    for (const key of ['message', 'details', 'shortMessage']) {
+    if (status === undefined && typeof obj['status'] === 'number') status = obj['status']
+    for (const key of ['details', 'shortMessage']) {
       const v = obj[key]
-      if (typeof v === 'string') messages.push(v)
+      if (typeof v === 'string') details.push(v)
     }
+    const message = obj['message']
+    if (typeof message === 'string') messages.push(message)
     node = obj['cause']
   }
-  const shape: RpcErrorShape = { message: messages.join(' | ') }
+  const shape: RpcErrorShape = {
+    message: [...messages, ...details].join(' | '),
+    // viem'de `details` VAR; duz transport'ta yok ve orada `message` sunucunun
+    // kendi metnidir.
+    details: (details.length > 0 ? details : messages).join(' | '),
+  }
   if (code !== undefined) shape.code = code
+  if (status !== undefined) shape.status = status
   return shape
 }
 
@@ -464,11 +496,15 @@ export async function getLogs(
       client.request({ method: 'eth_getLogs', params: [toFilter(params)] }),
     )) as RawLog[]
   } catch (error) {
-    const { code, message } = asRpcError(error)
+    const { code, details } = asRpcError(error)
     if (code !== undefined && RANGE_ERROR_CODES.has(code)) {
       if (depth >= MAX_SPLIT_DEPTH) throw new SplitDepthExceeded(params.from, params.to)
       if (code === -32602) {
-        const m = SUGGESTED.exec(message)
+        // ONERI, SUNUCUNUN METNINDE aranir -- bicimlendirilmis blokta DEGIL.
+        // O blok `Request body`'yi de tasir, yani BIZIM gonderdigimiz araligi;
+        // orada arama yapmak sunucunun onerisiyle kendi sorgumuzu ayirt
+        // edememek demektir.
+        const m = SUGGESTED.exec(details)
         if (m?.[2] !== undefined) {
           const suggested = BigInt(m[2])
           // ONERIYI YALNIZCA ARALIGI GERCEKTEN KUCULTUYORSA kullaniriz.
