@@ -5,6 +5,7 @@ import type { HexAddress, HolderRow, Page, ReadResult, TradeRow } from '@/compon
 import { HoldersTable } from '@/components/token/HoldersTable'
 import { TableTabs } from '@/components/token/TableTabs'
 import { relativeAge, TradesTable } from '@/components/token/TradesTable'
+import { feeBreakdown, walletDeltaWei } from '@/components/token/walletDelta'
 import { BUY_ONE_USDC, CLIMBING, SELL_ONE_USDC, ok } from '../fixtures/readModel'
 
 /**
@@ -152,6 +153,68 @@ describe('<TradesTable> -- cuzdandan cikan tutar', () => {
     const sentence = cell.getAttribute('title') ?? ''
     expect(sentence).toContain('Received 0.975308 USDC')
     expect(sentence).toContain('less 0.009383 protocol fee')
+  })
+})
+
+/**
+ * UCRETSIZ SATIR: TIP DUZEYINDE ULASILAMAZ, DAVRANISI YINE DE SABIT.
+ *
+ * `listTrades` bugun onuc kolonun hepsini seciyor, yani `TradeRow`'un iki
+ * ucret alani ZORUNLU ve asagidaki satir TypeScript'te KURULAMAZ -- bu yuzden
+ * `unknown` uzerinden geciliyor ve gecis burada, tek yerde yapiliyor.
+ *
+ * NEDEN YINE DE OLCULUYOR: bu dallarin ULASILAMAZ oldugu yaziliydi ama
+ * KOSULMUYORDU. Olculdu (2026-08-05): `walletDelta.ts`'teki iki `=== undefined`
+ * korumasi da SILINDIGINDE `@arcpad/web` suiti 667/667 YESIL kaliyordu --
+ * yani dallar "ulasilamaz" degil, "olculmemis" durumdaydi ve ikisi ayni sey
+ * degil. Bir gun bir sorgu ucretleri secmeyi birakirsa (ya da satir bir JSON
+ * sinirindan gecerse) dogru cevap `—`'dir; `quoteAmountWei`'ye DUSMEK,
+ * kullaniciya banka ekstresiyle uyusmayan bir sayiyi "cuzdandan cikan" diye
+ * etiketlemek olurdu. Yanlis sayi, eksik sayidan pahalidir.
+ *
+ * Bu blok o cevabi SABITLER; dallarin canliya ulasilabilir oldugunu IDDIA
+ * ETMEZ.
+ */
+const FEELESS_TRADE = (() => {
+  const row: Record<string, unknown> = { ...BUY_ONE_USDC }
+  delete row.protocolFeeWei
+  delete row.creatorFeeWei
+  return row as unknown as TradeRow
+})()
+
+describe('<TradesTable> -- ucret parcalari gelmediginde', () => {
+  it('`walletDeltaWei` ve `feeBreakdown` `null` doner -- curve tutarina DUSULMEZ', () => {
+    expect(walletDeltaWei(FEELESS_TRADE)).toBeNull()
+    expect(feeBreakdown(FEELESS_TRADE)).toBeNull()
+    // NEGATIF KONTROL: ayni vektor ucretleriyle birlikte `null` DEGIL, ve
+    // donen sayi curve tutari da degil. Bu satir olmadan yukaridaki iddia
+    // "her zaman null donen bir fonksiyon" tarafindan da saglanirdi.
+    expect(walletDeltaWei(BUY_ONE_USDC)).toBe(1_000_000_000_000_000_000n)
+    expect(walletDeltaWei(BUY_ONE_USDC)).not.toBe(BUY_ONE_USDC.quoteAmountWei)
+  })
+
+  it('tablo "—" cizer ve curve tutarini TUTAR olarak yazmaz', () => {
+    render(<TradesTable rows={[FEELESS_TRADE]} nextCursor={null} now={TRADE_AT} />)
+
+    const cell = cellAt(screen.getAllByRole('row')[1] as HTMLElement, 3)
+    // `<Money>` HIC cizilmez -- bir tutar yok, bu yuzden bicimlendirilecek bir
+    // sayi da yok.
+    expect(cell.querySelector('[data-rounding]')).toBeNull()
+    expect(cell.textContent).toContain('—')
+    expect(cell.textContent).not.toContain('0.987654')
+    expect(cell.textContent).not.toContain('0.987655')
+    expect(cell.textContent).not.toContain('1.000000')
+  })
+
+  it('dokum cumlesi YARIM kurulmaz -- eksikligi soyler', () => {
+    render(<TradesTable rows={[FEELESS_TRADE]} nextCursor={null} now={TRADE_AT} />)
+
+    const cell = cellAt(screen.getAllByRole('row')[1] as HTMLElement, 3)
+    const sentence = cell.getAttribute('title') ?? ''
+    expect(sentence).toBe('Fee breakdown is not available for this trade yet.')
+    // "curve tutari X" deyip ucretleri atlayan yarim bir dokum, kullanicinin
+    // odedigi tutari curve tutari sanmasina yol acar.
+    expect(sentence).not.toContain('to the curve')
   })
 })
 
