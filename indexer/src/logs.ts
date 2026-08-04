@@ -301,7 +301,38 @@ export function createPacer(opts?: { concurrency?: number; minIntervalMs?: numbe
   const concurrency = Math.max(1, opts?.concurrency ?? 1)
   const minIntervalMs = Math.max(0, opts?.minIntervalMs ?? 0)
   let active = 0
-  let lastStart = 0
+  /**
+   * EN ERKEN BASLAMA ANI. `lastStart` DEGIL, ve fark olculdu.
+   *
+   * "Son BASLAYANIN zamani + aralik" yalnizca `concurrency === 1` iken bir
+   * bosluk uretir. Iki slot bostayken iki `start()` ARDISIK olarak ayni
+   * `lastStart`i okur, ayni `wait`i hesaplar ve AYNI MILISANIYEDE baslar.
+   * Olculdu (`createPacer({concurrency: 4, minIntervalMs: 25})`, dort is):
+   * bosluklar `27, 0, 0`; `concurrency: 2` ile `51, 0, 50, 0, 50`. Yani
+   * `minIntervalMs` es zamanlilik acildigi anda SESSIZCE hicbir sey yapmiyordu
+   * -- ustelik bu fonksiyonun dokumante ettigi tek ozellik oydu ("ardisik hiz
+   * siniri icin gereken sey budur ve es zamanlilik siniri onu VERMEZ").
+   *
+   * `nextEarliest` IKI KEZ ilerletilir ve IKISI DE gerekli -- birincisini tek
+   * basina yazmak, duzeltmenin ICINE eski kusurun taze bir ornegini koydu ve
+   * test onu ANINDA yakaladi (bir bosluk 25 yerine 20 olctu):
+   *
+   *   1. SLOT VERILIRKEN, `at = max(now, nextEarliest)` ile. Es zamanli
+   *      slotlarin birbirini itmesini saglayan sey budur; `max(now, ...)`
+   *      kelepcesi ise GECMISTE kalmis bir rezervasyonu "simdi"ye cokertir,
+   *      yani bir takilmadan sonra biriken rezervasyonlar PATLAMA uretmez
+   *      (eski kusur, `lastStart = Date.now() + wait`, tam olarak o kelepcenin
+   *      yoklugundandi).
+   *   2. ISTEK GERCEKTEN BASLARKEN, `max(nextEarliest, now + minIntervalMs)`
+   *      ile. Rezervasyon bir PLANDIR: `setTimeout` gec atesler ve istek
+   *      planlanandan SONRA baslar; bir sonraki slotu yalnizca plana gore
+   *      hesaplamak, o gecikme kadar KISA bir bosluk uretir. Ilerletme
+   *      monotondur (`max`), yani hicbir yol araligi kisaltamaz.
+   *
+   * `concurrency === 1` davranisi degismedi ve olculdu: 60ms'lik bir
+   * takilmadan sonra bosluklar yine `60, 25, 25`.
+   */
+  let nextEarliest = 0
   const queue: (() => void)[] = []
 
   const release = (): void => {
@@ -314,24 +345,15 @@ export function createPacer(opts?: { concurrency?: number; minIntervalMs?: numbe
     new Promise<void>((resolve) => {
       const start = (): void => {
         active += 1
-        const wait = Math.max(0, lastStart + minIntervalMs - Date.now())
-        // ARALIK, ISTEGIN GERCEKTEN BASLADIGI ANDAN olculur -- PLANLANDIGI
-        // andan degil.
-        //
-        // Onceki hali `lastStart = Date.now() + wait` yaziyordu, yani slotu
-        // ILERIDE bir zamana rezerve ediyordu. Zamanlayici gec atesledigi ya
-        // da olay dongusu takildigi anda o rezervasyon GECMISTE kalir ve
-        // sirada bekleyen istekler `wait = 0` hesaplayip PATLAMA halinde
-        // cikar. Arc hem es zamanli hem ARDISIK istekleri sinirladigi icin
-        // bu, hiz sinirina tosladigimiz tam an olurdu; testte ise gecici bir
-        // takilmadan sonra kirilan bir olcum olarak gorunur (yuk altinda
-        // flake).
+        const now = Date.now()
+        const at = Math.max(now, nextEarliest)
+        nextEarliest = at + minIntervalMs
         const begin = (): void => {
-          lastStart = Date.now()
+          nextEarliest = Math.max(nextEarliest, Date.now() + minIntervalMs)
           resolve()
         }
-        if (wait === 0) begin()
-        else setTimeout(begin, wait)
+        if (at === now) begin()
+        else setTimeout(begin, at - now)
       }
       if (active < concurrency) start()
       else queue.push(start)

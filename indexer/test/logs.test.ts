@@ -671,6 +671,52 @@ describe('pacing', () => {
     }
   })
 
+  /**
+   * ES ZAMANLILIK ACIKKEN DE BOSLUK VAR -- VE ONCEDEN YOKTU.
+   *
+   * `minIntervalMs`in tek dokumante ozelligi "ARDISIK hiz siniri icin gereken
+   * sey budur ve es zamanlilik siniri onu VERMEZ" idi. Olculdu: `concurrency`
+   * 1'den buyuk oldugu anda ozellik yok oluyordu. Iki slot bostayken iki
+   * `start()` ardisik kosar, AYNI `lastStart`i okur, ayni `wait`i hesaplar ve
+   * AYNI MILISANIYEDE baslardi.
+   *
+   *   concurrency 4, minInterval 25, dort is  -> bosluklar 27, 0, 0
+   *   concurrency 2, minInterval 50, alti is  -> bosluklar 51, 0, 50, 0, 50
+   *
+   * Uretim `concurrency: 1` kullandigi icin bu canli bir ariza DEGILDI; ama
+   * `concurrency` disa acik bir secenek ve onu acmanin bedeli, Arc'in
+   * `-32011`i uretmis oldugu tam yapilandirmaya SESSIZCE gecmekti.
+   *
+   * Yukaridaki "takilmadan sonra patlamaz" testi DURUYOR ve ikisi birlikte
+   * olculuyor: duzeltmenin kendisi eski kusurun taze bir ornegini tasiyamaz.
+   */
+  it('minIntervalMs es zamanli slotlar arasinda da bosluk koyar', async () => {
+    for (const [concurrency, interval, count] of [
+      [4, 25, 4],
+      [2, 50, 6],
+    ] as const) {
+      const pacer = createPacer({ concurrency, minIntervalMs: interval })
+      const starts: number[] = []
+      await Promise.all(
+        Array.from({ length: count }, () =>
+          pacer.run(() => {
+            starts.push(Date.now())
+            return Promise.resolve()
+          }),
+        ),
+      )
+      starts.sort((a, b) => a - b)
+      expect(starts, `concurrency=${concurrency}`).toHaveLength(count)
+      for (let i = 1; i < starts.length; i += 1) {
+        // Zamanlayici granuluitesi icin kucuk bir pay -- yukaridaki
+        // 25 -> 23 payinin aynisi.
+        expect(starts[i]! - starts[i - 1]!, `concurrency=${concurrency}, i=${i}`).toBeGreaterThan(
+          interval - 3,
+        )
+      }
+    }
+  })
+
   it('cekme katmani gecirilen pacer i GERCEKTEN kullanir', async () => {
     let calls = 0
     const counting = {
