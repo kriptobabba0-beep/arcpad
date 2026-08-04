@@ -60,8 +60,18 @@ const KEY = (process.env.E2E_ARC_PRIVATE_KEY ?? '') as Hex
  * the configured key (if any) and REPORTS this address, which is enough for
  * every read path and incapable of moving anybody's money. Defaults to the
  * signing key's own address when both are configured.
+ *
+ * IT IS A `string`, NOT AN `Address`, AND THAT IS THE POINT. Reading it as
+ * `(process.env.X ?? '') as Address` told the compiler that an UNSET variable
+ * could never be `''`, so the "is it configured?" guard below was DEAD -- the
+ * compiler called it out as TS2367, "these types have no overlap", and the
+ * fallback to the signing key's address was unreachable as written. A cast at
+ * the point of READING erases exactly the state the code exists to handle; the
+ * narrowing belongs at the point of USE, after the shape has been checked.
  */
-const WATCH = (process.env.E2E_ARC_WATCH ?? '') as Address
+const WATCH = process.env.E2E_ARC_WATCH ?? ''
+const IS_ADDRESS = /^0x[0-9a-fA-F]{40}$/
+const isAddress = (value: string): value is Address => IS_ADDRESS.test(value)
 const BASE = process.env.E2E_ARC_BASE_URL ?? ''
 
 const ERC20 = parseAbi(['function balanceOf(address) view returns (uint256)'])
@@ -132,7 +142,7 @@ test.describe('Arc testnet', () => {
      * a funded address; the write tests below still require the key.
      */
     expect(
-      /^0x[0-9a-fA-F]{64}$/.test(KEY) || /^0x[0-9a-fA-F]{40}$/.test(WATCH),
+      /^0x[0-9a-fA-F]{64}$/.test(KEY) || isAddress(WATCH),
       'E2E_ARC=1 requires E2E_ARC_PRIVATE_KEY (to sign) or E2E_ARC_WATCH (to read)',
     ).toBe(true)
     expect(FACTORY, 'E2E_ARC=1 requires E2E_ARC_FACTORY').toMatch(/^0x[0-9a-fA-F]{40}$/)
@@ -163,7 +173,10 @@ test.describe('Arc testnet', () => {
   test('the ERC-20 view and the native view are ONE balance, and the screen shows ONE row', async ({
     page,
   }) => {
-    const watched: Address = WATCH === '' ? privateKeyToAccount(KEY).address : (WATCH as Address)
+    // UNSET (or malformed) `E2E_ARC_WATCH` falls back to the signing key's own
+    // address. `beforeAll` has already established that at least one of the two
+    // is present, so this cannot silently read address zero.
+    const watched: Address = isAddress(WATCH) ? WATCH : privateKeyToAccount(KEY).address
     const client = arcClient()
 
     /*

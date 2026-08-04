@@ -101,28 +101,76 @@ export const CLIMBING: TokenOverview = {
   buyCount: 1,
 }
 
-/** Bir alim. Ucretler K2'nin olculmus 1 USDC vektorunden. */
+/**
+ * TAZE CURVE'DE 1,000000 USDC BUTCELI BIR `buyExactQuoteIn` -- K2'nin OLCULMUS
+ * vektoru, ve `CLIMBING`'i URETEN islem.
+ *
+ * ============ DORT REZERV DE SATIRDA DURUR, VE BAGLIDIRLAR ============
+ *
+ * `listTrades` dordunu de seciyor (`packages/db/src/queries.ts`), yani
+ * `TradeRow` dordunu de ZORUNLU kiliyor. Iki tanesi bir sure eksik kaldi ve
+ * suite yesil kaldi: vitest tip DENETLEMEDEN cevirir. Degerler uydurulamaz --
+ * her durumda su iki OZDESLIK gecerlidir ve ihlal eden bir fixture, eksik bir
+ * alandan daha kotudur:
+ *
+ *     vT - rT = vT0 - S = 279_900_000_000_000_000_000_000_000   (2,799e26)
+ *     vQ - rQ = V       =           4_292_000_000_000_000_000   (4,292e18)
+ *
+ * Bu satirin sayilari `CLIMBING`'in durumundan TURETILDI, o yuzden ayni ani
+ * anlatiyorlar:
+ *   rT = S - tokenAmountTok = 793_100_000e18 - 200_723_953_120_761_740_526_324_105
+ *   rQ = quoteAmountWei     (curve'un ILK islemi; oncesinde rQ = 0)
+ *   vT = vT0 - tokenAmountTok        vQ = V + rQ
+ *
+ * `tokenAmountTok` DE olculmus vektorden: `floor((net-1)·T/(V+net-1))`, yani
+ * `test/trade/fixtures.ts`'in `ONE_USDC_TOKENS`'i. Burada bir sure 1,64e23
+ * duruyordu -- dosyadaki her diger sayiyla, ve `CLIMBING.tradeCount = 1` ile
+ * celisen bir yer tutucu: `S - 1,64e23` `CLIMBING.realTokenReservesTok` DEGIL.
+ */
 export const BUY_ONE_USDC: TradeRow = {
   eventSeq: 4_194_304n,
   txHash: `0x${'11'.repeat(32)}`,
   blockTime: new Date('2026-07-31T12:00:00.000Z'),
   trader: '0x00000000000000000000000000000000000000cc',
   isBuy: true,
-  tokenAmountTok: 164_000_000_000_000_000_000_000n,
+  tokenAmountTok: 200_723_953_120_761_740_526_324_105n,
   // CURVE tutari. Cuzdandan cikan tutar bu DEGILDIR.
   quoteAmountWei: 987_654_320_987_654_320n,
   protocolFeeWei: 9_382_716_049_382_717n,
   creatorFeeWei: 2_962_962_962_962_963n,
   virtualTokenReservesTok: CLIMBING.virtualTokenReservesTok,
   virtualQuoteReservesWei: CLIMBING.virtualQuoteReservesWei,
+  realTokenReservesTok: CLIMBING.realTokenReservesTok,
+  realQuoteReservesWei: CLIMBING.realQuoteReservesWei,
   isDev: false,
 }
 
-/** Ayni buyuklukte bir satim. Ucret ciktidan DUSULUR. */
+/**
+ * AYNI TOKENLERIN GERI SATIMI -- GIDIS-DONUS, OLCULDU. Ucret ciktidan DUSULUR.
+ *
+ * Rezervleri BUY'DAN DEVRALMAK yanlis olurdu: iki satir ayni `event_seq`
+ * sirasinda ayni islem-sonrasi durumu iddia ederdi. Satim curve'u neredeyse
+ * basa dondurur ve GERIYE TAM 1 WEI birakir:
+ *   proceeds 987_654_320_987_654_319  (alimda odenen curve tutarindan BIR EKSIK)
+ *   vT = vT0                          rT = S
+ *   vQ = 4_292_000_000_000_000_001    rQ = 1
+ * Iki ozdeslik de burada gecerli: `vT - rT = 2,799e26`, `vQ - rQ = 4,292e18`.
+ *
+ * Ucretler DEGISMEZ, cunku parcalar `ceil` ile ve AYRI AYRI hesaplanir:
+ * `ceil(987654320987654319·95/1e4) = 9_382_716_049_382_717` ve
+ * `ceil(987654320987654319·30/1e4) = 2_962_962_962_962_963`. Kullaniciya kalan
+ * 975_308_641_975_308_639 wei, yani gidis-donus kaybi 24_691_358_024_691_361 =
+ * iki islemin ucretleri + curve'da kalan o 1 wei.
+ */
 export const SELL_ONE_USDC: TradeRow = {
   ...BUY_ONE_USDC,
   eventSeq: 4_194_305n,
   isBuy: false,
+  quoteAmountWei: 987_654_320_987_654_319n,
+  virtualTokenReservesTok: 1_073_000_000_000_000_000_000_000_000n,
+  virtualQuoteReservesWei: 4_292_000_000_000_000_001n,
+  realTokenReservesTok: 793_100_000_000_000_000_000_000_000n,
+  realQuoteReservesWei: 1n,
 }
 
 export const HOLDER: HolderRow = {

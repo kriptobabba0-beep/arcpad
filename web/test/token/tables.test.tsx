@@ -111,7 +111,7 @@ describe('<TradesTable> -- cuzdandan cikan tutar', () => {
     render(<TradesTable rows={[SELL_ONE_USDC]} nextCursor={null} now={TRADE_AT} />)
 
     const row = screen.getAllByRole('row')[1] as HTMLElement
-    // 987654320987654320 - 12345679012345680 = 975308641975308640 -> 0,975308
+    // 987654320987654319 - 12345679012345680 = 975308641975308639 -> 0,975308
     expect(moneyText(cellAt(row, 3))).toBe('0.975308')
   })
 

@@ -319,9 +319,22 @@ describe('parseAmount', () => {
   })
 
   it('names each refusal', () => {
-    expect(parseAmount('1e3').reason).toMatch(/write the number out/i)
-    expect(parseAmount('-1').reason).toMatch(/negative/i)
-    expect(parseAmount('1.2345678').reason).toMatch(/six decimals/i)
+    /**
+     * `AmountParse` BIR BIRLESIM, ve `.reason` yalnizca `ok: false` dalinda
+     * VAR. Daraltmadan okumak derlenmez -- ama vitest tip DENETLEMEDEN cevirdigi
+     * icin bu uc satir aylarca `undefined.toMatch(...)` olarak kosabilirdi.
+     * Daraltma bir cast ile degil, KABULU REDDEDEREK yapiliyor: bir gun
+     * `parseAmount('-1')` kabul ederse test "reason yok" diye degil, "bunun
+     * reddedilmesi gerekiyordu" diye duser.
+     */
+    const refusal = (text: string): string | null => {
+      const parsed = parseAmount(text)
+      if (parsed.ok) throw new Error(`${text} kabul edildi (${parsed.value}); reddedilmeliydi`)
+      return parsed.reason
+    }
+    expect(refusal('1e3')).toMatch(/write the number out/i)
+    expect(refusal('-1')).toMatch(/negative/i)
+    expect(refusal('1.2345678')).toMatch(/six decimals/i)
   })
 })
 

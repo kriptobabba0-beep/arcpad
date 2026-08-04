@@ -49,38 +49,32 @@ export function asHex(value: string): HexAddress {
 }
 
 /**
- * ISLEM SATIRI = Faz 3'un satiri + UCRET VE REZERV ALANLARI.
+ * ISLEM SATIRI = Faz 3'un satiri. BOSLUK KAPANDI.
  *
- * ============ BU BIR BOSLUK, VE DERLEME ZAMANINDA DURUYOR ============
+ * ============ BU YORUM BIR SURE YANLISTI, VE YANLISLIGI ONEMLIYDI ============
  *
- * `listTrades` bugun sekiz alan seciyor: eventSeq, txHash, blockTime, trader,
- * isBuy, tokenAmountTok, quoteAmountWei, isDev. Ucretleri SECMIYOR.
+ * Burada "listTrades bugun sekiz alan seciyor, ucretleri SECMIYOR" yaziyordu ve
+ * alanlar bu yuzden OPSIYONEL kilinmisti. `listTrades` artik ONUCUNU de seciyor
+ * (`packages/db/src/queries.ts`): iki ucret parcasi ve DORT rezerv. Yani
+ * `DbTradeRow` hepsini ZORUNLU tasiyor, ve bir kesisim bir alani opsiyonel
+ * YAPAMAZ -- `A & B`'de alan ancak IKI tarafta da opsiyonelse opsiyoneldir.
+ * Olculdu: `{ x: bigint } & { x?: bigint }` icin `{}` atamasi TS2322 verir ve
+ * `const t: bigint = row.x` temiz derlenir. Yani asagidaki `?`'ler hicbir sey
+ * yapmiyordu ve yorum okuyucuyu var olmayan bir boslugu kapatmaya gonderiyordu.
  *
- * Ama `walletDeltaWei` -- "cuzdandan cikan tutari goster, curve tutarini
- * degil" -- onlarsiz HESAPLANAMAZ: alimda kullanicinin odedigi
- * `quote + protokol + creator`, satimda aldigi `quote - ucretler`. Yalnizca
- * `quoteAmountWei` gostermek, brief'in acikca yasakladigi sey.
+ * SONUC: overlay KALDIRILDI. `walletDeltaWei` ve `feeBreakdown` icindeki
+ * "ucretler yoksa `null`" dallari ve tablonun "—" cizimi TIP DUZEYINDE
+ * ULASILAMAZ durumda; hicbir test onlari kosmuyor. Silinmediler cunku bu
+ * satirlar API sinirindan JSON olarak da gecebiliyor, ama ULASILAMAZ olduklari
+ * artik yazili -- "kimsenin yazmadigi bir nedenle yesil duran" bir dal olarak
+ * degil.
  *
- * Kolonlar VERITABANINDA VAR (`003_trades_and_curve_state.sql`); yalnizca
- * SELECT'te yoklar.
- *
- * ONCE zorunlu yazildilar ve derleme GERCEKTEN kirildi -- boslugun var
- * oldugunun kaniti bu. Ama zorunlu birakmak, calisan bir sayfayi derlenmez
- * yapardi; yerine alanlar OPSIYONEL ve `walletDeltaWei` onlar yokken `null`
- * doner. Tablo o durumda "—" cizer.
- *
- * KRITIK OLAN SU: eksik ucretlerde `quoteAmountWei`'ye DUSULMEZ. Curve
- * tutarini "cuzdandan cikan" diye etiketlemek, brief'in yasakladigi hatanin ta
- * kendisi -- ve yanlis bir sayi, eksik bir sayidan pahaliya mal olur.
- * `test/token/tables.test.tsx` bunu iddia eder.
+ * KRITIK OLAN SU DEGISMEDI: eksik ucretlerde `quoteAmountWei`'ye DUSULMEZ.
+ * Curve tutarini "cuzdandan cikan" diye etiketlemek, brief'in yasakladigi
+ * hatanin ta kendisi -- ve yanlis bir sayi, eksik bir sayidan pahaliya mal
+ * olur. `test/token/tables.test.tsx` bunu iddia eder.
  */
-export type TradeRow = DbTradeRow & {
-  readonly protocolFeeWei?: bigint | undefined
-  /** Creator sifirsa SIFIRDIR ve protokol payina KATLANMAZ. */
-  readonly creatorFeeWei?: bigint | undefined
-  readonly virtualTokenReservesTok?: bigint | undefined
-  readonly virtualQuoteReservesWei?: bigint | undefined
-}
+export type TradeRow = DbTradeRow
 
 /** Faz 3'un satiri. Curve sorguda HARIC tutulur (`h.holder <> c.curve`). */
 export type HolderRow = DbHolderRow

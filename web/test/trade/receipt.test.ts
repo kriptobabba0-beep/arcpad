@@ -47,12 +47,47 @@ type TradeArgs = {
   creatorFee: bigint
 }
 
-function tradeLog(args: TradeArgs, opts: { address?: string; logIndex?: number } = {}): Log {
-  const topics = encodeEventTopics({
-    abi: bondingCurveAbi,
-    eventName: 'Trade',
-    args: { trader: TRADER as Hex },
+/**
+ * BIR MAKBUZUN LOG'U `pending` DEGILDIR, VE TIP BUNU SOYLEMELI.
+ *
+ * `Log` (parametresiz) `pending extends boolean` demektir, yani `blockHash`
+ * `0x… | null`. `TransactionReceipt.logs` ise `Log<bigint, number, false>[]`:
+ * onaylanmis bir makbuzun her log'unun blogu VARDIR. Ikisi arasindaki fark
+ * gercektir ve `as unknown as Log` ile ezilmisti -- cift cast, hem daralttigi
+ * hem genislettigi icin, tipin soyledigi hicbir seyi kontrol etmeden gecer.
+ * Burada `false` YAZILI: bu fixture onaylanmis bir makbuzun log'unu kuruyor.
+ */
+type ReceiptLog = Log<bigint, number, false>
+
+/**
+ * `encodeEventTopics` TIPI FILTRELER ICINDIR, LOG'LAR ICIN DEGIL.
+ *
+ * Bir filtrede indexed bir argüman bir LISTE (`[a, b]` = "ikisinden biri") ya
+ * da `null` (= "her sey") olabilir, ve donus tipi bunu tasir. GERCEK bir log'un
+ * topic'lerinde ikisi de yoktur: her slot tek bir 32 baytlik kelimedir. Filtre
+ * sekli burada DUZLESTIRILIYOR -- cast ile degil, KONTROL ederek: bir `null`
+ * slot, fixture'in hicbir zincirin yaymayacagi bir log kurdugu anlamina gelir.
+ */
+function logTopics(encoded: readonly (Hex | readonly Hex[] | null)[]): [Hex, ...Hex[]] {
+  const flat = encoded.map((topic) => {
+    if (typeof topic !== 'string') {
+      throw new Error(`topic tek bir kelime degil: ${JSON.stringify(topic)}`)
+    }
+    return topic
   })
+  const [signature, ...rest] = flat
+  if (signature === undefined) throw new Error('olay imzasi topic`i yok')
+  return [signature, ...rest]
+}
+
+function tradeLog(args: TradeArgs, opts: { address?: string; logIndex?: number } = {}): ReceiptLog {
+  const topics = logTopics(
+    encodeEventTopics({
+      abi: bondingCurveAbi,
+      eventName: 'Trade',
+      args: { trader: TRADER as Hex },
+    }),
+  )
   const data = encodeAbiParameters(TRADE_DATA_ABI, [
     args.isBuy,
     args.tokenAmount,
@@ -74,10 +109,10 @@ function tradeLog(args: TradeArgs, opts: { address?: string; logIndex?: number }
     transactionHash: `0x${'11'.repeat(32)}`,
     transactionIndex: 0,
     removed: false,
-  } as unknown as Log
+  }
 }
 
-function receiptWith(logs: readonly Log[]) {
+function receiptWith(logs: readonly ReceiptLog[]) {
   return {
     logs: [...logs],
     transactionHash: `0x${'11'.repeat(32)}` as Hex,

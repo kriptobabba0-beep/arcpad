@@ -23,9 +23,11 @@ import type { TradeRow } from '@/components/read/types'
  * daha ucuzdur. Toplama zaten bunu dogru tasir.
  */
 export function walletDeltaWei(row: TradeRow): bigint | null {
-  // `listTrades` ucret kolonlarini HENUZ SECMIYOR. Onlarsiz cuzdan tutari
-  // hesaplanamaz -- ve `quoteAmountWei`'ye dusmek CURVE tutarini "cuzdandan
-  // cikan" diye etiketlemek olurdu: eksik bir sayi degil, YANLIS bir sayi.
+  // `listTrades` ARTIK iki ucret parcasini da seciyor, yani bu dal TIP
+  // DUZEYINDE ULASILAMAZ (bkz. `components/read/types.ts`). Duruyor cunku
+  // dogru cevabi tasiyor: ucretler yoksa `quoteAmountWei`'ye DUSULMEZ --
+  // curve tutarini "cuzdandan cikan" diye etiketlemek eksik bir sayi degil,
+  // YANLIS bir sayi olurdu.
   const { protocolFeeWei, creatorFeeWei } = row
   if (protocolFeeWei === undefined || creatorFeeWei === undefined) return null
   const fees = protocolFeeWei + creatorFeeWei
