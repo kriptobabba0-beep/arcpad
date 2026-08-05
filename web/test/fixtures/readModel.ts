@@ -1,6 +1,8 @@
 import type {
   HolderRow,
+  FreshIndexer,
   IndexerStatus,
+  StaleIndexer,
   ReadResult,
   TokenOverview,
   TradeRow,
@@ -190,30 +192,59 @@ export const HOLDER: HolderRow = {
 }
 
 /**
- * INDEXER TAZELIGI, IKI DURUM.
+ * INDEXER TAZELIGI, UC DURUM -- CUNKU IKI EKSEN VAR.
  *
- * Faz 3 her okumaya `IndexerStatus` iliştirir ve `stale` esigi
- * `DEFAULT_STALE_AFTER_SECONDS = 30`'dur. Gerekcesi Arc'in blok suresi:
- * ~350 ms, ve dongu bos aralikta bile imleci ilerletir, yani saglikli bir
- * indexer'da `updatedAt` saniyeler icinde tazelenir. 30 sn gecici bir RPC
- * yavaslamasini alarma cevirmeyecek kadar genis, bir DURAKLAMAYI kullanicidan
- * gizlemeyecek kadar dardir.
+ * Faz 3 her okumaya `IndexerStatus` iliştirir. Esik IKIDIR ve ikisi de ayni
+ * cumleyi soyler ("30 saniyeden eski veri bayattir"), biri duvar saatinde
+ * (`DEFAULT_STALE_AFTER_SECONDS = 30`) biri zincir saatinde
+ * (`DEFAULT_MAX_BLOCKS_BEHIND = 90`, ~350 ms/blok).
+ *
+ * UCUNCU FIXTURE SONRADAN EKLENDI VE SEBEBI OLCULDU: canli kosuda indexer
+ * 767.504 blok geridEYKEN `stalenessSeconds` 0,17 idi. Yani "yazma taze, veri
+ * 75 saatlik" durumu GERCEKTIR ve eski iki fixture onu TEMSIL EDEMIYORDU --
+ * dolayisiyla hicbir test onu kosamiyordu.
  */
-export const LIVE_INDEXER: IndexerStatus = {
-  lastBlock: 4n,
-  lastBlockHash: `0x${'ab'.repeat(32)}`,
-  updatedAt: new Date('2026-07-31T12:00:02.000Z'),
-  stalenessSeconds: 2,
+export const LIVE_INDEXER: FreshIndexer = {
   stale: false,
+  at: {
+    lastBlock: 4n,
+    lastBlockHash: `0x${'ab'.repeat(32)}`,
+    updatedAt: new Date('2026-07-31T12:00:02.000Z'),
+    stalenessSeconds: 2,
+    headBlock: 4n,
+    blocksBehind: 0n,
+  },
 }
 
-/** 15 dakika geride. Veri VAR ama GUNCEL DEGIL -- en pahali durum. */
-export const STALE_INDEXER: IndexerStatus = {
-  lastBlock: 4n,
-  lastBlockHash: `0x${'ab'.repeat(32)}`,
-  updatedAt: new Date('2026-07-31T11:45:00.000Z'),
-  stalenessSeconds: 900,
+/** 15 dakika once yazdi ve durdu. Surec ekseni. */
+export const STALE_INDEXER: StaleIndexer = {
   stale: true,
+  why: 'writes-stalled',
+  at: {
+    lastBlock: 4n,
+    lastBlockHash: `0x${'ab'.repeat(32)}`,
+    updatedAt: new Date('2026-07-31T11:45:00.000Z'),
+    stalenessSeconds: 900,
+    headBlock: 4n,
+    blocksBehind: 0n,
+  },
+}
+
+/**
+ * SANIYELER ONCE YAZDI, 510.000 BLOK GERIDE. Veri ekseni.
+ * Canli kosuda olculen sekil budur ve eski sozlesme buna `stale: false` diyordu.
+ */
+export const BEHIND_INDEXER: StaleIndexer = {
+  stale: true,
+  why: 'behind-head',
+  at: {
+    lastBlock: 54_861_436n,
+    lastBlockHash: `0x${'ab'.repeat(32)}`,
+    updatedAt: new Date('2026-07-31T12:00:02.000Z'),
+    stalenessSeconds: 1,
+    headBlock: 55_371_436n,
+    blocksBehind: 510_000n,
+  },
 }
 
 /** Basarili bir okuma. Tazelik ZORUNLU ALAN oldugu icin varsayilanla gelir. */

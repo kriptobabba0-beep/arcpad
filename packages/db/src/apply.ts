@@ -512,19 +512,62 @@ export async function applyFeeEvent(db: Queryable, e: FeeLedgerEvent): Promise<n
  * degisir ve "ikinci gecis bir no-op" iddiasi dokum esitligiyle
  * ISPATLANAMAZDI), ve geriye dusmus bir head imleci geri cekemez.
  */
+/**
+ * `headBlock` ZORUNLUDUR, ve bu bir tip degil bir SOZLESME meselesidir.
+ *
+ * Imleci ilerleten herkes o anda zincirin basini ZATEN okumustur -- `runOnce`
+ * her turun basinda `finalized`i sorar, `replayRange`e aralik disaridan
+ * verilir. Opsiyonel yapmak, "bas bilinmiyor" satirlarini URETIM yolundan da
+ * uretilebilir kilardi; ve bir kez `head_block` NULL kaldiginda okuma katmani
+ * verinin yasini HESAPLAYAMAZ -- yani B2-a'nin tam olarak duzeltmeye calistigi
+ * korluk, bu parametreyi gecmeyi unutan tek bir cagirandan geri gelirdi.
+ */
 export async function setCursor(
   db: Queryable,
   lastBlock: bigint,
   lastBlockHash: string,
+  headBlock: bigint,
 ): Promise<number> {
+  if (headBlock < lastBlock) {
+    // Bas imlecin GERISINDE olamaz: `runOnce` araligi basin otesine hic
+    // acmaz. Sessizce negatif bir "geride" degeri yazmak, sayfada negatif bir
+    // gecikme gosterirdi.
+    throw new RangeError(`head ${headBlock} is behind the cursor ${lastBlock}`)
+  }
   const { rowCount } = await db.query(
-    `INSERT INTO sync_state (id, last_block, last_block_hash) VALUES (1, $1, $2)
+    `INSERT INTO sync_state (id, last_block, last_block_hash, head_block) VALUES (1, $1, $2, $3)
      ON CONFLICT (id) DO UPDATE
        SET last_block = EXCLUDED.last_block,
            last_block_hash = EXCLUDED.last_block_hash,
+           head_block = EXCLUDED.head_block,
            updated_at = now()
      WHERE EXCLUDED.last_block > sync_state.last_block`,
-    [lastBlock.toString(), lowerHash32(lastBlockHash)],
+    [lastBlock.toString(), lowerHash32(lastBlockHash), headBlock.toString()],
+  )
+  return rowCount ?? 0
+}
+
+/**
+ * BASA YETISMIS BIR INDEXER DE BIR SEY SOYLEMEK ZORUNDA.
+ *
+ * `runOnce` `null` dondugunde -- yani islenecek aralik kalmadiginda -- eski
+ * hal HICBIR SEY yazmiyordu. Iki sonucu vardi: `updated_at` yerinde sayardi
+ * (30 saniyeden sonra "yazma durdu" derdi, oysa surec gayet iyi) ve
+ * `head_block` bir onceki turdan kalirdi, yani "ne kadar geride" sorusunun
+ * cevabi TAZELENMEZDI.
+ *
+ * Bu yazma imleci ILERLETMEZ -- `last_block`a dokunmaz. Yalnizca "bu ana kadar
+ * gordugum bas budur ve hala kosuyorum" der. Bas GERIYE gitmez (`GREATEST`):
+ * `finalized` etiketinin geri dusmesi Arc'ta olculmedi, ama dusseydi verinin
+ * yasini SIFIRLAMASI kabul edilemezdi.
+ */
+export async function noteHead(db: Queryable, headBlock: bigint): Promise<number> {
+  const { rowCount } = await db.query(
+    `UPDATE sync_state
+        SET head_block = GREATEST(COALESCE(head_block, 0), $1::bigint),
+            updated_at = now()
+      WHERE id = 1 AND last_block <= $1::bigint`,
+    [headBlock.toString()],
   )
   return rowCount ?? 0
 }
@@ -607,7 +650,13 @@ export async function replayRange(
       else if (e.kind === 'transfer') r.transfers += n
       else r.fees += n
     }
-    r.cursorMoved = await setCursor(tx, to, toHash)
+    // BASI `to` OLARAK YAZAR, ve bu bir varsayim degil bir TANIM: `replayRange`
+    // araligi disaridan alir ve onu BUTUNUYLE uygular, yani cagirana gore bu
+    // kosunun bildigi en ileri blok `to`dur. Zincirin gercek basini bu
+    // fonksiyon HIC gormez -- goren tek yer `runOnce`tir ve o kendi basini
+    // gecirir. Ikisini karistirmamak icin burada `to` yaziliyor: "bildigim
+    // kadariyla basa yetismis durumdayim".
+    r.cursorMoved = await setCursor(tx, to, toHash, to)
     r.total =
       r.launches + r.trades + r.completed + r.graduated + r.transfers + r.fees + r.cursorMoved
     return r

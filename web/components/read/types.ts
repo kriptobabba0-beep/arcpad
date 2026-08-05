@@ -17,7 +17,15 @@ import type { HolderRow as DbHolderRow, TradeRow as DbTradeRow } from '@arcpad/d
  *   `…Ppm` = milyonda pay               `…Seq` = event_seq
  *   `…At`  = YALNIZCA gosterim, ASLA siralama
  */
-export type { IndexerStatus, SortKey, TokenOverview } from '@arcpad/db'
+export type {
+  FreshIndexer,
+  IndexerStatus,
+  SortKey,
+  StaleIndexer,
+  StaleReason,
+  SyncPoint,
+  TokenOverview,
+} from '@arcpad/db'
 export type { Page, ReadFailure, ReadResult } from '@/lib/read'
 // DEGER ihraci `./result`'tan: `@/lib/read` `server-only` ve `pg` tasiyor,
 // oradan bir fonksiyon yeniden ihrac etmek `pg`'yi istemci paketine sokar.

@@ -25,12 +25,13 @@ const EXPECTED = [
   '007_views.sql',
   '008_search.sql',
   '009_graduation.sql',
+  '010_sync_head.sql',
 ]
 
 describe('runMigrations', () => {
   beforeEach(dropSchema)
 
-  it('diskteki migration listesi tam olarak beklenen sekiz dosyadir', async () => {
+  it('diskteki migration listesi tam olarak beklenen on dosyadir', async () => {
     // Sirali ve TAM. Bir testin gecici olarak yazdigi bozuk dosya temizlenmemis
     // olsaydi burasi kirmizi olurdu -- yani sizinti sessiz kalamaz.
     await expect(migrationFiles()).resolves.toEqual(EXPECTED)
@@ -206,7 +207,7 @@ describe('runMigrations', () => {
     )
     try {
       await expect(runMigrations(pool, await migrationFiles())).rejects.toThrow(
-        /003a_between\.tmp\.sql: uygulanmamis, ama uygulanmis olan 009_graduation\.sql/,
+        /003a_between\.tmp\.sql: uygulanmamis, ama uygulanmis olan 010_sync_head\.sql/,
       )
     } finally {
       await unlink(join(MIGRATIONS_DIR, inserted))
@@ -217,10 +218,10 @@ describe('runMigrations', () => {
     // Kapinin fazla siki OLMADIGININ kaniti: normal evrim yolu -- `007_...` --
     // engellenmiyor.
     await runMigrations(pool)
-    // `010_`: son mesru dosya artik `009_graduation.sql`. `009_appended` onun
-    // ONUNE siralanirdi ('a' < 'g') ve kapi onu -- DOGRU OLARAK -- araya ekleme
+    // `011_`: son mesru dosya artik `010_sync_head.sql`. `010_appended` onun
+    // ONUNE siralanirdi ('a' < 's') ve kapi onu -- DOGRU OLARAK -- araya ekleme
     // sayardi.
-    const appended = '010_appended.tmp.sql'
+    const appended = '011_appended.tmp.sql'
     await writeFile(
       join(MIGRATIONS_DIR, appended),
       'CREATE TABLE appended_ok (x int PRIMARY KEY);\n',

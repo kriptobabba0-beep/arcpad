@@ -225,9 +225,11 @@ describe('exactly-once ingestion', () => {
 
   it('imlec geri gitmez', async () => {
     await replayRange(pool, RANGE, RANGE_TO, hashFor(RANGE_TO), await parentHash())
-    expect(await setCursor(pool, RANGE_TO - 100n, hashFor(RANGE_TO - 100n))).toBe(0)
-    expect(await setCursor(pool, RANGE_TO, hashFor(RANGE_TO))).toBe(0)
-    expect(await setCursor(pool, RANGE_TO + 1n, hashFor(RANGE_TO + 1n))).toBe(1)
+    expect(await setCursor(pool, RANGE_TO - 100n, hashFor(RANGE_TO - 100n), RANGE_TO - 100n)).toBe(
+      0,
+    )
+    expect(await setCursor(pool, RANGE_TO, hashFor(RANGE_TO), RANGE_TO)).toBe(0)
+    expect(await setCursor(pool, RANGE_TO + 1n, hashFor(RANGE_TO + 1n), RANGE_TO + 1n)).toBe(1)
     const { rows } = await pool.query<{ last_block: string }>('SELECT last_block FROM sync_state')
     expect(rows[0]?.last_block).toBe((RANGE_TO + 1n).toString())
   })
@@ -249,14 +251,14 @@ describe('exactly-once ingestion', () => {
 
     // Imlec ilerlerse hash da ilerler -- ikisi ATOMIK olarak birlikte yazilir,
     // yoksa muhafiz bir tur boyunca ESKI zincire karsi kontrol yapardi.
-    expect(await setCursor(pool, RANGE_TO + 5n, hashFor(RANGE_TO + 5n))).toBe(1)
+    expect(await setCursor(pool, RANGE_TO + 5n, hashFor(RANGE_TO + 5n), RANGE_TO + 5n)).toBe(1)
     expect(await getCursor(pool)).toEqual({
       lastBlock: RANGE_TO + 5n,
       lastBlockHash: hashFor(RANGE_TO + 5n),
     })
 
     // Geri giden bir yazim hic olmaz, yani hash de geri gitmez.
-    expect(await setCursor(pool, RANGE_TO, hashFor(RANGE_TO))).toBe(0)
+    expect(await setCursor(pool, RANGE_TO, hashFor(RANGE_TO), RANGE_TO)).toBe(0)
     expect((await getCursor(pool))?.lastBlockHash).toBe(hashFor(RANGE_TO + 5n))
   })
 
@@ -269,7 +271,7 @@ describe('exactly-once ingestion', () => {
     expect(e1.code).toBe('23502')
     expect(e1.column).toBe('last_block_hash')
 
-    const e2 = await failure(() => setCursor(pool, 5n, '0xnothex'))
+    const e2 = await failure(() => setCursor(pool, 5n, '0xnothex', 5n))
     expect(e2).toBeInstanceOf(RangeError)
 
     const e3 = await failure(() =>

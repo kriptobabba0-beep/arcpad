@@ -5,6 +5,7 @@ import {
   assertContinuous,
   getCursor,
   getDeployment,
+  noteHead,
   putDeployment,
   setCursor,
   withTransaction,
@@ -331,7 +332,17 @@ export async function runOnce(
   // tutulur (`nextRange` negatif imleci reddeder).
   const from = cursor?.lastBlock ?? (deployment.startBlock > 0n ? deployment.startBlock - 1n : 0n)
   const range = nextRange(from, head, config.maxSpan)
-  if (range === null) return null
+  if (range === null) {
+    // BASA YETISTIK -- VE BUNU SOYLEMEK ZORUNDAYIZ.
+    //
+    // Eski hal burada HICBIR SEY yazmadan donuyordu, yani "yapacak is yok"
+    // ile "surec olmus" veritabaninda AYNI gorunuyordu: `updated_at` yerinde
+    // sayiyor, 30 saniye sonra okuma katmani "yazma durdu" diyordu. `noteHead`
+    // imleci ILERLETMEZ, yalnizca gordugumuz basi ve "hala buradayim"i yazar --
+    // ve boylece `blocksBehind` bos turlarda da GUNCEL kalir.
+    await noteHead(pool, head)
+    return null
+  }
 
   const watch = await loadWatchSet(pool, deployment)
   const events = await fetchRange(client, watch, range.from, range.to, { pacer })
@@ -356,8 +367,11 @@ export async function runOnce(
       await refreshVolume24h(tx, await touchedTokens(tx, events))
       await refreshStale24hVolume(tx, options.volumeRefreshBatch ?? config.volumeRefreshBatch)
 
-      // IMLEC AYNI TRANSACTION ICINDE ILERLER.
-      await setCursor(tx, range.to, toHash)
+      // IMLEC AYNI TRANSACTION ICINDE ILERLER, ve YANINDA O TURUN BASI GIDER.
+      // `head` bu turun basinda `finalized`den okundu; `range.to` ondan buyuk
+      // olamaz (`nextRange` kelepceler). Ikisinin farki verinin BLOK cinsinden
+      // yasidir ve okuma katmani "taze" diyebilmek icin ona muhtactir.
+      await setCursor(tx, range.to, toHash, head)
       return applied
     })
     return { from: range.from, to: range.to, events: events.length, counts }

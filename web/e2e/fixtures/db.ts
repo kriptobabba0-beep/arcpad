@@ -441,7 +441,13 @@ export async function seed(pool: Pool): Promise<Seeded> {
   // The cursor is what `getIndexerStatus` reads to decide whether the data is
   // stale. Advancing it keeps the stale notice out of the way of every other
   // assertion — the notice has its own test elsewhere.
-  await setCursor(pool, START_BLOCK + BigInt(SEEDED * 10), hash32(0xb10c))
+  //
+  // THE HEAD IS PASSED EQUAL TO THE CURSOR, and that is now load-bearing rather
+  // than cosmetic: freshness has TWO axes and this seed has to satisfy both.
+  // Writing a head ahead of the cursor here would put a `behind-head` banner on
+  // top of every explore assertion in this file.
+  const seededTo = START_BLOCK + BigInt(SEEDED * 10)
+  await setCursor(pool, seededTo, hash32(0xb10c), seededTo)
 
   return {
     tokens,

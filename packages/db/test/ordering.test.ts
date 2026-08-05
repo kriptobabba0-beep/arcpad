@@ -272,7 +272,7 @@ describe('Explore sayfalamasi -- esit market cap', () => {
     await resetSchema()
     await putDeployment(pool, DEPLOYMENT)
     for (let i = 0; i < COUNT; i += 1) await applyLaunch(pool, launch(i))
-    await setCursor(pool, 54_500_100n, hashFor(54_500_100n))
+    await setCursor(pool, 54_500_100n, hashFor(54_500_100n), 54_500_100n)
   })
 
   /** Once: kume GERCEKTEN esit anahtarli mi? Degilse asagisi hicbir sey olcmez. */

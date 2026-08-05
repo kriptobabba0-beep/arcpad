@@ -3,7 +3,7 @@ import type { Address, Hex } from 'viem'
 import { decodeAbiParameters, encodeFunctionData } from 'viem'
 import type { Pool } from '@arcpad/db'
 import { createPool, getCursor, runMigrations, snapshot } from '@arcpad/db'
-import { getTokenOverview, listTrades } from '@arcpad/db'
+import { getIndexerStatus, getTokenOverview, listTrades } from '@arcpad/db'
 import { deriveTokenAddress } from '../../src/admit'
 import { isForbiddenEmitter, TOPIC0 } from '../../src/arc'
 import type { IndexerConfig } from '../../src/config'
@@ -417,8 +417,30 @@ describe('canli Arc testnet', () => {
     expect(rows!.graduationRaiseWei).toBe(12_161_433_369_060_378_706n)
     // Toplanan quote, raise'i SEKIZ wei asiyor -- `floor()+1` her alimda.
     expect(rows!.realQuoteReservesWei - rows!.graduationRaiseWei).toBe(8n)
-    expect(indexer.lastBlock).toBe(SMOKE_LAST)
+    // TAZE, cunku bu kosunun BASI `SMOKE_LAST`e sabitlendi ve imlec tam oraya
+    // ulasti -- yani `blocksBehind` SIFIR. Bu bir ayrinti degil: gercek basla
+    // kosulan ayni indexer 767.504 blok geride kalir ve o durumda TAZE DEGILDIR
+    // (bkz. asagidaki iddia ve `packages/db`nin "canli ama geride" testi).
     expect(indexer.stale).toBe(false)
+    if (indexer.stale) throw new Error('unreachable')
+    expect(indexer.at.lastBlock).toBe(SMOKE_LAST)
+    expect(indexer.at.blocksBehind).toBe(0n)
+
+    // AYNI SATIR, GERCEK ZINCIR BASIYLA: veri saniyeler once yazildi ve yine de
+    // BAYAT. Bu, B2-a'nin canli kanitidir ve kurgu bir bayrakla degil, zincirin
+    // o andaki basiyla kuruluyor.
+    const head = await liveClient.request({
+      method: 'eth_blockNumber',
+      params: [],
+    })
+    await pool.query('UPDATE sync_state SET head_block = $1', [BigInt(head as string).toString()])
+    const behind = await getIndexerStatus(pool)
+    expect(behind.stale).toBe(true)
+    if (!behind.stale) throw new Error('unreachable')
+    expect(behind.why).toBe('behind-head')
+    expect(behind.at?.stalenessSeconds).toBeLessThan(30)
+    expect(behind.at?.blocksBehind).toBeGreaterThan(700_000n)
+    await pool.query('UPDATE sync_state SET head_block = $1', [SMOKE_LAST.toString()])
   })
 
   /** (7) IKINCI KOSU IDEMPOTENT -- GERCEK zincir verisiyle. */

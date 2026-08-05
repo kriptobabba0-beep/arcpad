@@ -442,6 +442,7 @@ const EXPECTED_INVENTORY = [
   'public:r:schema_state.id',
   'public:r:schema_state.inventory_json',
   'public:r:schema_state.updated_at',
+  'public:r:sync_state.head_block',
   'public:r:sync_state.id',
   'public:r:sync_state.last_block',
   'public:r:sync_state.last_block_hash',

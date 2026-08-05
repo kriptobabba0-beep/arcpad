@@ -1,4 +1,4 @@
-import { createPool, type Pool } from '@arcpad/db'
+import { createPool, type FreshIndexer, type Pool, type StaleIndexer } from '@arcpad/db'
 import { createServer, type Server } from 'node:net'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { setPoolForTesting } from '../lib/db'
@@ -116,14 +116,19 @@ describe('a database that is really down', () => {
  * were fresh.
  */
 describe('a reading that is present but lagging', () => {
-  const laggingStatus = {
+  const at = {
     lastBlock: 1_000n,
     lastBlockHash: '0xabc',
     updatedAt: new Date('2026-08-02T00:00:00Z'),
     stalenessSeconds: 240,
-    stale: true,
+    headBlock: 1_000n,
+    blocksBehind: 0n,
   }
-  const freshStatus = { ...laggingStatus, stalenessSeconds: 2, stale: false }
+  const laggingStatus: StaleIndexer = { stale: true, why: 'writes-stalled', at }
+  const freshStatus: FreshIndexer = {
+    stale: false,
+    at: { ...at, stalenessSeconds: 2 },
+  }
 
   it('a stale reading has NO `data` field at all', async () => {
     const result = await guard(async () => ({ value: [1, 2, 3], indexer: laggingStatus }))
@@ -136,7 +141,7 @@ describe('a reading that is present but lagging', () => {
     expect((result as unknown as { data?: unknown }).data).toBeUndefined()
     if (!result.stale) throw new Error('unreachable')
     expect(result.staleData).toEqual([1, 2, 3])
-    expect(result.indexer.stalenessSeconds).toBe(240)
+    expect(result.indexer.at?.stalenessSeconds).toBe(240)
   })
 
   it('a fresh reading has `data` and no `staleData`', async () => {
@@ -156,7 +161,7 @@ describe('a reading that is present but lagging', () => {
       },
       stale: (_data, indexer) => {
         seen.push('stale')
-        return `lagging ${indexer.stalenessSeconds}s`
+        return `lagging ${indexer.at?.stalenessSeconds}s`
       },
       missing: () => {
         seen.push('missing')
@@ -216,6 +221,11 @@ describe('readHolders -- the keyset that was hard-coded to null', () => {
   const STATUS_ROW = {
     last_block: '1000',
     last_block_hash: '0xabc',
+    // THE HEAD IS PART OF THE ROW NOW. Leaving it out is not a fresh status --
+    // it is `head-unknown`, which is stale, and the notice would land on top of
+    // a test that is about cursors. That is the contract working: freshness
+    // cannot be claimed without a head.
+    head_block: '1000',
     updated_at: new Date('2026-08-05T00:00:00Z'),
     staleness_seconds: '2',
   }

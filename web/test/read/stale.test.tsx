@@ -1,9 +1,14 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { describeLag, StaleNotice } from '@/components/read/StaleNotice'
+import {
+  describeBlockLag,
+  describeLag,
+  describeStaleness,
+  StaleNotice,
+} from '@/components/read/StaleNotice'
 import { stalenessOf } from '@/components/read/result'
 import type { IndexerStatus, ReadResult } from '@/components/read/types'
-import { LIVE_INDEXER, STALE_INDEXER } from '../fixtures/readModel'
+import { BEHIND_INDEXER, LIVE_INDEXER, STALE_INDEXER } from '../fixtures/readModel'
 
 /**
  * BU BILESENI HICBIR TEST CIZMIYORDU.
@@ -29,6 +34,46 @@ describe('<StaleNotice>', () => {
     expect(notice).toHaveTextContent('Trading reads reserves straight from the chain')
     // `role="status"`: DOM'a sonradan girse bile duyurulur.
     expect(notice).toHaveAttribute('role', 'status')
+  })
+})
+
+/**
+ * B2-a'NIN EKRAN TARAFI.
+ *
+ * Canli kosuda olculen durum: indexer SANIYELER once yazdi ve YARIM MILYON
+ * blok geride. Eski sozlesme buna `stale: false` diyordu, yani bu uyari
+ * hicbir zaman cizilmedi. Simdi ciziliyor -- ve sayfada duran sayi, kimsenin
+ * gormedigi o sayidir.
+ */
+describe('<StaleNotice> -- canli ama geride', () => {
+  it('BLOK cinsinden gecikmeyi ve sure karsiligini yazar', () => {
+    render(<StaleNotice indexer={BEHIND_INDEXER} what="This page" />)
+    const notice = screen.getByTestId('stale-notice')
+    expect(notice).toHaveTextContent('This page may be out of date')
+    expect(notice).toHaveTextContent('510,000 blocks')
+    // 510.000 x 0,35 sn = 178.500 sn = 49,58 saat, ve 48 saat gun esigidir
+    // (`describeLag` ile ayni sinir) -> "2 days".
+    expect(notice).toHaveTextContent('~2 days')
+    // ...ve "yazma durdu" DEMEZ: indexer bir saniye once yazdi ve bu dogru.
+    expect(notice).not.toHaveTextContent('may have stopped')
+  })
+
+  it('sebep basina AYRI cumle -- dordu de ayri ariza', () => {
+    expect(describeStaleness(STALE_INDEXER)).toContain('may have stopped')
+    expect(describeStaleness({ stale: true, why: 'never-ran', at: null })).toContain('never run')
+    expect(describeStaleness({ ...BEHIND_INDEXER, why: 'head-unknown' })).toContain(
+      'CANNOT be measured',
+    )
+  })
+})
+
+describe('describeBlockLag -- sinirlar', () => {
+  it('tekil blok, bilinmeyen blok, ve gruplu binlik', () => {
+    expect(describeBlockLag(null)).toBe('an unknown number of blocks')
+    expect(describeBlockLag(1n)).toBe('1 block (~0 seconds)')
+    expect(describeBlockLag(767_504n)).toContain('767,504 blocks')
+    // 767.504 x 0,35 = 268.626 sn = 74,6 saat -> "3 days" (48 saat esigi asili).
+    expect(describeBlockLag(767_504n)).toContain('~3 days')
   })
 })
 

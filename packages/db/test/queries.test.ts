@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+  DEFAULT_MAX_BLOCKS_BEHIND,
   DEFAULT_STALE_AFTER_SECONDS,
   getClaimableFees,
   getIndexerStatus,
@@ -11,7 +12,7 @@ import {
   listTrades,
 } from '../src/queries'
 import { putDeployment } from '../src/deployment'
-import { replayRange, setCursor } from '../src/apply'
+import { noteHead, replayRange, setCursor } from '../src/apply'
 import { pool, resetSchema } from './setup'
 import {
   ALICE,
@@ -297,12 +298,17 @@ describe('listeler', () => {
 })
 
 /**
- * TAZELIK.
+ * TAZELIK -- IKI EKSEN.
  *
  * Frontend'in gereksinimi: bayat sayilari CANLI gibi gostermek yerine
  * "indexer geride" demek. Bu ancak okuma modeli tazeligi KENDISI verirse
  * mumkun -- ve `listTokens`/`getTokenOverview` onu satirlarla BIRLIKTE
  * dondurdugu icin cagiran onu almayi unutamaz.
+ *
+ * IKINCI EKSEN BIR ARIZADAN GELDI. `stale` yalnizca `now() - updated_at`i
+ * olcerken, canli Arc'a karsi kosan gercek indexer 767.504 blok (~75 saat)
+ * geridEYKEN `stale: false` dedi ve sayfa hicbir uyari cizmedi. Asagidaki
+ * "canli ama geride" testi tam olarak o durumdur ve eski kodda GECMEZDI.
  */
 describe('indexer tazeligi', () => {
   beforeEach(async () => {
@@ -312,29 +318,102 @@ describe('indexer tazeligi', () => {
 
   it('hic kosmamis bir indexer BAYATTIR (bilinmiyor, "taze" degil)', async () => {
     const status = await getIndexerStatus(pool)
-    expect(status.lastBlock).toBeNull()
-    expect(status.updatedAt).toBeNull()
     expect(status.stale).toBe(true)
+    if (!status.stale) throw new Error('unreachable')
+    expect(status.why).toBe('never-ran')
+    expect(status.at).toBeNull()
   })
 
-  it('yeni ilerlemis bir imlec TAZEDIR', async () => {
-    await setCursor(pool, 54_661_437n, hashFor(54_661_437n))
+  it('yeni ilerlemis VE basa yetismis bir imlec TAZEDIR', async () => {
+    await setCursor(pool, 54_661_437n, hashFor(54_661_437n), 54_661_437n)
     const status = await getIndexerStatus(pool)
-    expect(status.lastBlock).toBe(54_661_437n)
     expect(status.stale).toBe(false)
-    expect(status.stalenessSeconds).toBeLessThan(5)
+    if (status.stale) throw new Error('unreachable')
+    expect(status.at.lastBlock).toBe(54_661_437n)
+    expect(status.at.blocksBehind).toBe(0n)
+    expect(status.at.stalenessSeconds).toBeLessThan(5)
   })
 
   it('esigi asan bir imlec BAYATTIR ve olcum SUNUCU saatindendir', async () => {
-    await setCursor(pool, 54_661_437n, hashFor(54_661_437n))
+    await setCursor(pool, 54_661_437n, hashFor(54_661_437n), 54_661_437n)
     // Zamani veritabaninda geri al -- cagiranin saatini degil.
     await pool.query("UPDATE sync_state SET updated_at = now() - interval '10 minutes'")
     const status = await getIndexerStatus(pool)
-    expect(status.stalenessSeconds).toBeGreaterThan(590)
     expect(status.stale).toBe(true)
+    if (!status.stale) throw new Error('unreachable')
+    expect(status.why).toBe('writes-stalled')
+    expect(status.at?.stalenessSeconds).toBeGreaterThan(590)
     // Esik parametreliktir: 20 dakika esikte ayni satir TAZE sayilir.
     expect((await getIndexerStatus(pool, 1_200)).stale).toBe(false)
     expect(DEFAULT_STALE_AFTER_SECONDS).toBe(30)
+  })
+
+  /**
+   * B2-a. SANIYELER ONCE YAZDI, YARIM MILYON BLOK GERIDE.
+   *
+   * Bu satir CANLI kosuda uretildi: `runOnce` bir aralik isledi (`updated_at`
+   * = simdi), imlec 54.671.436'da kaldi, zincirin basi 55.438.940'taydi.
+   * Surec ekseni bunu "taze" gorur ve GORMEYE DEVAM ETMELIDIR -- yakalayan sey
+   * ikinci eksendir.
+   */
+  it('CANLI AMA GERIDE bir indexer BAYATTIR -- yazma tazeligi onu kurtarmaz', async () => {
+    await setCursor(pool, 54_671_436n, hashFor(54_671_436n), 55_438_940n)
+    const status = await getIndexerStatus(pool)
+
+    expect(status.stale).toBe(true)
+    if (!status.stale) throw new Error('unreachable')
+    expect(status.why).toBe('behind-head')
+    // Surec ekseni TAZE der -- eski sozlesmenin verdigi cevap tam da buydu.
+    expect(status.at?.stalenessSeconds).toBeLessThan(5)
+    expect(status.at?.blocksBehind).toBe(767_504n)
+  })
+
+  it('esik BLOK cinsinden de parametriktir ve 90 varsayilani ~30 saniyedir', async () => {
+    expect(DEFAULT_MAX_BLOCKS_BEHIND).toBe(90n)
+    // 90 blok TAM ESIKTE: `>` ile karsilastirilir, yani hala taze.
+    await setCursor(pool, 1_000n, hashFor(1_000n), 1_090n)
+    expect((await getIndexerStatus(pool)).stale).toBe(false)
+    // 91 blok bayat.
+    await setCursor(pool, 1_001n, hashFor(1_001n), 1_092n)
+    expect((await getIndexerStatus(pool)).stale).toBe(true)
+    // ...ve genis bir esik ayni satiri yine taze yapar.
+    expect((await getIndexerStatus(pool, { maxBlocksBehind: 1_000n })).stale).toBe(false)
+  })
+
+  /**
+   * BASI HIC YAZILMAMIS BIR SATIR TAZE SAYILAMAZ.
+   *
+   * Bu, migration 010'dan onceki bir satirin (ya da bu sutunu yazmayan eski
+   * bir indexer'in) sekli. "Bilinmiyor"u "taze"ye yuvarlamak, duzeltilen
+   * arizanin sessiz halini geri getirirdi -- ve tip duzeyinde de imkansizdir:
+   * `stale: false` dali `blocksBehind: bigint` ISTER.
+   */
+  it('head_block NULL ise TAZE DEGILDIR, sebebi head-unknown', async () => {
+    await setCursor(pool, 54_661_437n, hashFor(54_661_437n), 54_661_437n)
+    await pool.query('UPDATE sync_state SET head_block = NULL')
+    const status = await getIndexerStatus(pool)
+    expect(status.stale).toBe(true)
+    if (!status.stale) throw new Error('unreachable')
+    expect(status.why).toBe('head-unknown')
+    expect(status.at?.blocksBehind).toBeNull()
+  })
+
+  /** `noteHead` imleci ILERLETMEZ ama yasi ve canliligi tazeler. */
+  it('noteHead imleci degistirmeden basi ve updated_at i tasir', async () => {
+    await setCursor(pool, 1_000n, hashFor(1_000n), 1_000n)
+    await pool.query("UPDATE sync_state SET updated_at = now() - interval '10 minutes'")
+    expect((await getIndexerStatus(pool)).stale).toBe(true)
+
+    expect(await noteHead(pool, 1_050n)).toBe(1)
+    const status = await getIndexerStatus(pool)
+    expect(status.stale).toBe(false)
+    if (status.stale) throw new Error('unreachable')
+    expect(status.at.lastBlock).toBe(1_000n)
+    expect(status.at.blocksBehind).toBe(50n)
+
+    // Bas GERIYE gitmez.
+    await noteHead(pool, 1_020n)
+    expect((await getIndexerStatus(pool)).at?.headBlock).toBe(1_050n)
   })
 
   it('satirlari almanin tazeligi ALMADAN bir yolu yok', async () => {
@@ -349,6 +428,6 @@ describe('indexer tazeligi', () => {
     expect(one.rows?.token).toBe(TOKEN)
     expect(one.indexer.stale).toBe(true)
     // Ayni imlec, ayni cevap: iki yol da AYNI kaynagi okur.
-    expect(one.indexer.lastBlock).toBe(list.indexer.lastBlock)
+    expect(one.indexer.at?.lastBlock).toBe(list.indexer.at?.lastBlock)
   })
 })

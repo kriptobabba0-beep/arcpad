@@ -85,7 +85,7 @@ async function seedLaunches(): Promise<void> {
   for (const [i, [name, symbol]] of NAMES.entries()) {
     await applyLaunch(pool, launch(i, name, symbol))
   }
-  await setCursor(pool, 54_400_100n, hashFor(54_400_100n))
+  await setCursor(pool, 54_400_100n, hashFor(54_400_100n), 54_400_100n)
 }
 
 /** Bir sayfalamayi sonuna kadar surer ve gorulen her token'i sirayla toplar. */
@@ -280,7 +280,7 @@ describe('arama: siralama anahtari TAM MI', () => {
     await pool.query("UPDATE sync_state SET updated_at = now() - interval '1 hour'")
     const page = await searchTokens(pool, 'smoke', { limit: 5 })
     expect(page.indexer.stale).toBe(true)
-    await setCursor(pool, 54_400_101n, hashFor(54_400_101n))
+    await setCursor(pool, 54_400_101n, hashFor(54_400_101n), 54_400_101n)
     expect((await searchTokens(pool, 'smoke', { limit: 5 })).indexer.stale).toBe(false)
   })
 
@@ -399,7 +399,7 @@ describe('holders: iki parcali imlec', () => {
         amountTok: EQUAL,
       })
     }
-    await setCursor(pool, 54_400_100n, hashFor(54_400_100n))
+    await setCursor(pool, 54_400_100n, hashFor(54_400_100n), 54_400_100n)
   })
 
   it('OLCUM: alti holder, TEK bir bakiye degeri', async () => {

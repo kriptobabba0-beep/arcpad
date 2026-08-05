@@ -100,6 +100,25 @@ async function count(table: string): Promise<number> {
   return Number(rows[0]!.n)
 }
 
+/** Imlecin UC alani: nereye ulastik, hangi basi gorduk, ne zaman yazdik. */
+async function stamp(): Promise<{
+  lastBlock: bigint
+  headBlock: bigint | null
+  updatedAt: number
+}> {
+  const { rows } = await pool.query<{
+    last_block: string
+    head_block: string | null
+    updated_at: Date
+  }>('SELECT last_block::text, head_block::text, updated_at FROM sync_state WHERE id = 1')
+  const row = rows[0]!
+  return {
+    lastBlock: BigInt(row.last_block),
+    headBlock: row.head_block === null ? null : BigInt(row.head_block),
+    updatedAt: row.updated_at.getTime(),
+  }
+}
+
 describe('acilis', () => {
   beforeEach(async () => {
     await resetSchema()
@@ -221,11 +240,42 @@ describe('runOnce', () => {
     expect(cursor?.lastBlockHash).toBe(hashOf(LAST))
   })
 
-  it('head imlece yetismisse HICBIR SEY yapmaz', async () => {
+  /**
+   * HEAD IMLECE YETISMISSE HICBIR SATIR YAZILMAZ -- AMA CANLILIK YAZILIR.
+   *
+   * Bu test bir sure `snapshot(pool)`u OLDUGU GIBI karsilastiriyordu ve o hali
+   * `sync_state.updated_at`i de kapsiyordu, yani "hicbir sey yapmaz" iddiasi
+   * `updated_at`in DONMUS kalmasini da iceriyordu. O donmusluk B2-a'nin ikinci
+   * yarisiydi: basa yetismis bir indexer 30 saniye sonra okuma katmanina
+   * "yazma durdu" dedirtiyordu, oysa gayet iyi kosuyordu.
+   *
+   * Iddia daralmadi, KESKINLESTI: DEFTER degismez (exactly-once'in korudugu
+   * sey), imlec ILERLEMEZ, ve canlilik damgasi ILERLER.
+   */
+  it('head imlece yetismisse hicbir SATIR yazmaz, ama canliligi tazeler', async () => {
     await runOnce(pool, new ChainNode(logs), LIVE_DEPLOYMENT, CONFIG)
     const before = await snapshot(pool)
+    const beforeStamp = await stamp()
+    // Ayni milisaniyede iki `now()` esit cikabilir; damganin ILERLEDIGINI
+    // olcmek icin arada gercek zaman gecmeli.
+    await new Promise((done) => setTimeout(done, 25))
+
     expect(await runOnce(pool, new ChainNode(logs), LIVE_DEPLOYMENT, CONFIG)).toBeNull()
-    expect(await snapshot(pool)).toEqual(before)
+
+    const after = await snapshot(pool)
+    // DEFTERIN TAMAMI, `sync_state` HARIC: tek bir satir bile degismedi.
+    const { sync_state: syncBefore, ...ledgerBefore } = before
+    const { sync_state: syncAfter, ...ledgerAfter } = after
+    expect(ledgerAfter).toEqual(ledgerBefore)
+    expect(syncBefore).toHaveLength(1)
+    expect(syncAfter).toHaveLength(1)
+
+    const afterStamp = await stamp()
+    // IMLEC ILERLEMEDI.
+    expect(afterStamp.lastBlock).toBe(beforeStamp.lastBlock)
+    // ...ve "hala buradayim" yazildi.
+    expect(afterStamp.updatedAt).toBeGreaterThan(beforeStamp.updatedAt)
+    expect(afterStamp.headBlock).toBe(beforeStamp.lastBlock)
   })
 
   it('head GERIYE duserse hicbir sey yapmaz', async () => {

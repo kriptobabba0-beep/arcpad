@@ -26,29 +26,91 @@ import type { Queryable } from './pool'
  */
 
 /**
- * INDEXER'IN KENDI TAZELIGI.
+ * INDEXER'IN KENDI TAZELIGI -- IKI EKSEN, VE HICBIRI TEK BASINA CEVAP DEGIL.
  *
- * `stalenessSeconds` SUNUCU TARAFINDA hesaplanir (`now() - updated_at`),
- * cagiranin saatiyle degil: web sunucusunun saati veritabanininkinden saparsa
- * "indexer geride" uyarisi saat farkini rapor ederdi.
+ * ================== BURASI BIR KEZ TEK EKSENLIYDI VE YALAN SOYLEDI ==========
  *
- * `updatedAt` her ILERLEYEN aralikta tazelenir -- BOS bir aralik da imleci
- * ilerletir, yani bu alanin bayatlamasi "zincirde bir sey olmadi" degil
- * "indexer kosmuyor ya da takildi" demektir.
+ * Eski hal yalnizca `now() - updated_at`i olcuyordu. O sayi SURECIN canli olup
+ * olmadigini olcer: her ILERLEYEN aralik `updated_at`i tazeler, bos aralik da
+ * dahil. Verinin YASI hakkinda hicbir sey soylemez.
+ *
+ * OLCULDU (2026-08-05, canli Arc testnet, gercek factory, gercek `runOnce`):
+ *
+ *   [repro] runOnce -> 54661437-54671436 events=19
+ *   [repro] chain head        = 55438940
+ *   [repro] indexer lastBlock = 54671436
+ *   [repro] BLOCKS BEHIND     = 767504   (~75 saat zincir zamani)
+ *   [repro] stalenessSeconds  = 0.165668
+ *   [repro] status.stale      = false          <-- YALAN
+ *   [repro] token page would take the FRESH branch (NO notice at all)
+ *
+ * Yani `Fresh<T>` sozlesmesinin ONLEMEK ICIN VAR OLDUGU sey -- bayat bir sayiyi
+ * canli gibi cizmek -- tam olarak gerceklesti, ve sozlesmenin hicbir yeri
+ * kirilmadi. Kirilmasi gereken yer TIP DUZEYINDE YOKTU.
+ *
+ * ================== BU YUZDEN SEKIL DEGISTI, SAYI DEGIL ====================
+ *
+ * `web/lib/read.ts`in kurali "`result.data` `ok` VE `stale` daraltilmadan
+ * derlenmez"di. Ayni disiplin artik YASA da uygulaniyor:
+ *
+ *   TAZE dal bir `MeasuredSyncPoint` TASIMAK ZORUNDA,
+ *   ve `MeasuredSyncPoint` `blocksBehind: bigint` OLMADAN INSA EDILEMEZ.
+ *
+ * Dolayisiyla "basi hic okumadim ama taze diyorum" bir kod yolu olarak MEVCUT
+ * DEGILDIR -- yazilabilen tek sey `{ stale: true, why: 'head-unknown' }`tir.
+ * Duz bir `blocksBehind?: bigint` alani bunu vermezdi: unutmak yine derlenirdi,
+ * ki bu tam olarak eski `{stale, data}` duz seklinin reddedilme sebebidir.
+ *
+ * IKI EKSEN DE GEREKLI, ve birbirinin yerine gecmez:
+ *   `stalenessSeconds`  surec ekseni. OLU bir indexer eski bir `head_block`
+ *                       birakir, yani blok yasi KUCUK gorunur; bunu yakalayan
+ *                       tek sey yazma bayatligidir.
+ *   `blocksBehind`      veri ekseni. CANLI ama geride bir indexer her turda
+ *                       taze yazar; bunu yakalayan tek sey blok yasidir.
+ *
+ * IKISI DE SUNUCUDAN: `now()` veritabaninin saati, `head_block` indexer'in
+ * gordugu bas. Tarayicidan hesaplamak, saati kaymis bir kullaniciya kalici bir
+ * uyari gosterirdi (ayni gerekce `StaleNotice`'ta yazili).
  */
-export interface IndexerStatus {
-  /** Islenmis son blok. `null` ise indexer hic kosmadi. */
-  lastBlock: bigint | null
-  lastBlockHash: string | null
-  updatedAt: Date | null
+
+/** Indexer'in ulastigi nokta. `headBlock`/`blocksBehind` NULL olabilir. */
+export interface SyncPoint {
+  lastBlock: bigint
+  lastBlockHash: string
+  updatedAt: Date
   /** `now() - updated_at`, saniye. Sunucu saatinden. */
-  stalenessSeconds: number | null
-  /** `stalenessSeconds > staleAfterSeconds`. Hic kosmadiysa `true`. */
-  stale: boolean
+  stalenessSeconds: number
+  /** Indexer bu satiri yazarken gordugu bas. `null` = hic yazilmamis. */
+  headBlock: bigint | null
+  /** `headBlock - lastBlock`. `null` = bas bilinmiyor, yani YAS BILINMIYOR. */
+  blocksBehind: bigint | null
 }
 
 /**
- * Varsayilan bayatlik esigi.
+ * YASI OLCULMUS bir nokta. TAZE dalin tasimak ZORUNDA oldugu sey budur.
+ * `blocksBehind` burada `bigint`tir, `bigint | null` degil -- fark, "taze"
+ * demenin zincirle karsilastirmis olmayi GEREKTIRMESIDIR.
+ */
+export interface MeasuredSyncPoint extends SyncPoint {
+  headBlock: bigint
+  blocksBehind: bigint
+}
+
+/**
+ * NEDEN bayat. Runbook dallari ayri: `writes-stalled` "indexer olmus/takilmis",
+ * `behind-head` "indexer kosuyor ama geride", ve ikisi ayni ekrani gerektirmez.
+ */
+export type StaleReason = 'never-ran' | 'writes-stalled' | 'behind-head' | 'head-unknown'
+
+export type IndexerStatus =
+  { stale: false; at: MeasuredSyncPoint } | { stale: true; why: StaleReason; at: SyncPoint | null }
+
+/** Sayfanin cizecegi dal. `stalenessOf` bunu dondurur. */
+export type StaleIndexer = Extract<IndexerStatus, { stale: true }>
+export type FreshIndexer = Extract<IndexerStatus, { stale: false }>
+
+/**
+ * SUREC EKSENININ esigi.
  *
  * Arc'ta blok suresi ~350ms ve dongu her turda imleci ilerletir (bos aralikta
  * bile), yani saglikli bir indexer'da `updated_at` saniyeler icinde tazelenir.
@@ -57,17 +119,50 @@ export interface IndexerStatus {
  */
 export const DEFAULT_STALE_AFTER_SECONDS = 30
 
+/**
+ * VERI EKSENININ esigi, ve AYNI 30 SANIYEDIR -- blok cinsinden yazilmis hali.
+ *
+ * Arc'ta blok suresi ~350ms olculdu, yani 30 saniye ≈ 86 blok; yukari yuvarlanip
+ * 90. Iki esik ayni cumleyi soyler ("30 saniyeden eski veri bayattir"), biri
+ * duvar saatinde biri zincir saatinde.
+ *
+ * SAGLIKLI BIR INDEXER BUNU ASMAZ, ve bu bir tahmin degil: `runOnce` basa
+ * yetistiginde `range.to === head` olur, yani `blocksBehind` TAM SIFIRDIR;
+ * yetismemisken zaten geridedir ve uyari DOGRUDUR. `INDEXER_MAX_SPAN` (1.000)
+ * bu esigin uzerinde olmasi bir sorun degil -- bir tur 1.000 blok islese bile
+ * turun SONUNDA yazilan sayi "islemden sonra ne kadar geride kaldim"dir.
+ */
+export const DEFAULT_MAX_BLOCKS_BEHIND = 90n
+
+export interface StaleThresholds {
+  staleAfterSeconds?: number
+  maxBlocksBehind?: bigint
+}
+
 export async function getIndexerStatus(
   db: Queryable,
-  staleAfterSeconds: number = DEFAULT_STALE_AFTER_SECONDS,
+  thresholds: number | StaleThresholds = {},
 ): Promise<IndexerStatus> {
+  // Sayi gecmek ESKI IMZADIR ve saniye esigi demektir; iki cagiran (ve bir
+  // test) onu boyle kullaniyordu, kirmanin bir faydasi yok.
+  const staleAfterSeconds =
+    typeof thresholds === 'number'
+      ? thresholds
+      : (thresholds.staleAfterSeconds ?? DEFAULT_STALE_AFTER_SECONDS)
+  const maxBlocksBehind =
+    typeof thresholds === 'number'
+      ? DEFAULT_MAX_BLOCKS_BEHIND
+      : (thresholds.maxBlocksBehind ?? DEFAULT_MAX_BLOCKS_BEHIND)
+
   const { rows } = await db.query<{
     last_block: string
     last_block_hash: string
+    head_block: string | null
     updated_at: Date
     staleness_seconds: string
   }>(
-    `SELECT last_block::text AS last_block, last_block_hash, updated_at,
+    `SELECT last_block::text AS last_block, last_block_hash,
+            head_block::text AS head_block, updated_at,
             EXTRACT(EPOCH FROM (now() - updated_at))::text AS staleness_seconds
        FROM sync_state WHERE id = 1`,
   )
@@ -75,22 +170,35 @@ export async function getIndexerStatus(
   if (row === undefined) {
     // HIC KOSMADI. `stale: true` -- "bilinmiyor"u "taze"ye yuvarlamak, bos bir
     // veritabanini canli gostermek olurdu.
-    return {
-      lastBlock: null,
-      lastBlockHash: null,
-      updatedAt: null,
-      stalenessSeconds: null,
-      stale: true,
-    }
+    return { stale: true, why: 'never-ran', at: null }
   }
-  const staleness = Number(row.staleness_seconds)
-  return {
-    lastBlock: BigInt(row.last_block),
+
+  // `?? null` -- `=== null` DEGIL. Bir NULL sutun `pg`den `null` gelir, ama
+  // sutunu SECMEYEN bir okuyucu (ya da bir cift) `undefined` verir ve
+  // `BigInt(undefined)` FIRLATIR; `web/lib/read.ts`in `guard`i onu
+  // `unavailable`a cevirir, yani eksik bir sutun butun sayfayi dusururdu.
+  // Olculdu: `web/test/read.test.ts`in sahte surucusu tam olarak boyle dustu.
+  const headBlock = (row.head_block ?? null) === null ? null : BigInt(row.head_block as string)
+  const lastBlock = BigInt(row.last_block)
+  const at: SyncPoint = {
+    lastBlock,
     lastBlockHash: row.last_block_hash,
     updatedAt: row.updated_at,
-    stalenessSeconds: staleness,
-    stale: staleness > staleAfterSeconds,
+    stalenessSeconds: Number(row.staleness_seconds),
+    headBlock,
+    // Bas imlecin gerisindeyse (olmamali; `setCursor` reddeder) NEGATIF bir
+    // "geride" uretmek yerine sifira kirpilir -- eksi bir gecikme ekranda
+    // anlamsizdir ve bir hatayi gizler yerine gostermez.
+    blocksBehind: headBlock === null ? null : headBlock > lastBlock ? headBlock - lastBlock : 0n,
   }
+
+  // SIRA ONEMLI DEGIL AMA SEBEP ONEMLI: en spesifik olan once yaziliyor ki
+  // runbook dogru dala gitsin. "Bas bilinmiyor" TAZE DEGILDIR ve bu, tipin
+  // zaten zorladigi seyin calisma zamanindaki karsiligidir.
+  if (at.blocksBehind === null) return { stale: true, why: 'head-unknown', at }
+  if (at.stalenessSeconds > staleAfterSeconds) return { stale: true, why: 'writes-stalled', at }
+  if (at.blocksBehind > maxBlocksBehind) return { stale: true, why: 'behind-head', at }
+  return { stale: false, at: at as MeasuredSyncPoint }
 }
 
 /**

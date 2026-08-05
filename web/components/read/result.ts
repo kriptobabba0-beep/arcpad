@@ -1,4 +1,4 @@
-import type { IndexerStatus } from '@arcpad/db'
+import type { FreshIndexer, IndexerStatus, StaleIndexer } from '@arcpad/db'
 import type { ReadFailure, ReadResult } from '@/lib/read'
 
 /**
@@ -23,8 +23,8 @@ import type { ReadFailure, ReadResult } from '@/lib/read'
 export function fold<T, R>(
   result: ReadResult<T>,
   handlers: {
-    fresh: (data: T, indexer: IndexerStatus) => R
-    stale: (data: T, indexer: IndexerStatus) => R
+    fresh: (data: T, indexer: FreshIndexer) => R
+    stale: (data: T, indexer: StaleIndexer) => R
     missing: (reason: ReadFailure, indexer: IndexerStatus | null) => R
   },
 ): R {
@@ -43,7 +43,14 @@ export function valueOf<T>(result: ReadResult<T>): T | undefined {
   })
 }
 
-/** Bayat DALI ise `IndexerStatus`, degilse `null`. Uyari cizimi buna bakar. */
-export function stalenessOf<T>(result: ReadResult<T>): IndexerStatus | null {
+/**
+ * Bayat DALI ise durum, degilse `null`. Uyari cizimi buna bakar.
+ *
+ * Donen tip `StaleIndexer`, `IndexerStatus` DEGIL: `<StaleNotice>` NEDEN bayat
+ * oldugunu (`why`) ve varsa ne kadar geride oldugunu (`at.blocksBehind`) yazar,
+ * ve genis birlesim tipi bunlarin ikisini de her cizimde yeniden daraltmayi
+ * gerektirirdi.
+ */
+export function stalenessOf<T>(result: ReadResult<T>): StaleIndexer | null {
   return result.ok && result.stale ? result.indexer : null
 }

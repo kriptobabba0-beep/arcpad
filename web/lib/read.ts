@@ -14,6 +14,7 @@
 
 import {
   encodeHolderCursor,
+  type FreshIndexer,
   getIndexerStatus,
   getTokenOverview,
   type HolderRow,
@@ -25,6 +26,7 @@ import {
   type SearchSortKey,
   searchTokens,
   type SortKey,
+  type StaleIndexer,
   type TokenOverview,
   type TradeRow,
 } from '@arcpad/db'
@@ -60,13 +62,23 @@ import { getPool } from './db'
 
 export type ReadFailure = 'unavailable' | 'notFound'
 
+/**
+ * THE TWO BRANCHES CARRY DIFFERENT STATUSES, NOT THE SAME UNION TWICE.
+ *
+ * `FreshIndexer` cannot be constructed without a `blocksBehind: bigint` (see
+ * `packages/db/src/queries.ts`), so `{ ok: true, stale: false }` is unreachable
+ * for a reading whose distance from the chain head was never measured. That is
+ * the half this contract was missing: before, `stale` answered "is the indexer
+ * process writing", and a database 767 504 blocks behind compiled -- and
+ * rendered -- as fresh.
+ */
 export type ReadResult<T> =
-  | { readonly ok: true; readonly stale: false; readonly data: T; readonly indexer: IndexerStatus }
+  | { readonly ok: true; readonly stale: false; readonly data: T; readonly indexer: FreshIndexer }
   | {
       readonly ok: true
       readonly stale: true
       readonly staleData: T
-      readonly indexer: IndexerStatus
+      readonly indexer: StaleIndexer
     }
   | {
       readonly ok: false
@@ -87,8 +99,8 @@ export type Page<T> = {
 export function fold<T, R>(
   result: ReadResult<T>,
   handlers: {
-    fresh: (data: T, indexer: IndexerStatus) => R
-    stale: (data: T, indexer: IndexerStatus) => R
+    fresh: (data: T, indexer: FreshIndexer) => R
+    stale: (data: T, indexer: StaleIndexer) => R
     missing: (reason: ReadFailure, indexer: IndexerStatus | null) => R
   },
 ): R {
