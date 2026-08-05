@@ -49,6 +49,23 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # FACTORY ADRESI ARTIK BURAYA YAZILMIYOR.
+      #
+      # Onceki hali `ARC_FACTORY_ADDRESS: '0x0d75a4ff...'` idi ve bu, defterin
+      # ustunden atlayan bir KOPYAYDI. Faz 2 `LaunchFactory`nin constructor'ina
+      # `feeSchedule` argumanini ekliyor, yani initcode -- ve CREATE2 adresi --
+      # DEGISIYOR. Yeniden deploy edildigi gun defter guncellenir, bu satir
+      # guncellenmez, ve is akisi hicbir sey baslatmayan bir factory'yi izleyip
+      # YESIL rapor eder. Baska her tuketici defteri okuyor
+      # (`keeper/src/config.ts` -> `loadAddressBook(chainId)`), yalnizca burasi
+      # okumuyordu.
+      #
+      # `--env-only` ARC_FACTORY_ADDRESS, ARC_ESCROW_ADDRESS ve
+      # ARC_START_BLOCK'u birlikte yazar; ucu de defterden gelir ve
+      # `loadAddressBook` ucunu de dogrular.
+      - name: Chain env, from the address book
+        run: pnpm addressbook --env-only >> "$GITHUB_ENV"
+
       # ADIM SEVIYESINDE continue-on-error. Test ATLAMAZ: ARC_RPC_URL yoksa
       # dosya cokerek "kosmadi"yi gorunur kilar.
       - name: Live integration test
@@ -57,4 +74,3 @@ jobs:
         env:
           DATABASE_URL: postgres://arcpad:arcpad@localhost:5432/arcpad
           ARC_RPC_URL: ${{ secrets.ARC_RPC_URL || 'https://rpc.testnet.arc.network' }}
-          ARC_FACTORY_ADDRESS: '0x0d75a4ffb8cd6db4237557e9519591b94d6ab439'

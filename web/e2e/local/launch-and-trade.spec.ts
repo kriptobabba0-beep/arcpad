@@ -1,5 +1,6 @@
 import { expect, type Page, test } from '@playwright/test'
 import {
+  ARC_TESTNET_CHAIN_ID,
   bondingCurveAbi,
   getArcChain,
   launchFactoryAbi,
@@ -24,7 +25,20 @@ import { connectWallet, injectedWallet, LOCAL_USER_KEY } from '../fixtures/walle
  * smaller than the budget", asserted from the chain, in the same test.
  */
 
-const CHAIN_ID = Number(process.env.E2E_CHAIN_ID ?? '5042002')
+/**
+ * THE DEFAULT COMES FROM THE REGISTRY, NOT FROM A LITERAL.
+ *
+ * `'5042002'` used to sit here and it was a second copy of the chain id in
+ * tracked source -- which `chain-registry.test.ts` forbids and, measured on
+ * this tree, was ALREADY FAILING: `pnpm --filter @arcpad/shared test` reported
+ * `registry literals leaked outside chain.ts: web/e2e/local/launch-and-trade.spec.ts`.
+ * That made the `check` job's `pnpm -r test` step red independently of the web
+ * build, so CI had two reasons it could not go green, not one. The gate's
+ * carve-out exempts `*.test.ts` and `test/` directories; a `.spec.ts` under
+ * `e2e/` is neither, and widening the carve-out to cover it would have hidden
+ * the copy instead of removing it.
+ */
+const CHAIN_ID = Number(process.env.E2E_CHAIN_ID ?? ARC_TESTNET_CHAIN_ID)
 const RPC = process.env.E2E_RPC_URL ?? ''
 const FACTORY = (process.env.E2E_FACTORY ?? '') as Address
 

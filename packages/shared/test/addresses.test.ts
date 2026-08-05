@@ -13,6 +13,7 @@ import {
   loadAddressBook,
   parseAddressBook,
   toDeployment,
+  webEnvBlock,
 } from '../src/addresses'
 import { REPO_ROOT } from '../src/profiles'
 
@@ -336,6 +337,138 @@ describe('adres defteri', () => {
       const b = book()
       const env = { ...goodEnv(b), ARC_FACTORY_ADDRESS: b.launchFactory.toLowerCase() }
       expect(() => assertEnvMatchesBook(env, b)).not.toThrow()
+    })
+  })
+
+  // =====================================================================
+  // THE PRODUCER AND THE CHECKER ARE ONE TABLE.
+  //
+  // `webEnvBlock` writes CI's environment; `assertEnvMatchesBook` refuses a
+  // deploy whose environment disagrees with the book. They used to be two
+  // hand-written lists of the same six names, and nothing compared them --
+  // so a variable added to the checker and forgotten in the producer would
+  // have turned every CI web build red for a reason that has nothing to do
+  // with the code, which is precisely the failure this whole change exists
+  // to end.
+  // =====================================================================
+  describe('webEnvBlock', () => {
+    /**
+     * WRITTEN OUT, NOT DERIVED FROM `WEB_ENV_BINDINGS`.
+     *
+     * Deriving the expectation from the table under test would make this
+     * assertion vacuous -- it would pass for any table, including an empty
+     * one. These six names are the contract `.env.example`, `preflight` and
+     * both CI jobs depend on.
+     */
+    const EXPECTED_NAMES = [
+      'ARC_ESCROW_ADDRESS',
+      'ARC_FACTORY_ADDRESS',
+      'ARC_START_BLOCK',
+      'NEXT_PUBLIC_ARCPAD_ESCROW',
+      'NEXT_PUBLIC_ARCPAD_FACTORY',
+      'NEXT_PUBLIC_ARC_CHAIN_ID',
+    ]
+
+    function parseBlock(text: string): Record<string, string> {
+      const out: Record<string, string> = {}
+      for (const line of text.split('\n')) {
+        if (line === '') continue
+        const eq = line.indexOf('=')
+        expect(eq, `no "=" in ${JSON.stringify(line)}`).toBeGreaterThan(0)
+        out[line.slice(0, eq)] = line.slice(eq + 1)
+      }
+      return out
+    }
+
+    it('produces exactly what the checker demands -- no more, no less', () => {
+      const b = book()
+      const produced = parseBlock(webEnvBlock(b))
+      expect(Object.keys(produced).sort()).toEqual(EXPECTED_NAMES)
+      expect(() => assertEnvMatchesBook(produced, b)).not.toThrow()
+    })
+
+    it('every binding names a variable the checker actually reads', () => {
+      const b = book()
+      // Dropping any ONE produced variable must make the checker throw, naming
+      // that variable. A binding the checker ignores would survive this.
+      for (const name of Object.keys(parseBlock(webEnvBlock(b)))) {
+        const env = parseBlock(webEnvBlock(b))
+        delete env[name]
+        expectFieldError(() => assertEnvMatchesBook(env, b), name)
+      }
+    })
+
+    it('no line carries a stray space, a quote or a CR -- $GITHUB_ENV is literal', () => {
+      // GitHub appends this text to a file and parses `KEY=VALUE` verbatim: a
+      // trailing space or a quote becomes part of the VALUE, and the address
+      // then fails to parse at build time rather than here.
+      for (const line of webEnvBlock(book()).split('\n')) {
+        expect(line).toMatch(/^[A-Z0-9_]+=[^\s"']+$/)
+      }
+    })
+  })
+
+  // =====================================================================
+  // THE CI STEP ITSELF.
+  //
+  // Same shape as `abi-parity.test.ts`'s assertion that its job exists: a
+  // mechanism whose only consumer is a workflow file is unmeasured unless
+  // something reads that file. Measured on this tree: `pnpm --filter
+  // @arcpad/web build` exits 1 with `WebConfigError:
+  // NEXT_PUBLIC_ARC_CHAIN_ID: is not set` when these values are absent, so a
+  // job that builds `web` without the step CANNOT be green.
+  // =====================================================================
+  describe('the workflow reads the book before it builds web', () => {
+    /**
+     * COMMENTS ARE STRIPPED BEFORE THE "no pasted literal" CHECKS.
+     *
+     * Not a convenience: the comment that RECORDS the removed literal --
+     * "`ARC_FACTORY_ADDRESS: '0x0d75a4ff...'` used to be here, and why that was
+     * wrong" -- is the most valuable line in the file, and a check that forbade
+     * it would delete the reason along with the defect. YAML comments cannot
+     * set an environment variable, so nothing is lost.
+     */
+    function withoutComments(text: string): string {
+      return text
+        .split('\n')
+        .filter((line) => !/^\s*#/.test(line))
+        .join('\n')
+    }
+
+    const workflow = (): string =>
+      readFileSync(join(REPO_ROOT, '.github', 'workflows', 'node.yml'), 'utf8')
+
+    /** Steps, in file order, as `name` -> `run` is too loose; keep raw blocks. */
+    function stepIndex(text: string, needle: string): number {
+      const at = text.indexOf(needle)
+      expect(at, `workflow does not contain ${JSON.stringify(needle)}`).toBeGreaterThan(-1)
+      return at
+    }
+
+    it('every job that builds web reads the address book FIRST', () => {
+      const text = workflow()
+      // The two commands that end in a real `next build`.
+      for (const build of [
+        'run: pnpm --filter @arcpad/web build',
+        'run: pnpm --filter @arcpad/web release-gate',
+      ]) {
+        const buildAt = stepIndex(text, build)
+        const envAt = text.lastIndexOf('run: pnpm addressbook --env-only >> "$GITHUB_ENV"', buildAt)
+        expect(envAt, `no address-book step before "${build}"`).toBeGreaterThan(-1)
+      }
+    })
+
+    it('no NEXT_PUBLIC value is pasted into the workflow', () => {
+      // The remedy is READING the book, not copying it. A literal here would
+      // outlive the book the first time the factory is redeployed -- the exact
+      // defect that sat in `indexer-live.yml`.
+      expect(withoutComments(workflow())).not.toMatch(/NEXT_PUBLIC_[A-Z_]+:\s*['"]?0x/)
+    })
+
+    it('the live workflow no longer pastes a factory address', () => {
+      const live = readFileSync(join(REPO_ROOT, '.github', 'workflows', 'indexer-live.yml'), 'utf8')
+      expect(withoutComments(live)).not.toMatch(/ARC_FACTORY_ADDRESS:\s*['"]?0x/)
+      expect(live).toContain('run: pnpm addressbook --env-only >> "$GITHUB_ENV"')
     })
   })
 })

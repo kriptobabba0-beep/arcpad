@@ -13,7 +13,7 @@
  * jeneratorsuz halden daha kotudur.
  */
 import { execFileSync } from 'node:child_process'
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   type Address,
@@ -26,6 +26,7 @@ import {
   parseAbi,
 } from 'viem'
 import {
+  type AddressBook,
   AddressBookError,
   addressBookPath,
   CREATE2_FACTORY,
@@ -33,6 +34,7 @@ import {
   ESCROW_SALT,
   FACTORY_SALT,
   loadAddressBook,
+  webEnvBlock,
 } from '../packages/shared/src/addresses'
 import {
   chainKeyFor,
@@ -250,15 +252,37 @@ export function buildAddressBook(args: {
   }
 }
 
-export function envBlock(book: Record<string, unknown>): string {
-  return [
-    `NEXT_PUBLIC_ARC_CHAIN_ID=${book.chainId as number}`,
-    `NEXT_PUBLIC_ARCPAD_FACTORY=${book.launchFactory as string}`,
-    `NEXT_PUBLIC_ARCPAD_ESCROW=${book.feeEscrow as string}`,
-    `ARC_FACTORY_ADDRESS=${book.launchFactory as string}`,
-    `ARC_ESCROW_ADDRESS=${book.feeEscrow as string}`,
-    `ARC_START_BLOCK=${book.startBlock as string}`,
-  ].join('\n')
+/**
+ * ENV BLOGU ARTIK BURADA URETILMIYOR.
+ *
+ * Alti satir `@arcpad/shared`'in `webEnvBlock`unda ve `assertEnvMatchesBook`
+ * ile AYNI tablodan turuyor. Burada duran elle yazilmis kopya ucuncu bir
+ * listeydi ve hicbir sey onu denetciyle karsilastirmiyordu.
+ */
+
+/**
+ * DEFTERI KENDISI BULUR: `contracts/deploy/addresses.<chainId>.json`.
+ *
+ * `--env-only` yolunun `--chain` istememesinin sebebi budur -- is akisina
+ * yazilan her literal (bir adres, ama bir chain id de) defterin ustunden
+ * atlayan bir kopyadir ve `indexer-live.yml` tam olarak boyle bayat bir
+ * factory adresi tasiyordu. SIFIR ya da BIRDEN COK defter varsa DURUR: ikisi
+ * de "hangi zincir" sorusunun cevapsiz oldugu haldir ve birini secmek
+ * tahmindir.
+ */
+export function discoverChainId(dir: string = DEFAULT_BOOK_DIR): number {
+  const found = readdirSync(dir)
+    .map((f) => /^addresses\.(\d+)\.json$/.exec(f))
+    .filter((m): m is RegExpExecArray => m !== null)
+    .map((m) => Number(m[1]))
+    .sort((a, b) => a - b)
+  if (found.length === 0) throw new Error(`no addresses.<chainId>.json under ${dir}`)
+  if (found.length > 1) {
+    throw new Error(
+      `${dir} holds ${found.length} address books (${found.join(', ')}); pass --chain to choose`,
+    )
+  }
+  return found[0] as number
 }
 
 // ---------------------------------------------------------------
@@ -340,7 +364,30 @@ function parseArgs(argv: string[]): Map<string, string> {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
-  const chainRaw = args.get('chain')
+
+  // ---------------------------------------------------------------
+  // `--env-only`: ZINCIRE DOKUNMAZ, DOSYA YAZMAZ, YALNIZCA BASAR.
+  //
+  // CI'in kullandigi mod budur (`... --env-only >> "$GITHUB_ENV"`). Uc sey
+  // BILEREK yok: RPC (defter zaten commit'li), broadcast makbuzu (yeniden
+  // deploy etmiyoruz) ve `git rev-parse` (calisma agacini okumuyoruz). Ama
+  // dogrulama TAM: `loadAddressBook` her adresi kendi initcode hash'inden
+  // CREATE2 ile yeniden turetir, takma adlari reddeder, profil digest'ini ve
+  // `expected-governance.json` ile capraz kontrolu kosar. Yani bozuk bir
+  // defter CI'i YESIL BIRAKMAZ, adimi dusurur.
+  // ---------------------------------------------------------------
+  const envOnly = args.get('env-only') === 'true'
+  const chainRawForEnv = args.get('chain')
+  if (envOnly) {
+    const dir = args.get('out-dir') ?? DEFAULT_BOOK_DIR
+    const chainId =
+      chainRawForEnv && chainRawForEnv !== 'true' ? Number(chainRawForEnv) : discoverChainId(dir)
+    const book: AddressBook = loadAddressBook(chainId, dir)
+    process.stdout.write(`${webEnvBlock(book)}\n`)
+    return
+  }
+
+  const chainRaw = chainRawForEnv
   if (!chainRaw || chainRaw === 'true') throw new Error('usage: pnpm addressbook --chain <chainId>')
   const chainId = Number(chainRaw)
 
@@ -411,14 +458,18 @@ async function main(): Promise<void> {
 
   // KENDI YUKLEYICISINDEN GECIR. Bu satir olmadan jenerator, yukleyicisinin
   // reddedecegi bir dosya uretebilirdi.
+  let loaded: AddressBook
   try {
-    loadAddressBook(chainId, outDir)
+    loaded = loadAddressBook(chainId, outDir)
   } catch (error) {
     const field = error instanceof AddressBookError ? ` (field: ${error.field})` : ''
     throw new Error(`the generated book fails its own loader${field}: ${(error as Error).message}`)
   }
 
-  process.stdout.write(`wrote ${outPath}\n\n${envBlock(book)}\n`)
+  // BASILAN BLOK, YUKLENMIS DEFTERDEN. Yeni yazilmis `book` kaydindan degil:
+  // ikisi ayni olmali ve yukleyiciden GECMIS olan, gecmemis olandan her zaman
+  // daha iyi bir kaynaktir.
+  process.stdout.write(`wrote ${outPath}\n\n${webEnvBlock(loaded)}\n`)
 }
 
 main().catch((error: unknown) => {

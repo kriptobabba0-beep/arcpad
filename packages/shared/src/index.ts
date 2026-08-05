@@ -57,6 +57,8 @@ export {
   loadAddressBook,
   parseAddressBook,
   toDeployment,
+  WEB_ENV_BINDINGS,
+  webEnvBlock,
 } from './addresses'
 export {
   assertErc20Callable,

@@ -69,6 +69,27 @@ jobs:
         env:
           DATABASE_URL: postgres://arcpad:arcpad@localhost:5432/arcpad
 
+      # THE STEP WITHOUT WHICH THIS JOB HAS NEVER BEEN GREEN.
+      #
+      # `next build` prerenders `/_not-found`, which reaches `getWebConfig()`,
+      # which throws `WebConfigError: NEXT_PUBLIC_ARC_CHAIN_ID: is not set`.
+      # Measured on this tree: the build fails with exit status 1 without these
+      # values and succeeds with them. Neither this job nor `release-gate` set
+      # any of them, so the gate was decorative -- and a gate that has never
+      # passed teaches people to ignore it, which this repository has already
+      # paid for twice (a permanently-red weekly drill; a 90-error lint run).
+      #
+      # THE VALUES ARE READ, NOT PASTED. `--env-only` loads
+      # `contracts/deploy/addresses.<chainId>.json` through the SAME loader that
+      # re-derives every address from its initcode hash via CREATE2, rejects
+      # aliases, checks the profile digest and cross-checks
+      # `expected-governance.json`. A hand-written value in this file would be a
+      # third copy that outlives the book -- exactly the defect sitting in
+      # `indexer-live.yml` today. It finds the chain id itself, so not even that
+      # is written here.
+      - name: Web env, from the address book
+        run: pnpm addressbook --env-only >> "$GITHUB_ENV"
+
       - name: Build web
         run: pnpm --filter @arcpad/web build
 
@@ -310,6 +331,13 @@ jobs:
 
       - name: Install
         run: pnpm install --frozen-lockfile
+
+      # Same reason as the `check` job's copy: `release-gate` ends in a real
+      # `next build`, and it had no environment either. Repeated rather than
+      # factored because GitHub Actions has no YAML anchors and a composite
+      # action for one `run:` line would hide the one thing worth reading.
+      - name: Web env, from the address book
+        run: pnpm addressbook --env-only >> "$GITHUB_ENV"
 
       - name: Release gate
         run: pnpm --filter @arcpad/web release-gate

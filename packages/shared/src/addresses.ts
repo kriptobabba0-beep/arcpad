@@ -337,6 +337,38 @@ export function toDeployment(book: AddressBook): Deployment {
 }
 
 /**
+ * DEFTER -> ENV BAGI, TEK TABLO.
+ *
+ * URETICI (`webEnvBlock`) ve DENETCI (`assertEnvMatchesBook`) BU TABLODAN
+ * TUREK. Onceki hal iki ayri elle yazilmis listeydi ve ikisi de ayni alti adi
+ * tekrarliyordu: denetciye bir degisken eklemek ureticiye eklemeyi
+ * gerektirmiyordu, yani `pnpm addressbook`in bastigi blok preflight'in
+ * istediginden EKSIK olabilirdi ve fark ancak bir CI kosusunda -- ya da
+ * uretimde -- gorunurdu. Bir tablo, iki tuketici: ayrisma yazilamaz hale
+ * gelir.
+ *
+ * `kind` bir bicim degil bir DOGRULAMA secimidir: `address` olanlar
+ * buyuk/kucuk harften bagimsiz karsilastirilip EIP-55'e cevrilir, `plain`
+ * olanlar dize esitligiyle tutulur. Bir chain id'yi adres gibi dogrulamak
+ * imkansiz, bir adresi dize gibi dogrulamak ise checksum farkinda YANLIS
+ * ALARM verirdi.
+ */
+type EnvBinding = {
+  readonly name: string
+  readonly kind: 'plain' | 'address'
+  readonly valueOf: (book: AddressBook) => string
+}
+
+export const WEB_ENV_BINDINGS: readonly EnvBinding[] = Object.freeze([
+  { name: 'NEXT_PUBLIC_ARC_CHAIN_ID', kind: 'plain', valueOf: (b) => String(b.chainId) },
+  { name: 'NEXT_PUBLIC_ARCPAD_FACTORY', kind: 'address', valueOf: (b) => b.launchFactory },
+  { name: 'NEXT_PUBLIC_ARCPAD_ESCROW', kind: 'address', valueOf: (b) => b.feeEscrow },
+  { name: 'ARC_FACTORY_ADDRESS', kind: 'address', valueOf: (b) => b.launchFactory },
+  { name: 'ARC_ESCROW_ADDRESS', kind: 'address', valueOf: (b) => b.feeEscrow },
+  { name: 'ARC_START_BLOCK', kind: 'plain', valueOf: (b) => String(b.startBlock) },
+] as const satisfies readonly EnvBinding[])
+
+/**
  * Faz 4'un `preflight`inin BESINCI iddiasi.
  *
  * Env'in var olma sebebi secim degil ZORUNLULUKTUR: Next `NEXT_PUBLIC_*`i
@@ -347,12 +379,29 @@ export function assertEnvMatchesBook(
   env: Record<string, string | undefined>,
   book: AddressBook,
 ): void {
-  expectEnv(env, 'NEXT_PUBLIC_ARC_CHAIN_ID', String(book.chainId))
-  expectEnvAddress(env, 'NEXT_PUBLIC_ARCPAD_FACTORY', book.launchFactory)
-  expectEnvAddress(env, 'NEXT_PUBLIC_ARCPAD_ESCROW', book.feeEscrow)
-  expectEnvAddress(env, 'ARC_FACTORY_ADDRESS', book.launchFactory)
-  expectEnvAddress(env, 'ARC_ESCROW_ADDRESS', book.feeEscrow)
-  expectEnv(env, 'ARC_START_BLOCK', String(book.startBlock))
+  for (const binding of WEB_ENV_BINDINGS) {
+    if (binding.kind === 'address') {
+      expectEnvAddress(env, binding.name, binding.valueOf(book) as Address)
+    } else {
+      expectEnv(env, binding.name, binding.valueOf(book))
+    }
+  }
+}
+
+/**
+ * DEFTERDEN URETILEN `KEY=VALUE` BLOGU -- CI'IN `$GITHUB_ENV`E EKLEDIGI SEY.
+ *
+ * NEDEN VAR: `web`in uretim derlemesi `NEXT_PUBLIC_ARC_CHAIN_ID` olmadan
+ * `/_not-found` on-render'inda `WebConfigError` ile DUSER, ve `node.yml`in iki
+ * derleme is'i de degiskenlerin HICBIRINI ayarlamiyordu -- yani o kapi hic
+ * yesil olmadi ve olamazdi. Cozum degerleri is akisina YAPISTIRMAK DEGILDIR
+ * (defterin ustunden atlayan ucuncu bir kopya, ve `indexer-live.yml`de tam
+ * olarak bu yapildi): CI defteri OKUR, defteri dogrulayan ayni yukleyiciden
+ * gecirir ve bu blogu yazar. Adres kaymasi boylece derlemeyi kirar, sessizce
+ * yanlis bir factory'ye baglanmaz.
+ */
+export function webEnvBlock(book: AddressBook): string {
+  return WEB_ENV_BINDINGS.map((binding) => `${binding.name}=${binding.valueOf(book)}`).join('\n')
 }
 
 /**
