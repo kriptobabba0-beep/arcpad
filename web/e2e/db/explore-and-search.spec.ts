@@ -512,3 +512,64 @@ test('the holders tab pages past 25, and no wallet is repeated across the tie', 
     .evaluateAll((cells) => cells.map((c) => c.textContent ?? ''))
   expect(new Set(shown).size, 'a wallet must not appear on both pages').toBe(shown.length)
 })
+
+/**
+ * =========================================================================
+ *  THE STALE NOTICE, WHICH NOTHING HAD EVER EXECUTED.
+ * =========================================================================
+ *
+ * `MAINNET-READINESS.md` §2.4 says `stalenessOf` has "zero consumers in
+ * web/app or web/components" and that nothing tells a user the index is
+ * behind. THE FIRST HALF WAS TRUE AND THE SECOND WAS NOT: `<StaleNotice>`
+ * landed on both pages in `0b4f9c2`, and only the HELPER was unused (both
+ * sites had inlined the same three-way expression; they call it now).
+ *
+ * What WAS true is worse than the claim and nobody wrote it down: no test in
+ * this repository imported `<StaleNotice>` at all, so its two call sites --
+ * the only thing standing between a user and a stale price rendered as a live
+ * one -- had never been executed by anything. "Present in the source" and
+ * "reachable on the page" are the distinction this whole phase is about.
+ *
+ * THE LAG IS WRITTEN ONTO `sync_state`, NOT SIMULATED. The threshold is
+ * `packages/db`'s (`now() - updated_at > 30s`, the SERVER's clock), so making
+ * the row genuinely old is the only way to cross the real boundary. This test
+ * runs LAST and puts the cursor back, because every assertion above depends on
+ * the notice being absent.
+ */
+test('a lagging indexer says so, on BOTH pages, and the trade panel says it is unaffected', async ({
+  page,
+}) => {
+  const before = await pool!.query<{ n: string }>(
+    "SELECT count(*)::text AS n FROM sync_state WHERE id = 1 AND now() - updated_at > interval '30 seconds'",
+  )
+  expect(
+    Number(before.rows[0]!.n),
+    'PRECONDITION: the fixture must start FRESH, or this test proves nothing',
+  ).toBe(0)
+
+  try {
+    await pool!.query(
+      "UPDATE sync_state SET updated_at = now() - interval '9 minutes' WHERE id = 1",
+    )
+
+    await page.goto(url('/'))
+    const onExplore = page.getByTestId('stale-notice')
+    await expect(onExplore).toBeVisible()
+    await expect(onExplore).toContainText('Prices and volumes may be out of date')
+    // The LAG ITSELF, formatted by `describeLag`: 540s -> "9m ago". A notice
+    // that appeared but reported "0s ago" would be worse than none.
+    await expect(onExplore).toContainText('9m ago')
+    // AND the sentence a user needs in order to act: the number they sign
+    // against is read from the chain, not from this index.
+    await expect(onExplore).toContainText('Trading reads reserves straight from the chain')
+
+    await page.goto(url(`/token/${fixture!.deep}`))
+    const onToken = page.getByTestId('stale-notice')
+    await expect(onToken).toBeVisible()
+    await expect(onToken).toContainText('This page may be out of date')
+  } finally {
+    // Whatever happened above, the fixture goes back. A leaked stale cursor
+    // would make every re-run of the tests above fail for the wrong reason.
+    await pool!.query('UPDATE sync_state SET updated_at = now() WHERE id = 1')
+  }
+})

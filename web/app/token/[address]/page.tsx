@@ -9,6 +9,7 @@ import {
   asHex,
   type Canonicity,
   type HexAddress,
+  stalenessOf,
   type TokenOverview,
 } from '@/components/read/types'
 import { CanonicalBadge, NotALaunch } from '@/components/token/CanonicalBadge'
@@ -82,13 +83,14 @@ export default async function TokenPage({ params }: { params: Promise<{ address:
     )
   }
 
+  const lagging = stalenessOf(result)
   const overview = valueOf(result)
   if (overview === undefined) {
     return <ChainOnly token={token} canonicity="unverifiable" notice="unavailable" />
   }
   return (
     <>
-      {result.ok && result.stale ? <StaleNotice indexer={result.indexer} what="This page" /> : null}
+      {lagging === null ? null : <StaleNotice indexer={lagging} what="This page" />}
       <IndexedToken overview={overview} />
     </>
   )

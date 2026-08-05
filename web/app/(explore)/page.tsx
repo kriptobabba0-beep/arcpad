@@ -13,7 +13,7 @@ import {
 } from '@/components/explore/params'
 import { TokenGrid } from '@/components/explore/TokenGrid'
 import { StaleNotice } from '@/components/read/StaleNotice'
-import { fold, type IndexerStatus, type TokenOverview } from '@/components/read/types'
+import { fold, type IndexerStatus, stalenessOf, type TokenOverview } from '@/components/read/types'
 import { readTokenList } from '@/lib/read'
 
 /**
@@ -52,7 +52,10 @@ export default async function Home({
     missing: () => [] as readonly TokenOverview[],
   })
 
-  const listStale: IndexerStatus | null = climbing.ok && climbing.stale ? climbing.indexer : null
+  // `stalenessOf`, ELLE YAZILMIS AYNI IFADE DEGIL. Bu ucluyu iki sayfada
+  // kopyalamak, bayatlik testinin bir gun bir yerde degisip otekinde kalmasi
+  // demek -- ve bu sayfada kaybolan bir uyari, ekranda hicbir iz birakmaz.
+  const listStale: IndexerStatus | null = stalenessOf(climbing)
   const list = climbing.ok ? (climbing.stale ? climbing.staleData : climbing.data) : null
 
   return (
