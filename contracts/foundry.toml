@@ -55,10 +55,27 @@ auto_detect_remappings = true
 # dusurmek Surface.t.sol'u (27 iddia) ya da Profiles.t.sol'u kirar. Giris
 # ASAGIDAKI [profile.ci] listesine DE eklenir; profiller listeyi MIRAS ALMAZ,
 # DEGISTIRIR.
+#
+# FAZ 2 EKI -- `./out-frozen`, VE `read`TEN FAZLASI DEGIL. `DeployLib`in
+# broadcast oncesi kapisi (`assertMatchesFrozenBuild`) yayinlanacak
+# `LaunchFactory` creation code'unu DONDURULMUS derlemenin ciktisiyla
+# karsilastirir. `./out` YETMEZ ve yetmedigi OLCULDU: o dizini IKI derleme isi
+# yazar ve hangisinin kazandigi cagri sirasina baglidir; `out-frozen/`i
+# yalnizca `[profile.frozen]` yazabilir.
+#
+# GIRIS IKI LISTEYE DE EKLENDI. Profiller `fs_permissions`i MIRAS ALMAZ,
+# DEGISTIRIR -- yalnizca birine eklemek, obur profilde SESSIZ bir delik
+# birakirdi (CI `FOUNDRY_PROFILE=ci` ile kosar, yani delik tam da kapinin
+# onemli oldugu yerde acilirdi).
+#
+# GENISLEME OLCULDU: `test/script/Profiles.t.sol::test_theGrantDidNotWiden`
+# `src/`in HALA okunamadigini iddia eder ve bu giristen SONRA da yesildir --
+# yani izin `./out-frozen` kadar genisledi, bir adim fazla degil.
 fs_permissions = [
   { access = "read", path = "./out" },
   { access = "read", path = "./deploy" },
   { access = "read-write", path = "./fixtures" },
+  { access = "read", path = "./out-frozen" },
 ]
 
 [profile.default.fuzz]
@@ -117,6 +134,7 @@ fs_permissions = [
   { access = "read", path = "./out" },
   { access = "read", path = "./deploy" },
   { access = "read-write", path = "./fixtures" },
+  { access = "read", path = "./out-frozen" },
 ]
 
 [profile.ci.fuzz]

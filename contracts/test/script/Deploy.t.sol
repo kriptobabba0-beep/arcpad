@@ -233,6 +233,106 @@ contract DeployTest is Test {
     }
 
     // ---------------------------------------------------------------
+    // DONDURULMUS DERLEME KAPISI -- POZITIF, NEGATIF VE EKSIK-ARTIFACT
+    // ---------------------------------------------------------------
+
+    /// @dev Kapiyi DISARIDAN cagirmak icin sarmalayici; `expectRevert` bir
+    ///      kutuphane IC cagrisinda calismaz ve `allow_internal_expect_revert`
+    ///      acmak yerine cagri gercekten disari cikarilir.
+    function callAssertFrozen(Plan memory p) external view {
+        DeployLib.assertMatchesFrozenBuild(p);
+    }
+
+    function callAssertFrozenIn(Plan memory p, string memory dir) external view {
+        DeployLib.assertMatchesFrozenBuildIn(p, dir);
+    }
+
+    /// @notice POZITIF KONTROL. Degistirilmemis bir plan kapidan GECER.
+    /// @dev Negatif kontrol tek basina anlamsizdir: her seye revert eden bir
+    ///      kapi da onu saglar.
+    function test_theFrozenBuildGateAcceptsAnUnmodifiedPlan() public view {
+        Plan memory p = script.plan();
+        this.callAssertFrozen(p);
+    }
+
+    /// @notice NEGATIF KONTROL. `LaunchFactory` creation code'unda TEK BIR
+    ///         BAYT degisirse kapi `NotTheFrozenBuild` ile duser.
+    ///
+    /// @dev BIR IDDIA, DUSTUGU HIC GORULMEMISSE, BIR YORUMDUR. Degistirilen
+    ///      bayt initcode'un BAS KISMINDADIR (creation code), ARGUMAN
+    ///      KUYRUGUNDA degil -- kuyruk zincire ozgudur ve onu dogrulamak
+    ///      `_assertInitcodeEncodesThePlan`in isidir. Yani bu test tam olarak
+    ///      "yayinlanacak KOD dondurulmus kodun kendisi mi" sorusunu olcer.
+    function test_theFrozenBuildGateRejectsAOneByteChangeInTheFactoryCode() public {
+        Plan memory p = script.plan();
+        bytes32 before_ = keccak256(p.factoryInitcode);
+
+        // Bas kismin ortasindan bir bayt. Kuyruktan UZAK oldugu ayrica iddia
+        // edilir, yoksa test farkinda olmadan argumanlari mutasyona ugratirdi.
+        uint256 idx = (p.factoryInitcode.length - DeployLib.FACTORY_ARG_BYTES) / 2;
+        assertLt(idx, p.factoryInitcode.length - DeployLib.FACTORY_ARG_BYTES, "mutasyon kuyruga dustu");
+        p.factoryInitcode[idx] = bytes1(uint8(p.factoryInitcode[idx]) ^ 0x01);
+        assertTrue(keccak256(p.factoryInitcode) != before_, "mutasyon initcode'u degistirmedi");
+
+        // SELECTOR ACIKCA KARSILASTIRILIR, `expectRevert` ILE DEGIL. Iki
+        // sebep: (a) ciplak `expectRevert()` bir `fs_permissions` reddini ya
+        // da eksik dosyayi da KABUL ederdi ve test "kapi calisti"yi degil
+        // "bir sey patladi"yi olcerdi; (b) bu forge surumunde
+        // `expectRevert(bytes4)` selector'e gore DEGIL, TAM YUKE gore
+        // eslesiyor (olculdu: kapi dogru `NotTheFrozenBuild(...)` attigi
+        // halde cheatcode "custom error 0x9ae37c41 bekleniyordu" dedi).
+        (bool ok, bytes memory err) = address(this).staticcall(abi.encodeCall(this.callAssertFrozen, (p)));
+        assertFalse(ok, "tek bayt degismisken kapi GECTI");
+        assertEq(bytes4(err), DeployLib.NotTheFrozenBuild.selector, "kapi baska bir sebeple dustu");
+    }
+
+    /// @notice NEGATIF KONTROL, IKINCI ARTIFACT. `FeeEscrow` argumansizdir,
+    ///         dolayisiyla onda initcode'un TAMAMI esitlenir.
+    function test_theFrozenBuildGateRejectsAOneByteChangeInTheEscrowCode() public {
+        Plan memory p = script.plan();
+        p.escrowInitcode[p.escrowInitcode.length / 2] =
+            bytes1(uint8(p.escrowInitcode[p.escrowInitcode.length / 2]) ^ 0x01);
+
+        (bool ok, bytes memory err) = address(this).staticcall(abi.encodeCall(this.callAssertFrozen, (p)));
+        assertFalse(ok, "tek bayt degismisken kapi GECTI");
+        assertEq(bytes4(err), DeployLib.NotTheFrozenBuild.selector, "kapi baska bir sebeple dustu");
+    }
+
+    /// @notice EKSIK ARTIFACT REVERT EDER, ATLAMAZ.
+    ///
+    /// @dev EKSIK BIR DOSYA "KONTROL EDECEK BIR SEY YOK" DIYE OKUNAMAZ, ve bu
+    ///      testin varlik sebebi odur. `make frozen-hash` kosmadan
+    ///      `out-frozen/` yoktur; o durumda kapi SESSIZCE gecseydi, broadcast
+    ///      yolu tam da dogrulanmamisken acik olurdu.
+    ///
+    /// @dev DURUST SINIR: bu dizin hem MEVCUT DEGILDIR hem de
+    ///      `fs_permissions` tarafindan REDDEDILIR, ve Solidity ikisini AYIRT
+    ///      EDEMEZ -- `vm.readFile` her iki halde de revert eder. Ikisi de
+    ///      fail-closed oldugu icin iddia gecerlidir; hangi sebeple duserse
+    ///      dussun, kapi GECMEZ.
+    function test_theFrozenBuildGateRevertsWhenTheArtifactsAreMissing() public {
+        Plan memory p = script.plan();
+        (bool ok, bytes memory err) =
+            address(this).staticcall(abi.encodeCall(this.callAssertFrozenIn, (p, "out-frozen-does-not-exist")));
+        assertFalse(ok, "artifact YOKKEN kapi GECTI -- eksik dosya basari olarak okundu");
+        // VE KARSILASTIRMAYA HIC VARMADI: `NotTheFrozenBuild` bir bayt
+        // karsilastirmasinin sonucudur; burada okuma asamasinda dusmus
+        // olmalidir. Aksi halde bos bir artifact sessizce "esit" sayilirdi.
+        assertTrue(
+            bytes4(err) != DeployLib.NotTheFrozenBuild.selector,
+            "eksik artifact bir bayt karsilastirmasina donustu -- okuma fail-closed degil"
+        );
+    }
+
+    /// @notice KONTROL GRUBU: ayni sarmalayici, GERCEK dizinle, GECER.
+    /// @dev Onsuz yukaridaki test "sarmalayici her zaman revert ediyor"
+    ///      halinde de gecerdi.
+    function test_theMissingArtifactProbeUsesAWorkingWrapper() public view {
+        Plan memory p = script.plan();
+        this.callAssertFrozenIn(p, "out-frozen");
+    }
+
+    // ---------------------------------------------------------------
     // run(): the real thing
     // ---------------------------------------------------------------
 

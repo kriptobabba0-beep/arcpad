@@ -40,6 +40,27 @@ interface ICurveBoundToken {
 ///      uyeyi yeniden adlandirmasi ya da non-`view` yapmasi, deploy ettigi HER
 ///      curve'u kirar -- curve'un bytecode'u selector'leri ve STATICCALL'u
 ///      icerir.
+///
+/// @dev BU ARAYUZU KOPYALIYORSANIZ BU SATIRLARI DA KOPYALAYIN.
+///
+///      **`protocolTreasury()` HER HARCAMADA YENIDEN OKUNUR. HICBIR KOSULDA
+///      ONBELLEKLENMEZ** -- ne `immutable`, ne storage, ne bir constructor
+///      argumani, ne de bir struct alani. Governor Safe'i treasury'yi
+///      dondurdugunde rotasyonun ZATEN DEPLOY EDILMIS tuketicilere
+///      ulasmasinin tek yolu canli okumadir; bir kopya tutan her tuketici
+///      ucreti eski (ya da ele gecirilmis) treasury'ye SONSUZA KADAR oder.
+///
+///      OLCULDU, IKI KEZ, VE IKINCISI BU SATIR YAZILMADIGI ICIN OLDU:
+///      `graduation-implementation-review.md` F-G tam olarak bu arizayi
+///      ONGORDU ve buraya bir uyari istedi; uyari yazilmadi, Faz 2'nin
+///      `ArcpadHook`u bu arayuzu CIPLAK kopyaladi ve degeri `immutable`
+///      olarak onbellekledi. Hook'un adresi `PoolKey`in bir alani oldugu
+///      icin kusur ilk graduation'dan sonra DUZELTILEMEZ olacakti.
+///      Onbellekleyen bir tuketiciye karsi acilan test
+///      `ArcpadHook.t.sol::test_theHookPaysTheROTATEDTreasuryBecauseItNeverCachesIt`.
+///
+///      Ayni sey `graduationTarget()` icin de gecerlidir ve `graduate()` onu
+///      cagri aninda okur.
 interface ILaunchFactory {
     function graduationTarget() external view returns (address);
     function protocolTreasury() external view returns (address);

@@ -672,7 +672,20 @@ contract SurfaceTest is Test {
     ///      tanimlayici pini de yapar ama bu satir Faz 3'un filtre sabitiyle
     ///      BIRE BIR karsilastirilabilir bir sayi verir.
     function test_theGraduatedEventNameIsClaimedByExactlyOneContract() public view {
-        string[5] memory contracts = ["BondingCurve", "LaunchFactory", "LaunchToken", "FeeEscrow", "CurveMath"];
+        // FAZ 2'NIN UC YENI KONTRATI LISTEYE GIRDI. Listeye eklenmeyen bir
+        // kontrat, adi `Graduated` olan bir olay YAYSA DA sayilmazdi -- yani
+        // bu testin gucu tam olarak listenin GUNCELLIGI kadardir, ve bu
+        // dosyanin acik hucrelerinden biridir.
+        string[8] memory contracts = [
+            "BondingCurve",
+            "LaunchFactory",
+            "LaunchToken",
+            "FeeEscrow",
+            "CurveMath",
+            "ArcpadLocker",
+            "ArcpadHook",
+            "FeeSchedule"
+        ];
         uint256 claims;
         for (uint256 i = 0; i < contracts.length; i++) {
             string[] memory names = _strings(_artifact(contracts[i]), "$.abi[?(@.type == 'event')].name");
@@ -889,5 +902,338 @@ contract SurfaceTest is Test {
 
     function test_curveMathAbiCensus() public view {
         _assertEntryCensus("CurveMath", 0, 5, 0, 0, 0, 0);
+    }
+
+    // ---------------------------------------------------------------
+    // ArcpadLocker
+    // ---------------------------------------------------------------
+
+    /// @dev BES DIS FONKSIYON, VE ALTINCISI OLMAMALIDIR. Ozellikle bir
+    ///      `retrySeed`, bir `seedFromHeld`, bir `withdraw`, bir `sweep` ya da
+    ///      bir `setX` bu kumeye bir GIRIS EKLER ve fazlalik hatadir.
+    ///      `retrySeed` uydurma degildir: yazilmasi CAZIPTI ve tasarimi
+    ///      savunulabilirdi (parametresi yok, `PoolKey`in tamami curve'den
+    ///      turer). REDDEDILME SEBEBI, `graduate`in atomikligi ve zincirden
+    ///      geri okumasi verildiginde ULASILAMAZ olmasidir -- yani bu deponun
+    ///      acikca yasakladigi OLDURULEMEZ bir mutant. Iki yonlu esitlik o
+    ///      karari CALISTIRILABILIR yapar.
+    function test_arcpadLockerExposesExactlyTheseFunctions() public view {
+        string[] memory expected = new string[](5);
+        expected[0] = "factory()";
+        expected[1] = "graduate(address)";
+        expected[2] = "hook()";
+        expected[3] = "poolManager()";
+        expected[4] = "unlockCallback(bytes)";
+        _assertSetEquals(_functionSignatures("ArcpadLocker"), expected, "ArcpadLocker fonksiyonlari");
+    }
+
+    /// @dev `graduate` `nonpayable` OLMAK ZORUNDA: `payable` olsaydi cagiran
+    ///      locker'a native birakabilir ve locker o bakiyeyi BIR DAHA hareket
+    ///      ettiremezdi -- gonderme yolu yazilmamistir. `unlockCallback` de
+    ///      `nonpayable`dir; `PoolManager` ona deger gondermez.
+    function test_arcpadLockerFunctionMutabilityAndReturns() public view {
+        string[] memory expected = new string[](5);
+        expected[0] = "factory() view -> (address)";
+        expected[1] = "graduate(address) nonpayable -> ()";
+        expected[2] = "hook() view -> (address)";
+        expected[3] = "poolManager() view -> (address)";
+        expected[4] = "unlockCallback(bytes) nonpayable -> (bytes)";
+        _assertSetEquals(_functionDescriptors("ArcpadLocker"), expected, "ArcpadLocker tanimlayicilari");
+
+        string[] memory ctor = new string[](1);
+        ctor[0] = "constructor(address,address,address) nonpayable";
+        _assertSetEquals(_constructorDescriptor("ArcpadLocker"), ctor, "ArcpadLocker constructor");
+    }
+
+    /// @dev Son BES giris kutuphane katmanindandir (`GraduationMath` ve
+    ///      OZ `SafeERC20`/`Address`) ve `CurveMath`in `BondingCurve` ABI'sine
+    ///      girmesiyle AYNI kararla pinlenir: uyeligi biz degil DERLEYICI
+    ///      seciyor, ve disari propagate oluyorlar.
+    function test_arcpadLockerExposesExactlyTheseErrors() public view {
+        string[] memory expected = new string[](15);
+        expected[0] = "CurveNotFromFactory()";
+        expected[1] = "NotPoolManager()";
+        expected[2] = "PoolPriceMismatch()";
+        expected[3] = "PositionNotSeeded()";
+        expected[4] = "SeedShortfall()";
+        expected[5] = "UnexpectedCredit()";
+        expected[6] = "ZeroLiquidity()";
+        // --- GraduationMath katmani ---
+        expected[7] = "BaseIsQuote()";
+        expected[8] = "PriceOutOfRange()";
+        expected[9] = "ZeroBase()";
+        expected[10] = "ZeroReserves()";
+        // --- OZ SafeERC20 / Address katmani (CurrencySettler uzerinden) ---
+        expected[11] = "AddressEmptyCode(address)";
+        expected[12] = "AddressInsufficientBalance(address)";
+        expected[13] = "FailedInnerCall()";
+        expected[14] = "SafeERC20FailedOperation(address)";
+        _assertSetEquals(_errorDescriptors("ArcpadLocker"), expected, "ArcpadLocker hatalari");
+    }
+
+    /// @dev UC INDEKSLI ALAN. `poolId` topic olmak ZORUNDA: Faz 3'un indexer'i
+    ///      "bu havuzu hangi graduation actı" sorgusunu ona gore filtreler.
+    ///      `PoolId` bir user-defined value type'tir ve ABI'de `bytes32`
+    ///      gorunur -- pinlenen sey ABI'nin GORDUGU seydir.
+    function test_arcpadLockerExposesExactlyTheseEvents() public view {
+        string[] memory expected = new string[](1);
+        expected[0] = "PoolSeeded(address,address,bytes32,uint160,uint128,uint256,uint256) indexed:(token,curve,poolId)";
+        _assertSetEquals(_eventDescriptors("ArcpadLocker"), expected, "ArcpadLocker olaylari");
+    }
+
+    /// @dev `receive = 1` VE `fallback = 0`, IKISI DE TASIYICI. `receive`
+    ///      GEREKLIDIR: curve `target.call{value: R}("")` ile oder, onsuz her
+    ///      graduation `GraduationPayoutFailed` ile duserdi. `fallback` ise
+    ///      OLMAMALIDIR: bir `fallback` bilinmeyen her selector'u sessizce
+    ///      yutar ve yukaridaki iki yonlu fonksiyon esitligini ANLAMSIZ kilar
+    ///      -- kume "eksik" gorunmezdi cunku her cagri bir sey yapardi.
+    ///      `methodIdentifiers` bu ikisini HIC gormez; bu sayim tek koruyucu.
+    function test_arcpadLockerAbiCensus() public view {
+        _assertEntryCensus("ArcpadLocker", 5, 15, 1, 1, 1, 0);
+    }
+
+    /// @notice Locker'in HICBIR dis fonksiyonu isaretli tamsayi PARAMETRESI
+    ///         ALMAZ.
+    ///
+    /// @dev NEGATIF LIKIDITEYE GIDEN BIR YOLUN EN UCUZ NEGATIF GOSTERGESI.
+    ///      "Pozisyon kalicidir" iddiasi, negatif `liquidityDelta` cagiran
+    ///      kodun HIC YAZILMAMIS olmasidir -- ve YOKLUK test edilemez, YUZEY
+    ///      test edilir. Disaridan bir isaretli miktar KABUL EDEN her fonksiyon
+    ///      o iddianin en olasi giris noktasidir; kume bos oldugu surece
+    ///      cikarma yoluna disaridan miktar GECIRILEMEZ.
+    ///
+    /// @dev DUZLESTIRME BURADA MESRUDUR VE SEBEBI YAZILIYOR: dosya bas notu
+    ///      `inputs[*].type`i fonksiyonlara GRUPLAYAMADIGI icin reddediyor,
+    ///      ama bu iddia bir VARLIK sorgusudur ("herhangi bir yerde isaretli
+    ///      bir girdi var mi") ve gruplama gerektirmez. Iddia bos kume oldugu
+    ///      icin de duzlestirme hicbir sey kaybetmez.
+    function test_noExternalLockerFunctionTakesASignedAmount() public view {
+        string[] memory types = _strings(_artifact("ArcpadLocker"), "$.abi[?(@.type == 'function')].inputs[*].type");
+        for (uint256 i = 0; i < types.length; i++) {
+            assertFalse(_isSignedInt(types[i]), string.concat("locker isaretli girdi aliyor -> ", types[i]));
+        }
+        // KONTROL: tarama GERCEKTEN isaretli tipleri ayirt ediyor. Hook'un
+        // `afterSwap`i `int256` alir; ayni tarama orada BULMAK ZORUNDA, aksi
+        // halde yukaridaki dongu her seyi "temiz" ilan ederdi.
+        string[] memory hookTypes = _strings(_artifact("ArcpadHook"), "$.abi[?(@.type == 'function')].inputs[*].type");
+        bool foundOnHook;
+        for (uint256 i = 0; i < hookTypes.length; i++) {
+            if (_isSignedInt(hookTypes[i])) foundOnHook = true;
+        }
+        assertTrue(foundOnHook, "tarama isaretli tip bulamiyor -- iddia vakumla geciyor");
+    }
+
+    /// @dev `int8`..`int256` ve `int24` gibi tipler; `uint...` DEGIL.
+    function _isSignedInt(string memory t) internal pure returns (bool) {
+        bytes memory b = bytes(t);
+        return b.length >= 3 && b[0] == "i" && b[1] == "n" && b[2] == "t";
+    }
+
+    // ---------------------------------------------------------------
+    // ArcpadHook
+    // ---------------------------------------------------------------
+
+    /// @dev ONBIRI `IHooks`in TAMAMIDIR ve `BaseHook` onlari ZORUNLU KILAR;
+    ///      uygulanmayanlar `HookNotImplemented()` ile revert eder. Kume bu
+    ///      yuzden "arcpad'in yazdiklari" degil "hook'un ABI'sinde duranlar"
+    ///      olarak pinlenir -- entegratorun gordugu sey odur.
+    function test_arcpadHookExposesExactlyTheseFunctions() public view {
+        _assertSetEquals(_functionSignatures("ArcpadHook"), _expectedHookSignatures(), "ArcpadHook fonksiyonlari");
+    }
+
+    /// @dev `getHookPermissions()` `pure` OLMAK ZORUNDA: izin kumesi hook'un
+    ///      ADRESINE gomulur ve `BaseHook`in constructor'i onu adrese karsi
+    ///      dogrular. `view`e dusmesi, izinlerin bir DURUMDAN okundugu
+    ///      anlamina gelirdi -- yani deploy sonrasi degisebilir gorunurdu.
+    /// @dev `configOf(bytes32)` bir `public mapping` getter'idir ve DORT alan
+    ///      dondurur; bir alan eklemek/cikarmak swap yolunun sabit gazini
+    ///      degistirir ve BURADA gorunur.
+    function test_arcpadHookFunctionMutabilityAndReturns() public view {
+        _assertSetEquals(_functionDescriptors("ArcpadHook"), _expectedHookDescriptors(), "ArcpadHook tanimlayicilari");
+
+        string[] memory ctor = new string[](1);
+        ctor[0] = "constructor(address,address,address) nonpayable";
+        _assertSetEquals(_constructorDescriptor("ArcpadHook"), ctor, "ArcpadHook constructor");
+    }
+
+    function test_arcpadHookExposesExactlyTheseErrors() public view {
+        string[] memory expected = new string[](12);
+        expected[0] = "NotGraduationTarget()";
+        expected[1] = "PriceIsNotTheCurveClosingPrice()";
+        expected[2] = "QuoteLegMissing()";
+        expected[3] = "TokenNotFromFactory()";
+        expected[4] = "WrongPoolFee()";
+        expected[5] = "WrongTickSpacing()";
+        expected[6] = "ZeroCurrency()";
+        // --- BaseHook katmani ---
+        expected[7] = "HookNotImplemented()";
+        expected[8] = "NotPoolManager()";
+        // --- kutuphane katmani ---
+        expected[9] = "InvalidBps()"; // CurveMath
+        expected[10] = "PriceOutOfRange()"; // GraduationMath
+        expected[11] = "ZeroReserves()"; // GraduationMath
+        _assertSetEquals(_errorDescriptors("ArcpadHook"), expected, "ArcpadHook hatalari");
+    }
+
+    /// @dev `PoolRegistered.id` topic olmak ZORUNDA: bir havuzun kaydini
+    ///      `poolId`den bulmak Faz 3'un birincil sorgusudur.
+    function test_arcpadHookExposesExactlyTheseEvents() public view {
+        string[] memory expected = new string[](2);
+        expected[0] = "PoolRegistered(bytes32,address,address) indexed:(id,base,creator)";
+        expected[1] = "SwapFeeCollected(bytes32,uint256,uint256) indexed:(id)";
+        _assertSetEquals(_eventDescriptors("ArcpadHook"), expected, "ArcpadHook olaylari");
+    }
+
+    /// @dev SIFIR `receive`, SIFIR `fallback`, VE BU BIR EKSIKLIK DEGIL OLCUM
+    ///      SONUCUDUR: Arc'ta bir ERC-20 transferi alicinin NATIVE bakiyesini
+    ///      kredilendirir ve `receive()`i CALISTIRMAZ (canli olcum, blok
+    ///      54019678). Hook ucreti `take` ile alir ve `deposit{value:}` ile
+    ///      harcar; arada `receive()`e ihtiyac duyulan bir an YOKTUR. Bir
+    ///      `receive` eklemek, hook'a duz native gonderiminin BASARMASI
+    ///      demekti -- ve hook'un cikis yolu yoktur.
+    function test_arcpadHookAbiCensus() public view {
+        _assertEntryCensus("ArcpadHook", 16, 12, 2, 1, 0, 0);
+    }
+
+    // ---------------------------------------------------------------
+    // FeeSchedule
+    // ---------------------------------------------------------------
+
+    /// @dev DORT FONKSIYON, HEPSI OKUMA. Bir `setTier`, bir `setOwner`, bir
+    ///      `upgrade` bu kumeye bir GIRIS EKLER; tablonun degistirilemezligi
+    ///      tam olarak o girisin YOKLUGUDUR. Tabloyu guncellemek YENI bir
+    ///      `FeeSchedule` deploy etmektir ve o da yalnizca SONRAKI launch'lari
+    ///      etkiler.
+    function test_feeScheduleExposesExactlyTheseFunctions() public view {
+        string[] memory expected = new string[](4);
+        expected[0] = "SUPPLY_CONSTANT()";
+        expected[1] = "TIER_COUNT()";
+        expected[2] = "marketCap(uint256,uint256)";
+        expected[3] = "tierFor(uint256)";
+        _assertSetEquals(_functionSignatures("FeeSchedule"), expected, "FeeSchedule fonksiyonlari");
+    }
+
+    /// @dev `tierFor` ve `marketCap` `pure` OLMAK ZORUNDA -- `view`e dusmeleri
+    ///      tablonun bir DURUMDAN okundugu anlamina gelirdi, ve degismezlik
+    ///      garantisi BYTECODE'dan degil "setter yok" dilekcesinden gelirdi.
+    ///      Iki sabit getter'i `view`dir; `public constant` icin solc'un
+    ///      urettigi mutabilite budur ve degistirilemez.
+    function test_feeScheduleFunctionMutabilityAndReturns() public view {
+        string[] memory expected = new string[](4);
+        expected[0] = "SUPPLY_CONSTANT() view -> (uint256)";
+        expected[1] = "TIER_COUNT() view -> (uint256)";
+        expected[2] = "marketCap(uint256,uint256) pure -> (uint256)";
+        expected[3] = "tierFor(uint256) pure -> (uint256,uint256)";
+        _assertSetEquals(_functionDescriptors("FeeSchedule"), expected, "FeeSchedule tanimlayicilari");
+        _assertSetEquals(_constructorDescriptor("FeeSchedule"), new string[](0), "FeeSchedule constructor");
+    }
+
+    /// @dev HATA YOK, OLAY YOK, CONSTRUCTOR YOK, `receive` YOK, `fallback` YOK.
+    function test_feeScheduleAbiCensus() public view {
+        _assertSetEquals(_errorDescriptors("FeeSchedule"), new string[](0), "FeeSchedule hatalari");
+        _assertSetEquals(_eventDescriptors("FeeSchedule"), new string[](0), "FeeSchedule olaylari");
+        _assertEntryCensus("FeeSchedule", 4, 0, 0, 0, 0, 0);
+    }
+
+    /// @notice `FeeSchedule`in runtime kodunda TEK BIR `SSTORE` YOKTUR.
+    ///
+    /// @dev "DEPOLAMA YOK" ABI'DE GORUNMEZ VE PINLENMESI GEREKEN SEY ODUR.
+    ///      Kontratin kendi NatSpec'i "degistirilemezlik garantisi
+    ///      BYTECODE'DAN gelir" diyor; bu satir o cumleyi CALISTIRILABILIR
+    ///      yapar. Bir `constructor` + storage dizisi ile yazilmis bir tablo
+    ///      da setter'siz degistirilemez olurdu -- ama ABI kumesi AYNI kalirdi
+    ///      ve yukaridaki dort iddianin HICBIRI farki gormezdi.
+    ///
+    /// @dev TARAMA PUSH VERISINI ATLAR. Ham bir bayt aramasi `0x55`i bir
+    ///      `PUSH32` sabitinin ICINDE de bulur ve sahte alarm verirdi; bu
+    ///      yuruyucu opcode sinirlarini takip eder.
+    function test_theFeeScheduleRuntimeCodeContainsNoStorageWrite() public view {
+        bytes memory code = vm.parseJsonBytes(_artifact("FeeSchedule"), ".deployedBytecode.object");
+        assertGt(code.length, 0, "runtime kod bos");
+        assertFalse(_containsOpcode(code, 0x55), "FeeSchedule SSTORE iceriyor -- tablo artik bytecode'da degil");
+
+        // KONTROL: yuruyucu GERCEKTEN SSTORE bulabiliyor. `FeeEscrow`un defteri
+        // storage'dadir; orada BULMAK ZORUNDA.
+        bytes memory escrowCode = vm.parseJsonBytes(_artifact("FeeEscrow"), ".deployedBytecode.object");
+        assertTrue(_containsOpcode(escrowCode, 0x55), "yuruyucu SSTORE bulamiyor -- iddia vakumla geciyor");
+    }
+
+    /// @dev PUSH1..PUSH32 (0x60..0x7f) kendi verisini ATLAR; aksi halde bir
+    ///      sabitin icindeki bayt opcode sanilirdi.
+    function _containsOpcode(bytes memory code, uint8 op) internal pure returns (bool) {
+        uint256 i = 0;
+        while (i < code.length) {
+            uint8 b = uint8(code[i]);
+            if (b == op) return true;
+            i += (b >= 0x60 && b <= 0x7f) ? uint256(b) - 0x5f + 1 : 1;
+        }
+        return false;
+    }
+
+    // ---------------------------------------------------------------
+    // Olay adi ve topic0 carpismalari
+    // ---------------------------------------------------------------
+
+    /// @notice `PoolSeeded`in topic0'i `Graduated`inkine ESIT DEGILDIR.
+    ///
+    /// @dev UCUZ, KALICI, VE GRADUATION YUZEYI TASARIMI BUNU R-10'DA ACIKCA
+    ///      ISTEDI. Tehlike su: iki olay ayni topic0'i tasisaydi, birine gore
+    ///      yazilmis bir `getLogs` filtresi otekini de dondurur ve Faz 3'un
+    ///      indexer'i bir graduation'i IKI KEZ sayardi. Ters yon
+    ///      (`test_theGraduatedEventNameIsClaimedByExactlyOneContract`) ayni
+    ///      ADIN iki kontrata yayilmasini engeller; bu satir ayni TOPIC'in iki
+    ///      olaya dusmesini engeller.
+    function test_thePoolSeededTopicIsNotTheGraduatedTopic() public pure {
+        bytes32 graduated = keccak256("Graduated(address,address,uint256,uint256)");
+        bytes32 poolSeeded = keccak256("PoolSeeded(address,address,bytes32,uint160,uint128,uint256,uint256)");
+        assertTrue(graduated != poolSeeded, "PoolSeeded ve Graduated ayni topic0'i tasiyor");
+        assertEq(
+            poolSeeded, bytes32(0x03211e5ffb9673bbadaa0cc9107605913e68ccd7516817b4bae1bccdd90d4561), "PoolSeeded topic0"
+        );
+    }
+
+    // ---------------------------------------------------------------
+
+    function _expectedHookSignatures() internal pure returns (string[] memory e) {
+        e = new string[](16);
+        e[0] =
+            "afterAddLiquidity(address,(address,address,uint24,int24,address),(int24,int24,int256,bytes32),int256,int256,bytes)";
+        e[1] = "afterDonate(address,(address,address,uint24,int24,address),uint256,uint256,bytes)";
+        e[2] = "afterInitialize(address,(address,address,uint24,int24,address),uint160,int24)";
+        e[3] =
+            "afterRemoveLiquidity(address,(address,address,uint24,int24,address),(int24,int24,int256,bytes32),int256,int256,bytes)";
+        e[4] = "afterSwap(address,(address,address,uint24,int24,address),(bool,int256,uint160),int256,bytes)";
+        e[5] = "beforeAddLiquidity(address,(address,address,uint24,int24,address),(int24,int24,int256,bytes32),bytes)";
+        e[6] = "beforeDonate(address,(address,address,uint24,int24,address),uint256,uint256,bytes)";
+        e[7] = "beforeInitialize(address,(address,address,uint24,int24,address),uint160)";
+        e[8] =
+        "beforeRemoveLiquidity(address,(address,address,uint24,int24,address),(int24,int24,int256,bytes32),bytes)";
+        e[9] = "beforeSwap(address,(address,address,uint24,int24,address),(bool,int256,uint160),bytes)";
+        e[10] = "configOf(bytes32)";
+        e[11] = "escrow()";
+        e[12] = "factory()";
+        e[13] = "getHookPermissions()";
+        e[14] = "poolManager()";
+        e[15] = "protocolTreasury()";
+    }
+
+    function _expectedHookDescriptors() internal pure returns (string[] memory e) {
+        e = _expectedHookSignatures();
+        e[0] = string.concat(e[0], " nonpayable -> (bytes4,int256)");
+        e[1] = string.concat(e[1], " nonpayable -> (bytes4)");
+        e[2] = string.concat(e[2], " nonpayable -> (bytes4)");
+        e[3] = string.concat(e[3], " nonpayable -> (bytes4,int256)");
+        e[4] = string.concat(e[4], " nonpayable -> (bytes4,int128)");
+        e[5] = string.concat(e[5], " nonpayable -> (bytes4)");
+        e[6] = string.concat(e[6], " nonpayable -> (bytes4)");
+        e[7] = string.concat(e[7], " nonpayable -> (bytes4)");
+        e[8] = string.concat(e[8], " nonpayable -> (bytes4)");
+        e[9] = string.concat(e[9], " nonpayable -> (bytes4,int256,uint24)");
+        e[10] = string.concat(e[10], " view -> (address,address,address,bool)");
+        e[11] = string.concat(e[11], " view -> (address)");
+        e[12] = string.concat(e[12], " view -> (address)");
+        e[13] = string.concat(e[13], " pure -> (tuple)");
+        e[14] = string.concat(e[14], " view -> (address)");
+        e[15] = string.concat(e[15], " view -> (address)");
     }
 }

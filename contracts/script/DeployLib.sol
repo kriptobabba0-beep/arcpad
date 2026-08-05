@@ -90,6 +90,16 @@ library DeployLib {
     error ProfileNotAsDeployed(string field, uint256 expected, uint256 actual);
     error GovernanceNotAsDeployed(string field, address expected, address actual);
 
+    /// @dev "DONDURULMUS KAPIYI HIC KOSMADIN." `make frozen-hash` calismadan
+    ///      `out-frozen/` YOKTUR. AYRI BIR HATA OLMASI TASIYICIDIR: operator
+    ///      icin "kapiyi kosmadim" ile "kostum ve baytlar tutmuyor" AYNI SEY
+    ///      DEGILDIR, ve ikisini tek hataya toplamak teshisi tam da en pahali
+    ///      anda kaybettirirdi.
+    error FrozenArtifactMissing(string path);
+    /// @dev "KOSTUN, VE BAYTLAR TUTMUYOR." Yayinlanmak uzere olan initcode
+    ///      dondurulmus derlemenin urettigi initcode DEGILDIR.
+    error NotTheFrozenBuild(string what, bytes32 expected, bytes32 actual);
+
     function predict(bytes32 salt, bytes memory initcode) internal pure returns (address) {
         return address(
             uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), CREATE2_FACTORY, salt, keccak256(initcode)))))
@@ -161,6 +171,7 @@ library DeployLib {
             revert InsufficientDeployerBalance(plan.deployer, plan.deployer.balance, MIN_DEPLOYER_BALANCE);
         }
         _assertInitcodeEncodesThePlan(plan);
+        assertMatchesFrozenBuild(plan);
         _assertMultisig("governor", plan.governor);
         _assertMultisig("treasury", plan.treasury);
         if (plan.escrow.code.length != 0) revert AlreadyDeployed("FeeEscrow", plan.escrow);
@@ -255,6 +266,88 @@ library DeployLib {
         (bool ok, bytes memory ret) = CREATE2_FACTORY.call(abi.encodePacked(salt, initcode));
         if (!ok || ret.length != 20) revert Create2Failed(salt);
         deployed = address(bytes20(ret));
+    }
+
+    /// @notice Yayinlanmak uzere olan baytlar, DONDURULMUS DERLEMENIN
+    ///         urettigi baytlardir.
+    ///
+    /// @dev BUNUN NEDEN AYRI BIR IDDIA OLDUGU, VE `_assertInitcodeEncodesThePlan`IN
+    ///      NEDEN YETMEDIGI. O fonksiyon `plan.factoryInitcode`i
+    ///      `type(LaunchFactory).creationCode` ile karsilastirir -- ve
+    ///      `plan.factoryInitcode` ZATEN ondan uretilmistir. IKI TARAF AYNI
+    ///      DERLEMEDEN GELIR, dolayisiyla o derleme yanlissa IKISI BIRDEN
+    ///      kayar ve iddia SESSIZCE gecer. Bu, deponun kendi adlandirdigi
+    ///      "test edilen seyi ATLAYAN bir yoldan gecen iddia" kipidir ve bu
+    ///      hafta bir gune mal oldu: `optimizer_runs` 800 -> 44444444
+    ///      kaymasinda `out/` altindaki HER SEY birlikte hareket etti ve
+    ///      hicbir sey kirmizi olmadi.
+    ///
+    /// @dev BU YUZDEN REFERANS `out/` DEGIL `out-frozen/`DIR. `out/`u IKI
+    ///      derleme isi yazar (`ArcpadLockerTest` 44444444'te derlenir ve
+    ///      `BondingCurve`u import eder), hangisinin kazandigi CAGRI SIRASINA
+    ///      baglidir. `out-frozen/`e yalnizca `[profile.frozen]` yazabilir.
+    ///
+    /// @dev ESITLIK, ICERME DEGIL -- VE ESITLIK KATI OLARAK DAHA GUCLUDUR.
+    ///      `frozen_bytecode_gate.py` "fabrika, dondurulmus `BondingCurve`
+    ///      initcode'unu ICERIYOR" der. Burada `LaunchFactory`nin creation
+    ///      code'unun KENDISI bayt bayt esitlenir: esitse, ICERDIGI her sey de
+    ///      -- gomulu `BondingCurve` ve `LaunchToken` initcode'lari dahil --
+    ///      zorunlu olarak esittir. Icerme aramasi ayrica ~30KB x ~8KB'lik bir
+    ///      alt-dizi taramasi demekti; esitlik tek bir `keccak256`.
+    ///
+    /// @dev FABRIKADA BAS KISIM KARSILASTIRILIR, TAMAMI DEGIL: initcode'un son
+    ///      `FACTORY_ARG_BYTES` bayti ABI-encode edilmis constructor
+    ///      argumanlaridir ve ZINCIRE OZGUDUR. Onlarin dogrulugu
+    ///      `_assertInitcodeEncodesThePlan`in isidir; burada derlenen KODUN
+    ///      kimligi dogrulanir. `FeeEscrow` ve `FeeSchedule` argumansizdir,
+    ///      dolayisiyla onlarda initcode'un TAMAMI esitlenir.
+    function assertMatchesFrozenBuild(Plan memory plan) internal view {
+        assertMatchesFrozenBuildIn(plan, "out-frozen");
+    }
+
+    /// @dev DIZIN PARAMETRELIDIR ve YALNIZCA testin eksik-artifact halini
+    ///      surebilmesi icin. Uretim yolu her zaman `assertMatchesFrozenBuild`
+    ///      uzerinden gecer ve dizini SABIT verir.
+    function assertMatchesFrozenBuildIn(Plan memory plan, string memory dir) internal view {
+        // Fabrika: BAS KISIM (creation code) esit olmali.
+        bytes memory frozenFactory = _frozenCreationCode(dir, "LaunchFactory");
+        if (plan.factoryInitcode.length <= FACTORY_ARG_BYTES) {
+            revert InitcodeDoesNotEncodeThePlan("factoryInitcodeLength");
+        }
+        uint256 headLen = plan.factoryInitcode.length - FACTORY_ARG_BYTES;
+        bytes memory head = new bytes(headLen);
+        for (uint256 i = 0; i < headLen; ++i) {
+            head[i] = plan.factoryInitcode[i];
+        }
+        bytes32 want = keccak256(frozenFactory);
+        bytes32 got = keccak256(head);
+        if (want != got) revert NotTheFrozenBuild("LaunchFactory", want, got);
+
+        // Argumansiz ikili: initcode'un TAMAMI esit olmali.
+        want = keccak256(_frozenCreationCode(dir, "FeeEscrow"));
+        got = keccak256(plan.escrowInitcode);
+        if (want != got) revert NotTheFrozenBuild("FeeEscrow", want, got);
+
+        want = keccak256(_frozenCreationCode(dir, "FeeSchedule"));
+        got = keccak256(plan.feeScheduleInitcode);
+        if (want != got) revert NotTheFrozenBuild("FeeSchedule", want, got);
+    }
+
+    /// @dev FAIL-CLOSED, VE "ATLA" DALI YOKTUR. Artifact yoksa `vm.readFile`
+    ///      REVERT eder; okunabiliyor ama bos ise `FrozenArtifactMissing`
+    ///      atilir. Hicbir yolda "kontrol edecek bir sey yok, devam et"
+    ///      SONUCU URETILEMEZ -- eksik bir dosyanin sessizce basari olarak
+    ///      okunmasi tam olarak bu kapinin engellemek icin var oldugu sey.
+    ///
+    /// @dev DURUST SINIR: `fs_permissions` tarafindan REDDEDILEN bir okuma ile
+    ///      MEVCUT OLMAYAN bir dosya, Solidity tarafindan AYIRT EDILEMEZ --
+    ///      ikisi de `vm.readFile` icinde revert eder. Ikisi de fail-closed
+    ///      oldugu icin kapinin dogrulugu bundan etkilenmez, ama iki durumu
+    ///      ayri hatalarla raporlayamayiz ve bu yazili duruyor.
+    function _frozenCreationCode(string memory dir, string memory name) private view returns (bytes memory code) {
+        string memory path = string.concat(dir, "/", name, ".sol/", name, ".json");
+        code = vm.parseJsonBytes(vm.readFile(path), ".bytecode.object");
+        if (code.length == 0) revert FrozenArtifactMissing(path);
     }
 
     /// @dev DERLEME ZAMANI KONTROLLERININ GOREMEDIGI TEK SINIF: cozulen profil

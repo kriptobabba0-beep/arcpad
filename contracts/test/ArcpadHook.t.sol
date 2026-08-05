@@ -240,11 +240,11 @@ contract ArcpadHookTest is Test {
 
         // ADRES MADENCILIGI. Alt 14 bit tam olarak 0x20CC olmali; `BaseHook`in
         // constructor'i bunu dogrular, yani yanlis adrese deploy IMKANSIZDIR.
-        bytes memory args = abi.encode(IPoolManager(address(pm)), address(factory), address(escrow), TREASURY);
+        bytes memory args = abi.encode(IPoolManager(address(pm)), address(factory), address(escrow));
         (address hookAddr, bytes32 salt) =
             HookMiner.find(CREATE2_DEPLOYER, ARCPAD_HOOK_FLAGS, type(ArcpadHook).creationCode, args);
         vm.prank(CREATE2_DEPLOYER);
-        hook = new ArcpadHook{salt: salt}(IPoolManager(address(pm)), address(factory), address(escrow), TREASURY);
+        hook = new ArcpadHook{salt: salt}(IPoolManager(address(pm)), address(factory), address(escrow));
         require(address(hook) == hookAddr, "mined address diverged");
         minedSalt = salt;
 
@@ -378,8 +378,7 @@ contract ArcpadHookTest is Test {
     /// script'i tam olarak bu formulu kullanmak zorundadir.
     function test_theMinedSaltAndTheCurrentCreationCodeReproduceTheHookAddress() public view {
         bytes memory initcode = abi.encodePacked(
-            type(ArcpadHook).creationCode,
-            abi.encode(IPoolManager(address(pm)), address(factory), address(escrow), TREASURY)
+            type(ArcpadHook).creationCode, abi.encode(IPoolManager(address(pm)), address(factory), address(escrow))
         );
         address derived = address(
             uint160(
@@ -535,6 +534,79 @@ contract ArcpadHookTest is Test {
         uint256 before = escrow.owed(TREASURY);
         harness.swap(key, quoteIsCurrency0, -1_000_000);
         assertGt(escrow.owed(TREASURY), before, "yeniden yonlendirmeden sonra swap ucret uretmedi");
+    }
+
+    // ---------------------------------------------------------------
+    // TREASURY ROTASYONU -- ONBELLEK GERI GELIRSE BU TEST DUSER
+    // ---------------------------------------------------------------
+
+    /// @notice Governor treasury'yi dondurdukten sonra hook YENISINE oder ve
+    ///         eskisine ARTIK HIC odemez.
+    ///
+    /// @dev BU TEST BIR ONBELLEGIN VARLIGINI OLCER, YOKLUGUNU DEGIL, VE FARK
+    ///      TASIYICIDIR. Hook `protocolTreasury`yi `immutable` tutuyordu;
+    ///      `LaunchFactory.setProtocolTreasury` HER CURVE'E ulasip HICBIR
+    ///      HAVUZA ulasmiyordu. Hook'un adresi `PoolKey`in bir alani
+    ///      oldugundan bu, Task 7'nin ilk graduation'indan sonra
+    ///      DUZELTILEMEZ hale gelirdi: her havuz ucretini eski -- ya da ele
+    ///      gecirilmis -- treasury'ye sonsuza kadar oderdi.
+    ///
+    /// @dev UC IDDIA VE UCU DE GEREKLI:
+    ///        (1) YENI treasury'nin alacagi ARTAR. Tek basina yetmez: hook
+    ///            ikisine birden odese de gecerdi.
+    ///        (2) ESKI treasury'nin alacagi ROTASYONDAN SONRA HIC ARTMAZ.
+    ///            Onbellekli hal tam olarak buradan duser.
+    ///        (3) ROTASYONDAN ONCE eski treasury'nin GERCEKTEN artmis olmasi.
+    ///            Bu KONTROL GRUBUDUR: onsuz, ucreti hic almayan bir hook da
+    ///            (2)'yi saglar ve test hicbir sey olcmedigi halde gecer --
+    ///            deponun kendi adlandirdigi "hicbir sey yapmayan kontrat
+    ///            butun guvenlik iddialarini saglar" kipi.
+    function test_theHookPaysTheROTATEDTreasuryBecauseItNeverCachesIt() public {
+        _openPool();
+        _fundHarness();
+
+        address newTreasury = address(0x0EDDEC0DE);
+
+        // (3) KONTROL: rotasyondan ONCE eski treasury ucret ALIYOR.
+        uint256 oldBefore = escrow.owed(TREASURY);
+        harness.swap(key, quoteIsCurrency0, -1_000_000);
+        uint256 oldAfterFirstSwap = escrow.owed(TREASURY);
+        assertGt(oldAfterFirstSwap, oldBefore, "kontrol grubu: hook rotasyondan ONCE de odemiyor -- test bos");
+
+        vm.prank(GOVERNOR);
+        factory.setProtocolTreasury(newTreasury);
+        assertEq(factory.protocolTreasury(), newTreasury, "rotasyon factory'ye inmedi");
+        // Hook'un KENDI getter'i da canli okumali; `configOf` bir kopya tasimaz.
+        assertEq(hook.protocolTreasury(), newTreasury, "hook hala eski treasury'yi bildiriyor");
+
+        uint256 newBefore = escrow.owed(newTreasury);
+        harness.swap(key, quoteIsCurrency0, -1_000_000);
+
+        // (1) YENI alici odendi.
+        assertGt(escrow.owed(newTreasury), newBefore, "rotasyondan sonra YENI treasury odenmedi");
+        // (2) ESKI alici ARTIK ODENMIYOR -- onbellek geri gelirse burasi duser.
+        assertEq(
+            escrow.owed(TREASURY),
+            oldAfterFirstSwap,
+            "ESKI treasury rotasyondan sonra da odendi -- hook adresi onbellekliyor"
+        );
+    }
+
+    /// @notice Rotasyon, ZATEN ACILMIS bir havuzda da isler.
+    /// @dev `configOf` havuz basina BIR KEZ yazilir; treasury oraya girseydi
+    ///      rotasyon yalnizca SONRAKI havuzlara ulasirdi ve bu test onu
+    ///      `PoolConfig`in dort alanindan bagimsiz olarak yakalar.
+    function test_aRotationReachesAPoolThatWasOpenedBeforeIt() public {
+        _openPool();
+        _fundHarness();
+
+        address newTreasury = address(0x0B0BFACE);
+        vm.prank(GOVERNOR);
+        factory.setProtocolTreasury(newTreasury);
+
+        uint256 before = escrow.owed(newTreasury);
+        harness.swap(key, !quoteIsCurrency0, int256(1_000_000)); // OBUR sekil
+        assertGt(escrow.owed(newTreasury), before, "rotasyon acilmis havuza ulasmadi");
     }
 
     // ---------------------------------------------------------------

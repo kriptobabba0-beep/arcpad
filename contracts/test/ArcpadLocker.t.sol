@@ -286,11 +286,11 @@ contract ArcpadLockerTest is Test {
         schedule = new FeeSchedule();
         factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule));
 
-        bytes memory args = abi.encode(IPoolManager(address(pm)), address(factory), address(escrow), TREASURY);
+        bytes memory args = abi.encode(IPoolManager(address(pm)), address(factory), address(escrow));
         (address hookAddr, bytes32 salt) =
             HookMiner.find(CREATE2_DEPLOYER, ARCPAD_HOOK_FLAGS, type(ArcpadHook).creationCode, args);
         vm.prank(CREATE2_DEPLOYER);
-        hook = new ArcpadHook{salt: salt}(IPoolManager(address(pm)), address(factory), address(escrow), TREASURY);
+        hook = new ArcpadHook{salt: salt}(IPoolManager(address(pm)), address(factory), address(escrow));
         require(address(hook) == hookAddr, "mined address diverged");
 
         locker = new ArcpadLocker(pm, address(factory), IHooks(address(hook)));

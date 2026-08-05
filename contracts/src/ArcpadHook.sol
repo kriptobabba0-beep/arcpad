@@ -27,9 +27,24 @@ import {IFeeEscrow} from "./interfaces/IFeeEscrow.sol";
 /// @dev YEREL arayuzler. `LaunchFactory`yi ya da `BondingCurve`u IMPORT ETMEK
 ///      hook'un derleme birimini onlarinkine baglardi; ayni bagimlilik yonu
 ///      curve'un `ILaunchFactory`yi yerel tutma gerekcesiyle aynidir.
+/// @dev `protocolTreasury()` HER HARCAMADA YENIDEN OKUNUR VE ASLA
+///      ONBELLEKLENMEZ -- ne `immutable`, ne storage, ne bir `PoolConfig`
+///      alani. Governor Safe'i treasury'yi dondurdugunde rotasyonun
+///      DEPLOY EDILMIS havuzlara da ulasmasinin TEK yolu budur, ve hook'un
+///      adresi `PoolKey`in bir alani oldugu icin bu kontrat ilk
+///      graduation'dan sonra DEGISTIRILEMEZ: bir kopya, o havuzlarin
+///      ucretini ESKI (ya da ele gecirilmis) treasury'ye SONSUZA KADAR
+///      oderdi. `BondingCurve`in `ILaunchFactory`si ayni uyariyi tasir; bu
+///      arayuz oradan KOPYALANMISTIR ve uyari kopyayla birlikte gelmelidir.
+///
+/// @dev `view` TASIYICIDIR: solc `view` beyanindan STATICCALL uretir, yani
+///      kotu niyetli bir factory ucret tahsilatinin ORTASINDA hook'a geri
+///      giremez. Bu uyeyi non-`view` yapan bir factory beyani, sessizce bir
+///      CALL uretir.
 interface IFactoryView {
     function graduationTarget() external view returns (address);
     function feeScheduleOf(address token) external view returns (address);
+    function protocolTreasury() external view returns (address);
 }
 
 interface ILaunchTokenView {
@@ -82,7 +97,6 @@ contract ArcpadHook is BaseHook {
 
     address public immutable factory;
     address public immutable escrow;
-    address public immutable protocolTreasury;
 
     mapping(PoolId => PoolConfig) public configOf;
 
@@ -97,12 +111,34 @@ contract ArcpadHook is BaseHook {
     error TokenNotFromFactory();
     error PriceIsNotTheCurveClosingPrice();
 
-    constructor(IPoolManager poolManager_, address factory_, address escrow_, address protocolTreasury_)
-        BaseHook(poolManager_)
-    {
+    /// @dev TREASURY BIR CONSTRUCTOR ARGUMANI DEGILDIR VE OLMAMALIDIR.
+    ///      Argüman olsaydi tek makul saklama yeri bir kopya olurdu ve kopya
+    ///      tam olarak kaldirilan kusurdur; "alip dogrula ama okuma" ise
+    ///      olu bir arguman birakirdi. Curve'un constructor'i da ayni
+    ///      sebeple `protocolTreasury` ALMAZ (`LaunchFactory.sol:746`).
+    constructor(IPoolManager poolManager_, address factory_, address escrow_) BaseHook(poolManager_) {
         factory = factory_;
         escrow = escrow_;
-        protocolTreasury = protocolTreasury_;
+    }
+
+    /// @notice Protokol ucretinin alicisi, HER OKUMADA factory'den CANLI.
+    ///
+    /// @dev BU FONKSIYON BIR `immutable`IN YERINE GECTI VE GERI DONULMEMELIDIR.
+    ///      Ölculmus kusur: hook treasury'yi constructor'da kopyaliyordu, yani
+    ///      governor Safe'inin `setProtocolTreasury` rotasyonu HER CURVE'E
+    ///      ulasip HICBIR HAVUZA ulasmiyordu -- graduation sonrasi ucretler
+    ///      eski (ya da ele gecirilmis) treasury'ye sonsuza kadar akardi.
+    ///      Hook'un adresi `PoolKey`in bir alanidir, dolayisiyla ilk
+    ///      graduation'dan SONRA bu kontrat degistirilemez ve kusur
+    ///      duzeltilemezdi.
+    ///
+    /// @dev SIFIR KONTROLU BURADA DEGIL, FACTORY'DE -- `BondingCurve`in ayni
+    ///      karari. `LaunchFactory` hem constructor'da hem setter'da
+    ///      `!= address(0)` ve `!= escrow` garanti eder; buradaki bir kontrol
+    ///      gercek factory ile ULASILAMAZ, yani mutasyonla oldurulemeyen olu
+    ///      kod olurdu.
+    function protocolTreasury() public view returns (address) {
+        return IFactoryView(factory).protocolTreasury();
     }
 
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
@@ -270,7 +306,12 @@ contract ArcpadHook is BaseHook {
         Currency quote = cfg.quoteIsCurrency0 ? key.currency0 : key.currency1;
         quote.take(poolManager, address(this), fee, false);
 
-        IFeeEscrow(escrow).deposit{value: GraduationMath.quoteWei(protocolFee)}(protocolTreasury);
+        // CANLI OKUMA, YATIRIM ANINDA -- `BondingCurve._settleBuy`in aynisi.
+        // Bir yerel degiskene kaldirmak bile (`address t = protocolTreasury()`
+        // swap yolunun basinda) bu tek islem icinde ayni sonucu verir, ama
+        // deseni bozar ve bir sonraki okuyucuya onbellegin mesru oldugunu
+        // soylerdi.
+        IFeeEscrow(escrow).deposit{value: GraduationMath.quoteWei(protocolFee)}(protocolTreasury());
         if (creatorFee != 0) {
             IFeeEscrow(escrow).deposit{value: GraduationMath.quoteWei(creatorFee)}(cfg.creator);
         }

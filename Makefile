@@ -9,7 +9,19 @@ build:
 	forge build --root contracts --sizes
 	pnpm -r --if-present build
 
-test:
+# `frozen-hash` ON KOSULDUR VE BU BILINCLI BIR SECIMDIR. `DeployLib`in
+# broadcast oncesi kapisi `out-frozen/`den okur; o dizin `.gitignore`dadir,
+# yani TAZE BIR KLONDA YOKTUR. Bagimliligi buraya koymanin alternatifi, taze
+# klonda deploy paketinin CEVRESEL bir sebeple kirmizi olmasiydi -- ve bu depo
+# iki kez ogrendi ki insanlarin gormezden gelmeye alistigi bir kapi, hic
+# olmayan bir kapidan KOTUDUR (90 hatalik lint kosusu; kalici kirmizi haftalik
+# prova).
+#
+# AYRIM SU: DERLEYICI kosmayi bilir, OPERATOR tahmin etmek zorunda kalmaz --
+# ama BROADCAST yine de fail-closed'dir. `forge script --broadcast`,
+# `make frozen-hash` kosmadan `FrozenArtifactMissing` ile DUSER ve bu KASITLIDIR:
+# dondurulmus bytecode'u dogrulanmamis bir deploy yayin YAPAMAMALIDIR.
+test: frozen-hash
 	forge test --root contracts --no-match-path 'test/fork/*' -vv
 	pnpm -r test
 
