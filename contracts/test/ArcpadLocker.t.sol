@@ -498,11 +498,37 @@ contract ArcpadLockerTest is Test {
         }
     }
 
-    /// `quoteBuyCost`TAKI KOSULSUZ `+1` TASIYICIDIR ve BUGUN BUNU YAPAN
-    /// BASKA BIR TEST YOKTU. `mulDivRoundingUp`a sadelestirilirse tam bolunen
-    /// durumda R bir birim AZALIR ve tohumlanan oran ile kapanis fiyati
-    /// arasindaki farkin YONU TERSINE DONER -- havuz `P_final`in ALTINDA
-    /// acar, yani protokolun ALEYHINE.
+    /// `quoteBuyCost`TAKI KOSULSUZ `+1` TASIYICIDIR. Bu test onun SONUCUNU
+    /// pinler: tohumlanan oran R/D, kapanis fiyati vQ/vT'nin USTUNDE kalir, ve
+    /// R formul degerinin tam bir birim uzerindedir.
+    ///
+    /// @dev BU TESTIN ONCEKI NATSPEC'I IKI SEY IDDIA EDIYORDU VE IKISI DE
+    ///      OLCULDU, IKISI DE YANLIS:
+    ///      (1) "bunu yapan baska bir test yoktu" -- vardi:
+    ///          `CurveMath.t.sol::test_buyCostAddsOneEvenWhenDivisionIsExact`
+    ///          tam bolunen kurguyu DOGRUDAN surer (`quoteBuyCost(50,100,150)`
+    ///          == 51) ve bu fazdan ONCE yazilmistir.
+    ///      (2) "`mulDivRoundingUp`a sadelestirilirse bu test yakalar" -- TASK 6
+    ///          ADIM 2'DE OLCULDU: o mutasyon uygulandiginda BU TEST GECER.
+    ///
+    ///      SEBEP: `mulDiv(a,b,d) + 1` ile `mulDivRoundingUp(a,b,d)` YALNIZCA
+    ///      `d`, `a*b`yi TAM BOLDUGUNDE ayrisir. `_launchAndBuyOut`un surdugu
+    ///      alim dizisi hicbir adimda tam bolunmeye dusmez, dolayisiyla R
+    ///      degismez ve asagidaki uc iddia da aynen tutar. Bu, testin
+    ///      ULASIMININ olculmeden VARSAYILMASIydi.
+    ///
+    ///      O mutasyonu FIILEN olduren iki test sudur ve ikisi de
+    ///      `CurveMath` tarafindadir:
+    ///        - `CurveMath.t.sol::test_buyCostAddsOneEvenWhenDivisionIsExact`
+    ///          (`50 != 51`, tam bolunen kurguyu elle kurar)
+    ///        - `CurveMathFuzz.t.sol`in gidis-donus iddiasi
+    ///          (`assertLt(proceeds, cost, "round trip created value")`) --
+    ///          sadelestirme ile gidis-donus EsITLENIR, yani al-sat artik
+    ///          kesin zararli olmaktan cikar.
+    ///
+    ///      Test SILINMIYOR: pinledigi iki sey (oranin YONU ve R'nin tam
+    ///      degeri) gercek ozelliklerdir. Silinen sey, tasimadigi bir
+    ///      korumayi tasidigi IDDIASIDIR.
     function test_theUnconditionalPlusOneKeepsTheSeededRatioAboveTheClosingPrice() public {
         (, address payable curve) = _launchAndBuyOut("Arc");
         uint256 r = BondingCurve(curve).realQuoteReserves();
