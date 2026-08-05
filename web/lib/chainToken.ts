@@ -59,6 +59,25 @@ function client() {
  * The curve address is not known until the token answers, so the rounds cannot
  * be collapsed into one. Arc rate-limits sequential `eth_call`s, so nine of
  * them is nine chances to be throttled on a page load.
+ *
+ * ============ THE WEB LAYER IS AN RPC CONSUMER. IT WAS RECORDED AS NOT ONE ==
+ *
+ * `.superpowers/sdd/INTEGRATION-LIVE.md` round 1 wrote "web did not degrade --
+ * it serves from Postgres; the RPC is only on the trade-panel path". That is
+ * not what this code does: `web/app/token/[address]/page.tsx` awaits
+ * `readChainToken` during SSR, so **every token page view issues these two
+ * multicalls**, and the load is proportional to traffic rather than to
+ * anything the operator controls.
+ *
+ * It is not a defect -- these are the reserves the trade panel quotes against,
+ * and reading them from the chain rather than from the index is exactly the
+ * promise the stale notice makes ("Trading reads reserves straight from the
+ * chain"). But it belongs in the same budget as the indexer and the keeper:
+ * the measured composition failure (C6) was two log-scanning clients starving
+ * each other, and this is a third client on the same limit. It is left as a
+ * per-render read DELIBERATELY -- caching it would make the one number the
+ * notice promises is live into another indexed number -- and it is counted
+ * here so the next person sizing that budget does not have to rediscover it.
  */
 export async function readChainToken(
   token: Address,

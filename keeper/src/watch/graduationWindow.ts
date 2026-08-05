@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { formatUsdc } from '@arcpad/shared'
 import { type Address, getAddress, isAddress } from 'viem'
 import {
@@ -936,9 +936,40 @@ export function fileCursorStore(
       } catch {
         return null
       }
-      const parsed = JSON.parse(raw) as Record<string, unknown>
+      // ============ OKUNAMAYAN BIR IMLEC YOK SAYILIR, REDDEDILMEZ ==========
+      //
+      // Bu dosyanin kendi kurali: "kullanamadigi bir imleci YOK SAYAR,
+      // reddetmez -- baslamayan bir izleyici, yanlis imlecli bir izleyiciden
+      // kotudur." IKI YOL o kurali cigniyordu ve ikisi de FIRLATIYORDU:
+      // `JSON.parse` (yirtik dosya) ve asagidaki sekil kontrolu.
+      //
+      // OLCULDU, kurgulanarak degil calistirilarak: imlec 323 baytin ilk
+      // 160'ina kirpildi, keeper ona karsi baslatildi --
+      //   PAGE log-scan-failed: ... SyntaxError: Expected double-quoted
+      //        property name in JSON at position 160
+      //   PAGE watcher-heartbeat-missed: ... NO scan progress has ever been
+      //        reported; the watcher is not watching
+      // -- ve bu HER POLL'DA, SONSUZA KADAR tekrarladi. Kendini asla
+      // iyilestiremezdi: dosya ancak bir parca BASARIYLA bittiginde
+      // yeniden yazilir, ve hicbir parca baslayamiyordu.
+      //
+      // Artik ikisi de `onReset` yoluna gider: taramanin `startBlock`tan
+      // yeniden kurulmasi PAHALIDIR ama SONLUDUR; sonsuza kadar sayfa cikaran
+      // bir izleyici degildir.
+      let parsed: Record<string, unknown>
+      try {
+        parsed = JSON.parse(raw) as Record<string, unknown>
+      } catch (cause) {
+        onReset?.(
+          `${path} could not be parsed (${cause instanceof Error ? cause.message : String(cause)}), so it is being ignored and the log scan restarts from block ${identity.startBlock}. A truncated cursor is what a crash mid-write leaves behind; the scan rebuilds over the next few polls.`,
+        )
+        return null
+      }
       if (typeof parsed['lastScannedBlock'] !== 'string' || !Array.isArray(parsed['curves'])) {
-        throw new Error(`${path} is not a keeper cursor; refusing to guess`)
+        onReset?.(
+          `${path} parsed as JSON but is not a keeper cursor (no string lastScannedBlock / no curves array), so it is being ignored and the log scan restarts from block ${identity.startBlock}.`,
+        )
+        return null
       }
       if (parsed['version'] !== CURSOR_VERSION) return null
       const history = parsed['history'] as Record<string, unknown> | undefined
@@ -964,24 +995,37 @@ export function fileCursorStore(
         },
       }
     },
+    /**
+     * ============ YAZ-VE-YENIDEN-ADLANDIR, DUZ YAZMA DEGIL ============
+     *
+     * `writeFileSync` once KIRPAR sonra yazar, yani arada olen bir surec
+     * YARIM bir dosya birakir. Bu, `8e31a68`e kadar nadir bir pencereydi
+     * (hata basina ya da tarama sonunda bir yazma); o commit yazmayi PARCA
+     * BASINA yapti -- olculdu: alti dakikalik soguk taramada 34 yazma, yani
+     * pencere ~35 kat genisledi.
+     *
+     * `rename` ayni birim uzerinde ATOMIKTIR: okuyucu ya eski dosyanin
+     * tamamini ya yeni dosyanin tamamini gorur, yarisini ASLA. Gecici ad ayni
+     * dizinde durur, cunku farkli birimler arasinda `rename` atomik degildir
+     * (ve Windows'ta EXDEV ile duser).
+     */
     write(cursor: Cursor): void {
-      writeFileSync(
-        path,
-        `${JSON.stringify(
-          {
-            version: CURSOR_VERSION,
-            chainId: identity.chainId,
-            factory: identity.factory,
-            startBlock: identity.startBlock.toString(),
-            lastScannedBlock: cursor.lastScannedBlock.toString(),
-            curves: cursor.curves,
-            history: cursor.history,
-          },
-          null,
-          2,
-        )}\n`,
-        'utf8',
-      )
+      const body = `${JSON.stringify(
+        {
+          version: CURSOR_VERSION,
+          chainId: identity.chainId,
+          factory: identity.factory,
+          startBlock: identity.startBlock.toString(),
+          lastScannedBlock: cursor.lastScannedBlock.toString(),
+          curves: cursor.curves,
+          history: cursor.history,
+        },
+        null,
+        2,
+      )}\n`
+      const tmp = `${path}.tmp`
+      writeFileSync(tmp, body, 'utf8')
+      renameSync(tmp, path)
     },
   }
 }
@@ -1026,6 +1070,59 @@ export const DEFAULT_LOG_SCAN_CHUNK = 10_000n
 export type ScanProgress = (scannedThrough: bigint, head: bigint) => void
 
 /**
+ * ============ TAKILMAK ILE BIR KEZ DUSMEK AYRI SEYLER ============
+ *
+ * `8e31a68` bu ikisini PARCA SAYISIYLA ayirdi: bir parca bile bitmediyse
+ * sayfa, bittiyse bilgi. Olculdu ve o olcu TERS DONUYOR:
+ *
+ *   imlec soguk (768.000 blok geride) -> 77 parca -> tek bir `-32005`
+ *                                        `log-scan-catching-up`, sessiz
+ *   imlec SICAK (basa yetismis)       ->  1 parca -> AYNI tek `-32005`
+ *                                        `log-scan-failed`, SAYFA
+ *
+ * Ikisi de bu kosuda canli gorulду. Keeper yetistikten sonra -- yani YASAMASI
+ * gereken durumda -- her poll TEK parca tarar, dolayisiyla "sifir parca
+ * bitti" herhangi bir gecici hiz sinirinin TEK olasi sonucudur ve her biri bir
+ * sayfa cikarir. Ayirt edici, arizanin SIDDETINI degil BIRIKMIS ISI olcuyordu.
+ *
+ * Dogru olcu, arizanin POLL'LAR ARASINDA SURUP SURMEDIGIDIR: bir poll'da
+ * dusup bir sonrakinde gecen sey takilmis degildir. Sayac poll'lar arasinda
+ * yasamak zorunda oldugu icin disaridan verilir.
+ */
+export interface ScanHealth {
+  /** Bir poll'un taramasi dustu. Ust uste kacinci oldugunu doner. */
+  fail(): number
+  /** Tarama tamamlandi. */
+  succeed(): void
+}
+
+/** Ust uste kac dusen poll'dan SONRA sayfa cikar. */
+export const SCAN_FAILURES_BEFORE_PAGE = 2
+
+/**
+ * POLL BASINA PARCA BUTCESI. Bkz. `scanFactoryLogs` -- C6.
+ *
+ * 1: varsayilan 5 saniyelik poll araliginda 0,2 `eth_getLogs`/sn. Indexer'in
+ * kendi yuruyusunun yaninda ihmal edilebilir, ve keeper'in 77 parcalik soguk
+ * geri kalimini ~6,5 dakikaya yayar -- o sure boyunca durumu `catching-up`
+ * diye YAZILIR, sessizce beklenmez.
+ */
+export const DEFAULT_MAX_CHUNKS_PER_POLL = 1
+
+export function createScanHealth(): ScanHealth {
+  let consecutive = 0
+  return {
+    fail(): number {
+      consecutive += 1
+      return consecutive
+    },
+    succeed(): void {
+      consecutive = 0
+    },
+  }
+}
+
+/**
  * KURUM ICI INDEXER OLMADIGI ICIN CURVE KUMESI LOGLARDAN GELIR.
  *
  * MARUZIYETI EKSIK BILDIREN BIR SAYFA, HIC SAYFA CIKARMAMAKTAN DAHA KOTUDUR:
@@ -1050,12 +1147,65 @@ export async function knownCurves(
  * Ayni blok araliklari zaten yuruniyor; ayri bir tarama ikinci bir imlec,
  * ikinci bir hata yolu ve iki taramanin AYRISABILECEGI bir pencere yaratirdi.
  */
+/**
+ * ============ C6: IKI ISTEMCI AYNI YURUYUSU YURUYORDU ============
+ *
+ * OLCULDU (kompozisyon kosusu, canli): keeper soguk tarama yaparken denetimli
+ * indexer'in IKI TAM OMRU **sifir** aralik tamamladi ve ikisi de butcesini
+ * tuketip `exit 1` etti. Keeper durdurulunca AYNI ikili -- ayni binary, ayni
+ * butce, ayni uc -- 25 aralik tamamladi.
+ *
+ * Sebep bir aralik sabiti degil: indexer ve keeper AYNI factory'nin loglarini
+ * AYNI baslangic blogundan yuruyor ve birbirlerinden habersizler. Arc ardisik
+ * cagrilari da sinirladigi icin toplam yuk ikiye katlaniyor.
+ *
+ * KARAR: **KEEPER GERI CEKILIR, ZINCIRI YURUME ISI INDEXER'INDIR.** Keeper
+ * poll BASINA en fazla `maxChunks` parca tarar (varsayilan 1). Sonuclari:
+ *
+ *   - geri kalim suresince keeper ~0,2 `eth_getLogs`/sn uretir (5 sn'lik poll
+ *     araliginda bir parca), yani indexer'in yurumesinin yaninda gurultu
+ *     seviyesinde kalir;
+ *   - keeper'in KENDI geri kalimi uzar (77 parca ~6,5 dakika) ve bu KABUL
+ *     EDILEBILIR: o sure boyunca durumu `catching-up` diye YAZIYOR;
+ *   - ve asil kazanc guvenliktedir: `readWindowState` + `classify` + sayfa
+ *     yolu artik HER POLL kosar. Onceki halde tek bir poll dakikalarca suren
+ *     taramanin arkasinda bekliyordu, yani dusman bir hedefin fark edilme
+ *     gecikmesi dakikalardi; simdi poll araligi kadar.
+ *
+ * Alternatif -- taramayi PAYLASMAK, yani curve kumesini indexer'in
+ * `launches` tablosundan okumak -- bu dosyanin kendi notunun ("Faz 3'ten sonra
+ * govde `@arcpad/db` sorgusuyla degisir") isaret ettigi yon ve muhtemelen
+ * dogru son hal. BU KOSUDA YAPILMADI, ve sebebi kayda gecmeli: `@arcpad/db`yi
+ * keeper'a baglamak `pnpm-lock.yaml`i degistirir, o dosya uc track tarafindan
+ * paylasiliyor, ve `pnpm install --offline` bu makinede ILGISIZ bir opsiyonel
+ * bagimlilikta (`parse5`) duserek lockfile'i yeniden yazma riski uretti.
+ * Denendi, geri alindi, lockfile bayt bayt ayni birakildi.
+ */
 export async function scanFactoryLogs(
   client: ChainReader,
   factory: Address,
   startBlock: bigint,
-  opts?: { store?: CursorStore; head?: bigint; chunk?: bigint; onProgress?: ScanProgress },
-): Promise<{ curves: Address[]; history: GovernanceHistory }> {
+  opts?: {
+    store?: CursorStore
+    head?: bigint
+    chunk?: bigint
+    onProgress?: ScanProgress
+    /**
+     * BU CAGRIDA taranacak en fazla parca. Varsayilan SINIRSIZDIR, cunku
+     * `knownCurves` TAM bir liste vaat eder ve onu bir butceyle kirpmak,
+     * eksik bildirimi arka kapidan geri getirirdi. Butceyi yalnizca
+     * `runWatcher` gecer -- orada eksiklik `catching-up` olarak RAPORLANIR.
+     */
+    maxChunks?: number
+  },
+): Promise<{
+  curves: Address[]
+  history: GovernanceHistory
+  /** Bu cagrinin ulastigi son blok. */
+  scannedThrough: bigint
+  /** Butce bitmeden BASA varildi mi. `false` ise liste EKSIKTIR. */
+  caughtUp: boolean
+}> {
   const head = opts?.head ?? (await client.getBlock()).number
   const chunk = opts?.chunk ?? DEFAULT_LOG_SCAN_CHUNK
   if (chunk <= 0n) throw new Error(`log scan chunk must be positive, got ${chunk}`)
@@ -1097,8 +1247,26 @@ export async function scanFactoryLogs(
   // ETKIN ARALIK, `chunk` DEGIL. Aralik hatasinda KUCULUR ve kuculmus haliyle
   // bu cagrinin geri kalaninda kalir; asla buyumez. Bkz. `isRangeTooLarge`.
   let span = chunk
+  const maxChunks = opts?.maxChunks ?? Number.POSITIVE_INFINITY
+  let done = 0
+  // Hicbir parca taranmasa bile "nereye kadar tarandigi" cevabi vardir: imlec.
+  let scannedThrough = from > startBlock ? from - 1n : startBlock
 
   while (from <= head) {
+    if (done >= maxChunks) {
+      // BUTCE BITTI, TARAMA BITMEDI. Imlec parca basina zaten yazildi, yani
+      // bir sonraki poll tam olarak buradan devam eder.
+      return {
+        curves: sorted(seen),
+        history: {
+          proposedTargets: sorted(proposed),
+          landedTargets: sorted(landed),
+          treasuries: sorted(treasuries),
+        },
+        scannedThrough,
+        caughtUp: false,
+      }
+    }
     const to = from + span - 1n > head ? head : from + span - 1n
     let logs: ReadonlyArray<ObservedLog>
     try {
@@ -1195,12 +1363,19 @@ export async function scanFactoryLogs(
     // Ayrica `onProgress`in ANLAMINI tasiyan sey budur: "yasiyorum" demek,
     // ilerlemeyi KALICI kilmadan yarim bir iddiadir.
     store?.write(snapshot(to))
+    scannedThrough = to
+    done += 1
     opts?.onProgress?.(to, head)
   }
 
   const complete = snapshot(head)
   store?.write(complete)
-  return { curves: complete.curves, history: complete.history }
+  return {
+    curves: complete.curves,
+    history: complete.history,
+    scannedThrough: head,
+    caughtUp: true,
+  }
 }
 
 /**
@@ -1259,6 +1434,18 @@ export interface WatcherDeps {
   heartbeat: (state: WatcherState, detail?: string) => void
   liveness?: Liveness
   store?: CursorStore
+  /**
+   * POLL'LAR ARASINDA yasayan tarama sayaci. Bkz. `ScanHealth`: "takildi" ile
+   * "bir kez dustu" ancak burada ayrilir, ve o bilgi tek bir poll'un icinde
+   * YOKTUR. Verilmezse her dusus SAYFADIR (fail-closed).
+   */
+  scanHealth?: ScanHealth
+  /**
+   * POLL BASINA en fazla kac log parcasi taranir. Bkz. `scanFactoryLogs`
+   * (C6): zinciri yurume isi indexer'indir; keeper kendi geri kalimini
+   * RASYONLAR ki ikisi paylasilan hiz sinirini birlikte tuketmesin.
+   */
+  maxChunksPerPoll?: number
   chunk?: bigint
   nowMs?: () => number
   /** Bkz. `createThrottle`. Verilmezse HER bulgu HER poll yayilir. */
@@ -1317,6 +1504,8 @@ export async function runWatcher(deps: WatcherDeps): Promise<void> {
   let curves: Address[] = []
   let history: GovernanceHistory | undefined
   let scanOk = true
+  /** Tarama BASA VARDI mi. `false` ise curve listesi EKSIKTIR. */
+  let caughtUp = true
   /** Bu poll'da GERCEKTEN taranan son blok. `null` = tek parca bile bitmedi. */
   let scannedThrough: bigint | null = null
   try {
@@ -1325,8 +1514,10 @@ export async function runWatcher(deps: WatcherDeps): Promise<void> {
       head: bigint
       chunk?: bigint
       onProgress: ScanProgress
+      maxChunks: number
     } = {
       head: state.blockNumber,
+      maxChunks: deps.maxChunksPerPoll ?? DEFAULT_MAX_CHUNKS_PER_POLL,
       onProgress: (through, head) => {
         scannedThrough = through
         // CANLILIK POLL'A DEGIL ILERLEMEYE BAGLI. Kanarya bunu gorurse
@@ -1339,37 +1530,63 @@ export async function runWatcher(deps: WatcherDeps): Promise<void> {
         // tam olarak budur -- o akisi kesiyordu, yani izleyici disaridan OLU
         // gorunuyordu. Parca basina bir satir: 709.413 blokluk tam bir tarama
         // icin 71 satir.
-        deps.heartbeat('catching-up', `scanned=${through}/${head}`)
+        //
+        // C5: BASA VARAN PARCA "YETISIYOR" DEGILDIR. Her tamamlanmis taramanin
+        // SON parcasi `scanned=X/X` ile bir `catching-up` atisi yayiyordu --
+        // kendi iki sayisi esit olan bir "yetisiyorum" -- ve hemen ardindan
+        // `current` geliyordu. Olculdu: tamamen yetismis bir keeper'in
+        // atislarinin YARISI (14'te 7) `catching-up`ti. Atisin dogru sahibi o
+        // durumda `current` daldir; burasi susar.
+        if (through < head) deps.heartbeat('catching-up', `scanned=${through}/${head}`)
       },
     }
     if (deps.store !== undefined) scanOpts.store = deps.store
     if (deps.chunk !== undefined) scanOpts.chunk = deps.chunk
     const scan = await scanFactoryLogs(deps.client, factory, deps.startBlock, scanOpts)
     curves = scan.curves
-    history = scan.history
+    deps.scanHealth?.succeed()
+    if (scan.caughtUp) {
+      history = scan.history
+    } else {
+      // BUTCE BITTI (bkz. C6). Liste EKSIK, ve eksik bir listeyi tam sayip
+      // maruziyet hesaplamak `knownCurves`in reddettigi seyin ta kendisi.
+      // `history` VERILMEZ: `classify` onu `undefined` gorup gecmis hakkinda
+      // hicbir iddiada bulunmaz.
+      caughtUp = false
+      emit(
+        'ok',
+        'log-scan-deferred',
+        `log-scan-deferred: scanned through block ${scan.scannedThrough} of ${state.blockNumber} this poll and stopped at the per-poll budget of ${scanOpts.maxChunks} chunk(s). The indexer owns the chain walk; this watcher rations its own so the two do not exhaust the shared rate limit (measured: two concurrent walkers left the indexer completing ZERO ranges). Exposure is NOT measured and the governance history is INCOMPLETE until this catches up.`,
+      )
+    }
   } catch (error) {
     scanOk = false
-    // ================== ILERLEDI MI, TAKILDI MI ==================
+    // ================== SURUYOR MU, BIR KEZ MI DUSTU ==================
     //
-    // Ikisi AYNI SEY DEGILDIR ve eski hal ikisine de ayni sayfayi cikariyordu.
-    // Soguk taramanin ortasinda gelen bir hiz siniri, imleci ILERLETMIS bir
-    // taramanin sonudur: bir sonraki poll kaldigi yerden devam eder. Ona sayfa
-    // cikarmak, mesru bir uzun islemi acil duruma cevirir -- ve olculdu: 40
-    // saniyede dort sayfa, hepsi bunun turevi.
+    // Bkz. `ScanHealth`: eski ayirt edici PARCA SAYISIYDI ve o, imlecin ne
+    // kadar geride oldugunu olcuyordu -- arizanin siddetini degil. Sonucu bu
+    // kosuda canli goruldu: AYNI gecici `-32005`, soguk imlecte sessiz,
+    // sicak imlecte SAYFA.
     //
-    // Hicbir parca bitmediyse durum BASKADIR: tarama YAKINSAMIYOR, maruziyet
-    // KALICI olarak olculemiyor, ve bu gercekten insan ister.
-    if (scannedThrough === null) {
+    // Sayac verilmediginde varsayilan SAYFADIR (fail-closed): sayaci
+    // baglamayi unutan bir cagiran, sessizce daha az sayfa cikaran bir
+    // izleyici elde etmemeli.
+    const consecutive = deps.scanHealth?.fail() ?? SCAN_FAILURES_BEFORE_PAGE
+    const progress =
+      scannedThrough === null
+        ? 'without completing a chunk'
+        : `after advancing to block ${String(scannedThrough)} of ${state.blockNumber}`
+    if (consecutive >= SCAN_FAILURES_BEFORE_PAGE) {
       emit(
         'page',
         'log-scan-failed',
-        `log-scan-failed: the factory log scan threw WITHOUT completing a single chunk, so it is not advancing; the exposure below is NOT a number and the governance history is UNKNOWN: ${describe(error)}`,
+        `log-scan-failed: the factory log scan has now failed on ${consecutive} CONSECUTIVE polls (this one ${progress}), so it is not converging; the exposure below is NOT a number and the governance history is UNKNOWN: ${describe(error)}`,
       )
     } else {
       emit(
         'ok',
         'log-scan-catching-up',
-        `log-scan-catching-up: the factory log scan advanced to block ${String(scannedThrough)} of ${state.blockNumber} and then stopped for this poll, so it will resume from there. Exposure is NOT measured this poll and the governance history is INCOMPLETE: ${describe(error)}`,
+        `log-scan-catching-up: the factory log scan stopped for this poll ${progress} and will resume from there; it has failed ${consecutive} poll(s) in a row, below the ${SCAN_FAILURES_BEFORE_PAGE} that pages. Exposure is NOT measured this poll and the governance history is INCOMPLETE: ${describe(error)}`,
       )
     }
   }
@@ -1386,9 +1603,13 @@ export async function runWatcher(deps: WatcherDeps): Promise<void> {
   // KALMASIYLA olur -- imlec yalnizca ekler, silmez -- ya da `startBlock`
   // yanlissa. Ikisinin de caresi `keeper/.cursor` dosyasini SILMEKTIR ve mesaj
   // bunu SOYLER, cunku bu durum yapiskan: her poll sayfa, sifir kalp atisi.
+  // KARSILASTIRMA YALNIZCA TAM BIR TARAMADAN SONRA ANLAMLIDIR. Butce yuzunden
+  // yarim kalmis bir liste `launchCount`in altinda cikar ve o, bir ariza
+  // DEGIL beklenen bir ara durumdur; sayfaya cevirmek, geri cekilmenin bedelini
+  // yanlis alarma cevirirdi.
   const scanned = BigInt(curves.length)
-  const countMatches = scanOk && scanned === state.launchCount
-  if (scanOk && !countMatches) {
+  const countMatches = scanOk && caughtUp && scanned === state.launchCount
+  if (scanOk && caughtUp && !countMatches) {
     const over = scanned > state.launchCount
     emit(
       'page',
@@ -1406,7 +1627,7 @@ export async function runWatcher(deps: WatcherDeps): Promise<void> {
   // reddederek engelledigi eksik bildirim, arka kapidan geri gelmisti.
   // Testle bulundu, okumayla degil.
   let measured: { count: number; totalQuoteWei: bigint } | undefined
-  if (scanOk) {
+  if (scanOk && caughtUp) {
     try {
       measured = await exposure(deps.client, curves, state.blockNumber)
     } catch (error) {

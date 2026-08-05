@@ -16,6 +16,7 @@ import { loadKeeperConfig, loadWatcherConfig } from './config'
 import { loadRepoEnv } from './env'
 import {
   assertFactoryMatchesGovernance,
+  createScanHealth,
   fileCursorStore,
   pinnedAddress,
   runWatcher,
@@ -50,6 +51,9 @@ async function main(): Promise<void> {
 
   const liveness = createLiveness({ pollIntervalMs: config.pollIntervalMs }, Date.now())
   const throttle = createThrottle({ repeatAfterMs: watcher.alertRepeatMs })
+  // POLL'LAR ARASINDA yasar, `runWatcher`in disinda kurulur: "ust uste kacinci
+  // dusus" bilgisi tek bir poll'un icinde YOKTUR (bkz. `ScanHealth`).
+  const scanHealth = createScanHealth()
 
   // LAVABOYU KEEPER'IN KENDISI YAZAR. `KEEPER_ALERT_LOG` ayarliysa her olay --
   // `PAGE`, `OK` ve `HEARTBEAT` -- TEK bir dosyaya, tek bir akisa gider.
@@ -82,7 +86,7 @@ async function main(): Promise<void> {
     `keeper ready chainId=${ARC_TESTNET_CHAIN_ID} pollIntervalMs=${config.pollIntervalMs} dryRun=${config.dryRun}`,
   )
   console.log(
-    `watching graduation window factory=${factory} startBlock=${watcher.startBlock} chainKey=${watcher.chainKey} allowedTargets=${watcher.allowlist.graduationTargets.length} cursor=${watcher.cursorPath} alertLog=${watcher.alertLogPath ?? 'stdout+stderr only'} repeatAfterMs=${watcher.alertRepeatMs ?? DEFAULT_REPEAT_AFTER_MS}`,
+    `watching graduation window factory=${factory} startBlock=${watcher.startBlock} chainKey=${watcher.chainKey} allowedTargets=${watcher.allowlist.graduationTargets.length} cursor=${watcher.cursorPath} alertLog=${watcher.alertLogPath ?? 'stdout+stderr only'} repeatAfterMs=${watcher.alertRepeatMs ?? DEFAULT_REPEAT_AFTER_MS} logScanChunk=${watcher.logScanChunk} chunksPerPoll=${watcher.maxChunksPerPoll} (the INDEXER owns the chain walk; this watcher rations its own backfill so the two do not exhaust Arc's shared rate limit)`,
   )
 
   let stopped = false
@@ -108,7 +112,9 @@ async function main(): Promise<void> {
       },
       liveness,
       store,
+      scanHealth,
       chunk: watcher.logScanChunk,
+      maxChunksPerPoll: watcher.maxChunksPerPoll,
       throttle,
     })
     if (!stopped) setTimeout(() => void poll(), config.pollIntervalMs)

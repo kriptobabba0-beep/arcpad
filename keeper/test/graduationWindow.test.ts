@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type Address, getAddress } from 'viem'
@@ -19,6 +19,7 @@ import { parseGovernanceAllowlist } from '../src/config'
 import { type AlertSinkQuery, drillExpiry, drillObserve, fileAlertSink } from '../src/drill'
 import {
   type Allowlist,
+  createScanHealth,
   type ChainReader,
   classify,
   computeWindow,
@@ -753,10 +754,58 @@ describe('knownCurves', () => {
   // ASIL IDDIA, `runWatcher` SEVIYESINDE: dar aralikli bir saglayicida
   // izleyici KALP ATISI YAYAR. Kalp atisi tatbikatin "izleyici vardi"
   // olcusudur; onsuz dogru sayfalar bile "there was no watcher" okunur.
-  it('dar aralikli saglayicida runWatcher KALP ATISI YAYAR', async () => {
+  /**
+   * BU TEST C6'DAN SONRA SEKIL DEGISTIRDI, VE DEGISIM OLCULEN BIR SEYI ANLATIR.
+   *
+   * Eski hali "tek bir poll 400 blogu bitirir ve `current` atar" diyordu.
+   * Poll basina parca butcesi (C6) geldikten sonra bu ARTIK DOGRU DEGIL ve
+   * dogru OLMAMALI: 20 bloklik aralik siniri olan bir saglayicida 400 blok 20
+   * istektir, ve keeper'in bir poll'da yirmi istek atmasi tam olarak
+   * indexer'i acliktan olduren davranistir.
+   *
+   * Testin ASIL iddiasi degismedi -- izleyici KALP ATIYOR, yani tatbikat onu
+   * "vardi" sayar -- ama atisin durumu artik dogruyu soyluyor.
+   *
+   * BURADA YAZILI KALMASI GEREKEN BIR MALIYET VAR: `span` yalnizca CAGRI
+   * ICINDE kucultulur, cagrilar arasinda `chunk`a doner. Aralik siniri
+   * `chunk`in altinda olan bir saglayicida her poll o kuculme merdivenini
+   * yeniden oder (~log2(chunk) fazladan istek). Arc'ta bu yol OLU: olculen
+   * sinir 10.000 ve varsayilan `chunk` da 10.000. Boyle bir saglayiciya
+   * baglanan bir operatorun caresi `KEEPER_LOG_SCAN_CHUNK`i o sinira
+   * indirmektir.
+   */
+  it('dar aralikli saglayicida runWatcher KALP ATAR -- ama "yetisiyor" diye', async () => {
     const { sink, run } = watch({ blockNumber: 400n, rangeLimit: 20n })
     await run()
-    expect(sink.beats()).toBe(1)
+    // Poll basina bir parca: 400 blok tek poll'da BITMEZ.
+    expect(sink.beats()).toBe(0)
+    expect(sink.catchUpBeats()).toBeGreaterThanOrEqual(1)
+    expect(sink.pages()).toEqual([])
+    // ...ve durum SESSIZ degil: neden yetismedigi yazili.
+    expect(sink.oks().some((m) => m.includes('log-scan-deferred'))).toBe(true)
+  })
+
+  it('butce poll basina uygulanir ve tarama poll poll YAKINSAR', async () => {
+    const path = join(tempDir(), '.cursor')
+    const store = cursorAt(path)
+    const client = syntheticChain({ blockNumber: 400n, rangeLimit: 20n })
+    const sink = recorder()
+    const once = (): Promise<void> =>
+      runWatcher({
+        client,
+        factory: PINNED,
+        startBlock: 1n,
+        allowlist: ALLOW_GOOD,
+        alert: sink.alert,
+        heartbeat: sink.heartbeat,
+        store,
+        nowMs: localClock(NOW),
+      })
+    // 400 blok / 20 = 20 parca; her poll bir tane.
+    for (let i = 0; i < 21; i += 1) await once()
+    expect(store.read()?.lastScannedBlock).toBe(400n)
+    // Yakinsadi -> artik `current` atiyor.
+    expect(sink.beats()).toBeGreaterThanOrEqual(1)
     expect(sink.pages()).toEqual([])
   })
 
@@ -856,10 +905,84 @@ describe('knownCurves', () => {
     )
   })
 
-  it('imlec dosyasi tanimsizsa TAHMIN ETMEZ', () => {
+  /**
+   * ============ TAHMIN ETMEZ, AMA ARTIK FIRLATMAZ DA ============
+   *
+   * Bu test bir sure `toThrow(/not a keeper cursor/)` bekliyordu ve o
+   * davranis, dosyanin KENDI yazili kuralini cigniyordu: "kullanamadigi bir
+   * imleci YOK SAYAR, reddetmez -- baslamayan bir izleyici, yanlis imlecli bir
+   * izleyiciden kotudur."
+   *
+   * Bedeli olculdu (C4): yirtik bir imlec dosyasi keeper'i HER POLL'DA
+   * SONSUZA KADAR sayfa cikartiyordu ve asla kendini iyilestiremiyordu, cunku
+   * dosya ancak bir parca BASARIYLA bittiginde yeniden yazilir ve hicbir parca
+   * baslayamiyordu. "Tahmin etme" hala gecerli -- bu icerikten hicbir imlec
+   * TURETILMIYOR; degisen sey, bilinmeyeni bir OLUM yerine bir SIFIRLAMA
+   * saymak.
+   */
+  it('imlec dosyasi tanimsizsa TAHMIN ETMEZ -- yok sayar ve SEBEBINI soyler', () => {
     const path = join(tempDir(), '.cursor')
     writeFileSync(path, JSON.stringify({ nonsense: true }), 'utf8')
-    expect(() => cursorAt(path).read()).toThrow(/not a keeper cursor/)
+    const resets: string[] = []
+    const store = cursorAt(path, undefined, (reason) => resets.push(reason))
+    expect(store.read()).toBeNull()
+    expect(resets).toHaveLength(1)
+    expect(resets[0]).toContain('is not a keeper cursor')
+  })
+
+  /**
+   * C4. YIRTIK BIR DOSYADAN KURTULUS, KURGULANARAK DEGIL CALISTIRILARAK.
+   *
+   * Gercek bir yazma yapilir, dosya gercekten kirpilir, ve ayni store ondan
+   * SONRA yazip okuyabiliyor mu diye bakilir. Eski hal burada `SyntaxError`
+   * firlatiyordu ve `runWatcher` onu her poll'da bir sayfaya ceviriyordu.
+   */
+  it('YIRTIK bir imlec dosyasi sayfa degil SIFIRLAMA uretir, ve store kendini onarir', () => {
+    const path = join(tempDir(), '.cursor')
+    const store0 = cursorAt(path)
+    store0.write({
+      lastScannedBlock: 4_242n,
+      curves: [CURVE_A],
+      history: { proposedTargets: [], landedTargets: [], treasuries: [] },
+    })
+    const whole = readFileSync(path, 'utf8')
+    expect(whole.length).toBeGreaterThan(160)
+
+    // BIR COKME BOYLE GORUNUR: govdenin yarisi diskte.
+    writeFileSync(path, whole.slice(0, 160), 'utf8')
+
+    const resets: string[] = []
+    const store = cursorAt(path, undefined, (reason) => resets.push(reason))
+    expect(store.read()).toBeNull()
+    expect(resets).toHaveLength(1)
+    expect(resets[0]).toContain('could not be parsed')
+
+    // VE KENDINI ONARIR: bir sonraki basarili parca dosyayi yeniden yazar ve
+    // okuma yeniden calisir. Onceki hal buraya HIC ULASAMIYORDU.
+    store.write({
+      lastScannedBlock: 5_000n,
+      curves: [CURVE_A],
+      history: { proposedTargets: [], landedTargets: [], treasuries: [] },
+    })
+    expect(store.read()?.lastScannedBlock).toBe(5_000n)
+  })
+
+  /**
+   * YAZMA ATOMIK: gecici dosya ARDINDA BIRAKILMAZ ve okuyucu yarim govde
+   * gormez. `rename` ayni dizinde yapilir; farkli birimler arasinda atomik
+   * degildir.
+   */
+  it('yazma yaz-ve-yeniden-adlandir ile yapilir ve gecici dosya kalmaz', () => {
+    const dir = tempDir()
+    const path = join(dir, '.cursor')
+    const store = cursorAt(path)
+    store.write({
+      lastScannedBlock: 7n,
+      curves: [],
+      history: { proposedTargets: [], landedTargets: [], treasuries: [] },
+    })
+    expect(existsSync(`${path}.tmp`)).toBe(false)
+    expect(store.read()?.lastScannedBlock).toBe(7n)
   })
 
   // -------------------------------------------------------------
@@ -1299,6 +1422,39 @@ describe('kirilma 2: izleyici poll etmeyi birakti', () => {
   })
 
   /**
+   * ============ C2: AYNI KUSUR, BIR DEDEKTOR OTEDE ============
+   *
+   * `chain-head-stale` gozlem yasina gecirildi; `chain-time-frozen` AYNI
+   * DOSYADA duvar saatinde kaldi ve canlida YANLIS sayfa cikardi -- rapor
+   * edilen damga, o andaki zincir damgasindan 64 saniye geride.
+   *
+   * Asagidaki iki iddia birlikte kapiyi kurar: seyrek bakmak sayfa DEGILDIR,
+   * gercekten donmus bir damga HALA sayfadir.
+   */
+  it('uzun bir poll yuzunden seyrek bakmak, "zincir SAATI dondu" DEGILDIR', () => {
+    const liveness = createLiveness({ pollIntervalMs: POLL, chainTimeFrozenMs: 60_000 }, NOW_MS)
+    liveness.observeChainTime(1_785_938_195n, NOW_MS)
+    // 100 saniye sonra tekrar bakildi -- ve saat ILERLEMIS.
+    liveness.observeChainTime(1_785_938_295n, NOW_MS + 100_000)
+    liveness.scanProgressed(NOW_MS + 100_000)
+    const codes = liveness.check(NOW_MS + 100_000).map((f) => f.code)
+    expect(codes).not.toContain('chain-time-frozen')
+  })
+
+  it('GERCEKTEN donmus bir zincir saati hala sayfadir', () => {
+    const liveness = createLiveness({ pollIntervalMs: POLL, chainTimeFrozenMs: 60_000 }, NOW_MS)
+    // Ayni damga, tekrar tekrar GOZLENDI.
+    for (let t = 0; t <= 90_000; t += 10_000) {
+      liveness.observeChainTime(1_785_938_195n, NOW_MS + t)
+    }
+    const findings = liveness.check(NOW_MS + 90_000)
+    expect(findings.map((f) => f.code)).toContain('chain-time-frozen')
+    expect(findings.find((f) => f.code === 'chain-time-frozen')?.message).toContain(
+      'across observations spanning',
+    )
+  })
+
+  /**
    * CANLI ARIZANIN BIREBIR SEKLI: poll uzun surdugu icin ARALIKLI gozlem, ve
    * gozlemler arasinda bas ILERLIYOR. Eski dedektor burada sayfa cikariyordu.
    */
@@ -1333,6 +1489,101 @@ describe('kirilma 2: izleyici poll etmeyi birakti', () => {
     expect(liveness.check(NOW_MS + 3 * POLL).map((f) => f.code)).toContain(
       'watcher-heartbeat-missed',
     )
+  })
+})
+
+/**
+ * ============ C3: SIDDET, BIRIKMIS IS DEGIL ============
+ *
+ * Ayirt edici PARCA SAYISIYDI ve o, imlecin ne kadar geride oldugunu olcuyordu.
+ * Olculdu: AYNI gecici `-32005`, soguk imlecte sessiz (77 parcanin 4'u bitti),
+ * SICAK imlecte SAYFA (tek parca, sifir bitti). Keeper'in yasamasi gereken
+ * durum tam olarak sicak imlectir, yani her gecici hata bir sayfaydi.
+ */
+describe('tarama dususu: bir kez mi dustu, takildi mi', () => {
+  it('ILK dusen poll SAYFA DEGIL -- gecici bir hata takilma degildir', async () => {
+    const health = createScanHealth()
+    const client = syntheticChain({ blockNumber: 50n, failLogs: true })
+    const sink = recorder()
+    await runWatcher({
+      client,
+      factory: PINNED,
+      startBlock: 1n,
+      allowlist: ALLOW_GOOD,
+      alert: sink.alert,
+      heartbeat: sink.heartbeat,
+      scanHealth: health,
+      nowMs: localClock(NOW),
+    })
+    expect(sink.pages()).toEqual([])
+    expect(sink.oks().some((m) => m.includes('log-scan-catching-up'))).toBe(true)
+  })
+
+  it('UST USTE IKINCI dusus SAYFADIR -- yakinsamiyor', async () => {
+    const health = createScanHealth()
+    const client = syntheticChain({ blockNumber: 50n, failLogs: true })
+    const sink = recorder()
+    const once = (): Promise<void> =>
+      runWatcher({
+        client,
+        factory: PINNED,
+        startBlock: 1n,
+        allowlist: ALLOW_GOOD,
+        alert: sink.alert,
+        heartbeat: sink.heartbeat,
+        scanHealth: health,
+        nowMs: localClock(NOW),
+      })
+    await once()
+    await once()
+    const page = sink.pages().find((m) => m.includes('log-scan-failed'))
+    expect(page).toBeDefined()
+    expect(page).toContain('2 CONSECUTIVE polls')
+  })
+
+  it('ARADA BASARILI bir poll sayaci sifirlar -- "ust uste" gercekten ust ustedir', async () => {
+    const health = createScanHealth()
+    const sink = recorder()
+    const poll = (failLogs: boolean): Promise<void> =>
+      runWatcher({
+        client: syntheticChain({ blockNumber: 50n, failLogs, launchCount: 0n }),
+        factory: PINNED,
+        startBlock: 1n,
+        allowlist: ALLOW_GOOD,
+        alert: sink.alert,
+        heartbeat: sink.heartbeat,
+        scanHealth: health,
+        nowMs: localClock(NOW),
+      })
+    await poll(true)
+    await poll(false)
+    await poll(true)
+    // Uc poll, iki dusus, ama ARDISIK degil: hicbiri sayfa degil.
+    expect(sink.pages()).toEqual([])
+  })
+
+  /** Sayac verilmezse SAYFA. Unutmak, sessizce daha az sayfa uretmemeli. */
+  it('scanHealth verilmezse fail-closed: ilk dusus bile SAYFA', async () => {
+    const { sink, run } = watch({ blockNumber: 50n, failLogs: true })
+    await run()
+    expect(sink.pages().some((m) => m.includes('log-scan-failed'))).toBe(true)
+  })
+})
+
+/**
+ * ============ C5: BASA VARAN PARCA "YETISIYOR" DEGILDIR ============
+ *
+ * Her tamamlanmis tarama, son parcasinda `scanned=X/X` ile bir `catching-up`
+ * atisi yayiyordu; yetismis bir keeper'in atislarinin YARISI oyleydi.
+ */
+describe('kalp atisi durumu, basa varildiginda', () => {
+  it('tarama basa varirsa YALNIZCA current atar', async () => {
+    const { sink, run } = watch({ blockNumber: 50n, launchCount: 0n })
+    await run()
+    // Tarama basa vardi -> tam poll -> TEK `current` atisi...
+    expect(sink.beats()).toBe(1)
+    // ...ve `scanned=50/50` diyen bir "yetisiyorum" YOK.
+    expect(sink.catchUpBeats()).toBe(0)
   })
 })
 

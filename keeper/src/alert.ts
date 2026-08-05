@@ -422,8 +422,27 @@ export function createLiveness(config: LivenessConfig, startedAtMs: number): Liv
   let lastHeadSeenAt = startedAtMs
   let lastHead: bigint | null = null
   let lastChainTimeChangeAt = startedAtMs
+  /**
+   * ZAMAN DAMGASINI EN SON NE ZAMAN GORDUGUMUZ -- `lastHeadSeenAt`in ikizi.
+   *
+   * BU SATIR BIR AY SONRA DEGIL, AYNI DOSYADA EKSIKTI. `chain-head-stale` icin
+   * "gozlem yasi, duvar saati degil" gerekcesi 40 satir yukarida uzun uzun
+   * yazili; `chain-time-frozen` o gerekcenin BIR DEDEKTOR OTESINDE kaldi ve
+   * duvar saatini kullanmaya devam etti. Bu, projenin ilk adlandirdigi ariza
+   * seklidir: bir ozellik BIR giris noktasinda kapatilir ve KARDESLERINDE de
+   * kapali sanilir.
+   *
+   * OLCULDU (canli, soguk keeper):
+   *   PAGE chain-time-frozen: chain timestamp stuck at 1785938195 for 63400ms
+   * ...ve o anda zincirin damgasi ~1785938259 idi: rapor edilen degerin **64
+   * saniye** otesinde. Donan sey zincir degil, tek is parcacikli poll'un
+   * GOZLEMIYDI -- rate-limitli bir log taramasinin icindeydi.
+   */
+  let lastChainTimeSeenAt = startedAtMs
   let lastChainSeconds: bigint | null = null
   let lastSkewMs: number | null = null
+  /** Kayma OLCUMUNUN ne zaman alindigi. Bkz. `chain-time-skewed` mesaji. */
+  let lastSkewAt: number | null = null
 
   return {
     pollSucceeded(atMs: number): void {
@@ -447,6 +466,8 @@ export function createLiveness(config: LivenessConfig, startedAtMs: number): Liv
     observeChainTime(chainSeconds: bigint, atMs: number): void {
       // KAYMA HER GOZLEMDE OLCULUR; DONMUSLUK ise yalnizca DEGISIMDE sifirlanir.
       lastSkewMs = Number(chainSeconds * 1000n - BigInt(Math.trunc(atMs)))
+      lastSkewAt = atMs
+      lastChainTimeSeenAt = atMs
       if (lastChainSeconds === null || chainSeconds !== lastChainSeconds) {
         lastChainSeconds = chainSeconds
         lastChainTimeChangeAt = atMs
@@ -513,18 +534,26 @@ export function createLiveness(config: LivenessConfig, startedAtMs: number): Liv
         findings.push({
           code: 'chain-time-skewed',
           level: 'page',
-          message: `chain time is ${lastSkewMs > 0 ? 'ahead of' : 'behind'} local time by ${Math.abs(lastSkewMs)}ms (tolerance ${skewToleranceMs}ms); the window phase is computed from chain time, so it cannot be trusted while this holds`,
+          // OLCUMUN YASI DA YAZILIR. Bu dedektorun degeri duvar saatiyle
+          // BUYUMEZ (her gozlemde yeniden hesaplanir, yani `chain-head-stale`
+          // ve `chain-time-frozen`in kusuru burada YOK) -- ama ESKI bir olcum
+          // GUNCELMIS gibi okunabilirdi. Yasi yazmak, operatorun "bu daha
+          // once mi olctun" sorusunu sormasina gerek birakmaz.
+          message: `chain time was ${lastSkewMs > 0 ? 'ahead of' : 'behind'} local time by ${Math.abs(lastSkewMs)}ms when last observed ${lastSkewAt === null ? 'never' : `${atMs - lastSkewAt}ms ago`} (tolerance ${skewToleranceMs}ms); the window phase is computed from chain time, so it cannot be trusted while this holds`,
         })
       }
 
       // DONMUS ZAMAN, TOLERANSLI. Arc'in dokumani blok zaman damgalarinin
       // artmayabilecegini soyler; kisa duraklamalar NORMALDIR.
-      const chainTimeAge = atMs - lastChainTimeChangeAt
+      //
+      // GOZLEMLER ARASI, DUVAR SAATI DEGIL -- `chain-head-stale` ile AYNI
+      // duzeltme. Bir ay once degil, ayni dosyada, kirk satir asagida eksikti.
+      const chainTimeAge = lastChainTimeSeenAt - lastChainTimeChangeAt
       if (chainTimeAge >= frozenBudgetMs) {
         findings.push({
           code: 'chain-time-frozen',
           level: 'page',
-          message: `chain timestamp stuck at ${lastChainSeconds === null ? 'none-observed' : lastChainSeconds.toString()} for ${chainTimeAge}ms (budget ${frozenBudgetMs}ms, deliberately loose because Arc documents that block timestamps may not increase); the window clock has stopped`,
+          message: `chain timestamp stuck at ${lastChainSeconds === null ? 'none-observed' : lastChainSeconds.toString()} across observations spanning ${chainTimeAge}ms (budget ${frozenBudgetMs}ms, deliberately loose because Arc documents that block timestamps may not increase; last looked ${atMs - lastChainTimeSeenAt}ms ago); the window clock has stopped`,
         })
       }
 

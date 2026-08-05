@@ -3,7 +3,7 @@ import { isAbsolute, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ARC_TESTNET_CHAIN_ID, loadAddressBook } from '@arcpad/shared'
 import { type Address, getAddress, isAddress } from 'viem'
-import { type Allowlist, ZERO_ADDRESS } from './watch/graduationWindow'
+import { type Allowlist, DEFAULT_MAX_CHUNKS_PER_POLL, ZERO_ADDRESS } from './watch/graduationWindow'
 
 export interface KeeperConfig {
   rpcUrl: string
@@ -63,6 +63,8 @@ export interface WatcherConfig {
   governancePath: string
   cursorPath: string
   logScanChunk: bigint
+  /** Poll basina en fazla kac log parcasi. Bkz. `DEFAULT_MAX_CHUNKS_PER_POLL`. */
+  maxChunksPerPoll: number
   allowlist: Allowlist
   /** Ayarliysa keeper her olayi buraya da yazar; tatbikatin `observe` fazi bunu okur. */
   alertLogPath: string | undefined
@@ -229,6 +231,21 @@ export function loadWatcherConfig(env: NodeJS.ProcessEnv, bookDir?: string): Wat
     logScanChunk = BigInt(rawChunk)
   }
 
+  // POLL BASINA PARCA BUTCESI -- C6. Zinciri yurume isi indexer'indir; keeper
+  // kendini rasyonlar. Knob VAR cunku indexer'in KOSMADIGI bir kurulumda
+  // (yalnizca keeper) geri kalimi hizlandirmak mesrudur; varsayilan, ikisinin
+  // birlikte kostugu kurulum icindir.
+  const rawBudget = blankToUndefined(env['KEEPER_LOG_SCAN_CHUNKS_PER_POLL'])
+  let maxChunksPerPoll = DEFAULT_MAX_CHUNKS_PER_POLL
+  if (rawBudget !== undefined) {
+    if (!/^\d+$/.test(rawBudget) || Number(rawBudget) === 0) {
+      throw new Error(
+        `KEEPER_LOG_SCAN_CHUNKS_PER_POLL must be a positive integer, got "${rawBudget}"`,
+      )
+    }
+    maxChunksPerPoll = Number(rawBudget)
+  }
+
   let raw: string
   try {
     raw = readFileSync(governancePath, 'utf8')
@@ -258,6 +275,7 @@ export function loadWatcherConfig(env: NodeJS.ProcessEnv, bookDir?: string): Wat
     governancePath,
     cursorPath,
     logScanChunk,
+    maxChunksPerPoll,
     allowlist: parseGovernanceAllowlist(JSON.parse(raw) as unknown, chainKey),
     // `=== ''` bosluktan ibaret bir degeri KACIRIRDI; tek yardimci her ikisini de alir.
     alertLogPath: resolveFromRepoRoot(blankToUndefined(env['KEEPER_ALERT_LOG'])),
