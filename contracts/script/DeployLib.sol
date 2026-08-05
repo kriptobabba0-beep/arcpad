@@ -100,6 +100,24 @@ library DeployLib {
     ///      dondurulmus derlemenin urettigi initcode DEGILDIR.
     error NotTheFrozenBuild(string what, bytes32 expected, bytes32 actual);
 
+    /// @dev "O ADRESTE BIR SEY VAR, VE O BIZIM DERLEMEMIZ DEGIL."
+    ///      `AlreadyDeployed`DEN AYRI BIR HATA OLMASI TASIYICIDIR ve ayrimin
+    ///      kendisi guvenlik ozelligidir: bir CREATE2 adresinde KOD BULMAK iki
+    ///      apayri durumdur. Kod, deploy EDECEGIMIZ baytlarin ta kendisiyse o
+    ///      kontrat ZATEN BIZIMKIDIR ve yeniden kullanilmasi yalnizca guvenli
+    ///      degil ZORUNLUDUR (`FeeEscrow` canli ve FONLU). Baska bir sey ise
+    ///      adres ele gecirilmistir ve deploy DURMALIDIR.
+    error OccupiedByAForeignBuild(string what, address at, bytes32 expected, bytes32 actual);
+
+    /// @dev "BU KONTRAT ICIN RUNTIME CODEHASH KARSILASTIRMASI GECERSIZ."
+    ///      Yeniden kullanim kararinin ALTINDAKI on kosul: immutable tasiyan
+    ///      bir kontratin runtime kodu CONSTRUCTOR ARGUMANLARINA baglidir,
+    ///      dolayisiyla artifact'in `deployedBytecode`u zincirdekiyle ASLA
+    ///      esitlenemez (`LaunchFactory`: 6 aralik, olculdu). Sessizce
+    ///      "esitlemedi, demek ki yabanci" demek YANLIS TESHIS uretirdi;
+    ///      ON KOSULUN KENDISI iddia edilir ve saglanmazsa kapi duser.
+    error FrozenArtifactHasImmutables(string what);
+
     function predict(bytes32 salt, bytes memory initcode) internal pure returns (address) {
         return address(
             uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), CREATE2_FACTORY, salt, keccak256(initcode)))))
@@ -174,8 +192,67 @@ library DeployLib {
         assertMatchesFrozenBuild(plan);
         _assertMultisig("governor", plan.governor);
         _assertMultisig("treasury", plan.treasury);
-        if (plan.escrow.code.length != 0) revert AlreadyDeployed("FeeEscrow", plan.escrow);
+        assertVacantOrTheFrozenBuildIn(plan, "out-frozen");
         if (plan.factory.code.length != 0) revert AlreadyDeployed("LaunchFactory", plan.factory);
+    }
+
+    /// @notice `FeeEscrow` ve `FeeSchedule` icin: adres ya BOSTUR ya da
+    ///         UZERINDE TAM OLARAK BIZIM DERLEMEMIZ vardir.
+    ///
+    /// @dev NICIN VAR. Faz 2'nin deploy'u Arc testnet'te `AlreadyDeployed`
+    ///      ile DUSUYORDU ve dusme sebebi bir hata degil bir GERCEKTI:
+    ///      `FeeEscrow`un constructor argumani yoktur, yani adresi
+    ///      `predict(ESCROW_SALT, creationCode)`tir ve o adres --
+    ///      `0xEEd4431e...` -- ZATEN CANLIDIR, 152.069.146.725.900.635 wei
+    ///      alacak tasiyor. Faz 2 YENI bir factory deploy eder ama AYNI
+    ///      escrow'u kullanmak ZORUNDADIR; ikinci bir escrow deploy etmek
+    ///      canli alacaklarin tamamini yetim birakirdi.
+    ///
+    /// @dev YENIDEN KULLANIM ANCAK KIMLIK KANITLANDIGINDA GUVENLIDIR, ve
+    ///      guvenlik ozelligi TAM OLARAK BU AYRIMDIR. "Kod var, devam et"
+    ///      demek kapiyi tamamen kaldirmakti: o adreste baska bir kontrat
+    ///      olsaydi factory onu escrow olarak baglar, `LaunchFactory`nin
+    ///      `owed(address(0))` yoklamasi da (dolgun bir fallback ile)
+    ///      atlatilabilirdi. Bu yuzden karsilastirilan sey KOD VARLIGI degil
+    ///      RUNTIME CODEHASH'IDIR, ve referans `out-frozen/`dir -- yani
+    ///      YALNIZCA `[profile.frozen]`in yazabildigi dizin.
+    ///
+    /// @dev ON KOSUL IDDIA EDILIR, VARSAYILMAZ: bu karsilastirma yalnizca
+    ///      IMMUTABLE TASIMAYAN bir kontrat icin gecerlidir. `FeeEscrow` ve
+    ///      `FeeSchedule` icin solc sifir aralik bildirir (olculdu);
+    ///      `LaunchFactory` icin ALTI bildirir ve o yuzden bu yola HIC
+    ///      girmez -- onun kolu `AlreadyDeployed` olarak KATI kalir, cunku
+    ///      bir factory adresinde kod bulmak "bu plan zaten deploy edilmis"
+    ///      demektir ve operatorun bunu SESSIZCE gecmesi istenmez.
+    function assertVacantOrTheFrozenBuildIn(Plan memory plan, string memory dir) internal view {
+        _assertVacantOrTheFrozenBuild(dir, "FeeEscrow", plan.escrow);
+        _assertVacantOrTheFrozenBuild(dir, "FeeSchedule", plan.feeSchedule);
+    }
+
+    function _assertVacantOrTheFrozenBuild(string memory dir, string memory name, address at) private view {
+        if (at.code.length == 0) return;
+        bytes32 want = _frozenRuntimeCodehash(dir, name);
+        bytes32 got = at.codehash;
+        if (want != got) revert OccupiedByAForeignBuild(name, at, want, got);
+    }
+
+    /// @dev `immutableReferences` ANAHTARI HIC BULUNMAYABILIR ve bu, sifir
+    ///      immutable demektir (olculdu: `FeeEscrow`da anahtar YOK,
+    ///      `LaunchFactory`de alti aralikli bir nesne var). Ucu de ayri ayri
+    ///      ele alinir; "anahtar yoksa atla" ile "anahtar var ve bos"
+    ///      arasindaki farki gormeyen bir kontrol, sessizce her seyi kabul
+    ///      ederdi.
+    function _frozenRuntimeCodehash(string memory dir, string memory name) private view returns (bytes32) {
+        string memory path = string.concat(dir, "/", name, ".sol/", name, ".json");
+        string memory json = vm.readFile(path);
+        if (vm.keyExistsJson(json, ".deployedBytecode.immutableReferences")) {
+            if (vm.parseJsonKeys(json, ".deployedBytecode.immutableReferences").length != 0) {
+                revert FrozenArtifactHasImmutables(name);
+            }
+        }
+        bytes memory code = vm.parseJsonBytes(json, ".deployedBytecode.object");
+        if (code.length == 0) revert FrozenArtifactMissing(path);
+        return keccak256(code);
     }
 
     /// @dev BASILAN SAYILARIN GERCEKTEN DEPLOY EDILECEK SAYILAR OLDUGUNU
@@ -266,6 +343,19 @@ library DeployLib {
         (bool ok, bytes memory ret) = CREATE2_FACTORY.call(abi.encodePacked(salt, initcode));
         if (!ok || ret.length != 20) revert Create2Failed(salt);
         deployed = address(bytes20(ret));
+    }
+
+    /// @notice Zaten oradaysa yeniden kullan, degilse deploy et.
+    /// @dev BU FONKSIYON HICBIR KARAR VERMEZ VE VERMEMELIDIR. Yeniden
+    ///      kullanimin GUVENLI oldugu `assertVacantOrTheFrozenBuildIn`de
+    ///      KANITLANIR ve o iddia `assertDeployable`in icinde, HERHANGI BIR
+    ///      SEY YAYINLANMADAN ONCE kosar. Burada bir kimlik kontrolu daha
+    ///      yazmak, kararı iki yere bolerek birinin gevsetilmesini
+    ///      gorunmez kilardi; `expected.code.length` ise CREATE2'nin
+    ///      determinizmi geregi o iddianin baktigi adresin AYNISINI okur.
+    function deployIfAbsent(bytes32 salt, bytes memory initcode, address expected) internal returns (address) {
+        if (expected.code.length != 0) return expected;
+        return deploy(salt, initcode);
     }
 
     /// @notice Yayinlanmak uzere olan baytlar, DONDURULMUS DERLEMENIN

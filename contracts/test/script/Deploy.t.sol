@@ -371,11 +371,100 @@ contract DeployTest is Test {
 
     /// IKINCI KOSU IKINCI BIR EVREN URETMEZ -- ve HATA ADIYLA pinlenir, cunku
     /// on-kontrolu silmek yine revert ederdi (ama `Create2Failed` ile).
+    ///
+    /// @dev HATA ARTIK `FeeEscrow` DEGIL `LaunchFactory` ve BU DEGISIKLIK
+    ///      KASITLIDIR: escrow ile schedule artik YENIDEN KULLANILIR
+    ///      (kimlikleri kanitlandigi surece), dolayisiyla ikinci kosuda ilk
+    ///      duran sey factory'dir. "Ikinci bir evren uretilmez" ozelligi
+    ///      degismedi; onu tasiyan satir degisti.
     function test_aSecondRunRevertsRatherThanMintingASecondUniverse() public {
         Plan memory p = script.run();
 
-        vm.expectRevert(abi.encodeWithSelector(DeployLib.AlreadyDeployed.selector, "FeeEscrow", p.escrow));
+        vm.expectRevert(abi.encodeWithSelector(DeployLib.AlreadyDeployed.selector, "LaunchFactory", p.factory));
         script.run();
+    }
+
+    // ---------------------------------------------------------------
+    // Yeniden kullanim -- ve onun TAM OLARAK NE ZAMAN guvenli oldugu
+    // ---------------------------------------------------------------
+
+    /// KABUL YONU. Arc testnet'in GERCEK durumu: `FeeEscrow` zaten canli
+    /// (`0xEEd4431e...`, 152.069.146.725.900.635 wei alacak), factory yok.
+    /// Bu test o durumu kurar ve deploy'un YURUDUGUNU olcer.
+    ///
+    /// @dev BUNDAN ONCE FAZ 2 BURADA DUSUYORDU. `assertDeployable`
+    ///      `plan.escrow.code.length != 0` gorup `AlreadyDeployed` atiyordu,
+    ///      yani `plan()` de `run()` de Arc testnet'e karsi HIC
+    ///      KOSTURULAMIYORDU -- fail-closed, ama Task 7'yi tamamen bloke
+    ///      ediyordu.
+    function test_anAlreadyDeployedEscrowIsReusedAndTheFactoryBindsToIt() public {
+        Plan memory p = script.plan();
+
+        address pre = DeployLib.deploy(p.escrowSalt, p.escrowInitcode);
+        assertEq(pre, p.escrow, "on-deploy edilen escrow plandan ayristi");
+        assertGt(pre.code.length, 0, "on-deploy kod birakmadi -- test hicbir sey olcmuyor");
+
+        Plan memory q = script.run();
+
+        assertEq(q.escrow, pre, "escrow adresi kaydi");
+        assertEq(LaunchFactory(q.factory).escrow(), pre, "factory BASKA bir escrow'a baglandi");
+        assertEq(pre.code.length, FeeEscrow_runtimeLength(), "yeniden kullanilan escrow'un kodu degisti");
+    }
+
+    /// RED YONU, VE AYRIM TEK BAYTTIR. Gercek escrow indirilir, sonra runtime
+    /// kodunun SON BAYTI tersine cevrilir. "Kod var" diyen bir kontrol bunu
+    /// kabul ederdi; "BIZIM kodumuz var" diyen kontrol etmez.
+    ///
+    /// @dev BEKLENEN HASH GERCEK KODUN HASH'IDIR ve bu iddianin ikinci yarisi:
+    ///      kapinin referansinin fiilen `out-frozen/`daki `FeeEscrow` oldugunu
+    ///      da olcer, cunku o hash baska bir yerden gelseydi bu esitlik
+    ///      tutmazdi.
+    function test_aForeignContractAtTheEscrowAddressIsRefused() public {
+        Plan memory p = script.plan();
+
+        address pre = DeployLib.deploy(p.escrowSalt, p.escrowInitcode);
+        bytes memory real = pre.code;
+        assertGt(real.length, 0, "gercek escrow kodsuz -- test hicbir sey olcmuyor");
+
+        bytes memory tampered = new bytes(real.length);
+        for (uint256 i = 0; i < real.length; ++i) {
+            tampered[i] = real[i];
+        }
+        tampered[real.length - 1] = bytes1(uint8(real[real.length - 1]) ^ 0x01);
+        assertTrue(keccak256(tampered) != keccak256(real), "tahrifat kodu degistirmedi");
+
+        vm.etch(p.escrow, tampered);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployLib.OccupiedByAForeignBuild.selector, "FeeEscrow", p.escrow, keccak256(real), keccak256(tampered)
+            )
+        );
+        script.plan();
+    }
+
+    /// @dev YENIDEN KULLANIMIN ALTINDAKI ON KOSUL, ACIKCA OLCULUR. Runtime
+    ///      codehash karsilastirmasi yalnizca IMMUTABLE TASIMAYAN bir kontrat
+    ///      icin gecerlidir; `FeeEscrow` ya da `FeeSchedule` bir gun immutable
+    ///      kazanirsa kural SESSIZCE yanlislasirdi. Bu test o gun kirmizi olur.
+    ///      `LaunchFactory` ters taniktir: ALTI aralik tasir, ve tam da bu
+    ///      yuzden onun kolu `AlreadyDeployed` olarak kati kalir.
+    function test_theReuseRuleOnlyAppliesToContractsWithoutImmutables() public view {
+        assertEq(_immutableSpanCount("FeeEscrow"), 0, "FeeEscrow immutable kazandi -- yeniden kullanim kurali gecersiz");
+        assertEq(
+            _immutableSpanCount("FeeSchedule"), 0, "FeeSchedule immutable kazandi -- yeniden kullanim kurali gecersiz"
+        );
+        assertGt(_immutableSpanCount("LaunchFactory"), 0, "ters tanik dustu -- LaunchFactory immutable'sizlasti");
+    }
+
+    function _immutableSpanCount(string memory name) internal view returns (uint256) {
+        string memory json = vm.readFile(string.concat("out-frozen/", name, ".sol/", name, ".json"));
+        if (!vm.keyExistsJson(json, ".deployedBytecode.immutableReferences")) return 0;
+        return vm.parseJsonKeys(json, ".deployedBytecode.immutableReferences").length;
+    }
+
+    function FeeEscrow_runtimeLength() internal view returns (uint256) {
+        string memory json = vm.readFile("out-frozen/FeeEscrow.sol/FeeEscrow.json");
+        return vm.parseJsonBytes(json, ".deployedBytecode.object").length;
     }
 
     /// `AlreadyDeployed`in IKINCI kolu. Escrow kontrolu her zaman once

@@ -24,11 +24,20 @@ contract Deploy is Script {
         _print(p, "BROADCASTING");
 
         vm.startBroadcast();
-        address escrowAddr = DeployLib.deploy(p.escrowSalt, p.escrowInitcode);
+        // `deployIfAbsent`, `deploy` DEGIL -- VE YALNIZCA ILK IKISI ICIN.
+        // `FeeEscrow` Arc testnet'te ZATEN CANLI ve FONLUDUR; Faz 2 yeni bir
+        // factory indirir ama AYNI escrow'a baglanmak ZORUNDADIR. Yeniden
+        // kullanimin guvenli oldugu `assertDeployable` icinde, runtime
+        // codehash'i `out-frozen/` ile esitlenerek KANITLANDI; burada karar
+        // yok, yalnizca sonucu var.
+        address escrowAddr = DeployLib.deployIfAbsent(p.escrowSalt, p.escrowInitcode, p.escrow);
         // SIRA ZORUNLUDUR: factory'nin constructor'i `feeSchedule`in KODUNU
         // kontrol eder (`FeeScheduleHasNoCode`). Once schedule inmezse
         // factory'nin CREATE2'si revert eder.
-        address scheduleAddr = DeployLib.deploy(p.feeScheduleSalt, p.feeScheduleInitcode);
+        address scheduleAddr = DeployLib.deployIfAbsent(p.feeScheduleSalt, p.feeScheduleInitcode, p.feeSchedule);
+        // FACTORY ICIN `deploy` KALIR: adresinde kod bulmak "bu plan zaten
+        // yayinlanmis" demektir ve `assertDeployable` onu `AlreadyDeployed`
+        // ile ZATEN reddetmistir, yani buraya ancak BOS adresle gelinir.
         address factoryAddr = DeployLib.deploy(p.factorySalt, p.factoryInitcode);
         vm.stopBroadcast();
 
