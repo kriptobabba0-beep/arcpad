@@ -1,4 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
+import { ARC_TESTNET_CHAIN_ID, getArcChain } from '@arcpad/shared/browser'
 import { auditRoutes, auditToken, VIEWPORTS } from './routes'
 
 /**
@@ -126,4 +127,48 @@ test('at 1440px the token page puts the panel BESIDE the chart -- the control fo
   const sharesRow =
     panelBox!.y < chartBox!.y + chartBox!.height && chartBox!.y < panelBox!.y + panelBox!.height
   expect(sharesRow, 'a desktop layout puts them side by side, not stacked').toBe(true)
+})
+
+/**
+ * =========================================================================
+ *  THE ONE ACCESSIBILITY FIX A BROWSER FOUND AND NOTHING GUARDS.
+ * =========================================================================
+ *
+ * `track-6-review.md` backlog 1, and `MAINNET-READINESS.md` §2.13: reverting
+ * `Header.tsx` to a `<Pill className="hidden sm:inline-flex">` -- the version
+ * that DID NOT HIDE at 390px -- leaves the entire component project green.
+ * The current code hides the pill on a WRAPPER instead, with a comment saying
+ * why, and a comment is not a gate.
+ *
+ * THE ROOT CAUSE IS GENERAL AND WILL RECUR. `cx` concatenates; it does not
+ * merge Tailwind conflicts. `hidden` and `Pill`'s base `inline-flex` set the
+ * SAME property, so which one wins is decided by Tailwind's EMISSION ORDER,
+ * not by the order they were written in. A caller's class therefore does not
+ * reliably beat a component's -- and jsdom cannot see it, because jsdom does
+ * not resolve a stylesheet's cascade.
+ *
+ * BOTH HALVES ARE REQUIRED AND THE DESKTOP ONE IS NOT DECORATION. An element
+ * that does not exist is `toBeHidden()`, so the phone assertion alone is
+ * satisfied by DELETING the pill -- and by the mutant that removes the
+ * wrapper, whose locator would then find nothing. The desktop assertion is
+ * what makes the phone assertion mean something.
+ */
+test('the network pill is hidden at 375px and PRESENT at 1440px -- the mutant that survived', async ({
+  page,
+}) => {
+  // The name comes from the registry the app itself reads, so a renamed chain
+  // cannot leave this test asserting against a string nothing renders.
+  const chainName = getArcChain(ARC_TESTNET_CHAIN_ID).name
+  const pill = page.getByRole('banner').getByText(chainName, { exact: true })
+
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto('/', { waitUntil: 'networkidle' })
+  await expect(pill, 'the desktop header must show which network this is').toBeVisible()
+
+  await page.setViewportSize({ width: 375, height: 667 })
+  await expect(
+    pill,
+    'at 375px the pill must be hidden -- `hidden` on the Pill itself did not hide it, ' +
+      'because `cx` concatenates and Tailwind decides by emission order',
+  ).toBeHidden()
 })
