@@ -18,6 +18,7 @@ import {BondingCurve} from "../../src/BondingCurve.sol";
 import {FeeEscrow} from "../../src/FeeEscrow.sol";
 import {FeeSchedule} from "../../src/FeeSchedule.sol";
 import {LaunchFactory} from "../../src/LaunchFactory.sol";
+import {CurveMath} from "../../src/libraries/CurveMath.sol";
 import {GraduationMath} from "../../src/libraries/GraduationMath.sol";
 import {GraduationHandler} from "./GraduationHandler.sol";
 
@@ -429,6 +430,60 @@ contract PoolSeedInvariantsTest is Test {
         }
         assertGt(handler.swapsOnCurrency0Quote(), 0, "USDC = currency0 havuzunda swap yok");
         assertGt(handler.swapsOnCurrency1Quote(), 0, "token = currency0 havuzunda swap yok");
+    }
+
+    /// @notice UCRET KADEMESI IKI SIRALAMADA DA DEGERIYLE IDDIA EDILIR --
+    ///         "sifirdan buyuk" ile DEGIL.
+    ///
+    /// @dev BU TESTIN VAR OLMA SEBEBI OLCULMUS BIR SAG KALAN MUTANTTIR.
+    ///      `ArcpadHook._marketCap`in `cfg.quoteIsCurrency0` dallanmasini
+    ///      `true`ya sabitleyen mutant paketin 592 testinin HICBIRINI
+    ///      kirmiyordu; `false`a sabitleyen ikizi `ArcpadHook.t.sol`daki UC
+    ///      testi kiriyordu (`2500000000000000 != 9500000000000000`).
+    ///      ASIMETRI BULGUNUN KENDISIDIR: ucretin DEGERINI iddia eden tek yer
+    ///      o dosyaydi ve oradaki TEK havuzun siralamasi `USDC = currency0`
+    ///      idi. Ustteki test `token = currency0` havuzunda dort sekli de
+    ///      YURUTUYOR ama yalnizca `assertGt(..., owedBefore)` diyor --
+    ///      "bir ucret alindi", "DOGRU ucret alindi" degil. Bir siralamada
+    ///      kapsanan ozellik hepsinde kapsanmis gibi okunuyordu.
+    ///
+    /// @dev YANLIS DAL SESSIZDIR VE BUYUKTUR: mezuniyet fiyatinda dogru
+    ///      market cap ~58,78 USDC'dir (kademe 0 -> 95/30 bps); ters formul
+    ///      ~1,7e46 verir, yani HER ZAMAN en ust kademe (25/5 bps). Protokol
+    ///      3,8 kat, creator 6 kat az tahsil eder, HICBIR revert olmaz, ve
+    ///      hook adresi `PoolKey`in bir alani oldugu icin ilk graduation'dan
+    ///      SONRA duzeltilemez. Token adresleri tekduze oldugu icin bu her
+    ///      BES launch'tan BIRINI vururdu.
+    ///
+    /// @dev `swapRaw` KULLANILIR, `swap` DEGIL: bant secimini atlar, yani
+    ///      belirtilen miktar hook'un ucretlendirdigi miktarin TA KENDISIDIR
+    ///      ve beklenen ucret TAM olarak yazilabilir. Sekil 0 = quote
+    ///      SPECIFIED, exact-input, dolayisiyla ucret `beforeSwap`ta alinir.
+    function test_bothOrderingsChargeTierZeroAndTheAmountIsAsserted() public {
+        _assertTierZeroByValue(BELOW, "token = currency0");
+        _assertTierZeroByValue(ABOVE, "USDC = currency0");
+    }
+
+    function _assertTierZeroByValue(uint256 which, string memory what) internal {
+        uint256 q = 1e5; // 6 decimal quote birimi -- SPECIFIED taraf
+        uint256 protocolBefore = escrow.owed(TREASURY);
+        uint256 creatorBefore = escrow.owed(CREATOR);
+
+        handler.swapRaw(which, 0, q);
+
+        uint256 protocolFee = escrow.owed(TREASURY) - protocolBefore;
+        uint256 creatorFee = escrow.owed(CREATOR) - creatorBefore;
+        // ARAMA GERCEKTEN YURUDU: bu satir olmadan iki `assertEq` sifir
+        // beklentisiyle sifir olcumu karsilastirabilirdi.
+        assertGt(protocolFee, 0, string.concat(what, ": swap hic ucret uretmedi -- test hicbir sey olcmuyor"));
+        assertEq(
+            protocolFee,
+            CurveMath.feeOn(q, 95) * 1e12,
+            string.concat(what, ": protokol payi kademe 0'in 95 bps'i degil")
+        );
+        assertEq(
+            creatorFee, CurveMath.feeOn(q, 30) * 1e12, string.concat(what, ": creator payi kademe 0'in 30 bps'i degil")
+        );
     }
 
     /// @notice Rastgele dizinin bulmasi gerekmeyen yol: ucuncu curve alimlarla
