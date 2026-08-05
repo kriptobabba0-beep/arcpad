@@ -37,6 +37,11 @@ const BIGINT_FIELDS = [
   'realQuoteReservesWei',
   'completedSeq',
   'poolSeedSupplyTok',
+  // TERMINAL DURUMUN SAYILARI. `graduated` bir `boolean` oldugu icin bu
+  // listede YOKTUR ve olmamali -- JSON `boolean` tasir; `bigint` tasimaz.
+  'graduatedSeq',
+  'graduationBaseTok',
+  'graduationQuoteWei',
   'marketCapWei',
   'priceWeiPerTok',
   'graduationRaiseWei',

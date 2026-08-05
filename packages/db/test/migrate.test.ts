@@ -24,6 +24,7 @@ const EXPECTED = [
   '006_token_stats.sql',
   '007_views.sql',
   '008_search.sql',
+  '009_graduation.sql',
 ]
 
 describe('runMigrations', () => {
@@ -205,7 +206,7 @@ describe('runMigrations', () => {
     )
     try {
       await expect(runMigrations(pool, await migrationFiles())).rejects.toThrow(
-        /003a_between\.tmp\.sql: uygulanmamis, ama uygulanmis olan 008_search\.sql/,
+        /003a_between\.tmp\.sql: uygulanmamis, ama uygulanmis olan 009_graduation\.sql/,
       )
     } finally {
       await unlink(join(MIGRATIONS_DIR, inserted))
@@ -216,9 +217,10 @@ describe('runMigrations', () => {
     // Kapinin fazla siki OLMADIGININ kaniti: normal evrim yolu -- `007_...` --
     // engellenmiyor.
     await runMigrations(pool)
-    // `009_`: son mesru dosya artik `008_search.sql`. `008_appended` onun ONUNE
-    // siralanirdi ve kapi onu -- DOGRU OLARAK -- araya ekleme sayardi.
-    const appended = '009_appended.tmp.sql'
+    // `010_`: son mesru dosya artik `009_graduation.sql`. `009_appended` onun
+    // ONUNE siralanirdi ('a' < 'g') ve kapi onu -- DOGRU OLARAK -- araya ekleme
+    // sayardi.
+    const appended = '010_appended.tmp.sql'
     await writeFile(
       join(MIGRATIONS_DIR, appended),
       'CREATE TABLE appended_ok (x int PRIMARY KEY);\n',
@@ -493,7 +495,7 @@ describe('runMigrations', () => {
     await pool.query(
       "UPDATE schema_migrations SET checksum_hex = NULL WHERE filename = '001_deployment_and_cursor.sql'",
     )
-    const pendingFile = '009_should_not_apply.tmp.sql'
+    const pendingFile = '010_should_not_apply.tmp.sql'
     await writeFile(
       join(MIGRATIONS_DIR, pendingFile),
       'CREATE TABLE should_not_exist (x int PRIMARY KEY);\n',

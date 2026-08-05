@@ -196,6 +196,28 @@ export interface TokenOverview {
   complete: boolean
   completedSeq: bigint | null
   poolSeedSupplyTok: bigint | null
+  /**
+   * TERMINAL. `complete` DEGILDIR ve o ayrim tasiyicidir.
+   *
+   * `complete` -> satis arzi tukendi, curve kapandi, HAVUZ HENUZ ACILMADI.
+   * `graduated` -> `R` ve `D` hedefe odendi; asagidaki `marketCapWei` ve
+   * `priceWeiPerTok` artik CURVE'UN SON DEGERLERIDIR, canli bir fiyat DEGIL.
+   *
+   * Iki durum arasinda gercek bir zaman araligi vardir: canli smoke curve'u
+   * su an `complete && !graduated` (uretim factory'sinde `graduationTarget`
+   * sifir). Arayuz "bu sayi canli mi" sorusunu TEK bir alana bakarak
+   * cevaplar; `complete && havuzVar` gibi cagri yerinde kurulan bir bilesim,
+   * bu deponun zaten bir kez kaydettigi "iki sitede besteleniyor" kusuru
+   * olurdu.
+   */
+  graduated: boolean
+  graduatedSeq: bigint | null
+  /** `Graduated.to`. Hedef yeniden isaretlenebilir, bu yuzden ANIN kaydi. */
+  graduationTargetAddr: string | null
+  /** Hedefe GERCEKTEN odenen token; `poolSeedSupplyTok`tan TURETILMEZ. */
+  graduationBaseTok: bigint | null
+  /** Hedefe GERCEKTEN odenen quote. */
+  graduationQuoteWei: bigint | null
   marketCapWei: bigint
   priceWeiPerTok: bigint
   progressPpm: number
@@ -229,6 +251,11 @@ interface OverviewRow {
   complete: boolean
   completed_seq: string | null
   pool_seed_supply_tok: string | null
+  graduated: boolean
+  graduated_seq: string | null
+  graduation_target_addr: string | null
+  graduation_base_tok: string | null
+  graduation_quote_wei: string | null
   market_cap_wei: string
   price_wei_per_tok: string
   progress_ppm: number
@@ -265,6 +292,11 @@ function toOverview(row: OverviewRow): TokenOverview {
     complete: row.complete,
     completedSeq: big(row.completed_seq),
     poolSeedSupplyTok: big(row.pool_seed_supply_tok),
+    graduated: row.graduated,
+    graduatedSeq: big(row.graduated_seq),
+    graduationTargetAddr: row.graduation_target_addr,
+    graduationBaseTok: big(row.graduation_base_tok),
+    graduationQuoteWei: big(row.graduation_quote_wei),
     marketCapWei: BigInt(row.market_cap_wei),
     priceWeiPerTok: BigInt(row.price_wei_per_tok),
     progressPpm: row.progress_ppm,

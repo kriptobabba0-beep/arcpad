@@ -52,6 +52,11 @@ describe('exactly-once ingestion', () => {
       launches: 1,
       trades: 3,
       completed: 1,
+      // `RANGE` MEZUNIYET ICERMEZ ve icermemeli: zincirde `graduate()` ayri
+      // bir islemdir ve arasinda sinirsiz zaman olabilir (canli smoke curve'u
+      // su an tam olarak o araliktadir). Sifir burada bir BOSLUK degil, bir
+      // IDDIA -- mezuniyetin kendi exactly-once olcumu `graduation.test.ts`te.
+      graduated: 0,
       transfers: 4,
       fees: 3,
       cursorMoved: 1,
@@ -65,6 +70,7 @@ describe('exactly-once ingestion', () => {
       launches: 0,
       trades: 0,
       completed: 0,
+      graduated: 0,
       transfers: 0,
       fees: 0,
       cursorMoved: 0,

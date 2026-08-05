@@ -101,6 +101,7 @@ describe('kisitlar gercekten bagli mi', () => {
     expect(guarded.map((g) => `${g.rel}.${g.col}`)).toEqual([
       'creator_history.creator',
       'curve_state.curve',
+      'curve_state.graduation_target_addr',
       'deployment.escrow',
       'deployment.factory',
       'deployment.protocol_treasury',
@@ -123,6 +124,33 @@ describe('kisitlar gercekten bagli mi', () => {
     const MIXED = '0xAbCdEf0123456789AbCdEf0123456789AbCdEf01'
     const VALID = '0x00000000000000000000000000000000deadbeef'
 
+    /**
+     * COK SUTUNLU BIR INVARIANTIN ICINDE DURAN SUTUNLAR ICIN YOLDAS ALANLAR.
+     *
+     * POZITIF KONTROLU MUMKUN KILAR, KAPIYI GEVSETMEZ. `curve_state`in
+     * `graduated_iff_payout` kisiti "mezun bir satir DORT alani da doludur, ve
+     * mezun OLMAYAN bir satir DORDUNU DE bos tutar" der. Yani mezun olmayan
+     * bir satira TEK BASINA gecerli bir `graduation_target_addr` yazmak
+     * MESRU DEGILDIR ve 23514 verir -- desen kisiti calismadigi icin degil,
+     * BASKA bir kisit dogru calistigi icin. Yoldas alanlar olmadan pozitif
+     * kontrol dogru sebeple basarisiz olur ve testi YANLIS sebeple kirmizi
+     * yapar.
+     *
+     * Kisiti tek yonlu yapmak (yalnizca `graduated => dolu`) bu satiri
+     * gereksiz kilardi ve YANLIS OLURDU: o zaman canli bir curve'un satirinda
+     * bir graduation hedefi durabilir ve `token_overview` onu disari verirdi
+     * -- kullaniciya "bu curve mezun oldu" diyen bir alan, mezun olmayan bir
+     * curve icin.
+     */
+    const COMPANION: Record<string, Record<string, unknown>> = {
+      'curve_state.graduation_target_addr': {
+        graduated: true,
+        graduated_seq: '99999999',
+        graduation_base_tok: '0',
+        graduation_quote_wei: '0',
+      },
+    }
+
     const client: PoolClient = await pool.connect()
     const checked: string[] = []
     try {
@@ -132,14 +160,18 @@ describe('kisitlar gercekten bagli mi', () => {
         // `$1::text, $2::text` ACIK CAST: castsiz hali `creator_history` icin
         // 42P18 (indeterminate parameter datatype) veriyordu ve o tablo icin
         // test yanlis sebeple kirmizi oluyordu.
+        //
+        // `$3::jsonb` YOLDAS ALANLAR icin ve varsayilani `{}`tir, yani bu
+        // taramanin on yedi sutunundan on altisi icin hicbir sey degistirmez.
         const mutate = `
           INSERT INTO ${rel}
           SELECT (jsonb_populate_record(
                     NULL::${rel},
-                    to_jsonb(x) || jsonb_build_object($1::text, $2::text))).*
+                    to_jsonb(x) || jsonb_build_object($1::text, $2::text) || $3::jsonb)).*
           FROM ${rel} x LIMIT 1`
+        const companion = JSON.stringify(COMPANION[`${rel}.${col}`] ?? {})
 
-        const bad = await failure(() => client.query(mutate, [col, MIXED]))
+        const bad = await failure(() => client.query(mutate, [col, MIXED, companion]))
         expect(bad.code, `${rel}.${col} 23514 vermeliydi, ${bad.code} verdi`).toBe('23514')
         // Sutun ADI kisitin adinda geciyor: patlayan sey BU sutunun muhafizi,
         // baska bir sutunun ya da baska bir tablonunki degil.
@@ -151,7 +183,7 @@ describe('kisitlar gercekten bagli mi', () => {
         // olmasiyla da saglanabilirdi.
         await client.query('SAVEPOINT s2')
         try {
-          await client.query(mutate, [col, VALID])
+          await client.query(mutate, [col, VALID, companion])
         } catch (error) {
           const e = error as PgError
           expect(e.code, `${rel}.${col} gecerli adreste 23514 verdi`).not.toBe('23514')
@@ -164,7 +196,7 @@ describe('kisitlar gercekten bagli mi', () => {
       client.release()
     }
     // Tarama gercekten butun aileyi gezdi.
-    expect(checked).toHaveLength(17)
+    expect(checked).toHaveLength(18)
   })
 
   it('adres tasiyan HER sutun ya desenle ya yabanci anahtarla korunur', async () => {

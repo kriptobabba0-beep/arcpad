@@ -97,6 +97,17 @@ export interface CompletedEvent extends LogRef {
   poolSeedSupplyTok: bigint
 }
 
+export interface GraduatedEvent extends LogRef {
+  kind: 'graduated'
+  token: Address
+  /** `Graduated.to` -- odemeyi alan graduation hedefi. */
+  target: Address
+  /** `Graduated.baseAmount` = curve'un `poolSeedSupply`si. */
+  baseAmountTok: bigint
+  /** `Graduated.quoteAmount` = curve'un `realQuoteReserves`i. */
+  quoteAmountWei: bigint
+}
+
 export interface TransferEvent extends LogRef {
   kind: 'transfer'
   token: Address
@@ -114,12 +125,14 @@ export interface FeeLedgerEvent extends LogRef {
   amountWei: bigint
 }
 
-export type IngestEvent = LaunchEvent | TradeEvent | CompletedEvent | TransferEvent | FeeLedgerEvent
+export type IngestEvent =
+  LaunchEvent | TradeEvent | CompletedEvent | GraduatedEvent | TransferEvent | FeeLedgerEvent
 
 export interface ReplayResult {
   launches: number
   trades: number
   completed: number
+  graduated: number
   transfers: number
   fees: number
   cursorMoved: number
@@ -274,6 +287,53 @@ export async function applyCompleted(db: Queryable, e: CompletedEvent): Promise<
       e.eventSeq.toString(),
       e.poolSeedSupplyTok.toString(),
       e.realQuoteReservesWei.toString(),
+    ],
+  )
+  return rowCount ?? 0
+}
+
+/**
+ * `Graduated`. `curve_state.graduated` bir DURUM GECISIDIR.
+ *
+ * IDEMPOTENCY MUHAFIZI `NOT graduated`TIR, DEFTER SATIRI DEGIL -- ve bu bir
+ * ihmal degil bir AYRIM: bu paketin defter-satiri kurali "DELTA tasiyan her
+ * yazim" icindir (`holders.balance_tok`, `fee_balances.claimable_wei`), cunku
+ * bir deltayi ikinci kez uygulamak sessizce yanlis bir sayi uretir.
+ * `Graduated` MUTLAK yazar: ikinci oynatim ayni degerleri yazsa bile "ikinci
+ * gecis hicbir sey yazmaz" iddiasi olculebilir olmali, ve onu olculebilir
+ * yapan sey `WHERE ... AND NOT graduated`in SIFIR satir dondurmesidir --
+ * `applyCompleted`in `NOT complete`i ile ayni mekanik.
+ *
+ * ODENEN TOKEN'IN HOLDER MUHASEBESI BURADA YAPILMAZ VE YAPILMAMALI.
+ * `graduate()` `IERC20(token).transfer(target, baseAmount)` cagirir
+ * (`BondingCurve.sol:902`), yani zincir GERCEK bir `Transfer` logu yayar; o
+ * log zaten izleme kumesindeki bir token'dan gelir, `applyTransfer` onu kendi
+ * defteriyle (`token_transfers`) tam bir kez uygular ve curve'un bakiyesini
+ * dusurup hedefinkini artirir. Burada ikinci bir delta yazmak, tek bir
+ * hareketi IKI KEZ saymak olurdu -- EIP-7708'in `Transfer` duvarinin
+ * kapattigi arizanin aynisi, bu sefer kendi elimizle.
+ *
+ * `graduated_implies_complete` KISITI BILEREK YAKALAYICIDIR: `WHERE`, complete
+ * OLMAYAN bir satiri secerse kisit patlar ve islem geri alinir. Sessizce sifir
+ * satir dondurmek, `Completed`i kacirmis bir indexer'i "yapacak bir sey yoktu"
+ * gibi gosterirdi.
+ */
+export async function applyGraduated(db: Queryable, e: GraduatedEvent): Promise<number> {
+  const { rowCount } = await db.query(
+    `UPDATE curve_state SET
+       graduated              = true,
+       graduated_seq          = $2,
+       graduation_target_addr = $3,
+       graduation_base_tok    = $4,
+       graduation_quote_wei   = $5,
+       last_seq               = GREATEST(last_seq, $2)
+     WHERE token = $1 AND NOT graduated`,
+    [
+      lower(e.token),
+      e.eventSeq.toString(),
+      lower(e.target),
+      e.baseAmountTok.toString(),
+      e.quoteAmountWei.toString(),
     ],
   )
   return rowCount ?? 0
@@ -493,6 +553,8 @@ export async function applyEvent(db: Queryable, e: IngestEvent): Promise<number>
       return applyTrade(db, e)
     case 'completed':
       return applyCompleted(db, e)
+    case 'graduated':
+      return applyGraduated(db, e)
     case 'transfer':
       return applyTransfer(db, e)
     case 'fee':
@@ -530,6 +592,7 @@ export async function replayRange(
       launches: 0,
       trades: 0,
       completed: 0,
+      graduated: 0,
       transfers: 0,
       fees: 0,
       cursorMoved: 0,
@@ -540,11 +603,13 @@ export async function replayRange(
       if (e.kind === 'launch') r.launches += n
       else if (e.kind === 'trade') r.trades += n
       else if (e.kind === 'completed') r.completed += n
+      else if (e.kind === 'graduated') r.graduated += n
       else if (e.kind === 'transfer') r.transfers += n
       else r.fees += n
     }
     r.cursorMoved = await setCursor(tx, to, toHash)
-    r.total = r.launches + r.trades + r.completed + r.transfers + r.fees + r.cursorMoved
+    r.total =
+      r.launches + r.trades + r.completed + r.graduated + r.transfers + r.fees + r.cursorMoved
     return r
   })
 }

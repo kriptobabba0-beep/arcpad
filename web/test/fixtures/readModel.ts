@@ -50,6 +50,17 @@ export const SMOKE: TokenOverview = {
   // 13_988_816_402_609_506_057_782 taban, yani 13.988,816 token kalici kilitli.
   poolSeedSupplyTok: 206_886_011_183_597_390_493_942_218n,
 
+  // MEZUN DEGIL, VE BU OLCULMUS BIR DURUM: uretim factory'sinde
+  // `graduationTarget` sifir, yani bu curve icin `graduate()` `0xfe30fa5b`
+  // (`GraduationTargetUnset`) ile revert eder. `complete && !graduated` bir ara
+  // adim degil, zincirin SU ANKI hali -- ve fiyat/market cap alanlari bu
+  // durumda hala CANLI curve degerleridir.
+  graduated: false,
+  graduatedSeq: null,
+  graduationTargetAddr: null,
+  graduationBaseTok: null,
+  graduationQuoteWei: null,
+
   marketCapWei: 58_783_256_052_377_201_521n,
   priceWeiPerTok: 58_783_256_052n,
   progressPpm: 1_000_000,

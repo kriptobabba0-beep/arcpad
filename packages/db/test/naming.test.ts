@@ -129,6 +129,12 @@ const EXEMPT_NON_AMOUNT = new Set([
   'expected',
   'source',
   'complete',
+  // `curve_state.graduated` / `token_overview.graduated` -- `complete` ile AYNI
+  // sinifta bir boolean durum bayragi, ve ondan AYRI bir olgu. Sonek
+  // koymanin yolu yok: `_at` bir zaman damgasi BILDIRIR ve bu bir zaman degil,
+  // `_seq` ise ayri sutunda (`graduated_seq`) zaten var. Muafiyet TIP
+  // KAPSAMLIDIR -- `graduated bigint` yine yakalanir.
+  'graduated',
   'is_buy',
   'filename',
   // `token_overview.fee_creator` -- ucreti O ANDA alan adres
@@ -367,6 +373,11 @@ const EXPECTED_INVENTORY = [
   'public:r:curve_state.complete',
   'public:r:curve_state.completed_seq',
   'public:r:curve_state.curve',
+  'public:r:curve_state.graduated',
+  'public:r:curve_state.graduated_seq',
+  'public:r:curve_state.graduation_base_tok',
+  'public:r:curve_state.graduation_quote_wei',
+  'public:r:curve_state.graduation_target_addr',
   'public:r:curve_state.last_seq',
   'public:r:curve_state.pool_seed_supply_tok',
   'public:r:curve_state.real_quote_reserves_wei',
@@ -491,7 +502,12 @@ const EXPECTED_INVENTORY = [
   'public:v:token_overview.created_seq',
   'public:v:token_overview.curve',
   'public:v:token_overview.fee_creator',
+  'public:v:token_overview.graduated',
+  'public:v:token_overview.graduated_seq',
+  'public:v:token_overview.graduation_base_tok',
+  'public:v:token_overview.graduation_quote_wei',
   'public:v:token_overview.graduation_raise_wei',
+  'public:v:token_overview.graduation_target_addr',
   'public:v:token_overview.holder_count',
   'public:v:token_overview.last_buy_at',
   'public:v:token_overview.last_buy_seq',
@@ -639,7 +655,7 @@ describe('adlandirma kapisi', () => {
     const g = await gate(pool)
     // Bos kumeyi gecmesini onler -- "hepsi gecti" sifir sutun uzerinde de
     // dogrudur.
-    expect(g.numerics).toBe(38)
+    expect(g.numerics).toBe(42)
     expect(g.badNumeric).toEqual([])
   })
 

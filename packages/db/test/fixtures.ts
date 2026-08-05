@@ -2,6 +2,7 @@ import type { Address } from '../src/hex'
 import type {
   CompletedEvent,
   FeeLedgerEvent,
+  GraduatedEvent,
   IngestEvent,
   LaunchEvent,
   TradeEvent,
@@ -215,6 +216,51 @@ export const COMPLETED: CompletedEvent = {
   token: TOKEN,
   realQuoteReservesWei: FINAL_BUY.realQuoteReservesWei,
   poolSeedSupplyTok: PROFILE.totalSupplyTok - PROFILE.saleSupplyTok,
+}
+
+/** Graduation hedefi. Zincirde bu, havuzu tohumlayan kontrattir. */
+export const GRADUATION_TARGET = addr(0xdead)
+
+/**
+ * MEZUNIYET -- `Completed`TEN SONRAKI AYRI BIR ISLEM.
+ *
+ * `RANGE`E DAHIL DEGILDIR VE BU BILINCLIDIR. Zincirde de ayri bir islemdir ve
+ * arasinda SINIRSIZ zaman olabilir: canli smoke curve'u su an tam olarak bu
+ * arada duruyor -- `complete`, mezun DEGIL, cunku uretim factory'sinde
+ * `graduationTarget` sifir. `RANGE`in "bir aralikta olabilecek her sey"
+ * anlamini korumak, bu ikisini ayri tutmayi gerektirir; birlestirmek ayrica
+ * `RANGE` uzerine kurulu her testin holder bakiyelerini kaydirirdi.
+ */
+export const GRADUATED: GraduatedEvent = {
+  kind: 'graduated',
+  ...ref(0, BLOCK + 4n, new Date(T0.getTime() + 3000)),
+  token: TOKEN,
+  target: GRADUATION_TARGET,
+  // Zincir bunlari DEFTERDEN ve IMMUTABLE'DAN alir (`BondingCurve.sol:892`),
+  // bir bakiyeden degil -- fixture ayni iki degeri tasir.
+  baseAmountTok: COMPLETED.poolSeedSupplyTok,
+  quoteAmountWei: COMPLETED.realQuoteReservesWei,
+}
+
+/**
+ * MEZUNIYETIN TOKEN BACAGI -- GERCEK BIR `Transfer` LOGU.
+ *
+ * `graduate()` `IERC20(token).transfer(target, baseAmount)` cagirir
+ * (`BondingCurve.sol:902`), yani zincir bunu AYRICA yayar ve indexer onu zaten
+ * ceker. Holder muhasebesinin TEK sahibi budur; `applyGraduated`in bir delta
+ * yazmamasinin sebebi de budur. Ikisini birlikte oynatmak, cift sayimin
+ * OLMADIGINI olcmeyi mumkun kilar.
+ *
+ * Miktar tam olarak curve'de kalandir: `T - BUY + SELL - (S - BUY + SELL)`
+ * `= T - S` `= poolSeedSupplyTok`, yani odemeden sonra curve SIFIR tutar.
+ */
+export const GRADUATION_TRANSFER: TransferEvent = {
+  kind: 'transfer',
+  ...ref(1, BLOCK + 4n, new Date(T0.getTime() + 3000)),
+  token: TOKEN,
+  from: CURVE,
+  to: GRADUATION_TARGET,
+  amountTok: COMPLETED.poolSeedSupplyTok,
 }
 
 /**

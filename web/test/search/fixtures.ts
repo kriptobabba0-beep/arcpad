@@ -31,6 +31,14 @@ export function overview(patch: Partial<TokenOverview> = {}): TokenOverview {
     complete: false,
     completedSeq: null,
     poolSeedSupplyTok: null,
+    // MEZUN DEGIL. `complete: false` bunu ZATEN ima eder (zincirde
+    // `graduated => complete`), ama okuma modeli o cikarimi YAPMAZ ve
+    // yapmamalidir: iki ayri olgu, iki ayri alan.
+    graduated: false,
+    graduatedSeq: null,
+    graduationTargetAddr: null,
+    graduationBaseTok: null,
+    graduationQuoteWei: null,
     marketCapWei: 6_052_733_351_875_009_052n,
     priceWeiPerTok: 6_052_733_351n,
     progressPpm: 253_087,
