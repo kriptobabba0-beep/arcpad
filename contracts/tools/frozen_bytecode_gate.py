@@ -68,12 +68,31 @@ FROZEN = {
     #                 `LaunchFactory`nin constructor argumanidir, yani FACTORY
     #                 ADRESINI de belirler.
     #
-    # `LaunchFactory` BILEREK BURADA DEGIL: Faz 2 ona `feeSchedule` argumani
-    # ekledi, yani initcode'unun DEGISMESI BEKLENIYOR. Task 7 onu zincire
-    # yazdiginda buraya EKLENMELIDIR -- o andan itibaren hareket etmesi
-    # turetilmis her curve ve token adresini kaydirir.
     "FeeEscrow": "bf5338882879119b63c1908b67f50ce699aa3d05e3665138b5196e5161e957f8",
     "FeeSchedule": "93cdb1ff0a4bcf15489fe446382af1b632548b208f693f76664986a55e45dd5c",
+    # ---------------------------------------------------------------
+    # `LaunchFactory` ARTIK MUAF DEGIL, VE MUAFIYETI KALDIRAN SEY OLCULMUS BIR
+    # SALDIRIDIR.
+    #
+    # Eski gerekce: "Faz 2 ona `feeSchedule` argumani ekledi, yani
+    # initcode'unun degismesi beklenir." O gerekce initcode'un CANLI Faz 1
+    # fabrikasindan farkli olmasi hakkindaydi ve HALA DOGRUDUR -- `check_chain`
+    # `LaunchFactory`yi zaten bayt karsilastirmasina SOKMAZ. Ama muafiyet
+    # yanlislikla sunu da soyluyordu: "bu agacin ICINDE hareket etmesi de
+    # serbest."
+    #
+    # OLCULDU: constructor'daki dort atamanin SIRASINI degistirmek --
+    # anlambilimsel olarak hicbir sey degistirmez -- kapiyi YESIL ve paketi
+    # 607/607 birakiyor, fabrika adresini 0x5CA156f1... -> 0x2F0C56DB...
+    # kaydiriyordu. `ArcpadHook`un madenlenmis tuzu o adrese BAGLI oldugu icin
+    # hook KODSUZ bir fabrikaya baglanmis olurdu: `_beforeInitialize` sonsuza
+    # kadar revert eder, hicbir havuz acilamaz, ve hook adresi her `PoolKey`de
+    # yayinlandigi icin YENIDEN MADENLENEMEZ.
+    #
+    # Yani Faz 2'de `LaunchFactory`nin initcode'u BIR ADRES BELIRLEYICISIDIR.
+    # Task 7 onu zincire yazdiginda bu satir DEGISMEZ -- pin zaten
+    # yayinlanacak baytlardir.
+    "LaunchFactory": "e88224f8e769d2d4e50f302f6c5dc76fb738c80f5b0452f3c4f05fad889321a0",
 }
 
 # Canli olculmus adresler. `docs/`ta degil BURADA duruyorlar cunku kapinin
@@ -168,24 +187,52 @@ def check_every_compared_contract_has_a_literal():
     hareket etmesi turetilen her curve ve token adresini kaydirir.
     """
     print("== DeployLib'in karsilastirdigi her kontratin literali var mi ==")
-    excused = {"LaunchFactory": "Faz 2'de initcode'u degisiyor; Task 7 yayinladiginda EKLENMELI"}
+    # ARTIK MUAF KIMSE YOK. Bos birakilmasi kasitlidir: bir sonraki muafiyet
+    # gerekcesiyle BURAYA yazilmali ve kapinin ciktisinda GORUNMELIDIR.
+    excused = {}
     src_path = os.path.join(CONTRACTS, "script", "DeployLib.sol")
     with open(src_path, encoding="utf-8") as f:
         src = f.read()
-    compared = sorted(set(re.findall(r'_frozenCreationCode\(\s*dir\s*,\s*"([A-Za-z0-9_]+)"\s*\)', src)))
-    if not compared:
+
+    # IKI LISTE VARDI VE KURAL BIRINI GORMUYORDU -- BU BIR INCELEME BULGUSU.
+    # Ilk hali yalnizca `_frozenCreationCode` cagrilarini tariyordu, yani
+    # KARDES kumeyi (yeniden kullanim kimlik kontrolunun karsilastirdigi
+    # kontratlar, `_assertVacantOrTheFrozenBuild`) hic gormuyordu: oraya
+    # literali olmayan bir isim eklemek kapiyi YESIL ve SESSIZ birakiyordu.
+    # Ikisi de ayni ozelligi tasir -- referans `out-frozen/`dir, o dizin bu
+    # agactan uretilir, dolayisiyla literalsiz her isim KENDISIYLE
+    # karsilastirilir.
+    # ILK ARGUMAN HERHANGI BIR IFADE OLABILIR, `dir` OLMAK ZORUNDA DEGIL --
+    # ve bunu `dir`e sabitlemek bir ELEME BOSLUGUYDU: `_frozenCreationCode(d,
+    # "X")` diye yazilmis bir cagri SESSIZCE sayilmazdi, ve liste bos
+    # olmadigi icin fail-closed dal da tetiklenmezdi. Kural artik ilk
+    # argumani UMURSAMAZ; okudugu tek sey KONTRAT ADIDIR.
+    initcode_cmp = re.findall(r'_frozenCreationCode\(\s*[^,()]+\s*,\s*"([A-Za-z0-9_]+)"\s*\)', src)
+    runtime_cmp = re.findall(r'_assertVacantOrTheFrozenBuild\(\s*[^,()]+\s*,\s*"([A-Za-z0-9_]+)"', src)
+    if not initcode_cmp:
         fail("DeployLib.sol icinde `_frozenCreationCode(dir, \"...\")` cagrisi BULUNAMADI -- "
              "kapi kaynaktan turetiyor ve turetme BOS dondu")
         return
-    for name in compared:
+    if not runtime_cmp:
+        fail("DeployLib.sol icinde `_assertVacantOrTheFrozenBuild(dir, \"...\")` cagrisi BULUNAMADI -- "
+             "yeniden kullanim kumesi BOS gorunuyor")
+        return
+
+    for name in sorted(set(initcode_cmp) | set(runtime_cmp)):
+        where = []
+        if name in initcode_cmp:
+            where.append("initcode")
+        if name in runtime_cmp:
+            where.append("yeniden kullanim")
+        tag = "+".join(where)
         if name in FROZEN:
-            ok("%-14s karsilastiriliyor VE literali var" % name)
+            ok("%-14s karsilastiriliyor (%s) VE literali var" % (name, tag))
         elif name in excused:
             print("  --    %-14s literali YOK (bilincli): %s" % (name, excused[name]))
             notes.append("%s'nin literali yok: %s" % (name, excused[name]))
         else:
-            fail("%s `assertMatchesFrozenBuild` tarafindan karsilastiriliyor ama FROZEN'da literali YOK -- "
-                 "referansi bu agactan uretiliyor, yani iddia kendisiyle karsilastiriyor" % name)
+            fail("%s `DeployLib` tarafindan karsilastiriliyor (%s) ama FROZEN'da literali YOK -- "
+                 "referansi bu agactan uretiliyor, yani iddia kendisiyle karsilastiriyor" % (name, tag))
 
 
 def check_factory_embeds():
