@@ -14,11 +14,9 @@ import {PoolDeployLib, PoolPlan} from "./PoolDeployLib.sol";
 ///      olamaz -- `assertDeployable` bos bir pinle zaten duserdi.
 contract PredictPool is Script {
     function run() external view {
+        uint256 chainId = PoolDeployLib.ARC_TESTNET_CHAIN_ID;
         PoolPlan memory p = PoolDeployLib.build(
-            PoolDeployLib.ARC_TESTNET_CHAIN_ID,
-            PoolDeployLib.ARC_GOVERNOR,
-            PoolDeployLib.ARC_FACTORY,
-            PoolDeployLib.ARC_ESCROW
+            chainId, PoolDeployLib.ARC_GOVERNOR, PoolDeployLib.factoryFor(chainId), PoolDeployLib.escrowFor(chainId)
         );
 
         console2.log("=== arcpad Faz 2 havuz katmani (chain 5042002) ===");

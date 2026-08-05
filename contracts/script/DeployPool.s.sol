@@ -54,8 +54,15 @@ contract DeployPool is Script {
     ///      bu script'i, kabuk gecmisindeki bir yazim hatasinin kalici bir
     ///      hook adresi uretebildigi bir sey yapardi.
     function _resolve() private view returns (PoolPlan memory p) {
-        (address governor,) = Profiles.governanceForChain(block.chainid);
-        p = PoolDeployLib.build(block.chainid, governor, PoolDeployLib.ARC_FACTORY, PoolDeployLib.ARC_ESCROW);
+        uint256 chainId = block.chainid;
+        (address governor,) = Profiles.governanceForChain(chainId);
+        // FABRIKA VE ESCROW LITERALDEN DEGIL TURETMEDEN GELIR. Onceki hali
+        // `PoolDeployLib.ARC_FACTORY`yi dogrudan geciriyordu; o literali
+        // `Deploy`in urettigi adrese baglayan HICBIR SEY yoktu, ve
+        // `LaunchFactory`de anlambilimsel olarak notr bir duzenleme (dort
+        // atamanin sirasi) fabrikayi kaydirirken hook'un tuzunu KIMILDATMIYOR,
+        // yani hook'u kodsuz bir adrese kalici olarak bagliyordu.
+        p = PoolDeployLib.build(chainId, governor, PoolDeployLib.factoryFor(chainId), PoolDeployLib.escrowFor(chainId));
         PoolDeployLib.assertDeployable(p);
     }
 

@@ -72,6 +72,10 @@ library PoolDeployLib {
     bytes32 internal constant POOL_MANAGER_SALT = keccak256("arcpad.PoolManager.v1");
     bytes32 internal constant LOCKER_SALT = keccak256("arcpad.ArcpadLocker.v1");
 
+    error FactoryIsNotTheDerivedOne(address derived, address given);
+    error EscrowIsNotTheDerivedOne(address derived, address given);
+    error FactoryHasNoCode(address factory);
+    error EscrowHasNoCode(address escrow);
     error HookAddressLacksTheArcpadFlags(address hook, uint160 got, uint160 want);
     error HookSaltDoesNotReproduceTheAddress(bytes32 salt, address expected, address actual);
     error HookSaltIsNotThePinnedOne(bytes32 pinned, bytes32 mined);
@@ -93,9 +97,31 @@ library PoolDeployLib {
     uint256 internal constant ARC_TESTNET_CHAIN_ID = 5042002;
     address internal constant ARC_GOVERNOR = 0x970534698e4592932F31892759147f79EB0D2C22;
     address internal constant ARC_ESCROW = 0xEEd4431eAD3E27F16D97f677A9C4c1a963DF8dC6;
-    /// @dev Faz 2 `LaunchFactory`si -- `PredictPhase2`nin yazdirdigi adres.
-    ///      `LaunchFactory` HENUZ YAYINLANMADI; bu sayi Task 7'nin
-    ///      yayinlayacagi adrestir ve `DeployPool` ondan SONRA kosar.
+    /// @notice Faz 2 `LaunchFactory`si. **PIN, KAYNAK DEGIL.**
+    ///
+    /// @dev BU SABIT BIR ZAMANLAR TEK BASINA TASIYICIYDI VE O EN TEHLIKELI
+    ///      HALIYDI. Hicbir sey onu `DeployLib.build().factory` ile
+    ///      baglamiyordu, hicbir sey o adreste KOD olmasini istemiyordu, ve
+    ///      `LaunchFactory` dondurulmus literal kumesinden MUAFTI. Olculdu:
+    ///      `LaunchFactory`nin constructor'indaki dort atamanin sirasini
+    ///      degistirmek -- ANLAMBILIMSEL OLARAK HICBIR SEY DEGISTIRMEZ --
+    ///      kapiyi YESIL ve paketi 607/607 birakiyor, fabrikayi
+    ///      `0x5CA156f1...` -> `0x2F0C56DB...` kaydiriyor, ve hook'un tuzu ile
+    ///      adresi HIC KIMILDAMIYORDU. Yani hook KODSUZ bir fabrikaya kalici
+    ///      olarak baglanirdi: `_beforeInitialize` her cagrida revert eder,
+    ///      hicbir havuz acilamaz, ve hook adresi her `PoolKey`de yayinlandigi
+    ///      icin yeniden madenlenemez.
+    ///
+    /// @dev UC KAPI BIRDEN KONDU, cunku hicbiri tek basina yetmiyor:
+    ///        (1) `factoryFor(chainId)` adresi `DeployLib`in TURETTIGI YERDEN
+    ///            turetir -- ayni profil, ayni governance, ayni salt. Asagidaki
+    ///            sabit artik o turetmenin PINIDIR ve `DeployPool.t.sol` ikisini
+    ///            esitler.
+    ///        (2) `assertDeployable` o adreste KOD olmasini ister. Bir literal
+    ///            "dogru gorunebilir" ama kodsuz bir adres YAYINLANAMAZ.
+    ///        (3) `LaunchFactory` artik `frozen_bytecode_gate.py`nin FROZEN
+    ///            kumesinde -- muafiyet, saldirinin ULASILABILIR olmasinin
+    ///            sebebiydi.
     address internal constant ARC_FACTORY = 0x5CA156f1809aB784655410d0f4B0704d2b306B47;
 
     /// @notice Kaynaktan degil, ARAMA SONUCUNDAN gelen tek sabit.
@@ -123,6 +149,25 @@ library PoolDeployLib {
 
     function predict(bytes32 salt, bytes memory initcode) internal pure returns (address) {
         return DeployLib.predict(salt, initcode);
+    }
+
+    /// @notice Bu zincirin `LaunchFactory` ve `FeeEscrow` adresleri, `Deploy`in
+    ///         KULLANDIGI YERDEN turetilmis.
+    ///
+    /// @dev TEK KAYNAK, VE `type(...).creationCode` DEGIL. Bu birim
+    ///      `PoolManager`i ismiyle import ettigi icin `optimizer_runs =
+    ///      44444444`tur; `Deploy.s.sol` ise 800'dur. Ikisi
+    ///      `type(LaunchFactory).creationCode`u FARKLI gorur, dolayisiyla
+    ///      burada `DeployLib.build` cagirmak FARKLI bir fabrika adresi
+    ///      uretirdi -- ve o adres hook'un constructor argumani olarak KALICI
+    ///      olarak gomulurdu. `DeployLib.frozenFactoryAddress` bunun yerine
+    ///      `out-frozen/`dan okur: YAYINLANACAK baytlar, birimden bagimsiz.
+    function factoryFor(uint256 chainId) internal view returns (address) {
+        return DeployLib.frozenFactoryAddress(chainId);
+    }
+
+    function escrowFor(uint256) internal view returns (address) {
+        return DeployLib.frozenEscrowAddress();
     }
 
     /// @notice Bu derleme biriminin gordugu `ArcpadHook` creation code'unun
@@ -214,6 +259,25 @@ library PoolDeployLib {
                 DeployLib.CREATE2_FACTORY, DeployLib.CREATE2_FACTORY_CODEHASH, DeployLib.CREATE2_FACTORY.codehash
             );
         }
+
+        // ---- ONCE BAGLANILAN ADRESLER, SONRA HOOK'UN KENDISI ----
+        // SIRA TASIYICIDIR: hook'un tuzu bu iki adresten TURETILIR, yani
+        // onlar yanlissa hook adresi de yanlistir ve bayrak kontrolu YINE DE
+        // gecerdi (olculdu: yanlis bir fabrikayla madenlenen adres de 0x20CC
+        // tasir). Bayraga once bakan bir sira, en pahali hatayi en son
+        // gorurdu.
+        address derivedFactory = factoryFor(p.chainId);
+        if (p.factory != derivedFactory) revert FactoryIsNotTheDerivedOne(derivedFactory, p.factory);
+        address derivedEscrow = escrowFor(p.chainId);
+        if (p.escrow != derivedEscrow) revert EscrowIsNotTheDerivedOne(derivedEscrow, p.escrow);
+
+        // ...VE IKISI DE ZINCIRDE OLMALI. Turetme "adres dogru" der, kod
+        // varligi "kontrat ORADA" der, ve hook'un ihtiyaci ikincisidir:
+        // `_beforeInitialize` her cagrida `factory`ye STATICCALL yapar ve
+        // kodsuz bir adres `graduationTarget()`i bos dondurup revert ettirir --
+        // sonsuza kadar, cunku hook adresi `PoolKey`in alanidir.
+        if (p.factory.code.length == 0) revert FactoryHasNoCode(p.factory);
+        if (p.escrow.code.length == 0) revert EscrowHasNoCode(p.escrow);
 
         uint160 got = uint160(p.hook) & Hooks.ALL_HOOK_MASK;
         if (got != ARCPAD_HOOK_FLAGS) revert HookAddressLacksTheArcpadFlags(p.hook, got, ARCPAD_HOOK_FLAGS);
