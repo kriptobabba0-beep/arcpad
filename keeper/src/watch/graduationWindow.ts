@@ -1478,6 +1478,9 @@ export async function runWatcher(deps: WatcherDeps): Promise<void> {
   const factory = pinnedAddress(deps.factory)
   const nowMs = deps.nowMs ?? Date.now
   const at = nowMs()
+  // BIR POLL BASLADI. Kanaryanin "ilk poll hala suruyor" ile "izleyici hic
+  // poll etmedi"yi ayirt edebilmesinin TEK yolu (N3).
+  deps.liveness?.pollStarted(at)
   const activeKeys = new Set<string>()
 
   const emit = (level: AlertLevel, key: string, message: string): void => {

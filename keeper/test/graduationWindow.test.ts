@@ -1390,6 +1390,48 @@ describe('kirilma 2: izleyici poll etmeyi birakti', () => {
    * `log-scan-failed` DOGRU, `watcher-heartbeat-missed` ve `chain-head-stale`
    * YANLIS. Asagidaki uc iddia o uc durumu ayirir.
    */
+  /**
+   * ============ N3: "HENUZ" ILE "HIC" ============
+   *
+   * `lastProgressAt === null` iki sey birden demekti -- "daha ilerleme olmadi"
+   * ve "hicbir zaman olmadi" -- ve kanarya ikincisini varsayiyordu. Olculdu:
+   * dort soguk baslangicin IKISI, ilk poll'u 10 saniyelik butceyi astigi icin
+   * "the watcher is not watching" sayfasi cikardi. Ilk poll factory'nin
+   * slotlarini okur; hiz siniri altinda 10 saniyeyi asmasi NORMALDIR.
+   */
+  it('ILK poll hala surerken SAYFA DEGIL -- "basliyor" ile "izlemiyor" ayri', () => {
+    const liveness = createLiveness({ pollIntervalMs: POLL }, NOW_MS)
+    liveness.pollStarted(NOW_MS)
+    const findings = liveness.check(NOW_MS + 2 * POLL)
+    expect(findings.map((f) => f.code)).toEqual(['watcher-starting'])
+    expect(findings[0]?.level).toBe('ok')
+  })
+
+  it('IKINCI poll basladiysa birincisi BITMISTIR: musamaha biter, sayfa doner', () => {
+    const liveness = createLiveness({ pollIntervalMs: POLL }, NOW_MS)
+    liveness.pollStarted(NOW_MS)
+    // Ikinci poll basladi ve hicbiri BASARILI bitmedi -- yani izleyici
+    // "basliyor" degil, deneyip beceremiyor.
+    liveness.pollStarted(NOW_MS + POLL)
+    const findings = liveness.check(NOW_MS + 2 * POLL)
+    expect(findings.map((f) => f.code)).toEqual(['watcher-heartbeat-missed'])
+    expect(findings[0]?.level).toBe('page')
+  })
+
+  it('ILK poll SONSUZA KADAR asili kalirsa musamaha DOLAR ve sayfa cikar', () => {
+    const liveness = createLiveness({ pollIntervalMs: POLL, catchUpStallMs: 30_000 }, NOW_MS)
+    liveness.pollStarted(NOW_MS)
+    expect(liveness.check(NOW_MS + 29_000).map((f) => f.code)).toEqual(['watcher-starting'])
+    expect(liveness.check(NOW_MS + 30_001).map((f) => f.code)).toEqual(['watcher-heartbeat-missed'])
+  })
+
+  it('HIC poll baslamadiysa musamaha YOKTUR -- o gercekten "izlemiyor"', () => {
+    const liveness = createLiveness({ pollIntervalMs: POLL }, NOW_MS)
+    expect(liveness.check(NOW_MS + 2 * POLL).map((f) => f.code)).toEqual([
+      'watcher-heartbeat-missed',
+    ])
+  })
+
   it('YETISIYOR: ilerleme varken sayfa DEGIL, kayit', () => {
     const liveness = createLiveness({ pollIntervalMs: POLL }, NOW_MS)
     // Soguk tarama: poll hic BITMIYOR ama parcalar ilerliyor.

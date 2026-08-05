@@ -269,6 +269,12 @@ export function createThrottle(config?: { repeatAfterMs?: number | undefined }):
 export type LivenessCode =
   | 'watcher-heartbeat-missed'
   | 'watcher-catching-up'
+  /**
+   * ILK POLL HENUZ BITMEDI. "Daha bitirmedim" ile "hic calismadim" ayni sey
+   * DEGILDIR, ve `lastProgressAt === null` ikisini birden demek zorunda
+   * kaldigi icin ikincisi birincisinin adiyla raporlaniyordu.
+   */
+  | 'watcher-starting'
   | 'chain-head-stale'
   | 'chain-time-skewed'
   | 'chain-time-frozen'
@@ -304,6 +310,16 @@ export interface LivenessConfig {
 }
 
 export interface Liveness {
+  /**
+   * BIR POLL BASLADI. `pollSucceeded`in ikizi degil, ONCULU.
+   *
+   * Bu olmadan kanarya "izleyici hic poll etmedi" ile "izleyicinin ilk poll'u
+   * hala suruyor"u ayirt EDEMEZ. Olculdu (canli soguk baslangic): dort soguk
+   * baslangicin IKISINDE ilk poll 10 saniyelik butceyi asti ve
+   * `watcher-heartbeat-missed` -- "the watcher is not watching" -- cikti, tam
+   * da izleyici ilk gozlemini yapmaya calisirken.
+   */
+  pollStarted(atMs: number): void
   /** Yalnizca BASTAN SONA tamamlanmis bir poll'dan sonra cagrilir. */
   pollSucceeded(atMs: number): void
   /**
@@ -402,6 +418,18 @@ export function createLiveness(config: LivenessConfig, startedAtMs: number): Liv
    * "ilerleme gorulmedi" bir MAZERET degildir.
    */
   let lastProgressAt: number | null = null
+  /**
+   * ILK poll denemesinin ani -- SONUNCUSUNUN degil, ve fark her seydir.
+   *
+   * "Baslangic musamahasi"ni EN SON baslayan poll'a baglamak, duzeltilen
+   * kusurun aynasini uretirdi: her poll'da hemen dusen bir izleyici damgayi
+   * her seferinde ileri iter ve SONSUZA KADAR "basliyor" diye okunur -- yani
+   * hicbir zaman sayfa cikmaz. Ilk denemeye baglandiginda musamaha bir kez ve
+   * SONLU olur: `catchUpStallMs` sonra kanarya normal kararini verir.
+   */
+  let firstPollStartAt: number | null = null
+  let pollStarts = 0
+  let everCompletedPoll = false
   let lastHeadChangeAt = startedAtMs
   /**
    * BASI EN SON NE ZAMAN GORDUGUMUZ -- ne zaman DEGISTIGI degil.
@@ -452,6 +480,11 @@ export function createLiveness(config: LivenessConfig, startedAtMs: number): Liv
       // boyunca "yetisiyor" diye okunuyordu. Ilerleme, TAMAMLANMAMIS bir
       // taramanin sinyalidir; tamamlanmis bir poll onun tersidir.
       lastPollOkAt = atMs
+      everCompletedPoll = true
+    },
+    pollStarted(atMs: number): void {
+      pollStarts += 1
+      if (firstPollStartAt === null) firstPollStartAt = atMs
     },
     scanProgressed(atMs: number): void {
       lastProgressAt = atMs
@@ -497,8 +530,38 @@ export function createLiveness(config: LivenessConfig, startedAtMs: number): Liv
       //      bir parca degil, ve o izleyici YETISMIYOR -- OLMUS.
       const progressAge = lastProgressAt === null ? null : atMs - lastProgressAt
       const midScan = lastProgressAt !== null && lastProgressAt > lastPollOkAt
+      // ================== "HENUZ" ILE "HIC" AYRI SEYLER ==================
+      //
+      // `lastProgressAt === null` IKI ANLAMA geliyordu -- "daha ilerleme
+      // olmadi" ve "hicbir zaman ilerleme olmadi" -- ve kanarya ikincisini
+      // varsayiyordu. Olculdu: dort soguk baslangicin IKISI, ilk poll'u 10
+      // saniyelik butceyi astigi icin "the watcher is not watching" sayfasi
+      // cikardi; izleyici o sirada ilk gozlemini yapiyordu.
+      //
+      // Musamaha ILK denemeye baglidir ve SONLUDUR: `catchUpStallMs` sonra
+      // kanarya normal kararini verir, yani hicbir zaman calismayan bir
+      // izleyici yine SAYFADIR -- sadece 10 saniye sonra degil, 60 saniye
+      // sonra.
+      // `pollStarts === 1` MUSAMAHANIN ASIL KAPISI, sure DEGIL.
+      //
+      // Ikinci bir poll BASLADIYSA birincisi bitmis demektir -- ve
+      // `everCompletedPoll` hala `false` ise BASARISIZ bitmistir. O izleyici
+      // "basliyor" degil, "deneyip beceremiyor"dur ve kanarya onu eskisi gibi
+      // yakalar. Sure siniri yalnizca ILK poll'un sonsuza kadar asili
+      // kalmasina karsidir.
+      const starting =
+        !everCompletedPoll &&
+        pollStarts === 1 &&
+        firstPollStartAt !== null &&
+        atMs - firstPollStartAt < catchUpStallMs
       if (beatAge >= beatBudget) {
-        if (midScan && progressAge !== null && progressAge < catchUpStallMs) {
+        if (starting && !midScan) {
+          findings.push({
+            code: 'watcher-starting',
+            level: 'ok',
+            message: `no completed poll yet, but the FIRST poll started ${atMs - (firstPollStartAt ?? atMs)}ms ago and is still running (budget ${catchUpStallMs}ms): the watcher is STARTING, not wedged. A cold first poll reads the factory's slots before it scans anything.`,
+          })
+        } else if (midScan && progressAge !== null && progressAge < catchUpStallMs) {
           findings.push({
             code: 'watcher-catching-up',
             level: 'ok',
