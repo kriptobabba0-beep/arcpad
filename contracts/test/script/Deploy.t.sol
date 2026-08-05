@@ -247,6 +247,10 @@ contract DeployTest is Test {
         DeployLib.assertMatchesFrozenBuildIn(p, dir);
     }
 
+    function callAssertBookIn(Plan memory p, string memory path) external view {
+        DeployLib.assertEscrowMatchesTheAddressBookIn(p, path);
+    }
+
     /// @notice POZITIF KONTROL. Degistirilmemis bir plan kapidan GECER.
     /// @dev Negatif kontrol tek basina anlamsizdir: her seye revert eden bir
     ///      kapi da onu saglar.
@@ -440,6 +444,61 @@ contract DeployTest is Test {
             )
         );
         script.plan();
+    }
+
+    /// BU AGAC, ZINCIRDEKI ESCROW'U URETIYOR -- ve referans bu agactan
+    /// TURETILMIS DEGILDIR.
+    ///
+    /// @dev NICIN `assertMatchesFrozenBuild` BUNU YAPAMAZ. O iddianin
+    ///      referansi `out-frozen/`dir ve o dizin bu agactan uretilir:
+    ///      `make frozen-hash` her cagrida yeniden yazar, `Makefile`in
+    ///      `test: frozen-hash` on kosulu da bunu OTOMATIK yapar. Olculdu --
+    ///      `FeeSchedule.tierFor`in kademe 0 protokol payi 95 -> 94
+    ///      yapildiginda kapi YESIL kaliyor ve `Deploy.t.sol` 53/53
+    ///      geciyordu. `deploy/addresses.5042002.json` ise GECMIS BIR
+    ///      YAYINDAN kalmadir, yeniden uretilemez, ve kaynakla birlikte
+    ///      hareket etmez.
+    ///
+    /// @dev DURDURDUGU ARIZA: `FeeEscrow.sol`da bir baytlik degisiklik
+    ///      initcode'u, o da adresi kaydirir. Yeni adres BOSTUR -- ne
+    ///      `AlreadyDeployed` ne yeniden-kullanim kolu tetiklenir -- yani
+    ///      deploy IKINCI bir escrow indirir, yeni factory ona baglanir ve
+    ///      canli escrow'daki 152.069.146.725.900.635 wei yetim kalir.
+    function test_theAddressBookBindsTheEscrowThisTreeWouldDeploy() public view {
+        Plan memory p = script.plan();
+
+        string memory json = vm.readFile("deploy/addresses.5042002.json");
+        assertEq(
+            keccak256(p.escrowInitcode),
+            vm.parseJsonBytes32(json, ".escrowInitcodeHash"),
+            "bu agacin escrow initcode'u defterdekinden AYRISTI -- ikinci bir escrow inerdi"
+        );
+        assertEq(p.escrow, vm.parseJsonAddress(json, ".feeEscrow"), "tahmin edilen escrow, CANLI escrow degil");
+    }
+
+    /// ...VE DEFTER AYRISTIGINDA BROADCAST YOLU DURUR. Tanik gercek bir
+    /// dosyadir (`deploy/testdata/tampered-addresses.json`), tek bayti
+    /// degistirilmis.
+    function test_anAddressBookThatDisagreesStopsTheDeploy() public {
+        Plan memory p = script.plan();
+        string memory tampered = "deploy/testdata/tampered-addresses.json";
+
+        bytes32 recorded = vm.parseJsonBytes32(vm.readFile(tampered), ".escrowInitcodeHash");
+        assertTrue(recorded != keccak256(p.escrowInitcode), "tanik tahrif edilmemis -- test hicbir sey olcmuyor");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployLib.AddressBookDisagrees.selector, "escrowInitcodeHash", recorded, keccak256(p.escrowInitcode)
+            )
+        );
+        this.callAssertBookIn(p, tampered);
+    }
+
+    /// KONTROL GRUBU: ayni sarmalayici, GERCEK defterle, GECER. Onsuz
+    /// yukaridaki test "sarmalayici her zaman revert ediyor" halinde de
+    /// gecerdi.
+    function test_theAddressBookProbeUsesAWorkingWrapper() public view {
+        this.callAssertBookIn(script.plan(), "deploy/addresses.5042002.json");
     }
 
     /// @dev YENIDEN KULLANIMIN ALTINDAKI ON KOSUL, ACIKCA OLCULUR. Runtime

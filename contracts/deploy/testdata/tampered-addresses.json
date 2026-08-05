@@ -1,0 +1,7 @@
+{
+  "_comment": "NEGATIF TANIK, URETIMDE KULLANILMAZ. `deploy/addresses.5042002.json`in kopyasi, YALNIZCA `escrowInitcodeHash`in son baytı degistirilmis: ...435e8 -> ...435e9. `FeeEscrow.sol`da bir baytlik bir degisiklik zincirde tam olarak bunu uretir, ve `DeployLib.assertEscrowMatchesTheAddressBookIn` onu bu dosyayla surulur.",
+  "chainId": 5042002,
+  "chainKey": "arc-testnet",
+  "feeEscrow": "0xEEd4431eAD3E27F16D97f677A9C4c1a963DF8dC6",
+  "escrowInitcodeHash": "0xd99a4f910483ee8e40e4898fee5ef732462b55888427cd00c89697b0bff435e9"
+}

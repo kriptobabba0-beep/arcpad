@@ -118,6 +118,11 @@ library DeployLib {
     ///      ON KOSULUN KENDISI iddia edilir ve saglanmazsa kapi duser.
     error FrozenArtifactHasImmutables(string what);
 
+    /// @dev "BU AGAC, ZINCIRDEKI ESCROW'U URETEMIYOR." Adres defterinin
+    ///      kaydettigi initcode hash'i ile bu agacin derledigi initcode
+    ///      AYRISTI.
+    error AddressBookDisagrees(string field, bytes32 recorded, bytes32 built);
+
     function predict(bytes32 salt, bytes memory initcode) internal pure returns (address) {
         return address(
             uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), CREATE2_FACTORY, salt, keccak256(initcode)))))
@@ -193,7 +198,58 @@ library DeployLib {
         _assertMultisig("governor", plan.governor);
         _assertMultisig("treasury", plan.treasury);
         assertVacantOrTheFrozenBuildIn(plan, "out-frozen");
+        assertEscrowMatchesTheAddressBook(plan);
         if (plan.factory.code.length != 0) revert AlreadyDeployed("LaunchFactory", plan.factory);
+    }
+
+    /// @dev ARC'IN DEFTERI HER ZINCIRI BAGLAR, VE BU BIR TAKLA DEGIL OLCULMUS
+    ///      BIR OZELLIKTIR: `FeeEscrow`un constructor argumani yoktur,
+    ///      dolayisiyla adresi ayni salt ile HER ZINCIRDE AYNIDIR -- defterin
+    ///      bu ozelligi tasiyan TEK uyesi (`test_theEscrowAddressIsChainIndependent`).
+    ///      Bu yuzden burada "bu zincirin defteri VARSA karsilastir" gibi bir
+    ///      ATLAMA DALI YOKTUR; tek bir kayit her yolu baglar.
+    string internal constant ARC_ADDRESS_BOOK = "deploy/addresses.5042002.json";
+
+    /// @notice Bu agacin derledigi escrow, ZINCIRDEKI escrow'dur.
+    ///
+    /// @dev BU IDDIA `assertMatchesFrozenBuild`IN YAPAMADIGI SEYI YAPAR, VE
+    ///      FARK "REFERANSIN NEREDEN GELDIGI"DIR. `out-frozen/` bu agactan
+    ///      TURETILIR: `make frozen-hash` onu her cagrida yeniden uretir, ve
+    ///      `Makefile`in `test: frozen-hash` on kosulu bunu otomatik yapar --
+    ///      yani kaynak degistiginde referans ONUNLA BIRLIKTE hareket eder ve
+    ///      iddia sessizce tatmin olur (olculdu: `FeeSchedule` 95 -> 94 ile
+    ///      kapi YESIL, `Deploy.t.sol` 53/53). `deploy/addresses.5042002.json`
+    ///      ise GECMIS BIR YAYINDAN kalan bir kayittir; bu agactan yeniden
+    ///      URETILEMEZ, dolayisiyla kaynakla birlikte HAREKET ETMEZ.
+    ///
+    /// @dev DURDURDUGU ARIZA, TAM OLARAK: `FeeEscrow.sol`da bir baytlik bir
+    ///      degisiklik initcode'u, o da `predict(ESCROW_SALT, ...)` ile ADRESI
+    ///      kaydirir. Yeni adres BOSTUR, yani ne `AlreadyDeployed` ne de
+    ///      yeniden-kullanim kolu tetiklenir; deploy IKINCI bir escrow indirir,
+    ///      yeni factory ona baglanir, ve canli escrow'daki
+    ///      152.069.146.725.900.635 wei ile her `owed[]` girisi YETIM KALIR.
+    ///      Sessiz, geri donusu yok, ve broadcast'e kadar hicbir sey kirmizi
+    ///      olmaz. Bu satir orada durur.
+    function assertEscrowMatchesTheAddressBook(Plan memory plan) internal view {
+        assertEscrowMatchesTheAddressBookIn(plan, ARC_ADDRESS_BOOK);
+    }
+
+    /// @dev MEKANIZMA POLITIKADAN AYRI -- `Profiles.readFrom`un aynisi ve ayni
+    ///      sebeple: negatif testin GERCEK bir tahrif edilmis defter
+    ///      yurutebilmesi gerekir.
+    function assertEscrowMatchesTheAddressBookIn(Plan memory plan, string memory path) internal view {
+        string memory json = vm.readFile(path);
+
+        bytes32 recorded = vm.parseJsonBytes32(json, ".escrowInitcodeHash");
+        bytes32 built = keccak256(plan.escrowInitcode);
+        if (recorded != built) revert AddressBookDisagrees("escrowInitcodeHash", recorded, built);
+
+        address recordedEscrow = vm.parseJsonAddress(json, ".feeEscrow");
+        if (recordedEscrow != plan.escrow) {
+            revert AddressBookDisagrees(
+                "feeEscrow", bytes32(uint256(uint160(recordedEscrow))), bytes32(uint256(uint160(plan.escrow)))
+            );
+        }
     }
 
     /// @notice `FeeEscrow` ve `FeeSchedule` icin: adres ya BOSTUR ya da

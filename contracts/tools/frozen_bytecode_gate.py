@@ -39,6 +39,41 @@ REPO = os.path.dirname(CONTRACTS)
 FROZEN = {
     "BondingCurve": "8e2460fff48ee5b6c591d0c62041936a7c63099d2ae1d636fa3bd2b927b4982f",
     "LaunchToken": "d4c19416664f373cb5e8504f9e2060bb874b0894ef4c6e266b4d9121e405f805",
+    # ---------------------------------------------------------------
+    # FAZ 2 EKI, VE EKLENME SEBEBI OLCULDU.
+    #
+    # Bu iki satirdan ONCE kapi `FeeEscrow` ve `FeeSchedule` icin YALNIZCA
+    # `optimizer_runs`a bakiyordu, yani onlar hakkinda hicbir SABIT referans
+    # tasimiyordu. Sonucu su sekilde olculdu: `FeeSchedule.tierFor`in kademe
+    # 0 protokol payi 95 -> 94 yapildiginda, `make frozen-hash` YESIL
+    # kaliyordu ve hemen ardindan `Deploy.t.sol` 53/53 GECIYORDU -- cunku
+    # `DeployLib.assertMatchesFrozenBuild`in referansi `out-frozen/`dir ve
+    # kapinin kendisi o dizini DEGISTIRILMIS KAYNAKTAN yeniden uretiyordu.
+    # `Makefile`in `test: frozen-hash` on kosulu bunu OTOMATIK yapiyor.
+    # Yani iddia, duzenlenmis derlemeyi KENDISIYLE karsilastiriyordu.
+    #
+    # TUREVI OLMAYAN TEK REFERANS ELLE YAZILMIS BIR LITERALDIR. Bunlar
+    # `Profiles.TESTNET_DIGEST` ile AYNI mekanizmadir: degeri degistirmek
+    # DERLENEN/INCELENEN bir satiri degistirmeyi gerektirir, ve tek dosyalik
+    # bir kaza -- ki kazalar tek dosyaliktir -- yakalanir.
+    #
+    # BU IKISININ NICIN ONEMLI OLDUGU, AYRI AYRI:
+    #   FeeEscrow   : ZATEN CANLI (0xEEd4431e..., 152069146725900635 wei) ve
+    #                 constructor argumani olmadigi icin adresi
+    #                 `predict(ESCROW_SALT, creationCode)`tir. Kaynaktaki
+    #                 herhangi bir degisiklik adresi kaydirir; `AlreadyDeployed`
+    #                 kontrolu YENI adreste kod bulamaz, yani deploy IKINCI bir
+    #                 escrow indirir ve canli alacaklarin tamami yetim kalir.
+    #   FeeSchedule : hook her swap'ta `tierFor`i cagirir, ve adresi
+    #                 `LaunchFactory`nin constructor argumanidir, yani FACTORY
+    #                 ADRESINI de belirler.
+    #
+    # `LaunchFactory` BILEREK BURADA DEGIL: Faz 2 ona `feeSchedule` argumani
+    # ekledi, yani initcode'unun DEGISMESI BEKLENIYOR. Task 7 onu zincire
+    # yazdiginda buraya EKLENMELIDIR -- o andan itibaren hareket etmesi
+    # turetilmis her curve ve token adresini kaydirir.
+    "FeeEscrow": "bf5338882879119b63c1908b67f50ce699aa3d05e3665138b5196e5161e957f8",
+    "FeeSchedule": "93cdb1ff0a4bcf15489fe446382af1b632548b208f693f76664986a55e45dd5c",
 }
 
 # Canli olculmus adresler. `docs/`ta degil BURADA duruyorlar cunku kapinin
@@ -91,7 +126,7 @@ def check_settings():
     """AYARIN KENDISI, sonucun yani sira. Bir sonraki kisi `[profile.frozen]`e
     dokunursa hash zaten kirilir; bu satir SEBEBI de soyler."""
     print("== derleyici ayarlari ==")
-    for name in ("BondingCurve", "LaunchFactory", "LaunchToken", "FeeEscrow", "CurveMath"):
+    for name in ("BondingCurve", "LaunchFactory", "LaunchToken", "FeeEscrow", "FeeSchedule", "CurveMath"):
         runs = artifact(name)["metadata"]["settings"]["optimizer"]["runs"]
         (ok if runs == 800 else fail)("%-14s optimizer_runs = %s" % (name, runs))
 
@@ -103,7 +138,13 @@ def check_hashes():
         if got == expected:
             ok("%-14s %s" % (name, got))
         else:
-            fail("%-14s %s  (BEKLENEN %s)" % (name, got, expected))
+            # "PIN'I YENIDEN URETMEYIN" METNI BURADA DA DURUYOR VE SEBEBI
+            # OLCULDU: bu kapinin kendi referans dizinini (`out-frozen/`) her
+            # cagrida yeniden urettigi icin, kirmizi bir satiri "temizlemenin"
+            # en kolay yolu degeri buraya kopyalamaktir -- ve o hareket
+            # kapiyi tam olarak kapatmak icin var oldugu seye acar.
+            fail("%-14s %s  (BEKLENEN %s) -- pin'i YENIDEN URETMEYIN, sebebini bulun"
+                 % (name, got, expected))
 
 
 def check_factory_embeds():
@@ -133,7 +174,7 @@ def frozen_closure():
     `metadata.sources` anahtarlari, yani solc'un o girdide gordugu dosyalar.
     """
     files = set()
-    for name in ("BondingCurve", "LaunchFactory", "LaunchToken", "FeeEscrow", "CurveMath"):
+    for name in ("BondingCurve", "LaunchFactory", "LaunchToken", "FeeEscrow", "FeeSchedule", "CurveMath"):
         files.update(artifact(name)["metadata"]["sources"].keys())
     return files
 
