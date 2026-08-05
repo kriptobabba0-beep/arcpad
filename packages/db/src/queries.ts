@@ -87,20 +87,66 @@ export interface SyncPoint {
    * saglikli bir indexer'i "durmus" gostermenin ta kendisiydi.
    */
   stalenessSeconds: number
-  /** Indexer bu satiri yazarken gordugu bas. `null` = hic yazilmamis. */
-  headBlock: bigint | null
-  /** `headBlock - lastBlock`. `null` = bas bilinmiyor, yani YAS BILINMIYOR. */
-  blocksBehind: bigint | null
+  /**
+   * ZINCIRIN BASI, VE O GOZLEMIN KENDI YASI. Bkz. `HeadObservation`.
+   *
+   * Duz bir `blocksBehind: bigint | null` alani BIR KEZ DENENDI ve TAM OLARAK
+   * BU YUZDEN YETMEDI: sayi vardi, YASI yoktu, ve donmus bir gozlemden gelen
+   * `0` ile taze olculmus bir `0` ayirt edilemiyordu.
+   */
+  head: HeadObservation
 }
 
 /**
+ * ============ BIR OLCUM, KENDI YASIYLA BIRLIKTE ============
+ *
+ * OLCULDU (canli, basa yetismis bir indexer merdivene girdiginde, 11 ardisik
+ * cizim): sayfa **11/11 TAZE dalini** secti ve HICBIR uyari cizmedi; gercek
+ * gecikme 0'dan 120 bloga cikti (90 esiginin ustu), rapor edilen `blocksBehind`
+ * ise 0'da DONDU. Sifir "olculdu" degil "kaldi"ydi.
+ *
+ * Sebep tam olarak sudur: `noteAlive` `updated_at`i tazeler ama `head_block`a
+ * DOKUNMAZ, yani `c26c065`ten sonra iki eksen de bagimsizca "saglikli"
+ * diyebiliyordu -- biri gercekten taze oldugu icin, oteki DONDUGU icin.
+ *
+ * Care dorduncu bir `if` DEGIL: olculmemis durumu TEMSIL EDILEMEZ yapmak.
+ * `blocksBehind` YALNIZCA `measured: true` dalinda vardir; olculmemis dalda
+ * alanin ADI BILE farklidir (`lastKnownBlocksBehind`), yani daraltmayi unutan
+ * bir tuketici DERLENMEZ. Ayni oyun `data`/`staleData` ile bir seviye yukarida
+ * oynaniyor ve C1'in tutmasinin sebebi oydu.
+ */
+export type HeadObservation =
+  | {
+      readonly measured: true
+      readonly headBlock: bigint
+      /** `headBlock - lastBlock`, GOZLEM TAZEYKEN. */
+      readonly blocksBehind: bigint
+      /** Bu gozlemin yasi. Taze oldugu ISPATLANMIS haldedir. */
+      readonly observedSecondsAgo: number
+    }
+  | {
+      readonly measured: false
+      readonly why: 'never-observed' | 'observation-stale'
+      readonly headBlock: bigint | null
+      /**
+       * SON BILINEN gecikme -- BIR ALT SINIR, guncel bir olcum DEGIL. Adi
+       * `blocksBehind` DEGIL, ve bu bilincli: iki alan ayni adi tasisaydi,
+       * daraltmayi unutan kod eskisi gibi derlenirdi.
+       */
+      readonly lastKnownBlocksBehind: bigint | null
+      readonly lastObservedSecondsAgo: number | null
+    }
+
+export type MeasuredHead = Extract<HeadObservation, { measured: true }>
+
+/**
  * YASI OLCULMUS bir nokta. TAZE dalin tasimak ZORUNDA oldugu sey budur.
- * `blocksBehind` burada `bigint`tir, `bigint | null` degil -- fark, "taze"
- * demenin zincirle karsilastirmis olmayi GEREKTIRMESIDIR.
+ * `head` burada `MeasuredHead`tir -- yani "taze" demek, zincirin basiyla
+ * karsilastirmis OLMAYI ve o karsilastirmanin TAZE olmasini birlikte
+ * gerektirir.
  */
 export interface MeasuredSyncPoint extends SyncPoint {
-  headBlock: bigint
-  blocksBehind: bigint
+  head: MeasuredHead
 }
 
 /**
@@ -132,7 +178,18 @@ export interface MeasuredSyncPoint extends SyncPoint {
  * susan tek sey gercekten durmus bir surectir.
  */
 export type StaleReason =
-  'never-ran' | 'head-unknown' | 'writes-stalled' | 'behind-head' | 'stopped-and-behind'
+  | 'never-ran'
+  | 'head-unknown'
+  /**
+   * INDEXER YASIYOR AMA ZINCIRIN BASINA BAKAMIYOR (tipik olarak bir hiz
+   * siniri merdiveninin icinde). Gecikme OLCULEMEZ, ve olculemeyen bir
+   * gecikme TAZE DEGILDIR. Bu durum bir sure hicbir ada sahip degildi ve
+   * sonucu, sayfanin hicbir uyari cizmemesiydi.
+   */
+  | 'head-stale'
+  | 'writes-stalled'
+  | 'behind-head'
+  | 'stopped-and-behind'
 
 export type IndexerStatus =
   { stale: false; at: MeasuredSyncPoint } | { stale: true; why: StaleReason; at: SyncPoint | null }
@@ -166,9 +223,20 @@ export const DEFAULT_STALE_AFTER_SECONDS = 30
  */
 export const DEFAULT_MAX_BLOCKS_BEHIND = 90n
 
+/**
+ * UCUNCU EKSEN: GOZLEMIN kendi yasi, ve yine AYNI 30 SANIYE.
+ *
+ * `head_block` her ilerleyen aralikta ve her bos turda tazelenir (saniyeler),
+ * ve YALNIZCA indexer zincire bakamadiginda donar -- yani bir hiz siniri
+ * merdiveninin icinde. 30 saniyeden eski bir gozlemden hesaplanan gecikme bir
+ * OLCUM degil bir HATIRADIR, ve hatira "taze" diyemez.
+ */
+export const DEFAULT_HEAD_STALE_AFTER_SECONDS = 30
+
 export interface StaleThresholds {
   staleAfterSeconds?: number
   maxBlocksBehind?: bigint
+  headStaleAfterSeconds?: number
 }
 
 export async function getIndexerStatus(
@@ -186,16 +254,25 @@ export async function getIndexerStatus(
       ? DEFAULT_MAX_BLOCKS_BEHIND
       : (thresholds.maxBlocksBehind ?? DEFAULT_MAX_BLOCKS_BEHIND)
 
+  const headStaleAfterSeconds =
+    typeof thresholds === 'number'
+      ? DEFAULT_HEAD_STALE_AFTER_SECONDS
+      : (thresholds.headStaleAfterSeconds ?? DEFAULT_HEAD_STALE_AFTER_SECONDS)
+
   const { rows } = await db.query<{
     last_block: string
     last_block_hash: string
     head_block: string | null
     updated_at: Date
     staleness_seconds: string
+    head_age_seconds: string | null
   }>(
+    // IKI YAS, IKI AYRI SUTUNDAN, IKISI DE SUNUCUNUN SAATINDEN. Tek bir
+    // `updated_at`ten ikisini birden turetmek, tam olarak duzeltilen kusurdur.
     `SELECT last_block::text AS last_block, last_block_hash,
             head_block::text AS head_block, updated_at,
-            EXTRACT(EPOCH FROM (now() - updated_at))::text AS staleness_seconds
+            EXTRACT(EPOCH FROM (now() - updated_at))::text AS staleness_seconds,
+            EXTRACT(EPOCH FROM (now() - head_observed_at))::text AS head_age_seconds
        FROM sync_state WHERE id = 1`,
   )
   const row = rows[0]
@@ -212,31 +289,75 @@ export async function getIndexerStatus(
   // Olculdu: `web/test/read.test.ts`in sahte surucusu tam olarak boyle dustu.
   const headBlock = (row.head_block ?? null) === null ? null : BigInt(row.head_block as string)
   const lastBlock = BigInt(row.last_block)
+  const headAgeSeconds =
+    (row.head_age_seconds ?? null) === null ? null : Number(row.head_age_seconds)
+  // Bas imlecin gerisindeyse (olmamali; `setCursor` reddeder) NEGATIF bir
+  // "geride" uretmek yerine sifira kirpilir -- eksi bir gecikme ekranda
+  // anlamsizdir ve bir hatayi gizler yerine gostermez.
+  const lag = headBlock === null ? null : headBlock > lastBlock ? headBlock - lastBlock : 0n
+
+  /**
+   * GOZLEM YA OLCUMDUR YA DEGILDIR, VE UCUNCU HALI YOKTUR.
+   *
+   * Uc sart birden: bas yazilmis, ne zaman yazildigi yazilmis, ve o an
+   * YETERINCE YAKIN. Herhangi biri eksikse `measured: false` -- ve o dalda
+   * `blocksBehind` diye bir alan YOKTUR, yani asagidaki mantik onu okumayi
+   * bile deneyemez.
+   */
+  const head: HeadObservation =
+    headBlock === null || headAgeSeconds === null || lag === null
+      ? {
+          measured: false,
+          why: 'never-observed',
+          headBlock,
+          lastKnownBlocksBehind: lag,
+          lastObservedSecondsAgo: headAgeSeconds,
+        }
+      : headAgeSeconds > headStaleAfterSeconds
+        ? {
+            measured: false,
+            why: 'observation-stale',
+            headBlock,
+            lastKnownBlocksBehind: lag,
+            lastObservedSecondsAgo: headAgeSeconds,
+          }
+        : {
+            measured: true,
+            headBlock,
+            blocksBehind: lag,
+            observedSecondsAgo: headAgeSeconds,
+          }
+
   const at: SyncPoint = {
     lastBlock,
     lastBlockHash: row.last_block_hash,
     updatedAt: row.updated_at,
     stalenessSeconds: Number(row.staleness_seconds),
-    headBlock,
-    // Bas imlecin gerisindeyse (olmamali; `setCursor` reddeder) NEGATIF bir
-    // "geride" uretmek yerine sifira kirpilir -- eksi bir gecikme ekranda
-    // anlamsizdir ve bir hatayi gizler yerine gostermez.
-    blocksBehind: headBlock === null ? null : headBlock > lastBlock ? headBlock - lastBlock : 0n,
+    head,
   }
 
-  // "Bas bilinmiyor" TAZE DEGILDIR ve bu, tipin zaten zorladigi seyin calisma
-  // zamanindaki karsiligidir. Yas OLCULEMIYORSA baska hicbir sey soylenemez.
-  if (at.blocksBehind === null) return { stale: true, why: 'head-unknown', at }
-
-  // IKI OLGU AYRI OLCULUR. Bir `if` zinciri degil, cunku zincirin ilk dali
-  // ikincisini GORUNMEZ yapiyordu -- olculdu: 25 cizimin 25'i "durmus olabilir"
-  // dedi ve 727.334 bloklu gecikme cumleden dustu.
   const notWriting = at.stalenessSeconds > staleAfterSeconds
-  const behind = at.blocksBehind > maxBlocksBehind
+  // SON BILINEN gecikme, olculmus olsun olmasin. Bir surec DURDUYSA gecikmesi
+  // zaten yalnizca son gozleminden bilinebilir; onu cumleden dusurmek N2'nin
+  // ta kendisiydi.
+  const lastKnownBehind = head.measured ? head.blocksBehind : head.lastKnownBlocksBehind
 
-  if (notWriting && behind) return { stale: true, why: 'stopped-and-behind', at }
-  if (notWriting) return { stale: true, why: 'writes-stalled', at }
-  if (behind) return { stale: true, why: 'behind-head', at }
+  // DURMUS OLMAK EN UST OLGUDUR: gecikmeyi olcemiyor olmamiz onu degistirmez,
+  // ve "durdu" cumlesi son bilinen gecikmeyi zaten TASIR.
+  if (notWriting) {
+    return lastKnownBehind !== null && lastKnownBehind > maxBlocksBehind
+      ? { stale: true, why: 'stopped-and-behind', at }
+      : { stale: true, why: 'writes-stalled', at }
+  }
+
+  // YAZIYOR AMA GECIKME OLCULEMIYOR. Bu, dorduncu durumdur ve bir sure hicbir
+  // ada sahip degildi -- sonucu, TAZE dalini secip hicbir uyari cizmemekti
+  // (olculdu: 11/11 cizim, gercek gecikme 0 -> 120 blok).
+  if (!head.measured) {
+    return { stale: true, why: head.why === 'never-observed' ? 'head-unknown' : 'head-stale', at }
+  }
+
+  if (head.blocksBehind > maxBlocksBehind) return { stale: true, why: 'behind-head', at }
   return { stale: false, at: at as MeasuredSyncPoint }
 }
 

@@ -121,8 +121,12 @@ describe('a reading that is present but lagging', () => {
     lastBlockHash: '0xabc',
     updatedAt: new Date('2026-08-02T00:00:00Z'),
     stalenessSeconds: 240,
-    headBlock: 1_000n,
-    blocksBehind: 0n,
+    head: {
+      measured: true as const,
+      headBlock: 1_000n,
+      blocksBehind: 0n,
+      observedSecondsAgo: 240,
+    },
   }
   const laggingStatus: StaleIndexer = { stale: true, why: 'writes-stalled', at }
   const freshStatus: FreshIndexer = {

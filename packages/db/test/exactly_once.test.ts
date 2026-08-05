@@ -358,7 +358,7 @@ describe('exactly-once ingestion', () => {
 /**
  * IKI AYRI KURULUSU karsilastirmak icin. `now()` varsayilanli sutunlar iki
  * bagimsiz kurulusta ZORUNLU olarak farklidir (`applied_at`, `updated_at`,
- * `seen_at`, `volume_24h_refreshed_at`) ve onlarin farki bir idempotency
+ * `head_observed_at`, `seen_at`, `volume_24h_refreshed_at`) ve onlarin farki bir idempotency
  * ihlali DEGILDIR.
  *
  * Liste KATALOGDAN turer, elle yazilmaz -- ve asagida iceriginin ne oldugu
@@ -376,6 +376,7 @@ async function stableSnapshot(): Promise<Record<string, unknown[]>> {
     'rejected_launches.seen_at',
     'schema_migrations.applied_at',
     'schema_state.updated_at',
+    'sync_state.head_observed_at',
     'sync_state.updated_at',
     'token_stats.volume_24h_refreshed_at',
   ])

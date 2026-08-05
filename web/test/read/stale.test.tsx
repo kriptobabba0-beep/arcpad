@@ -7,7 +7,7 @@ import {
   StaleNotice,
 } from '@/components/read/StaleNotice'
 import { stalenessOf } from '@/components/read/result'
-import type { IndexerStatus, ReadResult } from '@/components/read/types'
+import type { IndexerStatus, ReadResult, StaleIndexer } from '@/components/read/types'
 import { BEHIND_INDEXER, LIVE_INDEXER, STALE_INDEXER } from '../fixtures/readModel'
 
 /**
@@ -85,7 +85,10 @@ describe('<StaleNotice> -- canli ama geride', () => {
 
     // (2) DURMUS: gecikmeyi YINE DE soyler -- eski hal onu dusuruyordu.
     expect(stopped).toContain('may have stopped')
-    expect(stopped).toContain('behind the chain')
+    // GECIKMEYI YINE DE SOYLER -- ve "when it last looked" diye, cunku olu bir
+    // indexer'in gecikmesi bir OLCUM degil bir HATIRADIR (N1/N2).
+    expect(stopped).toContain('When it last looked')
+    expect(stopped).toContain('blocks')
     expect(stopped).not.toContain('still catching up')
 
     // (3) IKISI BIRDEN: iki olgu da cumlededir, ve cumle (1) ile (2)'nin
@@ -94,6 +97,54 @@ describe('<StaleNotice> -- canli ama geride', () => {
     expect(both).toContain('ALREADY 510,000 blocks')
     expect(both).not.toBe(alive)
     expect(both).not.toBe(stopped)
+  })
+})
+
+/**
+ * ============ N1: "BILMIYORUM" DIYEBILEN BIR CUMLE ============
+ *
+ * Bu durumun bir sure hicbir adi ve hicbir cumlesi yoktu: basa yetismis bir
+ * indexer merdivene girince sayfa TAZE dalini seciyor ve HICBIR sey
+ * cizmiyordu. Olculdu: 11 ardisik cizim, gercek gecikme 0 -> 120 blok.
+ */
+describe('<StaleNotice> -- canli ama zincire bakamiyor', () => {
+  const HEAD_STALE: StaleIndexer = {
+    stale: true,
+    why: 'head-stale',
+    at: {
+      lastBlock: 55_485_142n,
+      lastBlockHash: `0x${'ab'.repeat(32)}`,
+      updatedAt: new Date('2026-08-05T18:58:00.000Z'),
+      stalenessSeconds: 1,
+      head: {
+        measured: false,
+        why: 'observation-stale',
+        headBlock: 55_485_142n,
+        lastKnownBlocksBehind: 0n,
+        lastObservedSecondsAgo: 95,
+      },
+    },
+  }
+
+  it('OLCEMEDIGINI soyler, ve sifiri OLCUM gibi yazmaz', () => {
+    render(<StaleNotice indexer={HEAD_STALE} what="This page" />)
+    const notice = screen.getByTestId('stale-notice')
+    // (1) Uyari VAR. Eski hal hic cizmiyordu.
+    expect(notice).toHaveTextContent('This page may be out of date')
+    // (2) "Olcemiyorum" der -- "0 blok geride" DEMEZ.
+    expect(notice).toHaveTextContent('CANNOT be measured right now')
+    // (3) Surecin OLDUGUNU iddia etmez: canli, sadece bakamiyor.
+    expect(notice).not.toHaveTextContent('may have stopped')
+    // (4) Son bakisi ne zaman oldugu YAZILI -- operatorun sonraki sorusu bu.
+    expect(notice).toHaveTextContent('2m')
+  })
+
+  it('sifir gecikme, TAZE olculmusse bambaska bir cumledir', () => {
+    // Ayni sayi (0 blok), ama gozlem TAZE -> hicbir uyari cizilmez, cunku
+    // `stale: false` dalina duser. Farki uretin sey sayinin kendisi degil,
+    // sayinin YASIDIR.
+    expect(LIVE_INDEXER.stale).toBe(false)
+    expect(LIVE_INDEXER.at.head.blocksBehind).toBe(0n)
   })
 })
 

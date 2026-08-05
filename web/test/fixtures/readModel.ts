@@ -211,8 +211,7 @@ export const LIVE_INDEXER: FreshIndexer = {
     lastBlockHash: `0x${'ab'.repeat(32)}`,
     updatedAt: new Date('2026-07-31T12:00:02.000Z'),
     stalenessSeconds: 2,
-    headBlock: 4n,
-    blocksBehind: 0n,
+    head: { measured: true, headBlock: 4n, blocksBehind: 0n, observedSecondsAgo: 2 },
   },
 }
 
@@ -225,8 +224,14 @@ export const STALE_INDEXER: StaleIndexer = {
     lastBlockHash: `0x${'ab'.repeat(32)}`,
     updatedAt: new Date('2026-07-31T11:45:00.000Z'),
     stalenessSeconds: 900,
-    headBlock: 4n,
-    blocksBehind: 0n,
+    // OLU bir indexer'in gozlemi de donmustur -- yani gecikme bir HATIRADIR.
+    head: {
+      measured: false,
+      why: 'observation-stale',
+      headBlock: 4n,
+      lastKnownBlocksBehind: 0n,
+      lastObservedSecondsAgo: 900,
+    },
   },
 }
 
@@ -242,8 +247,12 @@ export const BEHIND_INDEXER: StaleIndexer = {
     lastBlockHash: `0x${'ab'.repeat(32)}`,
     updatedAt: new Date('2026-07-31T12:00:02.000Z'),
     stalenessSeconds: 1,
-    headBlock: 55_371_436n,
-    blocksBehind: 510_000n,
+    head: {
+      measured: true,
+      headBlock: 55_371_436n,
+      blocksBehind: 510_000n,
+      observedSecondsAgo: 1,
+    },
   },
 }
 

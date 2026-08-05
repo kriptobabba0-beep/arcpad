@@ -73,21 +73,45 @@ export const ARC_BLOCK_SECONDS = 0.35
 export function describeStaleness(indexer: StaleIndexer): string {
   const at = indexer.at
   const age = describeLag(at?.stalenessSeconds ?? null)
-  const lag = describeBlockLag(at?.blocksBehind ?? null)
+  // SON BILINEN gecikme. Bir bayat dalda gecikme neredeyse hicbir zaman TAZE
+  // OLCULMUS degildir (surec durduysa ya da basa bakamiyorsa, gozlem de
+  // donmustur), yani burada okunan sey bir ALT SINIRDIR ve cumleler onu oyle
+  // yazar -- "when it last reported/looked".
+  const head = at?.head
+  const lastKnown =
+    head === undefined ? null : head.measured ? head.blocksBehind : head.lastKnownBlocksBehind
+  const lag = describeBlockLag(lastKnown)
+  const lookedAgo = describeLag(
+    head === undefined
+      ? null
+      : head.measured
+        ? head.observedSecondsAgo
+        : head.lastObservedSecondsAgo,
+  )
   switch (indexer.why) {
     case 'never-ran':
       return 'Our indexer has never run against this database, so nothing here has been checked against the chain.'
     case 'head-unknown':
-      return `Our indexer last reported ${age} but did not record where the chain head was, so how far behind this page is CANNOT be measured.`
+      return `Our indexer last reported ${age} but has never recorded where the chain head was, so how far behind this page is CANNOT be measured.`
+    /**
+     * N1. INDEXER YASIYOR, AMA ZINCIRE BAKAMIYOR.
+     *
+     * Bu cumle bir sure HIC YAZILMIYORDU: durum TAZE dalina dusuyor ve sayfa
+     * hicbir uyari cizmiyordu (olculdu, 11/11 cizim, gercek gecikme 120 blok).
+     * "Bilmiyorum" demek, "sifir" demekten her zaman iyidir.
+     */
+    case 'head-stale':
+      return `Our indexer is running but has not been able to read the chain head for ${lookedAgo.replace(/ ago$/, '')} — it is most likely backing off a rate limit — so how far behind this page is CANNOT be measured right now. When it last looked it was ${lag} behind.`
     case 'writes-stalled':
       // GECIKME DE YAZILIR, kucuk olsa bile: "durmus olabilir" tek basina
       // operatore verinin NE KADAR eski oldugunu soylemez, ve bu sayfa tam
       // olarak o soruyu cevaplamak icin var.
-      return `Our indexer has not reported for ${age.replace(/ ago$/, '')} and may have stopped. Its last reading was ${lag} behind the chain.`
+      return `Our indexer has not reported for ${age.replace(/ ago$/, '')} and may have stopped. When it last looked at the chain it was ${lag} behind.`
     case 'stopped-and-behind':
-      return `Our indexer has not reported for ${age.replace(/ ago$/, '')} and may have stopped, and it was ALREADY ${lag} behind the chain when it last reported.`
+      return `Our indexer has not reported for ${age.replace(/ ago$/, '')} and may have stopped, and it was ALREADY ${lag} behind the chain when it last looked.`
     case 'behind-head':
-      // "hala yetisiyor": son rapor TAZE, yani surec calisiyor.
+      // "hala yetisiyor": son rapor TAZE **VE** gozlem TAZE -- yani bu, bir
+      // hatira degil bir OLCUMDUR, ve cumle onu oyle yazabilir.
       return `Our indexer is ${lag} behind the chain and still catching up (last reported ${age}).`
   }
 }

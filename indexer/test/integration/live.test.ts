@@ -425,7 +425,7 @@ describe('canli Arc testnet', () => {
     expect(indexer.stale).toBe(false)
     if (indexer.stale) throw new Error('unreachable')
     expect(indexer.at.lastBlock).toBe(SMOKE_LAST)
-    expect(indexer.at.blocksBehind).toBe(0n)
+    expect(indexer.at.head.blocksBehind).toBe(0n)
 
     // AYNI SATIR, GERCEK ZINCIR BASIYLA: veri saniyeler once yazildi ve yine de
     // BAYAT. Bu, B2-a'nin canli kanitidir ve kurgu bir bayrakla degil, zincirin
@@ -434,14 +434,25 @@ describe('canli Arc testnet', () => {
       method: 'eth_blockNumber',
       params: [],
     })
-    await pool.query('UPDATE sync_state SET head_block = $1', [BigInt(head as string).toString()])
+    // GOZLEM DAMGASI DA TAZELENIR. Yalnizca `head_block`i itmek, artik
+    // `head-stale` uretirdi -- ve o da DOGRU olurdu, ama olcmek istedigimiz
+    // sey bu degil: burada iddia edilen, TAZE bir gozlemin BUYUK bir gecikme
+    // gostermesi. Iki sutunu birlikte yazmak, uretimdeki `setCursor`/`noteHead`
+    // ciftinin ta kendisidir.
+    await pool.query(
+      'UPDATE sync_state SET head_block = $1, head_observed_at = now(), updated_at = now()',
+      [BigInt(head as string).toString()],
+    )
     const behind = await getIndexerStatus(pool)
     expect(behind.stale).toBe(true)
     if (!behind.stale) throw new Error('unreachable')
     expect(behind.why).toBe('behind-head')
     expect(behind.at?.stalenessSeconds).toBeLessThan(30)
-    expect(behind.at?.blocksBehind).toBeGreaterThan(700_000n)
-    await pool.query('UPDATE sync_state SET head_block = $1', [SMOKE_LAST.toString()])
+    const lag = behind.at?.head.measured === true ? behind.at.head.blocksBehind : null
+    expect(lag).toBeGreaterThan(700_000n)
+    await pool.query('UPDATE sync_state SET head_block = $1, head_observed_at = now()', [
+      SMOKE_LAST.toString(),
+    ])
   })
 
   /** (7) IKINCI KOSU IDEMPOTENT -- GERCEK zincir verisiyle. */

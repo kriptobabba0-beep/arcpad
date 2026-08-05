@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
+  DEFAULT_HEAD_STALE_AFTER_SECONDS,
+  type HeadObservation,
   DEFAULT_MAX_BLOCKS_BEHIND,
   DEFAULT_STALE_AFTER_SECONDS,
   getClaimableFees,
@@ -310,6 +312,36 @@ describe('listeler', () => {
  * geridEYKEN `stale: false` dedi ve sayfa hicbir uyari cizmedi. Asagidaki
  * "canli ama geride" testi tam olarak o durumdur ve eski kodda GECMEZDI.
  */
+
+/**
+ * GECIKME, HANGI DALDAN GELIRSE GELSIN -- ve daraltma her cagri yerinde
+ * GORUNUR. Tip `blocksBehind`i yalnizca olculmus dalda tasir; testler de o
+ * kurala uyar, cunku bir test yardimcisi kurali gevsetirse kural kalmaz.
+ */
+function lagOf(at: { head: HeadObservation } | null): bigint | null {
+  if (at === null) return null
+  return at.head.measured ? at.head.blocksBehind : at.head.lastKnownBlocksBehind
+}
+
+/** Gozlenen bas, olculmus olsun olmasin. */
+function lagSourceOf(at: { head: HeadObservation } | null): bigint | null {
+  return at === null ? null : at.head.headBlock
+}
+
+/** `sync_state`in ham hali -- iki damganin AYRI hareket ettigini olcmek icin. */
+async function raw(): Promise<{
+  head_block: string | null
+  updated_at: Date
+  head_observed_at: Date
+}> {
+  const { rows } = await pool.query<{
+    head_block: string | null
+    updated_at: Date
+    head_observed_at: Date
+  }>('SELECT head_block::text, updated_at, head_observed_at FROM sync_state WHERE id = 1')
+  return rows[0]!
+}
+
 describe('indexer tazeligi', () => {
   beforeEach(async () => {
     await resetSchema()
@@ -330,7 +362,8 @@ describe('indexer tazeligi', () => {
     expect(status.stale).toBe(false)
     if (status.stale) throw new Error('unreachable')
     expect(status.at.lastBlock).toBe(54_661_437n)
-    expect(status.at.blocksBehind).toBe(0n)
+    expect(status.at.head.blocksBehind).toBe(0n)
+    expect(status.at.head.observedSecondsAgo).toBeLessThan(5)
     expect(status.at.stalenessSeconds).toBeLessThan(5)
   })
 
@@ -365,7 +398,7 @@ describe('indexer tazeligi', () => {
     expect(status.why).toBe('behind-head')
     // Surec ekseni TAZE der -- eski sozlesmenin verdigi cevap tam da buydu.
     expect(status.at?.stalenessSeconds).toBeLessThan(5)
-    expect(status.at?.blocksBehind).toBe(767_504n)
+    expect(lagOf(status.at)).toBe(767_504n)
   })
 
   /**
@@ -385,7 +418,7 @@ describe('indexer tazeligi', () => {
     expect(status.why).toBe('stopped-and-behind')
     // IKI OLGU DA ELDE, ve ikisi de kullanilabilir.
     expect(status.at?.stalenessSeconds).toBeGreaterThan(590)
-    expect(status.at?.blocksBehind).toBe(767_504n)
+    expect(lagOf(status.at)).toBe(767_504n)
   })
 
   it('YAZMIYOR ama GERIDE DEGILSE sebep yalnizca writes-stalled', async () => {
@@ -394,7 +427,7 @@ describe('indexer tazeligi', () => {
     const status = await getIndexerStatus(pool)
     if (!status.stale) throw new Error('unreachable')
     expect(status.why).toBe('writes-stalled')
-    expect(status.at?.blocksBehind).toBe(0n)
+    expect(lagOf(status.at)).toBe(0n)
   })
 
   /**
@@ -417,8 +450,66 @@ describe('indexer tazeligi', () => {
     expect(after.why).toBe('behind-head')
     expect(after.at?.stalenessSeconds).toBeLessThan(5)
     expect(after.at?.lastBlock).toBe(54_671_436n)
-    expect(after.at?.headBlock).toBe(55_438_940n)
-    expect(after.at?.blocksBehind).toBe(767_504n)
+    expect(after.at?.head.headBlock).toBe(55_438_940n)
+    expect(lagOf(after.at)).toBe(767_504n)
+  })
+
+  /**
+   * ============ N1: DONMUS BIR GOZLEM TAZE OKUNAMAZ ============
+   *
+   * Basa yetismis bir indexer merdivene girdiginde `noteAlive` `updated_at`i
+   * tazeler ama basa BAKAMAZ. Eski hal iki ekseni de "saglikli" goruyordu --
+   * biri gercekten taze oldugu icin, oteki DONDUGU icin -- ve sayfa TAZE
+   * dalini seciyordu. Olculdu: 11/11 cizim uyarisiz, gercek gecikme 0 -> 120.
+   */
+  it('CANLI ama basa BAKAMAYAN bir indexer TAZE DEGILDIR (gecikme olculemez)', async () => {
+    await setCursor(pool, 1_000n, hashFor(1_000n), 1_000n)
+    // Merdiven: canlilik tazelenmeye devam ediyor, gozlem donuyor.
+    await pool.query("UPDATE sync_state SET head_observed_at = now() - interval '5 minutes'")
+    expect(await noteAlive(pool)).toBe(1)
+
+    const status = await getIndexerStatus(pool)
+    expect(status.stale).toBe(true)
+    if (!status.stale) throw new Error('unreachable')
+    expect(status.why).toBe('head-stale')
+    // Surec ekseni saglikli -- ve OYLE KALMALI, cunku surec gercekten canli.
+    expect(status.at?.stalenessSeconds).toBeLessThan(5)
+    // Ve `blocksBehind` OKUNAMAZ: olculmemis dalda o alan YOKTUR.
+    expect(status.at?.head.measured).toBe(false)
+    expect(lagOf(status.at)).toBe(0n) // son BILINEN, bir alt sinir
+  })
+
+  /**
+   * BU TESTIN VARLIK SEBEBI: N1 iki sutunun AYRISMASIYDI. Ayrisamayacaklarini
+   * iddia eden sey artik bir yorum degil, bir kapi.
+   */
+  it('head_block ile head_observed_at BIRLIKTE yazilir; noteAlive IKISINE DE dokunmaz', async () => {
+    await setCursor(pool, 1_000n, hashFor(1_000n), 1_100n)
+    const before = await raw()
+    await new Promise((done) => setTimeout(done, 25))
+
+    await noteAlive(pool)
+    const afterAlive = await raw()
+    // Canlilik ILERLEDI...
+    expect(afterAlive.updated_at.getTime()).toBeGreaterThan(before.updated_at.getTime())
+    // ...gozlem ve bas AYNEN durdu.
+    expect(afterAlive.head_observed_at.getTime()).toBe(before.head_observed_at.getTime())
+    expect(afterAlive.head_block).toBe(before.head_block)
+
+    // `noteHead` ikisini BIRLIKTE tasir.
+    await noteHead(pool, 1_200n)
+    const afterHead = await raw()
+    expect(afterHead.head_block).toBe('1200')
+    expect(afterHead.head_observed_at.getTime()).toBeGreaterThan(before.head_observed_at.getTime())
+  })
+
+  it('gozlem esigi parametriktir ve 30 saniye varsayilanini pinler', async () => {
+    expect(DEFAULT_HEAD_STALE_AFTER_SECONDS).toBe(30)
+    await setCursor(pool, 1_000n, hashFor(1_000n), 1_000n)
+    await pool.query("UPDATE sync_state SET head_observed_at = now() - interval '45 seconds'")
+    expect((await getIndexerStatus(pool)).stale).toBe(true)
+    // Genis bir gozlem esiginde ayni satir yine TAZE.
+    expect((await getIndexerStatus(pool, { headStaleAfterSeconds: 120 })).stale).toBe(false)
   })
 
   it('esik BLOK cinsinden de parametriktir ve 90 varsayilani ~30 saniyedir', async () => {
@@ -448,7 +539,7 @@ describe('indexer tazeligi', () => {
     expect(status.stale).toBe(true)
     if (!status.stale) throw new Error('unreachable')
     expect(status.why).toBe('head-unknown')
-    expect(status.at?.blocksBehind).toBeNull()
+    expect(lagOf(status.at)).toBeNull()
   })
 
   /** `noteHead` imleci ILERLETMEZ ama yasi ve canliligi tazeler. */
@@ -462,11 +553,11 @@ describe('indexer tazeligi', () => {
     expect(status.stale).toBe(false)
     if (status.stale) throw new Error('unreachable')
     expect(status.at.lastBlock).toBe(1_000n)
-    expect(status.at.blocksBehind).toBe(50n)
+    expect(status.at.head.blocksBehind).toBe(50n)
 
     // Bas GERIYE gitmez.
     await noteHead(pool, 1_020n)
-    expect((await getIndexerStatus(pool)).at?.headBlock).toBe(1_050n)
+    expect(lagSourceOf((await getIndexerStatus(pool)).at)).toBe(1_050n)
   })
 
   it('satirlari almanin tazeligi ALMADAN bir yolu yok', async () => {

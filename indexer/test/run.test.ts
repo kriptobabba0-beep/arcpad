@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { Address, Hex } from 'viem'
 import {
   DEFAULT_STALE_AFTER_SECONDS,
+  type HeadObservation,
   getCursor,
   getIndexerStatus,
   putDeployment,
@@ -697,10 +698,10 @@ describe('gecici hata politikasi', () => {
     // ARTIK "durmus" DEMIYOR -- ve "geride" oldugunu hala soyluyor.
     expect(after.why).toBe('behind-head')
     expect(after.at?.stalenessSeconds).toBeLessThan(1)
-    expect(after.at?.blocksBehind).toBe(HEAD - CURSOR)
+    expect(lagOf(after.at)).toBe(HEAD - CURSOR)
     // Ve ilerleme IDDIA EDILMEDI: imlec ve bas aynen yerinde.
     expect(after.at?.lastBlock).toBe(CURSOR)
-    expect(after.at?.headBlock).toBe(HEAD)
+    expect(after.at?.head.headBlock).toBe(HEAD)
   })
 
   it('canlilik atisi arasi bosluk, bayatlik esiginden KUCUK olmak zorunda', () => {
@@ -801,8 +802,22 @@ describe('config', () => {
  * burada yazili: baska hicbir alan disarida degil, ozellikle hicbir MIKTAR,
  * SIRA ya da ADRES.
  */
+/**
+ * Gecikme, olculmus olsun olmasin -- ve daraltma HER cagri yerinde gorunur.
+ * Tip `blocksBehind`i yalnizca `measured: true` dalinda tasir (bkz.
+ * `HeadObservation`); test yardimcisi o kurali gevsetmez, ADLANDIRIR.
+ */
+function lagOf(at: { head: HeadObservation } | null | undefined): bigint | null {
+  if (at === null || at === undefined) return null
+  return at.head.measured ? at.head.blocksBehind : at.head.lastKnownBlocksBehind
+}
+
 const CLOCK_COLUMNS: Record<string, readonly string[]> = {
-  sync_state: ['updated_at'],
+  // `head_observed_at` DE BIR DUVAR SAATIDIR ve `updated_at` ile ayni sebeple
+  // burada: ikisi de "ne zaman" sorusunun cevabidir, "ne" sorusunun degil. Onu
+  // listeye eklemeyi unutmak, iki kosunun ayni ANDA yapilmadigini bir
+  // idempotency ihlali gibi gostermisti -- kapinin dogru sekilde patlamasi.
+  sync_state: ['updated_at', 'head_observed_at'],
   // `volume_24h_wei` SEMANIN TEK `now()` BAGIMLI DEGERIDIR: 24 saatlik bir
   // PENCERE toplamidir ve iki kosu arasindaki saniyelerde bile pencere kenari
   // gecilebilir. Canli smoke tam olarak ~24 saat oncesine dustugu icin bu

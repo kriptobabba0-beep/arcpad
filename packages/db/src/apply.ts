@@ -534,12 +534,19 @@ export async function setCursor(
     // gecikme gosterirdi.
     throw new RangeError(`head ${headBlock} is behind the cursor ${lastBlock}`)
   }
+  // `head_block` VE `head_observed_at` AYNI IFADEDE. Ikisini ayri yollardan
+  // yazilabilir birakmak, donmus bir basi guncel gostermenin ta kendisidir
+  // (bkz. migration 011): bir yazici birini tazeleyip otekini birakirsa,
+  // okuma katmani gecikmeyi olculmus sanar. Bu depoda `head_block`i yazan
+  // ifade sayisi IKIDIR ve ikisi de bu satirdaki gibi ciftini tasir.
   const { rowCount } = await db.query(
-    `INSERT INTO sync_state (id, last_block, last_block_hash, head_block) VALUES (1, $1, $2, $3)
+    `INSERT INTO sync_state (id, last_block, last_block_hash, head_block, head_observed_at)
+     VALUES (1, $1, $2, $3, now())
      ON CONFLICT (id) DO UPDATE
        SET last_block = EXCLUDED.last_block,
            last_block_hash = EXCLUDED.last_block_hash,
            head_block = EXCLUDED.head_block,
+           head_observed_at = now(),
            updated_at = now()
      WHERE EXCLUDED.last_block > sync_state.last_block`,
     [lastBlock.toString(), lowerHash32(lastBlockHash), headBlock.toString()],
@@ -584,6 +591,11 @@ export async function setCursor(
  * iddia etmek, duzeltilen yalanin yerine baskasini koymak olurdu.
  */
 export async function noteAlive(db: Queryable): Promise<number> {
+  // `head_block`A VE `head_observed_at`E DOKUNMAZ, ve bu satirin BUTUN anlami
+  // odur. Onceki hal `head_block`a zaten dokunmuyordu -- kusur, dokunmamanin
+  // GORUNMEMESIYDI: bas donuyor, `updated_at` tazeleniyor, ve gecikme sifir
+  // OKUNUYORDU. Gozlemin kendi damgasi (`head_observed_at`) o donmayi
+  // gorunur yapar; burasi ona da dokunmayarak yalani imkansiz kilar.
   const { rowCount } = await db.query('UPDATE sync_state SET updated_at = now() WHERE id = 1')
   return rowCount ?? 0
 }
@@ -592,6 +604,7 @@ export async function noteHead(db: Queryable, headBlock: bigint): Promise<number
   const { rowCount } = await db.query(
     `UPDATE sync_state
         SET head_block = GREATEST(COALESCE(head_block, 0), $1::bigint),
+            head_observed_at = now(),
             updated_at = now()
       WHERE id = 1 AND last_block <= $1::bigint`,
     [headBlock.toString()],
