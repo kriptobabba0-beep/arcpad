@@ -289,7 +289,19 @@ function tradeEvent(index: number, nth: number, at: Date, block: bigint): TradeE
     protocolFeeWei: (quote * 95n) / 10_000n,
     creatorFeeWei: (quote * 30n) / 10_000n,
     virtualTokenReservesTok: PROFILE.virtualTokenReservesTok - tokens,
-    virtualQuoteReservesWei: PROFILE.virtualQuoteReservesWei + quote,
+    /*
+     * THE CURVE'S OWN RELATION, NOT `V + quote`.
+     *
+     * `vQ = V*T/vT` is what the chain computes (`BondingCurve`), and the
+     * previous `PROFILE.virtualQuoteReservesWei + quote` was an invented
+     * number that happened to increase. It made every fixture row describe a
+     * curve that CANNOT EXIST, so any claim shaped like "the realised price
+     * lies on the bonding curve" was unmeasurable here -- the assertion would
+     * have failed against correct rendering code.
+     */
+    virtualQuoteReservesWei:
+      (PROFILE.virtualQuoteReservesWei * PROFILE.virtualTokenReservesTok) /
+      (PROFILE.virtualTokenReservesTok - tokens),
     realTokenReservesTok: PROFILE.saleSupplyTok - tokens,
     realQuoteReservesWei: quote,
   }
@@ -382,11 +394,26 @@ export async function seed(pool: Pool): Promise<Seeded> {
 
   // Trades 3..DEEP_TRADES, at log indices 200+ so they cannot collide with the
   // transfer at 8 or the `Completed` at 9 that other tokens use.
+  /*
+   * ONE TRADE PER BLOCK, AND THAT IS NOT COSMETIC.
+   *
+   * `realisedSeries` samples the LAST trade in each block -- averaging would
+   * draw a price that never happened. Writing all 28 into one block therefore
+   * collapsed them to a SINGLE realised point, `realised.length > 1` was false,
+   * and the chart's realised overlay was NEVER RENDERED in any browser. The
+   * fixture was hiding a whole render path from the only leg that can see it.
+   *
+   * Blocks `deepBlock+1 .. deepBlock+27` overlap other tokens' launch blocks,
+   * which is fine and realistic: `event_seq` is `(block << 20) | logIndex` and
+   * these sit at log index 200+, where nothing else does.
+   */
   for (let nth = 2; nth < DEEP_TRADES; nth += 1) {
-    const base = tradeEvent(3, nth, deepAt, deepBlock)
+    const block = deepBlock + BigInt(nth)
+    const base = tradeEvent(3, nth, deepAt, block)
     await applyTrade(pool, {
       ...base,
-      eventSeq: toSeq(deepBlock, 200 + nth),
+      blockNumber: block,
+      eventSeq: toSeq(block, 200 + nth),
       logIndex: 200 + nth,
       txHash: hash32(0x20_000 + nth),
     })

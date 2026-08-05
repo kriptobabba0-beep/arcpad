@@ -141,6 +141,15 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
           )}
 
           <Card className="px-4 py-4">
+            {/*
+              `trades` GECILIYOR, ve gecilmedigi surece bu grafigin GERCEKLESEN
+              KATMANI HIC CIZILMEDI. `CurveChart`'in `trades` prop'u opsiyonel
+              ve varsayilani `[]`, yani `realisedSeries([])` bos donuyor,
+              `realised.length > 1` yanlis kaliyor ve `curve-realised` yolu
+              hicbir sayfada DOM'a girmiyordu -- bileşenin testleri ise prop'u
+              kendileri veriyordu. Bu, ayni dosyadaki eksik `loadMore*`
+              prop'lariyla AYNI kusur ve yine ancak tarayicida gorundu.
+            */}
             <CurveChart
               profile={
                 profile ?? {
@@ -151,6 +160,7 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
               }
               soldTok={soldTok}
               currentPriceWei={stats.priceWeiPerToken}
+              trades={valueOf(trades)?.rows ?? []}
               progressPercent={percent}
             />
           </Card>

@@ -257,3 +257,118 @@ describe('istatistik seridi', () => {
     expect(screen.queryByText('$0.00')).not.toBeInTheDocument()
   })
 })
+
+/**
+ * =========================================================================
+ *  GERCEKLESEN SERI EGRININ USTUNDE OLMAK ZORUNDA -- BU BIR SECIM DEGIL.
+ * =========================================================================
+ *
+ * Bir bonding curve'de fiyat, SATILAN MIKTARIN FONKSIYONUDUR. Dolayisiyla her
+ * gerceklesen islem, referans egrinin uzerinde bir NOKTADIR; baska bir yerde
+ * olmasi zincirde IMKANSIZDIR.
+ *
+ * Kod noktalari `PAD.left + (i / (n - 1)) * (markerX - PAD.left)` ile ESIT
+ * ARALIKLARLA dagitiyordu -- ve hemen ustundeki yorum "islemin kendi
+ * rezervine gore konumlariz" diyordu, yani yorum kodun TERSINI soyluyordu.
+ * Sonuc gorsel bir yalandi: yirmi kucuk alim ve bir dev alim, egriden sapan
+ * duzgun bir rampa gibi cizilirdi.
+ *
+ * ASAGIDAKI VEKTOR TAM DA BUNUN ICIN SECILDI: uc islem, ve ORTADAKI dev.
+ * Esit aralikli x'te ortanca nokta yolun %50'sine oturur; gercek konumu
+ * %90'dir. Esit araliklarla dagitilmis her seri bu testte duser; egrinin
+ * uzerine oturan hicbiri dusmez.
+ */
+describe('curve chart -- gerceklesen noktalar egrinin USTUNDE', () => {
+  /** `d` icindeki `M x y L x y ...` -> nokta dizisi. */
+  function pointsOf(d: string): { x: number; y: number }[] {
+    return [...d.matchAll(/[ML]([\d.]+) ([\d.]+)/g)].map((m) => ({
+      x: Number(m[1]),
+      y: Number(m[2]),
+    }))
+  }
+
+  /** Referans poligonu `x`te dogrusal olarak orneklenir. */
+  function curveYAt(curve: { x: number; y: number }[], x: number): number {
+    for (let i = 1; i < curve.length; i += 1) {
+      const a = curve[i - 1]!
+      const b = curve[i]!
+      if (x >= a.x && x <= b.x) {
+        const t = b.x === a.x ? 0 : (x - a.x) / (b.x - a.x)
+        return a.y + t * (b.y - a.y)
+      }
+    }
+    return NaN
+  }
+
+  const S = PROFILE.saleSupply
+  const T = PROFILE.virtualTokenReserves
+  const V = PROFILE.virtualQuoteReserves
+
+  /** Zincirin kendi aritmetigi: `vT = T - sold`, `vQ = V*T/vT`. */
+  function tradeAt(soldFraction: bigint, block: bigint) {
+    const sold = (S * soldFraction) / 100n
+    const vT = T - sold
+    return {
+      ...BUY_ONE_USDC,
+      eventSeq: block << 20n,
+      virtualTokenReservesTok: vT,
+      virtualQuoteReservesWei: (V * T) / vT,
+      realTokenReservesTok: S - sold,
+    }
+  }
+
+  it('her gerceklesen nokta referans egrinin uzerine dusar', () => {
+    // %10, sonra DEV bir alimla %90, sonra %91. Esit aralikli x, ortanca
+    // noktayi yolun yarisina koyar; gercegi %90'dir.
+    const trades = [tradeAt(10n, 1n), tradeAt(90n, 2n), tradeAt(91n, 3n)]
+    render(
+      <CurveChart
+        profile={PROFILE}
+        soldTok={(S * 91n) / 100n}
+        currentPriceWei={(V * T) / (T - (S * 91n) / 100n) / 10n ** 9n}
+        trades={trades}
+        progressPercent="91.0"
+      />,
+    )
+
+    const curve = pointsOf(screen.getByTestId('curve-reference').getAttribute('d') ?? '')
+    const realised = pointsOf(screen.getByTestId('curve-realised').getAttribute('d') ?? '')
+
+    // ANTI-VACUITY: iki seri de gercekten cizilmis olmali.
+    expect(curve.length).toBeGreaterThan(10)
+    expect(realised).toHaveLength(3)
+
+    for (const point of realised) {
+      const expected = curveYAt(curve, point.x)
+      expect(Number.isNaN(expected), `x=${point.x} referans egrinin disinda`).toBe(false)
+      // Tolerans, referans egrinin ornekleme adimindan gelen dogrusallastirma
+      // hatasi kadar -- piksel olcusunde 1'in altinda.
+      expect(Math.abs(point.y - expected), `y sapmasi x=${point.x}`).toBeLessThan(1)
+    }
+  })
+
+  it('ortanca noktanin x’i sira numarasindan DEGIL satilan miktardan gelir', () => {
+    const trades = [tradeAt(10n, 1n), tradeAt(90n, 2n), tradeAt(91n, 3n)]
+    render(
+      <CurveChart
+        profile={PROFILE}
+        soldTok={(S * 91n) / 100n}
+        currentPriceWei={1n}
+        trades={trades}
+        progressPercent="91.0"
+      />,
+    )
+    const realised = pointsOf(screen.getByTestId('curve-realised').getAttribute('d') ?? '')
+    const [first, middle, last] = realised as [
+      { x: number; y: number },
+      { x: number; y: number },
+      { x: number; y: number },
+    ]
+
+    // Esit aralikli mutant: middle tam olarak first ve last'in ORTASINDA olur.
+    const evenlySpaced = (first.x + last.x) / 2
+    expect(Math.abs(middle.x - evenlySpaced)).toBeGreaterThan(20)
+    // ...ve gercek konum son noktaya cok yakindir (%90 ile %91).
+    expect(Math.abs(middle.x - last.x)).toBeLessThan(10)
+  })
+})

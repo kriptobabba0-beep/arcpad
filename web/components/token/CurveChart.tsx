@@ -64,6 +64,14 @@ export type RealisedPoint = {
   readonly priceWei: bigint
   readonly seq: bigint
   readonly at: Date
+  /**
+   * O ISLEMIN KENDI real token rezervi -- grafigin X EKSENININ kaynagi.
+   *
+   * Satilan miktar `saleSupply - realTokenReserves`tir ve cikarma BURADA
+   * yapilmaz: paydasi profilden gelir, `realisedSeries`in elinde yoktur.
+   * Bugunun rezervinden hesaplansaydi butun noktalar ayni x'e otururdu.
+   */
+  readonly realTokenReservesTok: bigint
 }
 
 export function realisedSeries(trades: readonly TradeRow[]): RealisedPoint[] {
@@ -85,6 +93,7 @@ export function realisedSeries(trades: readonly TradeRow[]): RealisedPoint[] {
       priceWei: priceWeiPerToken(trade.virtualQuoteReservesWei, trade.virtualTokenReservesTok),
       seq: trade.eventSeq,
       at: trade.blockTime,
+      realTokenReservesTok: trade.realTokenReservesTok,
     }
     const existing = lastPerBlock.get(block)
     if (existing === undefined || point.seq > existing.seq) {
@@ -147,10 +156,19 @@ export function CurveChart({
   const markerX = xOf(soldTok)
   const markerY = yOf(currentPriceWei)
 
+  /*
+   * "N ISLEM DRAWN", "N ISLEM SO FAR" DEGIL.
+   *
+   * Onceki hal `${realised.length} trades so far` yaziyordu. `realised`,
+   * sayfaya gelen ILK SAYFADAN (25 satir) turetilir ve blok basina tek noktaya
+   * indirgenir; yani dort bin islemi olan bir token icin bu cumle "25 trades
+   * so far" derdi. Bir toplam gibi okunan ve toplam OLMAYAN bir sayi, bu
+   * projenin tek kirmizi cizgisi. Cizilen nokta sayisi cizilen nokta sayisidir.
+   */
   const summary =
     `Bonding curve price from ${formatPriceWeiPerToken(minPrice)} to ` +
     `${formatPriceWeiPerToken(maxPrice)} USDC per token across the sale supply. ` +
-    `${realised.length} trade${realised.length === 1 ? '' : 's'} so far; ` +
+    `${realised.length} recent trade${realised.length === 1 ? '' : 's'} drawn on the curve; ` +
     `${progressPercent}% to graduation.`
 
   return (
@@ -188,11 +206,29 @@ export function CurveChart({
         {realised.length > 1 ? (
           <path
             d={path(
-              realised.map((p, i) => ({
-                // Gerceklesen seri satilan-token ekseninde degil ISLEM
-                // sirasinda gelir; egrinin uzerine oturtmak icin x'i satilan
-                // miktara degil, islemin kendi rezervine gore konumlariz.
-                x: PAD.left + (i / (realised.length - 1)) * (markerX - PAD.left),
+              realised.map((p) => ({
+                /*
+                 * X, ISLEMIN KENDI REZERVINDEN -- SIRA NUMARASINDAN DEGIL.
+                 *
+                 * Buradaki ifade `PAD.left + (i / (n - 1)) * (markerX -
+                 * PAD.left)` idi: noktalar esit araliklarla dagitiliyordu ve
+                 * ustundeki yorum "islemin kendi rezervine gore konumlariz"
+                 * diyordu. Yorum kodun TERSINI soyluyordu.
+                 *
+                 * Sonucu bir gorsel yalandi. Bir bonding curve'de fiyat
+                 * satilan miktarin FONKSIYONUDUR, yani her gerceklesen nokta
+                 * referans egrinin USTUNDE olmak ZORUNDA. Esit araliklarla
+                 * dagitilinca degildi: yirmi kucuk alim ve bir dev alim,
+                 * egriden sapan duzgun bir rampa gibi cizilirdi -- bu curve'de
+                 * GERCEKLESMESI IMKANSIZ bir sekil. Gercek eksende ayni veri
+                 * egrinin uzerinde bir PARCA olur ve islemlerin nerede
+                 * yogunlastigini gosterir.
+                 *
+                 * Satis SOLA gider ve bu da dogrudur: `realTokenReserves`
+                 * artar, yani satilan miktar azalir ve cizgi egri boyunca geri
+                 * doner. Sira KRONOLOJIKTIR (blok), x ise konumdur.
+                 */
+                x: xOf(S - p.realTokenReservesTok),
                 y: yOf(p.priceWei),
               })),
             )}
@@ -234,7 +270,8 @@ export function CurveChart({
       <figcaption className="text-[12px] text-muted">
         {realised.length === 0
           ? 'No trades yet — this is the bonding curve itself, with the current position marked.'
-          : 'Bonding curve with realised trade prices. The x axis is blocks, not wall-clock time.'}
+          : 'Bonding curve with recent realised prices. The x axis is tokens sold, not time — ' +
+            'a sell moves the line back to the left.'}
       </figcaption>
     </figure>
   )

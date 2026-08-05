@@ -573,3 +573,68 @@ test('a lagging indexer says so, on BOTH pages, and the trade panel says it is u
     await pool!.query('UPDATE sync_state SET updated_at = now() WHERE id = 1')
   }
 })
+
+/**
+ * =========================================================================
+ *  THE CHART'S REALISED LAYER, WHICH NO PAGE HAD EVER DRAWN.
+ * =========================================================================
+ *
+ * `<CurveChart>`'s `trades` prop is optional and defaults to `[]`, and the
+ * token page never passed it. So `realisedSeries([])` was always empty,
+ * `realised.length > 1` was always false, and the `curve-realised` path never
+ * entered the DOM on any real page — while the component's own tests passed
+ * `trades` themselves and drew it happily. Third instance in this file of one
+ * failure mode: A PROP THE COMPONENT TESTS SUPPLY AND THE PAGE DOES NOT.
+ *
+ * The fixture was hiding it a second way: `realisedSeries` keeps the LAST
+ * trade per BLOCK, and all 28 deep trades were written into ONE block, so even
+ * a page that passed them would have had a single point and drawn nothing.
+ * They are one-per-block now.
+ */
+test('the curve chart draws the realised layer, and it lies ON the reference curve', async ({
+  page,
+}) => {
+  const deep = fixture!.deep
+  const { rows } = await pool!.query<{ n: string }>(
+    'SELECT count(DISTINCT block_number)::text AS n FROM trades WHERE token = $1',
+    [deep],
+  )
+  expect(
+    Number(rows[0]!.n),
+    'the realised layer needs trades in MORE THAN ONE block to exist at all',
+  ).toBeGreaterThan(1)
+
+  await page.goto(url(`/token/${deep}`))
+
+  const reference = page.locator('[data-testid="curve-reference"]')
+  const realised = page.locator('[data-testid="curve-realised"]')
+  await expect(reference).toHaveCount(1)
+  await expect(realised, 'the realised overlay must be in the DOM of a real page').toHaveCount(1)
+
+  const parse = (d: string) =>
+    [...d.matchAll(/[ML]([\d.]+) ([\d.]+)/g)].map((m) => ({ x: Number(m[1]), y: Number(m[2]) }))
+
+  const curve = parse((await reference.getAttribute('d')) ?? '')
+  const points = parse((await realised.getAttribute('d')) ?? '')
+  expect(points.length, 'more than one point, or there is no line').toBeGreaterThan(1)
+
+  /*
+   * ON A BONDING CURVE THE REALISED PRICE IS A FUNCTION OF TOKENS SOLD, so
+   * every realised point MUST sit on the reference curve. Positioned by index
+   * — which is what the code did — they do not, and the chart shows a price
+   * history that this curve cannot produce.
+   */
+  for (const point of points) {
+    const seg = curve.find((_, i) => i > 0 && curve[i - 1]!.x <= point.x && point.x <= curve[i]!.x)
+    const prev = seg === undefined ? undefined : curve[curve.indexOf(seg) - 1]
+    expect(seg !== undefined && prev !== undefined, `x=${point.x} is off the reference curve`).toBe(
+      true,
+    )
+    const t = seg!.x === prev!.x ? 0 : (point.x - prev!.x) / (seg!.x - prev!.x)
+    expect(Math.abs(point.y - (prev!.y + t * (seg!.y - prev!.y)))).toBeLessThan(1)
+  }
+
+  // AND THE CAPTION NAMES THE AXIS IT ACTUALLY USES. It said "the x axis is
+  // blocks", which was false before the fix and after it.
+  await expect(page.getByText(/x axis is tokens sold/i)).toBeVisible()
+})
