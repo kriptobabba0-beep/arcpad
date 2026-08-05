@@ -39,9 +39,37 @@ export function severityToLevel(severity: Severity): AlertLevel {
   return SEVERITY_ORDER[severity] >= SEVERITY_ORDER.page ? 'page' : 'ok'
 }
 
+/**
+ * ================== UC DURUM, IKI DEGIL ==================
+ *
+ * "Kalp atisi var" ile "kalp atisi yok" IKI durumdur ve izleyicinin UC durumu
+ * vardir. Uculuk olculdu, uydurulmadi -- canli factory'ye karsi 40 saniye:
+ * **4 sayfa, 0 kalp atisi**, ve izleyici o sirada gayet iyi calisiyordu; 71
+ * parcalik soguk taramanin dorduncu parcasindaydi.
+ *
+ * Eski model kalp atisini yalnizca BASTAN SONA tamamlanmis bir poll'a
+ * veriyordu. Soguk tarama ise `2 x pollIntervalMs` icinde FIZIKSEL OLARAK
+ * bitemez (709.413 blok / 10.000 = 71 ardisik `eth_getLogs`), yani DOGRU
+ * yapilandirilmis bir izleyici her soguk baslangicta "izleyici izlemiyor"
+ * diye sayfa cikariyordu. Ve tatbikat sifir kalp atisini "there was no
+ * watcher" diye okuyor -- yani tek savunma hatti hem yanlis sayfa cikariyor
+ * hem her yeniden baslatmada kendini YOK ilan ediyordu. Iki kez bunu goren
+ * bir operator pager'i kapatir.
+ *
+ *   `current`      bir poll BASTAN SONA tamamlandi ve tarama BASA yetisti.
+ *                  Maruziyet OLCULDU.
+ *   `catching-up`  izleyici YASIYOR ve tarama ILERLIYOR, ama daha basa
+ *                  yetismedi. Maruziyet HENUZ olculmedi ve bu SOYLENIR.
+ *   (atis yok)     ucuncu durum, ve yaziya DOKULMEZ: onu gormenin tek yolu
+ *                  atisin YOKLUGUDUR. Bu yuzden ilk ikisi ayni akisa,
+ *                  AYIRT EDILEBILIR bicimde yazilir -- yoklugu ancak
+ *                  varliginin iki bicimi de tanimliysa "olu" diye okunabilir.
+ */
+export type WatcherState = 'current' | 'catching-up'
+
 export type AlertEvent =
   | { kind: 'alert'; level: AlertLevel; message: string; at: number }
-  | { kind: 'heartbeat'; at: number }
+  | { kind: 'heartbeat'; at: number; state: WatcherState; detail?: string }
 
 export type AlertSink = (event: AlertEvent) => void
 
@@ -57,10 +85,18 @@ export const consoleSink: AlertSink = (event) => {
   else console.log(line)
 }
 
-/** `render`, hem `consoleSink`in hem `fileSink`in TEK bicimlendiricisidir. */
+/**
+ * `render`, hem `consoleSink`in hem `fileSink`in TEK bicimlendiricisidir.
+ *
+ * `state=` ONEK BICIMINI BOZMADAN EKLENDI ve bu zorunluydu: harici olu-adam
+ * anahtari ve `drill.ts` satiri `^(PAGE|OK|HEARTBEAT) keeper\.graduationWindow
+ * at=(\S+)` ile ayristirir. Alan `at=`den SONRA geldigi icin eski okuyucu da
+ * calismaya devam eder -- yalnizca yeni okuyucu hangi durumda oldugunu GORUR.
+ */
 export function renderEvent(event: AlertEvent): string {
   if (event.kind === 'heartbeat') {
-    return `HEARTBEAT keeper.graduationWindow at=${new Date(event.at).toISOString()}`
+    const detail = event.detail === undefined ? '' : ` ${event.detail}`
+    return `HEARTBEAT keeper.graduationWindow at=${new Date(event.at).toISOString()} state=${event.state}${detail}`
   }
   return `${event.level === 'page' ? 'PAGE' : 'OK'} keeper.graduationWindow at=${new Date(event.at).toISOString()} ${event.message}`
 }
@@ -157,8 +193,25 @@ export function alert(
   sink({ kind: 'alert', level, message, at: now() })
 }
 
-export function heartbeat(sink: AlertSink = consoleSink, now: () => number = Date.now): void {
-  sink({ kind: 'heartbeat', at: now() })
+/**
+ * `state` ZORUNLUDUR, varsayilani YOKTUR.
+ *
+ * Varsayilan `'current'` vermek cazipti ve tam olarak duzeltilen arizayi geri
+ * getirirdi: soguk taramanin ortasindaki bir atis, kendini "basa yetismis"
+ * diye yazardi ve tatbikat maruziyeti OLCULMUS sanardi. Bir cagirani durumu
+ * SOYLEMEYE zorlamak, unutmayi derleme hatasi yapar.
+ */
+export function heartbeat(
+  sink: AlertSink = consoleSink,
+  state: WatcherState = 'current',
+  detail?: string,
+  now: () => number = Date.now,
+): void {
+  const event: AlertEvent =
+    detail === undefined
+      ? { kind: 'heartbeat', at: now(), state }
+      : { kind: 'heartbeat', at: now(), state, detail }
+  sink(event)
 }
 
 // ---------------------------------------------------------------
@@ -214,9 +267,20 @@ export function createThrottle(config?: { repeatAfterMs?: number | undefined }):
 // ---------------------------------------------------------------
 
 export type LivenessCode =
-  'watcher-heartbeat-missed' | 'chain-head-stale' | 'chain-time-skewed' | 'chain-time-frozen'
+  | 'watcher-heartbeat-missed'
+  | 'watcher-catching-up'
+  | 'chain-head-stale'
+  | 'chain-time-skewed'
+  | 'chain-time-frozen'
 
-export type LivenessFinding = { code: LivenessCode; message: string }
+/**
+ * `level` SONRADAN EKLENDI, ve eksikligi bir hataydi.
+ *
+ * Kanarya her bulguyu `page` olarak yayiyordu. Bir bulgu ("izleyici hala
+ * yetisiyor") sayfa DEGILDIR -- kaydedilmesi gereken, ama kimseyi uyandirmamasi
+ * gereken bir olgudur. Ayni akista, ayni throttle'da, ama `OK` satirinda.
+ */
+export type LivenessFinding = { code: LivenessCode; level: AlertLevel; message: string }
 
 export interface LivenessConfig {
   pollIntervalMs: number
@@ -228,11 +292,28 @@ export interface LivenessConfig {
   clockSkewToleranceMs?: number
   /** Zincir saatinin hic ilerlemedigi tolere edilen sure. Varsayilan 10 poll araligi, en az 60 sn. */
   chainTimeFrozenMs?: number
+  /**
+   * Yetisme MODUNDA ilerleme gormeden gecebilecek sure. Varsayilan 60 sn.
+   *
+   * OLCULMUS BIR TABANDIR, secilmis degil: `withRateLimitRetry`in patolojik
+   * durumdaki toplam bekleme tavani 21 saniyedir (`chainReader.ts`), yani
+   * bundan dar bir butce, MESRU bir yeniden denemenin ortasinda sayfa
+   * cikarirdi -- duzeltilen arizanin aynisinin taze bir ornegi.
+   */
+  catchUpStallMs?: number
 }
 
 export interface Liveness {
   /** Yalnizca BASTAN SONA tamamlanmis bir poll'dan sonra cagrilir. */
   pollSucceeded(atMs: number): void
+  /**
+   * TARAMA BIR PARCA ILERLETTI -- poll bitmedi, ama izleyici YASIYOR.
+   *
+   * Ayri bir saat, `pollSucceeded`in saati DEGIL. Ikisini birlestirmek cazipti
+   * ve yanlisti: sonsuza kadar yetisemeyen bir izleyici "guncel" gorunurdu, ki
+   * bu duzeltilen arizanin ta kendisinin ters yonu olurdu.
+   */
+  scanProgressed(atMs: number): void
   /** Her okunan zincir basligi. Ayni numara TEKRAR gorulurse sayac SIFIRLANMAZ. */
   observeHead(blockNumber: bigint, atMs: number): void
   /** Her okunan blok ZAMAN DAMGASI. Blok numarasindan AYRI izlenir; bkz. asagisi. */
@@ -303,9 +384,42 @@ export function createLiveness(config: LivenessConfig, startedAtMs: number): Liv
   // yakalanirdi.
   const skewToleranceMs = config.clockSkewToleranceMs ?? 900_000
   const frozenBudgetMs = config.chainTimeFrozenMs ?? Math.max(60_000, 10 * config.pollIntervalMs)
+  const catchUpStallMs = config.catchUpStallMs ?? 60_000
 
   let lastPollOkAt = startedAtMs
+  /**
+   * `null` = HIC ILERLEME GORULMEDI, ve baslangicta `startedAtMs` OLAMAZ.
+   *
+   * Ilk hali `startedAtMs` ile tohumluyordu ve mevcut kanarya testleri onu
+   * ANINDA yakaladi: bu tohumla, hic poll etmemis -- yani ILK ANDAN ITIBAREN
+   * bozuk -- bir izleyici, ilk 60 saniye boyunca "yetisiyor" diye okunuyordu ve
+   * `watcher-heartbeat-missed` CIKMIYORDU. Yani duzeltmenin kendisi,
+   * duzeltmeye calistigi sinifin (bir arizanin baska bir ariza gibi
+   * raporlanmasi) taze bir ornegini iceriyordu -- bu depoda alti kez olan sey.
+   *
+   * `lastPollOkAt`in dogustan kurulu olmasi DOGRU (bir sayaci gec baslatmak
+   * kanaryayi bosaltir); ilerlemenin `null` baslamasi da ayni sebepten dogru:
+   * "ilerleme gorulmedi" bir MAZERET degildir.
+   */
+  let lastProgressAt: number | null = null
   let lastHeadChangeAt = startedAtMs
+  /**
+   * BASI EN SON NE ZAMAN GORDUGUMUZ -- ne zaman DEGISTIGI degil.
+   *
+   * `chain-head-stale` bir sure `atMs - lastHeadChangeAt`e bakiyordu, yani
+   * "en son bakisimdan bu yana gecen sure"yi "zincir durdu" diye raporluyordu.
+   * OLCULDU (canli, 2026-08-05): iki sayfa cikti --
+   *   "chain head stuck at block 55372283 for 14999ms"
+   *   "chain head stuck at block 55372354 for 13970ms"
+   * -- ve MESAJIN KENDI IKI SAYISI basin 71 blok ilerledigini kanitliyor. Donan
+   * sey RPC degil, tek is parcacikli poll'un GOZLEMIYDI: taramanin icindeydi.
+   *
+   * Dedektorun cevaplamasi gereken soru "iki GOZLEM arasinda bas ayni mi
+   * kaldi"dir. Hic bakmadigimiz sure onun sorusu degil -- o, kalp atisi
+   * dedektorunun sorusudur, ve iki soruyu tek sayaca bagli birakmak birinin
+   * digerinin adiyla raporlanmasi demekti.
+   */
+  let lastHeadSeenAt = startedAtMs
   let lastHead: bigint | null = null
   let lastChainTimeChangeAt = startedAtMs
   let lastChainSeconds: bigint | null = null
@@ -313,9 +427,18 @@ export function createLiveness(config: LivenessConfig, startedAtMs: number): Liv
 
   return {
     pollSucceeded(atMs: number): void {
+      // `lastProgressAt`E DOKUNMAZ, ve bu bir ihmal degil bir karar. Ilk hali
+      // ikisini birlikte ilerletiyordu ve mevcut bir test onu ANINDA yakaladi:
+      // poll'lari tamamlayip SONRA olen bir izleyici, olumden sonraki 60 saniye
+      // boyunca "yetisiyor" diye okunuyordu. Ilerleme, TAMAMLANMAMIS bir
+      // taramanin sinyalidir; tamamlanmis bir poll onun tersidir.
       lastPollOkAt = atMs
     },
+    scanProgressed(atMs: number): void {
+      lastProgressAt = atMs
+    },
     observeHead(blockNumber: bigint, atMs: number): void {
+      lastHeadSeenAt = atMs
       if (lastHead === null || blockNumber !== lastHead) {
         lastHead = blockNumber
         lastHeadChangeAt = atMs
@@ -332,21 +455,53 @@ export function createLiveness(config: LivenessConfig, startedAtMs: number): Liv
     check(atMs: number): LivenessFinding[] {
       const findings: LivenessFinding[] = []
 
+      // ================== UC DURUM, IKI DEGIL ==================
+      //
+      // `beatAge >= budget` tek basina "izleyici izlemiyor" DEMEZ. Soguk bir
+      // tarama mesru bir uzun islemdir ve `2 x pollIntervalMs` icinde bitemez;
+      // olculen sonuc, DOGRU calisan bir izleyicinin her soguk baslangicta bu
+      // sayfayi cikarmasiydi (40 saniyede 4 sayfa, 0 kalp atisi).
+      //
+      // Ayirt eden sey ILERLEMEDIR: tarama parca basina `scanProgressed`
+      // cagirir. Ilerliyorsa durum "yetisiyor"dur -- KAYDA GECER, kimseyi
+      // UYANDIRMAZ. Ilerleme de durduysa gercekten takilmistir ve SAYFADIR.
       const beatAge = atMs - lastPollOkAt
       const beatBudget = missedBeats * config.pollIntervalMs
+      // "YETISIYOR" UC SART ISTER, ve ucuncusu kolayca atlanirdi:
+      //   1. ilerleme GORULMUS olmali (`null` degil) -- yoksa hic kosmamis bir
+      //      izleyici kendini yetisiyor sanardi;
+      //   2. ilerleme TAZE olmali -- yoksa takilmis bir tarama mazeret olurdu;
+      //   3. ilerleme SON TAMAMLANAN POLL'DAN SONRA olmali. Bu ucuncusu,
+      //      "tamamlayip olen" izleyiciyi ayirir: onun son sinyali bir POLL'dur,
+      //      bir parca degil, ve o izleyici YETISMIYOR -- OLMUS.
+      const progressAge = lastProgressAt === null ? null : atMs - lastProgressAt
+      const midScan = lastProgressAt !== null && lastProgressAt > lastPollOkAt
       if (beatAge >= beatBudget) {
-        findings.push({
-          code: 'watcher-heartbeat-missed',
-          message: `no completed poll for ${beatAge}ms (budget ${beatBudget}ms = ${missedBeats} x ${config.pollIntervalMs}ms); the watcher is not watching`,
-        })
+        if (midScan && progressAge !== null && progressAge < catchUpStallMs) {
+          findings.push({
+            code: 'watcher-catching-up',
+            level: 'ok',
+            message: `no COMPLETED poll for ${beatAge}ms (budget ${beatBudget}ms), but the log scan advanced ${progressAge}ms ago: the watcher is ALIVE and still catching up. Exposure is not measured until the scan reaches the head.`,
+          })
+        } else {
+          findings.push({
+            code: 'watcher-heartbeat-missed',
+            level: 'page',
+            message: `no completed poll for ${beatAge}ms (budget ${beatBudget}ms = ${missedBeats} x ${config.pollIntervalMs}ms) AND ${progressAge === null ? 'NO scan progress has ever been reported' : `no scan progress for ${progressAge}ms`} (budget ${catchUpStallMs}ms); the watcher is not watching`,
+          })
+        }
       }
 
-      const headAge = atMs - lastHeadChangeAt
+      // GOZLEMLER ARASI YAS. Bkz. `lastHeadSeenAt`: "bakmadim" ile "zincir
+      // durdu" ayni sayaca bagliydi ve ikincisi birincinin adiyla
+      // raporlaniyordu.
+      const headAge = lastHeadSeenAt - lastHeadChangeAt
       const headBudget = staleIntervals * config.pollIntervalMs
       if (headAge >= headBudget) {
         findings.push({
           code: 'chain-head-stale',
-          message: `chain head stuck at block ${lastHead === null ? 'none-observed' : lastHead.toString()} for ${headAge}ms (budget ${headBudget}ms); the RPC is serving a frozen view and the window clock cannot advance`,
+          level: 'page',
+          message: `chain head stuck at block ${lastHead === null ? 'none-observed' : lastHead.toString()} across observations spanning ${headAge}ms (budget ${headBudget}ms; last looked ${atMs - lastHeadSeenAt}ms ago); the RPC is serving a frozen view and the window clock cannot advance`,
         })
       }
 
@@ -357,6 +512,7 @@ export function createLiveness(config: LivenessConfig, startedAtMs: number): Liv
       if (lastSkewMs !== null && Math.abs(lastSkewMs) > skewToleranceMs) {
         findings.push({
           code: 'chain-time-skewed',
+          level: 'page',
           message: `chain time is ${lastSkewMs > 0 ? 'ahead of' : 'behind'} local time by ${Math.abs(lastSkewMs)}ms (tolerance ${skewToleranceMs}ms); the window phase is computed from chain time, so it cannot be trusted while this holds`,
         })
       }
@@ -367,6 +523,7 @@ export function createLiveness(config: LivenessConfig, startedAtMs: number): Liv
       if (chainTimeAge >= frozenBudgetMs) {
         findings.push({
           code: 'chain-time-frozen',
+          level: 'page',
           message: `chain timestamp stuck at ${lastChainSeconds === null ? 'none-observed' : lastChainSeconds.toString()} for ${chainTimeAge}ms (budget ${frozenBudgetMs}ms, deliberately loose because Arc documents that block timestamps may not increase); the window clock has stopped`,
         })
       }

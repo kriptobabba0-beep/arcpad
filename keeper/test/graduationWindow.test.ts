@@ -13,6 +13,7 @@ import {
   fileSink,
   heartbeat as emitHeartbeat,
   multiSink,
+  type WatcherState,
 } from '../src/alert'
 import { parseGovernanceAllowlist } from '../src/config'
 import { type AlertSinkQuery, drillExpiry, drillObserve, fileAlertSink } from '../src/drill'
@@ -254,10 +255,18 @@ const PINNED: PinnedFactory = await assertFactoryMatchesGovernance(
 function recorder(): {
   events: AlertEvent[]
   alert: (level: AlertLevel, message: string) => void
-  heartbeat: () => void
+  heartbeat: (state: WatcherState, detail?: string) => void
   pages: () => string[]
   oks: () => string[]
+  /**
+   * `current` ATISLARI. Bu sayaci "her atis" olarak birakmak, duzeltmenin
+   * icine duzeltilen kusurun taze bir ornegini koyardi: bir yetisme atisi
+   * "poll tamamlandi"nin kaniti DEGILDIR ve `beats() === 1` diyen her mevcut
+   * test sessizce yanlis seyi olcmeye baslardi.
+   */
   beats: () => number
+  /** `catching-up` atislari -- AYRI sayilir. */
+  catchUpBeats: () => number
 } {
   const events: AlertEvent[] = []
   return {
@@ -265,13 +274,19 @@ function recorder(): {
     alert: (level, message) => {
       events.push({ kind: 'alert', level, message, at: 0 })
     },
-    heartbeat: () => {
-      events.push({ kind: 'heartbeat', at: 0 })
+    heartbeat: (state, detail) => {
+      events.push(
+        detail === undefined
+          ? { kind: 'heartbeat', at: 0, state }
+          : { kind: 'heartbeat', at: 0, state, detail },
+      )
     },
     pages: () =>
       events.flatMap((e) => (e.kind === 'alert' && e.level === 'page' ? [e.message] : [])),
     oks: () => events.flatMap((e) => (e.kind === 'alert' && e.level === 'ok' ? [e.message] : [])),
-    beats: () => events.filter((e) => e.kind === 'heartbeat').length,
+    beats: () => events.filter((e) => e.kind === 'heartbeat' && e.state === 'current').length,
+    catchUpBeats: () =>
+      events.filter((e) => e.kind === 'heartbeat' && e.state === 'catching-up').length,
   }
 }
 
@@ -1200,11 +1215,32 @@ describe('kirilma 1: log abonesi dustu (loglar SESSIZCE bos donuyor)', () => {
 describe('kirilma 2: izleyici poll etmeyi birakti', () => {
   const POLL = 5_000
 
+  /**
+   * ============ `chain-head-stale` ARTIK BURADA CIKMIYOR, VE BU DUZELTME ====
+   *
+   * Iki test de eskiden `['watcher-heartbeat-missed', 'chain-head-stale']`
+   * bekliyordu. Ikinci kod YANLISTI ve yanligi canlida olculdu: mesaji "the RPC
+   * is serving a frozen view" der, oysa gozlenen sey RPC degil BIZIM
+   * BAKISIMIZDI. Kanit sayfalarin KENDI metnindeydi --
+   *   "chain head stuck at block 55372283 for 14999ms"
+   *   "chain head stuck at block 55372354 for 13970ms"
+   * -- iki sayfa arasinda bas 71 blok ilerlemis. Yani dedektor "en son ne zaman
+   * BAKTIM"i "zincir durdu" diye raporluyordu.
+   *
+   * Yeni olcu GOZLEMLER ARASI: `lastHeadSeenAt - lastHeadChangeAt`. Hic
+   * bakmadigimiz sure `watcher-heartbeat-missed`in sorusudur ve o SORU HALA
+   * CEVAPLANIYOR -- asagidaki iki iddia da onu gosteriyor. Kaybedilen bir
+   * kapsam yok; kaybedilen, ayni olgunun ikinci ve yanlis adiydi.
+   */
   it('kanarya DOGUSTAN kurulu: hic basarili poll yapmadan iki aralik gecerse sayfa', () => {
     const liveness = createLiveness({ pollIntervalMs: POLL }, NOW_MS)
     expect(liveness.check(NOW_MS + POLL)).toEqual([])
     const findings = liveness.check(NOW_MS + 2 * POLL)
-    expect(findings.map((f) => f.code)).toEqual(['watcher-heartbeat-missed', 'chain-head-stale'])
+    // TEK sayfa, ve DOGRU olan: hic bas GORMEDIK, yani zincir hakkinda
+    // soyleyecek sozumuz yok.
+    expect(findings.map((f) => f.code)).toEqual(['watcher-heartbeat-missed'])
+    expect(findings[0]?.level).toBe('page')
+    expect(findings[0]?.message).toContain('NO scan progress has ever been reported')
   })
 
   it('poll ediliyorken sessiz, DURDUGUNDA iki aralik sonra sayfa', () => {
@@ -1218,8 +1254,63 @@ describe('kirilma 2: izleyici poll etmeyi birakti', () => {
     // Burada durur.
     expect(liveness.check(NOW_MS + 60_000 + POLL)).toEqual([])
     const findings = liveness.check(NOW_MS + 60_000 + 2 * POLL)
-    expect(findings.map((f) => f.code)).toEqual(['watcher-heartbeat-missed', 'chain-head-stale'])
+    // Bakmayi biraktik; zincir bizden bagimsiz ilerliyor olabilir ve son
+    // GOZLEMLERIMIZDE ilerliyordu. Tek dogru cumle "izleyici izlemiyor".
+    expect(findings.map((f) => f.code)).toEqual(['watcher-heartbeat-missed'])
     expect(findings[0]?.message).toContain('the watcher is not watching')
+  })
+
+  /**
+   * ============ UC DURUM: guncel / yetisiyor / yok ============
+   *
+   * B2-b'nin olcumu: canli factory'ye karsi 40 saniyede 4 sayfa, 0 kalp atisi;
+   * `log-scan-failed` DOGRU, `watcher-heartbeat-missed` ve `chain-head-stale`
+   * YANLIS. Asagidaki uc iddia o uc durumu ayirir.
+   */
+  it('YETISIYOR: ilerleme varken sayfa DEGIL, kayit', () => {
+    const liveness = createLiveness({ pollIntervalMs: POLL }, NOW_MS)
+    // Soguk tarama: poll hic BITMIYOR ama parcalar ilerliyor.
+    liveness.scanProgressed(NOW_MS + 3_000)
+    const findings = liveness.check(NOW_MS + 2 * POLL)
+    expect(findings.map((f) => f.code)).toEqual(['watcher-catching-up'])
+    // KIMSEYI UYANDIRMAZ.
+    expect(findings[0]?.level).toBe('ok')
+    expect(findings[0]?.message).toContain('ALIVE and still catching up')
+  })
+
+  it('YOK: ilerleme de durduysa yine SAYFA -- yetisme bir mazeret degil', () => {
+    const liveness = createLiveness({ pollIntervalMs: POLL, catchUpStallMs: 30_000 }, NOW_MS)
+    liveness.scanProgressed(NOW_MS + 1_000)
+    // Ilerlemenin uzerinden butceden fazlasi gecti.
+    const findings = liveness.check(NOW_MS + 1_000 + 30_001)
+    expect(findings.map((f) => f.code)).toEqual(['watcher-heartbeat-missed'])
+    expect(findings[0]?.level).toBe('page')
+  })
+
+  it('TAMAMLANIP OLEN bir izleyici "yetisiyor" diye okunmaz', () => {
+    // Bu, duzeltmenin ICINDEKI kusurdu: `pollSucceeded` bir sure
+    // `lastProgressAt`i de ilerletiyordu, yani poll'lari bitirip SONRA olen bir
+    // izleyici 60 saniye boyunca "yetisiyor" gorunuyordu.
+    const liveness = createLiveness({ pollIntervalMs: POLL }, NOW_MS)
+    liveness.scanProgressed(NOW_MS + 1_000)
+    liveness.pollSucceeded(NOW_MS + 2_000)
+    const findings = liveness.check(NOW_MS + 2_000 + 2 * POLL)
+    expect(findings.map((f) => f.code)).toEqual(['watcher-heartbeat-missed'])
+  })
+
+  /**
+   * CANLI ARIZANIN BIREBIR SEKLI: poll uzun surdugu icin ARALIKLI gozlem, ve
+   * gozlemler arasinda bas ILERLIYOR. Eski dedektor burada sayfa cikariyordu.
+   */
+  it('uzun bir poll yuzunden seyrek bakmak, "zincir dondu" DEGILDIR', () => {
+    const liveness = createLiveness({ pollIntervalMs: POLL }, NOW_MS)
+    liveness.observeHead(55_372_283n, NOW_MS)
+    // 15 saniye sonra tekrar bakildi -- ve bas ILERLEMIS.
+    liveness.observeHead(55_372_354n, NOW_MS + 15_000)
+    liveness.scanProgressed(NOW_MS + 15_000)
+    const codes = liveness.check(NOW_MS + 15_000).map((f) => f.code)
+    expect(codes).not.toContain('chain-head-stale')
+    expect(codes).toEqual(['watcher-catching-up'])
   })
 
   it('yarim poll kalp atisi vermez, yani kanarya onu da yakalar', async () => {

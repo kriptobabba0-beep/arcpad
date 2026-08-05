@@ -4,6 +4,7 @@ import { argv, env, exit } from 'node:process'
 import { fileURLToPath } from 'node:url'
 import { createArcClient } from '@arcpad/shared'
 import { type Address, BaseError, ContractFunctionRevertedError, getAddress } from 'viem'
+import type { WatcherState } from './alert'
 import { blankToUndefined, loadWatcherConfig, resolveFromRepoRoot } from './config'
 import { loadRepoEnv } from './env'
 import { FACTORY_WATCH_ABI } from './watch/graduationWindow'
@@ -52,7 +53,13 @@ export function drillSinkPath(env: NodeJS.ProcessEnv): string | undefined {
  * BORUSUNUN calistigi hakkinda hicbir sey soylemezdi -- ve on bir kez isiran
  * sekil tam olarak "mekanizma var ama ciktisi hicbir yere varmiyor"dur.
  */
-export type SinkLine = { kind: 'page' | 'ok' | 'heartbeat'; atMs: number; text: string }
+export type SinkLine = {
+  kind: 'page' | 'ok' | 'heartbeat'
+  atMs: number
+  text: string
+  /** Yalnizca `heartbeat` satirlarinda. Eski bicimli satirlarda `undefined`. */
+  state?: WatcherState
+}
 
 export interface AlertSinkQuery {
   /** `sinceMs`ten SONRA damgalanmis satirlar. Damgasi okunamayan satir DUSER. */
@@ -60,6 +67,8 @@ export interface AlertSinkQuery {
 }
 
 const LINE = /^(PAGE|OK|HEARTBEAT) keeper\.graduationWindow at=(\S+)/
+/** `state=` OPSIYONEL ayristirilir: bu alandan onceki satirlar da okunabilir. */
+const STATE = /\bstate=(current|catching-up)\b/
 
 /**
  * `consoleSink`/`fileSink`in yazdigi satirlari okuyan lavabo sorgusu. Bicim
@@ -94,7 +103,8 @@ export function fileAlertSink(path: string): AlertSinkQuery {
         const atMs = Date.parse(m[2] as string)
         if (Number.isNaN(atMs) || atMs < sinceMs) continue
         const kind = m[1] === 'PAGE' ? 'page' : m[1] === 'OK' ? 'ok' : 'heartbeat'
-        out.push({ kind, atMs, text })
+        const state = STATE.exec(text)?.[1] as WatcherState | undefined
+        out.push(state === undefined ? { kind, atMs, text } : { kind, atMs, text, state })
       }
       return Promise.resolve(out)
     },
@@ -134,18 +144,21 @@ export async function drillObserve(deps: {
   const attempts = deps.attempts ?? 3
   const needle = deps.target.toLowerCase()
   let beats = 0
+  let catchingUp = 0
   let pages = 0
 
   for (let i = 0; i < attempts; i += 1) {
     const lines = await deps.sink.readSince(deps.sinceMs)
-    beats = lines.filter((l) => l.kind === 'heartbeat').length
+    const heartbeats = lines.filter((l) => l.kind === 'heartbeat')
+    beats = heartbeats.length
+    catchingUp = heartbeats.filter((l) => l.state === 'catching-up').length
     const fresh = lines.filter((l) => l.kind === 'page')
     pages = fresh.length
     const hit = fresh.find((l) => l.text.toLowerCase().includes(needle))
     if (hit !== undefined && beats > 0) {
       return {
         ok: true,
-        detail: `paged on attempt ${i + 1}/${attempts}, and the watcher was alive for it (${beats} heartbeat(s) inside the window): ${hit.text}`,
+        detail: `paged on attempt ${i + 1}/${attempts}, and the watcher was alive for it (${describeBeats(beats, catchingUp)} inside the window): ${hit.text}`,
       }
     }
     if (i + 1 < attempts) await deps.sleep(deps.waitMs)
@@ -155,13 +168,29 @@ export async function drillObserve(deps: {
   if (beats === 0) {
     return {
       ok: false,
-      detail: `NO HEARTBEAT in the sink since ${window}. The watcher was not running during this drill, so nothing here is evidence either way -- do not read this as "the alarm failed", read it as "there was no watcher". Runbook section 6.`,
+      detail: `NO HEARTBEAT of ANY state in the sink since ${window}. The watcher was not running during this drill, so nothing here is evidence either way -- do not read this as "the alarm failed", read it as "there was no watcher". A watcher that is merely BEHIND still beats (state=catching-up), so this is not the cold-start case. Runbook section 6.`,
     }
   }
   return {
     ok: false,
-    detail: `The watcher was alive (${beats} heartbeat(s) since ${window}) but produced NO PAGE naming ${deps.target} in that window. ${pages} unrelated page(s) were in it. The alarm path did not carry the proposal.`,
+    detail: `The watcher was alive (${describeBeats(beats, catchingUp)} since ${window}) but produced NO PAGE naming ${deps.target} in that window. ${pages} unrelated page(s) were in it. The alarm path did not carry the proposal.`,
   }
+}
+
+/**
+ * "6 heartbeat(s)" ile "6 heartbeat(s), ALL of them while still catching up"
+ * AYNI SEY DEGILDIR ve rota'yi ayni yere gondermez.
+ *
+ * Yalnizca yetisme atisi gormek, izleyicinin YASADIGINI ispatlar ama maruziyet
+ * sayisinin OLCULMEDIGINI de soyler -- ve bir tatbikat basarisizligini
+ * "izleyici yok" diye okumak, bu deponun on iki kez odedigi hatadir.
+ */
+function describeBeats(beats: number, catchingUp: number): string {
+  if (catchingUp === 0) return `${beats} heartbeat(s)`
+  if (catchingUp === beats) {
+    return `${beats} heartbeat(s), ALL of them state=catching-up -- the watcher was alive but had not finished its log scan, so exposure was never measured in this window`
+  }
+  return `${beats} heartbeat(s), ${catchingUp} of them state=catching-up`
 }
 
 /**

@@ -100,10 +100,11 @@ async function main(): Promise<void> {
       alert: (level, message) => {
         alert(level, message, sink)
       },
-      heartbeat: () => {
+      heartbeat: (state, detail) => {
         // KALP ATISI ASLA BASTIRILMAZ. Harici olu-adam anahtari onu SAYAR;
-        // seyrelttigimiz an, o anahtarin esigi anlamsizlasir.
-        heartbeat(sink)
+        // seyrelttigimiz an, o anahtarin esigi anlamsizlasir. `state` de
+        // bastirilmaz: `catching-up` bir atistir, atisin YOKLUGU degil.
+        heartbeat(sink, state, detail)
       },
       liveness,
       store,
@@ -125,7 +126,11 @@ async function main(): Promise<void> {
     const findings = liveness.check(now)
     for (const finding of findings) {
       if (canaryThrottle.shouldEmit(finding.code, now)) {
-        alert('page', `${finding.code}: ${finding.message}`, sink)
+        // SEVIYE BULGUNUN KENDISINDEN. Eskiden hepsi `page`di ve
+        // `watcher-catching-up` -- "izleyici yasiyor, hala yetisiyor" -- bir
+        // insani uyandirmak icin fazlasiyla normal bir olgudur. Kaydedilir,
+        // pager'a gitmez.
+        alert(finding.level, `${finding.code}: ${finding.message}`, sink)
       }
     }
     canaryThrottle.sweep(findings.map((finding) => finding.code))

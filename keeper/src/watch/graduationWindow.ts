@@ -8,6 +8,7 @@ import {
   maxSeverity,
   type Severity,
   severityToLevel,
+  type WatcherState,
 } from '../alert'
 
 /**
@@ -1014,6 +1015,17 @@ function readAddressList(value: unknown, field: string): Address[] {
 export const DEFAULT_LOG_SCAN_CHUNK = 10_000n
 
 /**
+ * BIR PARCA BITTI. Soguk taramanin "yasiyorum" sinyali.
+ *
+ * `scanFactoryLogs` bir POLL ICINDE dakikalarca surebilir (709.413 blok / 10.000
+ * = 71 ardisik `eth_getLogs`) ve bu sure boyunca disaridan OLU bir surecten
+ * ayirt edilemezdi. Geri cagri her BASARILI parcadan sonra atesler, yani
+ * canlilik "poll bitti mi" sorusundan KOPARILIR -- tam olarak B2-b'nin
+ * duzeltmesi.
+ */
+export type ScanProgress = (scannedThrough: bigint, head: bigint) => void
+
+/**
  * KURUM ICI INDEXER OLMADIGI ICIN CURVE KUMESI LOGLARDAN GELIR.
  *
  * MARUZIYETI EKSIK BILDIREN BIR SAYFA, HIC SAYFA CIKARMAMAKTAN DAHA KOTUDUR:
@@ -1042,7 +1054,7 @@ export async function scanFactoryLogs(
   client: ChainReader,
   factory: Address,
   startBlock: bigint,
-  opts?: { store?: CursorStore; head?: bigint; chunk?: bigint },
+  opts?: { store?: CursorStore; head?: bigint; chunk?: bigint; onProgress?: ScanProgress },
 ): Promise<{ curves: Address[]; history: GovernanceHistory }> {
   const head = opts?.head ?? (await client.getBlock()).number
   const chunk = opts?.chunk ?? DEFAULT_LOG_SCAN_CHUNK
@@ -1171,6 +1183,19 @@ export async function scanFactoryLogs(
       }
     }
     from = to + 1n
+
+    // PARCA BASINA KAYIT, YALNIZCA HATADA VE SONDA DEGIL.
+    //
+    // Eski hal ilerlemeyi SADECE bir `LogScanError` firlatildiginda ya da
+    // tarama BITTIGINDE yaziyordu. Yani SIGTERM, OOM ya da makine kapanmasi --
+    // firlatilmis bir `LogScanError` OLMAYAN her sey -- 71 parcalik yuruyusun
+    // TAMAMINI cope atiyordu ve bir sonraki kosu bastan basliyordu. Bir soguk
+    // taramanin asla bitmemesi tam olarak boyle olur.
+    //
+    // Ayrica `onProgress`in ANLAMINI tasiyan sey budur: "yasiyorum" demek,
+    // ilerlemeyi KALICI kilmadan yarim bir iddiadir.
+    store?.write(snapshot(to))
+    opts?.onProgress?.(to, head)
   }
 
   const complete = snapshot(head)
@@ -1226,7 +1251,12 @@ export interface WatcherDeps {
   startBlock: bigint
   allowlist: Allowlist
   alert: (level: AlertLevel, message: string) => void
-  heartbeat: () => void
+  /**
+   * `state` ZORUNLUDUR. Bkz. `WatcherState`: "canliyim" ile "gunceleyim" iki
+   * AYRI iddiadir ve tek bir atis onlari ayirt edilemez kilardi -- tatbikat da
+   * tam olarak atis SAYISINA bakiyor.
+   */
+  heartbeat: (state: WatcherState, detail?: string) => void
   liveness?: Liveness
   store?: CursorStore
   chunk?: bigint
@@ -1287,9 +1317,30 @@ export async function runWatcher(deps: WatcherDeps): Promise<void> {
   let curves: Address[] = []
   let history: GovernanceHistory | undefined
   let scanOk = true
+  /** Bu poll'da GERCEKTEN taranan son blok. `null` = tek parca bile bitmedi. */
+  let scannedThrough: bigint | null = null
   try {
-    const scanOpts: { store?: CursorStore; head: bigint; chunk?: bigint } = {
+    const scanOpts: {
+      store?: CursorStore
+      head: bigint
+      chunk?: bigint
+      onProgress: ScanProgress
+    } = {
       head: state.blockNumber,
+      onProgress: (through, head) => {
+        scannedThrough = through
+        // CANLILIK POLL'A DEGIL ILERLEMEYE BAGLI. Kanarya bunu gorurse
+        // "izleyici izlemiyor" sayfasi cikmaz -- cikan sey `watcher-catching-up`
+        // bilgisidir ve o bir sayfa DEGILDIR.
+        deps.liveness?.scanProgressed(nowMs())
+        // ...VE DISARIYA DA SOYLENIR. Ic kanarya harici olu-adam anahtarinin
+        // yerine gecmez (bkz. `createLiveness`); o anahtar KALP ATISI AKISINI
+        // okur. Tek bir poll'un dakikalarca surmesi -- 71 parcalik soguk tarama
+        // tam olarak budur -- o akisi kesiyordu, yani izleyici disaridan OLU
+        // gorunuyordu. Parca basina bir satir: 709.413 blokluk tam bir tarama
+        // icin 71 satir.
+        deps.heartbeat('catching-up', `scanned=${through}/${head}`)
+      },
     }
     if (deps.store !== undefined) scanOpts.store = deps.store
     if (deps.chunk !== undefined) scanOpts.chunk = deps.chunk
@@ -1298,11 +1349,29 @@ export async function runWatcher(deps: WatcherDeps): Promise<void> {
     history = scan.history
   } catch (error) {
     scanOk = false
-    emit(
-      'page',
-      'log-scan-failed',
-      `log-scan-failed: the factory log scan threw rather than returning a short list, so the exposure below is NOT a number and the governance history is UNKNOWN: ${describe(error)}`,
-    )
+    // ================== ILERLEDI MI, TAKILDI MI ==================
+    //
+    // Ikisi AYNI SEY DEGILDIR ve eski hal ikisine de ayni sayfayi cikariyordu.
+    // Soguk taramanin ortasinda gelen bir hiz siniri, imleci ILERLETMIS bir
+    // taramanin sonudur: bir sonraki poll kaldigi yerden devam eder. Ona sayfa
+    // cikarmak, mesru bir uzun islemi acil duruma cevirir -- ve olculdu: 40
+    // saniyede dort sayfa, hepsi bunun turevi.
+    //
+    // Hicbir parca bitmediyse durum BASKADIR: tarama YAKINSAMIYOR, maruziyet
+    // KALICI olarak olculemiyor, ve bu gercekten insan ister.
+    if (scannedThrough === null) {
+      emit(
+        'page',
+        'log-scan-failed',
+        `log-scan-failed: the factory log scan threw WITHOUT completing a single chunk, so it is not advancing; the exposure below is NOT a number and the governance history is UNKNOWN: ${describe(error)}`,
+      )
+    } else {
+      emit(
+        'ok',
+        'log-scan-catching-up',
+        `log-scan-catching-up: the factory log scan advanced to block ${String(scannedThrough)} of ${state.blockNumber} and then stopped for this poll, so it will resume from there. Exposure is NOT measured this poll and the governance history is INCOMPLETE: ${describe(error)}`,
+      )
+    }
   }
 
   // SLOT, LOGU DOGRULAR. `launchCount` her `launch()`ta bir artar ve her
@@ -1375,11 +1444,15 @@ export async function runWatcher(deps: WatcherDeps): Promise<void> {
     )
   }
 
-  // KALP ATISI YALNIZCA HER SEY YURUDUYSE -- SINIFLANDIRMA DAHIL. Yarim bir
-  // poll'a atis vermek, kanaryayi bosaltirdi; ve siniflandiramamis bir poll
-  // "tamamlanmis" degildir, cunku bu fonksiyonun BUTUN isi odur.
+  // `current` ATISI YALNIZCA HER SEY YURUDUYSE -- SINIFLANDIRMA DAHIL. Yarim
+  // bir poll'a `current` demek, kanaryayi bosaltirdi; ve siniflandiramamis bir
+  // poll "tamamlanmis" degildir, cunku bu fonksiyonun BUTUN isi odur.
+  //
+  // BU KOSUL DARALMADI, YALNIZCA UCUNCU DURUM YANINA KONDU: yetisme atislari
+  // `onProgress`ten gelir ve KENDI adiyla (`state=catching-up`) gelir, yani
+  // "canliyim" ile "gunceleyim" ayni satirda karistirilamaz.
   if (scanOk && countMatches && measured !== undefined && classified) {
-    deps.heartbeat()
+    deps.heartbeat('current')
     deps.liveness?.pollSucceeded(at)
   }
 

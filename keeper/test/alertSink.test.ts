@@ -37,7 +37,7 @@ describe('assertAlertLogWritable', () => {
   it('yazilabilir bir yolu kabul eder ve DOSYAYI BOZMAZ', () => {
     const path = join(tempDir(), 'alerts.log')
     const sink = fileSink(path)
-    sink({ kind: 'heartbeat', at: 0 })
+    sink({ kind: 'heartbeat', at: 0, state: 'current' })
     const before = readFileSync(path, 'utf8')
     expect(() => assertAlertLogWritable(path)).not.toThrow()
     // Bos dize ekler: var olan kaydi SILMEZ. Bir tatbikatin kanitini
@@ -60,14 +60,14 @@ describe('fileSink yazma hatasi', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     // Onceki hal burada ENOENT firlatirdi ve `heartbeat()` her `try`in
     // disinda oldugu icin poll'u reddettirip DONGUYU BITIRIRDI.
-    expect(() => sink({ kind: 'heartbeat', at: 1_000 })).not.toThrow()
+    expect(() => sink({ kind: 'heartbeat', at: 1_000, state: 'current' })).not.toThrow()
     expect(() => sink({ kind: 'alert', level: 'page', message: 'x', at: 1_001 })).not.toThrow()
   })
 
   it('SESSIZ DE KALMAZ: stderr"e `PAGE ` onekiyle sikayet eder', () => {
     const path = join(tempDir(), 'gone', 'alerts.log')
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
-    fileSink(path, { now: () => 1_000 })({ kind: 'heartbeat', at: 1_000 })
+    fileSink(path, { now: () => 1_000 })({ kind: 'heartbeat', at: 1_000, state: 'current' })
     expect(spy).toHaveBeenCalledTimes(1)
     const line = spy.mock.calls[0]?.[0] as string
     // Harici olu-adam anahtari `PAGE ` onekine gore filtreler, JSON
@@ -82,12 +82,12 @@ describe('fileSink yazma hatasi', () => {
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     let clock = 1_000
     const sink = fileSink(path, { now: () => clock })
-    sink({ kind: 'heartbeat', at: clock })
+    sink({ kind: 'heartbeat', at: clock, state: 'current' })
     clock += SINK_COMPLAINT_INTERVAL_MS - 1
-    sink({ kind: 'heartbeat', at: clock })
+    sink({ kind: 'heartbeat', at: clock, state: 'current' })
     expect(spy).toHaveBeenCalledTimes(1)
     clock += 1
-    sink({ kind: 'heartbeat', at: clock })
+    sink({ kind: 'heartbeat', at: clock, state: 'current' })
     // Bastirilan sey TEKRARDIR, sikayetin KENDISI degil: kalici bir ariza
     // dakikada bir yeniden gorunur, yoksa sessizlige donerdi.
     expect(spy).toHaveBeenCalledTimes(2)
