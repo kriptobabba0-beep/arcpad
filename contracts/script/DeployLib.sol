@@ -5,7 +5,7 @@ import {VmSafe} from "forge-std/Vm.sol";
 import {FeeEscrow} from "../src/FeeEscrow.sol";
 import {LaunchFactory} from "../src/LaunchFactory.sol";
 import {FeeSchedule} from "../src/FeeSchedule.sol";
-import {Profile} from "./Profiles.sol";
+import {Profile, Profiles} from "./Profiles.sol";
 
 /// @dev Safe'in yalnizca yoklamanin ihtiyac duydugu iki uyesi.
 interface ISafeProbe {
@@ -98,7 +98,28 @@ library DeployLib {
     error FrozenArtifactMissing(string path);
     /// @dev "KOSTUN, VE BAYTLAR TUTMUYOR." Yayinlanmak uzere olan initcode
     ///      dondurulmus derlemenin urettigi initcode DEGILDIR.
-    error NotTheFrozenBuild(string what, bytes32 expected, bytes32 actual);
+    error NotTheFrozenBuild(string what, string remedy, bytes32 expected, bytes32 actual);
+
+    /// @dev `remedy` ALANI BIR YANLIS KIRMIZIYI ONLEMEK ICIN VAR, VE BIR
+    ///      `console2.log` YERINE ALAN OLMASININ SEBEBI OLCULDU: forge, log
+    ///      satirlarini VARSAYILAN AYRINTI DUZEYINDE GOSTERMEZ (`-vv`
+    ///      gerekir), ama hata alanlarini HER ZAMAN basar. Bir ipucu,
+    ///      okunmadigi yerde ipucu degildir.
+    ///
+    ///      ONLEDIGI DURUM: `forge test` `out-frozen/` dizinini YENIDEN
+    ///      DERLEMEZ -- onu yalnizca `make frozen-hash` yazar. Bir kaynagi
+    ///      degistirip geri alan, sonra CIPLAK `forge test` kosan biri TEMIZ
+    ///      bir agacta ~38 `NotTheFrozenBuild` hatasi gorur; hicbiri agac
+    ///      hakkinda bir sey soylemez, hepsi REFERANSIN bayat oldugunu
+    ///      soyler. Bu depoda "insanlarin gormezden gelmeye alistigi bir kapi,
+    ///      hic olmayan bir kapidan KOTUDUR" iki kez olculdu.
+    ///
+    ///      METIN IKI SEYI SIRAYLA SOYLER: once "kapiyi kos" (vakalarin
+    ///      cogu), sonra "hala kirmiziysa pin'i YENIDEN URETME, sebebini bul"
+    ///      (gercek bir kayma da aynen boyle gorunur, ve iki durumu ayirt
+    ///      edecek olan operatordur).
+    string internal constant FROZEN_REMEDY =
+        "ONCE KOS: make frozen-hash (forge test out-frozen/ dizinini YENIDEN DERLEMEZ). Sonra hala kirmiziysa: pin'i YENIDEN URETMEYIN, sebebini bulun.";
 
     /// @dev "O ADRESTE BIR SEY VAR, VE O BIZIM DERLEMEMIZ DEGIL."
     ///      `AlreadyDeployed`DEN AYRI BIR HATA OLMASI TASIYICIDIR ve ayrimin
@@ -167,18 +188,64 @@ library DeployLib {
         plan.feeSchedule = predict(FEE_SCHEDULE_SALT, plan.feeScheduleInitcode);
 
         plan.factoryInitcode = abi.encodePacked(
-            type(LaunchFactory).creationCode,
-            abi.encode(
-                plan.escrow,
-                treasury,
-                governor,
-                p.virtualTokenReserves,
-                p.virtualQuoteReserves,
-                p.saleSupply,
-                plan.feeSchedule
-            )
+            type(LaunchFactory).creationCode, factoryArgs(plan.escrow, treasury, governor, p, plan.feeSchedule)
         );
         plan.factory = predict(FACTORY_SALT, plan.factoryInitcode);
+    }
+
+    /// @dev ARGUMAN KODLAMASI TEK YERDE. Ikinci bir `abi.encode(...)` cagrisi
+    ///      -- ornegin `frozenFactoryAddress` icinde -- sessizce ayrisabilirdi
+    ///      ve ayrisma dogrudan FABRIKA ADRESI demektir. Sira burada da
+    ///      TASIYICIDIR: `T`, `V`den ONCE gelir.
+    function factoryArgs(address escrow_, address treasury, address governor, Profile memory p, address feeSchedule_)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        return abi.encode(
+            escrow_, treasury, governor, p.virtualTokenReserves, p.virtualQuoteReserves, p.saleSupply, feeSchedule_
+        );
+    }
+
+    /// @notice Uc adres de, YAYINLANACAK BAYTLARDAN turetilmis: creation code
+    ///         `out-frozen/`dan okunur, `type(...).creationCode`tan DEGIL.
+    ///
+    /// @dev NICIN AYRI BIR TURETME VAR. `type(X).creationCode` CAGIRAN
+    ///      DERLEME BIRIMININ ayarina baglidir, ve bu depoda o ayar tek degil:
+    ///      `lib/v4-core/src/PoolManager.sol`u ismiyle import eden her birim
+    ///      `optimizer_runs = 44444444`e duser, otekiler 800'de kalir.
+    ///      `Deploy.s.sol` 800'dur (olculdu: `out/Deploy.s.sol/Deploy.json`),
+    ///      `DeployPool.s.sol` 44444444'tur -- yani ikisi
+    ///      `type(LaunchFactory).creationCode`u FARKLI gorur ve FARKLI bir
+    ///      fabrika adresi hesaplar. Havuz katmani fabrikanin adresini
+    ///      `ArcpadHook`un constructor argumani olarak KALICI bicimde
+    ///      gomdugu icin, o adres BIRIM-BAGIMSIZ olmak zorundadir.
+    ///
+    /// @dev `out-frozen/` tam olarak bunu verir: yalnizca `[profile.frozen]`in
+    ///      yazabildigi, 800 ayarli dizin -- ve `assertMatchesFrozenBuild`
+    ///      `Deploy.s.sol`un yayinlayacagi baytlarin AYNEN o dizindekiler
+    ///      oldugunu zaten iddia eder. Yani bu turetme "fabrika hangi adreste
+    ///      YAYINLANACAK" sorusunun cevabidir, "bu birim onu nerede
+    ///      hesaplardi" sorusunun degil.
+    function frozenFactoryAddress(uint256 chainId) internal view returns (address) {
+        Profile memory p = Profiles.forChain(chainId);
+        (address governor, address treasury) = Profiles.governanceForChain(chainId);
+        bytes memory initcode = abi.encodePacked(
+            _frozenCreationCode("out-frozen", "LaunchFactory"),
+            factoryArgs(frozenEscrowAddress(), treasury, governor, p, frozenFeeScheduleAddress())
+        );
+        return predict(FACTORY_SALT, initcode);
+    }
+
+    /// @dev `FeeEscrow` ve `FeeSchedule` constructor argumansizdir, yani
+    ///      adresleri ZINCIRDEN BAGIMSIZDIR -- parametre almamalarinin sebebi
+    ///      budur.
+    function frozenEscrowAddress() internal view returns (address) {
+        return predict(ESCROW_SALT, _frozenCreationCode("out-frozen", "FeeEscrow"));
+    }
+
+    function frozenFeeScheduleAddress() internal view returns (address) {
+        return predict(FEE_SCHEDULE_SALT, _frozenCreationCode("out-frozen", "FeeSchedule"));
     }
 
     function assertDeployable(Plan memory plan) internal view {
@@ -467,16 +534,36 @@ library DeployLib {
         }
         bytes32 want = keccak256(frozenFactory);
         bytes32 got = keccak256(head);
-        if (want != got) revert NotTheFrozenBuild("LaunchFactory", want, got);
+        if (want != got) _frozenMismatch("LaunchFactory", want, got);
 
         // Argumansiz ikili: initcode'un TAMAMI esit olmali.
         want = keccak256(_frozenCreationCode(dir, "FeeEscrow"));
         got = keccak256(plan.escrowInitcode);
-        if (want != got) revert NotTheFrozenBuild("FeeEscrow", want, got);
+        if (want != got) _frozenMismatch("FeeEscrow", want, got);
 
         want = keccak256(_frozenCreationCode(dir, "FeeSchedule"));
         got = keccak256(plan.feeScheduleInitcode);
-        if (want != got) revert NotTheFrozenBuild("FeeSchedule", want, got);
+        if (want != got) _frozenMismatch("FeeSchedule", want, got);
+    }
+
+    /// @dev HATA SELECTOR'U DEGISMEDI; ONUNDE BIR SATIR VAR, VE O SATIR BIR
+    ///      YANLIS KIRMIZIYI ONLEMEK ICIN.
+    ///
+    ///      OLCULDU: `forge test` `out-frozen/`i YENIDEN DERLEMEZ -- onu
+    ///      yalnizca `make frozen-hash` yazar. Bir kaynagi degistirip geri
+    ///      alan, sonra CIPLAK `forge test` kosan biri, TEMIZ bir agacta 38
+    ///      `NotTheFrozenBuild` hatasi gorur. Hatalarin hicbiri agac hakkinda
+    ///      bir sey soylemez; hepsi referansin bayat oldugunu soyler. Boyle
+    ///      bir kirmizi, kapiya guvenmemeyi ogretir -- ve bu depoda "insanlarin
+    ///      gormezden gelmeye alistigi bir kapi, hic olmayan bir kapidan
+    ///      KOTUDUR" iki kez olculdu.
+    ///
+    ///      METIN IKI SEYI BIRDEN SOYLER ve sirasi kasitlidir: once "kapiyi
+    ///      kos", cunku vakalarin cogu budur; sonra "hala kirmiziysa PIN'I
+    ///      YENIDEN URETME, sebebini bul", cunku gercek bir kayma da tam
+    ///      olarak boyle gorunur ve iki durumun ayirt edilme yeri operatordur.
+    function _frozenMismatch(string memory what, bytes32 want, bytes32 got) private pure {
+        revert NotTheFrozenBuild(what, FROZEN_REMEDY, want, got);
     }
 
     /// @dev FAIL-CLOSED, VE "ATLA" DALI YOKTUR. Artifact yoksa `vm.readFile`

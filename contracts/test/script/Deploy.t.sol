@@ -501,6 +501,92 @@ contract DeployTest is Test {
         this.callAssertBookIn(script.plan(), "deploy/addresses.5042002.json");
     }
 
+    /// IKINCI KOL: `FeeSchedule`. **BU TESTIN VAR OLMA SEBEBI BIR INCELEME
+    /// BULGUSUDUR** -- yeniden kullanim kontrolunun `FeeSchedule` KOLUNU
+    /// SILMEK 607/607 hayatta kaliyordu, cunku yalnizca `FeeEscrow` kolu
+    /// yurunuyordu. `ArcpadHook._marketCap`in siralama dallanmasiyla AYNI
+    /// SEKIL: iki kol, biri kosulmus.
+    function test_theFeeScheduleArmOfTheReuseCheckIsAlsoExercised() public {
+        Plan memory p = script.plan();
+
+        address pre = DeployLib.deploy(p.feeScheduleSalt, p.feeScheduleInitcode);
+        assertEq(pre, p.feeSchedule, "on-deploy edilen schedule plandan ayristi");
+        assertGt(pre.code.length, 0, "on-deploy kod birakmadi -- test hicbir sey olcmuyor");
+
+        // KABUL: gercek `FeeSchedule` oradaysa deploy YURUR ve factory ona baglanir.
+        Plan memory q = script.run();
+        assertEq(q.feeSchedule, pre, "schedule adresi kaydi");
+        assertEq(LaunchFactory(q.factory).feeSchedule(), pre, "factory BASKA bir schedule'a baglandi");
+    }
+
+    /// ...VE RED YONU, ayni tek-bayt ayrimiyla.
+    function test_aForeignContractAtTheFeeScheduleAddressIsRefused() public {
+        Plan memory p = script.plan();
+
+        address pre = DeployLib.deploy(p.feeScheduleSalt, p.feeScheduleInitcode);
+        bytes memory real = pre.code;
+        bytes memory tampered = new bytes(real.length);
+        for (uint256 i = 0; i < real.length; ++i) {
+            tampered[i] = real[i];
+        }
+        tampered[real.length - 1] = bytes1(uint8(real[real.length - 1]) ^ 0x01);
+        assertTrue(keccak256(tampered) != keccak256(real), "tahrifat kodu degistirmedi");
+
+        vm.etch(p.feeSchedule, tampered);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                DeployLib.OccupiedByAForeignBuild.selector,
+                "FeeSchedule",
+                p.feeSchedule,
+                keccak256(real),
+                keccak256(tampered)
+            )
+        );
+        script.plan();
+    }
+
+    // ---------------------------------------------------------------
+    // Dondurulmus turetme -- havuz katmaninin ankraji
+    // ---------------------------------------------------------------
+
+    /// `DeployLib.frozenFactoryAddress` ILE `build().factory` AYNI ADRESTIR --
+    /// bu birimde, cunku bu birim 800'dur.
+    ///
+    /// @dev NICIN BU IDDIA GEREKLI. `PoolDeployLib` fabrikanin adresini
+    ///      `ArcpadHook`un constructor argumani olarak KALICI bicimde gomer,
+    ///      ama o birim `PoolManager`i import ettigi icin 44444444'tur ve
+    ///      `type(LaunchFactory).creationCode`u FARKLI gorur. Bu yuzden havuz
+    ///      katmani adresi `out-frozen/`dan turetir. Bu test, o turetmenin
+    ///      `Deploy.s.sol`un GERCEKTEN yayinlayacagi adres oldugunu -- yani
+    ///      iki script'in ayni fabrikadan soz ettigini -- olcer. Ayrisirsa
+    ///      hook kodsuz bir adrese baglanirdi.
+    /// BU BIRIM 800'DUR, VE YAYINLADIGI BAYTLAR `out-frozen/`DAKILERIN
+    /// TA KENDISIDIR.
+    ///
+    /// @dev `DeployPool.t.sol`da bunun TERS TANIGI durur: o birim
+    ///      `PoolManager`i import ettigi icin 44444444'tur ve ayni ifade
+    ///      FARKLI bir hash verir. Ikisi birlikte, "hangi derleme yayinlanir"
+    ///      sorusunun cevabini YURUTULEBILIR yapar -- tek basina hicbiri
+    ///      yapmaz, cunku her biri kendi biriminde tutarlidir.
+    function test_thisUnitCompilesTheSameLaunchFactoryTheFrozenProfileDoes() public view {
+        bytes memory frozen =
+            vm.parseJsonBytes(vm.readFile("out-frozen/LaunchFactory.sol/LaunchFactory.json"), ".bytecode.object");
+        assertEq(
+            keccak256(type(LaunchFactory).creationCode),
+            keccak256(frozen),
+            "Deploy.s.sol'un birimi dondurulmus profilden BASKA bir LaunchFactory goruyor"
+        );
+    }
+
+    function test_theFrozenDerivationIsTheAddressThisScriptWouldPublish() public view {
+        Plan memory p = script.plan();
+        assertEq(
+            DeployLib.frozenFactoryAddress(LOCAL_REHEARSAL), p.factory, "dondurulmus turetme, plandan BASKA bir fabrika"
+        );
+        assertEq(DeployLib.frozenEscrowAddress(), p.escrow, "dondurulmus turetme, plandan BASKA bir escrow");
+        assertEq(DeployLib.frozenFeeScheduleAddress(), p.feeSchedule, "dondurulmus turetme, plandan BASKA bir schedule");
+    }
+
     /// @dev YENIDEN KULLANIMIN ALTINDAKI ON KOSUL, ACIKCA OLCULUR. Runtime
     ///      codehash karsilastirmasi yalnizca IMMUTABLE TASIMAYAN bir kontrat
     ///      icin gecerlidir; `FeeEscrow` ya da `FeeSchedule` bir gun immutable
