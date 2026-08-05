@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Address, Hex } from 'viem'
-import { getCursor, putDeployment, snapshot } from '@arcpad/db'
+import {
+  DEFAULT_STALE_AFTER_SECONDS,
+  getCursor,
+  getIndexerStatus,
+  putDeployment,
+  setCursor,
+  snapshot,
+} from '@arcpad/db'
 import { NonCanonicalLaunch } from '../src/admit'
 import type { IndexerConfig } from '../src/config'
 import { loadConfig } from '../src/config'
@@ -9,6 +16,7 @@ import { createPacer } from '../src/logs'
 import {
   backoffMs,
   isRateLimit,
+  LIVENESS_BEAT_MS,
   RATE_LIMIT_BACKOFF_BASE_MS,
   DeploymentMismatch,
   ensureDeployment,
@@ -608,6 +616,7 @@ describe('gecici hata politikasi', () => {
       },
     }
     const slept: number[] = []
+    const delays: number[] = []
     await expect(
       runWithRetry(
         pool,
@@ -618,20 +627,89 @@ describe('gecici hata politikasi', () => {
           sleep: async (ms) => {
             slept.push(ms)
           },
+          onRetry: (info) => {
+            delays.push(info.delayMs)
+          },
         },
       ),
     ).rejects.toThrow(/rate limit/)
 
     // GENEL butce (3) DEGIL, hiz siniri butcesi (8) harcandi.
-    expect(slept).toHaveLength(7)
-    const total = slept.reduce((a, b) => a + b, 0)
+    expect(delays).toHaveLength(7)
+    const total = delays.reduce((a, b) => a + b, 0)
     // Eski davranisin TAVANI 3.750ms idi ve limit 3.000ms araliklarda bile
     // bir kez reddediyordu. Yeni taban tek basina onu asiyor.
     expect(total).toBeGreaterThan(3_750)
     // Ilk bekleme bile saniye mertebesinde -- eskisi 125-250ms idi.
-    expect(slept[0]).toBeGreaterThanOrEqual(500)
+    expect(delays[0]).toBeGreaterThanOrEqual(500)
+    // HICBIR UYKU DILIMI CANLILIK ARALIGINI ASMAZ. Bekleme buyudukce dilim
+    // SAYISI artar, SURESI degil -- C1'in butun mekanizmasi budur.
+    expect(Math.max(...slept)).toBeLessThanOrEqual(LIVENESS_BEAT_MS)
+    expect(slept.reduce((a, b) => a + b, 0)).toBe(total)
     // Ve imlec YERINDE: butce tukendiginde bile hicbir sey yazilmadi.
     expect(await getCursor(pool)).toBeNull()
+  })
+
+  /**
+   * ============ C1: GERI CEKILEN INDEXER "DURMUS" GORUNMEZ ============
+   *
+   * BU TEST GERCEK BIR GERI CEKILME KOSAR. `sleep` DEGISTIRILMEZ, saat
+   * SAHTELENMEZ, `vi.useFakeTimers` YOKTUR -- cunku ariza tam olarak sahte bir
+   * saatin goremeyecegi yerdeydi: gercek `setTimeout` uykusu boyunca hicbir
+   * sey YAZILMIYORDU ve veritabaninin KENDI saati ilerliyordu. Sahte bir saat,
+   * `now()`u Postgres'in icinde ilerletmez, yani kusuru uretemez.
+   *
+   * OLCULEN ARIZA (gercek merdiven, gercek sunucu saati): sekiz denemelik
+   * ladder 68,6 saniye surdu ve 4 saniye arayla alinan 18 orneklemin 10'u
+   * `writes-stalled` dedi -- indexer her denemeyi loglayarak yasarken.
+   *
+   * Burada butce 3'e kisiltilir (gercek uykular ~0,5-2 sn) ve esik 1 saniyeye
+   * indirilir; oran korunur, sure test edilebilir kalir.
+   */
+  it('GERCEK bir geri cekilme sirasinda canlilik yazilir, "durmus" DEMEZ', async () => {
+    const CURSOR = 54_671_436n
+    const HEAD = 55_438_940n
+    await setCursor(pool, CURSOR, hashOf(CURSOR), HEAD)
+    // Damgayi GERIYE al: eger geri cekilme sessiz olsaydi, durum bu testin
+    // sonunda hala `stopped-and-behind` olurdu.
+    await pool.query("UPDATE sync_state SET updated_at = now() - interval '10 minutes'")
+    const before = await getIndexerStatus(pool, { staleAfterSeconds: 1 })
+    if (!before.stale) throw new Error('unreachable')
+    expect(before.why).toBe('stopped-and-behind')
+
+    const limited: RpcClient = {
+      request: () =>
+        Promise.reject(
+          Object.assign(new Error('rate limit exceeded'), { code: -32005, status: 429 }),
+        ),
+    }
+    // GERCEK uykular: `sleep` gecilmiyor.
+    await expect(
+      runWithRetry(pool, limited, LIVE_DEPLOYMENT, {
+        ...CONFIG,
+        maxAttempts: 3,
+        rateLimitMaxAttempts: 3,
+      }),
+    ).rejects.toThrow(/rate limit/)
+
+    const after = await getIndexerStatus(pool, { staleAfterSeconds: 1 })
+    if (!after.stale) throw new Error('unreachable')
+    // ARTIK "durmus" DEMIYOR -- ve "geride" oldugunu hala soyluyor.
+    expect(after.why).toBe('behind-head')
+    expect(after.at?.stalenessSeconds).toBeLessThan(1)
+    expect(after.at?.blocksBehind).toBe(HEAD - CURSOR)
+    // Ve ilerleme IDDIA EDILMEDI: imlec ve bas aynen yerinde.
+    expect(after.at?.lastBlock).toBe(CURSOR)
+    expect(after.at?.headBlock).toBe(HEAD)
+  })
+
+  it('canlilik atisi arasi bosluk, bayatlik esiginden KUCUK olmak zorunda', () => {
+    // Iliski bir tesaduf degil bir SART: merdiven ne kadar buyurse buyusun,
+    // iki atis arasindaki en buyuk bosluk bu sabittir. Esik saniye, sabit
+    // milisaniye.
+    expect(LIVENESS_BEAT_MS).toBeLessThan(DEFAULT_STALE_AFTER_SECONDS * 1000)
+    // Ucte bir pay: tek bir kacirilmis atis bile esigi asmaz.
+    expect(LIVENESS_BEAT_MS * 3).toBeLessThanOrEqual(DEFAULT_STALE_AFTER_SECONDS * 1000)
   })
 
   it('hiz siniri butcesi GENEL butceyi tuketmez -- sayaclar ayri', async () => {

@@ -78,7 +78,14 @@ export interface SyncPoint {
   lastBlock: bigint
   lastBlockHash: string
   updatedAt: Date
-  /** `now() - updated_at`, saniye. Sunucu saatinden. */
+  /**
+   * `now() - updated_at`, saniye. Sunucu saatinden.
+   *
+   * BU BIR CANLILIK OLCUSUDUR, "en son ne zaman VERI yazildi" degil: indexer
+   * geri cekilirken de `noteAlive` ile bu damgayi tazeler (bkz. `apply.ts`).
+   * Verinin yasi `blocksBehind`tir ve ikisi bilerek ayri kalir -- birlestirmek,
+   * saglikli bir indexer'i "durmus" gostermenin ta kendisiydi.
+   */
   stalenessSeconds: number
   /** Indexer bu satiri yazarken gordugu bas. `null` = hic yazilmamis. */
   headBlock: bigint | null
@@ -97,10 +104,35 @@ export interface MeasuredSyncPoint extends SyncPoint {
 }
 
 /**
- * NEDEN bayat. Runbook dallari ayri: `writes-stalled` "indexer olmus/takilmis",
- * `behind-head` "indexer kosuyor ama geride", ve ikisi ayni ekrani gerektirmez.
+ * ============ NEDEN bayat -- IKI OLGU, DORT AD, HICBIRI DIGERININ ICINDE ====
+ *
+ * Ilk hal DORT ad yerine bir SIRA kullaniyordu:
+ *
+ *   if (writeAge > 30) return 'writes-stalled'
+ *   if (blocksBehind > 90) return 'behind-head'
+ *
+ * ...ve bu, iki BAGIMSIZ olguyu tek bir mesaja cokertiyordu. Olculdu
+ * (kompozisyon kosusu, canli): geri cekilme merdiveni yazmayi 30 saniyeden
+ * uzun susturunca, **25 sayfa cizimin 25'i** "may have stopped" dedi ve
+ * `blocksBehind: 727334` -- AYNI yanitin icinde duran, operatorun ihtiyaci
+ * olan tek sayi -- cumleden dusuruldu. Ustelik GERCEKTEN olmus bir indexer
+ * de birebir ayni cumleyi uretiyordu: "geri cekiliyorum" ile "durdum" ayni
+ * kelimelerle yaziliyordu.
+ *
+ * Simdi iki olgu AYRI olculur ve KOMBINASYONUN kendi adi vardir. Bir durumun
+ * mesaji, baska bir durumdan ULASILABILIR DEGILDIR -- sira meselesi degil,
+ * ad meselesi:
+ *
+ *   `behind-head`         yaziyor (yasiyor), veri eski      -> "yetisiyor"
+ *   `writes-stalled`      yazmiyor, veri guncel(e yakin)    -> "durmus olabilir"
+ *   `stopped-and-behind`  yazmiyor VE veri eski             -> ikisini de soyler
+ *
+ * Ve `writes-stalled`in ARTIK saglikli bir indexer'da cikmamasi yapisaldir:
+ * `noteAlive` geri cekilme uykusunun icinde atilir (bkz. `apply.ts`), yani
+ * susan tek sey gercekten durmus bir surectir.
  */
-export type StaleReason = 'never-ran' | 'writes-stalled' | 'behind-head' | 'head-unknown'
+export type StaleReason =
+  'never-ran' | 'head-unknown' | 'writes-stalled' | 'behind-head' | 'stopped-and-behind'
 
 export type IndexerStatus =
   { stale: false; at: MeasuredSyncPoint } | { stale: true; why: StaleReason; at: SyncPoint | null }
@@ -192,12 +224,19 @@ export async function getIndexerStatus(
     blocksBehind: headBlock === null ? null : headBlock > lastBlock ? headBlock - lastBlock : 0n,
   }
 
-  // SIRA ONEMLI DEGIL AMA SEBEP ONEMLI: en spesifik olan once yaziliyor ki
-  // runbook dogru dala gitsin. "Bas bilinmiyor" TAZE DEGILDIR ve bu, tipin
-  // zaten zorladigi seyin calisma zamanindaki karsiligidir.
+  // "Bas bilinmiyor" TAZE DEGILDIR ve bu, tipin zaten zorladigi seyin calisma
+  // zamanindaki karsiligidir. Yas OLCULEMIYORSA baska hicbir sey soylenemez.
   if (at.blocksBehind === null) return { stale: true, why: 'head-unknown', at }
-  if (at.stalenessSeconds > staleAfterSeconds) return { stale: true, why: 'writes-stalled', at }
-  if (at.blocksBehind > maxBlocksBehind) return { stale: true, why: 'behind-head', at }
+
+  // IKI OLGU AYRI OLCULUR. Bir `if` zinciri degil, cunku zincirin ilk dali
+  // ikincisini GORUNMEZ yapiyordu -- olculdu: 25 cizimin 25'i "durmus olabilir"
+  // dedi ve 727.334 bloklu gecikme cumleden dustu.
+  const notWriting = at.stalenessSeconds > staleAfterSeconds
+  const behind = at.blocksBehind > maxBlocksBehind
+
+  if (notWriting && behind) return { stale: true, why: 'stopped-and-behind', at }
+  if (notWriting) return { stale: true, why: 'writes-stalled', at }
+  if (behind) return { stale: true, why: 'behind-head', at }
   return { stale: false, at: at as MeasuredSyncPoint }
 }
 

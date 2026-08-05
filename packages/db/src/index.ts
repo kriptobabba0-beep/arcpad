@@ -12,6 +12,7 @@ export {
   type GraduatedEvent,
   type IngestEvent,
   type LaunchEvent,
+  noteAlive,
   noteHead,
   replayRange,
   type ReplayResult,

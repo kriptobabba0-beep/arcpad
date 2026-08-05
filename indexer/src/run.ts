@@ -5,6 +5,7 @@ import {
   assertContinuous,
   getCursor,
   getDeployment,
+  noteAlive,
   noteHead,
   putDeployment,
   setCursor,
@@ -625,6 +626,70 @@ export const DEFAULT_BACKOFF_BASE_MS = 250
  */
 export const RATE_LIMIT_BACKOFF_BASE_MS = 1_000
 
+/**
+ * ============ GERI CEKILIRKEN SUSMAK, OLMEKLE AYNI GORUNUYORDU ============
+ *
+ * Merdiven buyudu (yukarisi) ve o buyume, TAZELIK SOZLESMESINI kirdi. Iki
+ * duzeltme tek tek dogruydu ve BIRLIKTE yanlis oldu.
+ *
+ * OLCULDU, gercek merdiven ve gercek sunucu saatiyle (mock yok): sekiz
+ * denemelik tam ladder 68,6 saniye surdu (514, 1167, 2742, 4638, 9289, 20685,
+ * 29548 ms) ve 4 saniye arayla alinan 18 orneklemin 10'u `writes-stalled`
+ * dedi -- yani "indexer durmus olabilir" -- indexer o sirada her denemeyi
+ * loglayarak yasadigini kanitlarken. `blocksBehind: 767504` her orneklemde
+ * yerindeydi ve hicbirinde kullanilmadi.
+ *
+ * Cozum esigi buyutmek DEGIL (o, gercek bir olumu de gizlerdi): uykunun
+ * ICINDEN canlilik atmak. Bu sabit, iki atis arasindaki EN BUYUK bosluktur ve
+ * `DEFAULT_STALE_AFTER_SECONDS`in (30 sn) UCTE BIRIDIR -- yani tek bir
+ * kacirilmis atis bile esigi asamaz. Merdiven ne kadar buyurse buyusun bu
+ * bosluk sabit kalir; iliski "esik > en uzun uyku" degil, "esik > atis
+ * araligi"dir, ve ikincisi merdivenden BAGIMSIZDIR.
+ */
+export const LIVENESS_BEAT_MS = 10_000
+
+/**
+ * Uykuyu dilimler ve her dilimden ONCE canlilik atar; sonda bir kez daha atar
+ * ki uyanma ile bir sonraki yazma arasinda uzun bir sessizlik kalmasin.
+ *
+ * `sleep` disaridan verilebilir (testler), ama `noteAlive` GERCEK veritabanina
+ * gider: bu fonksiyonun butun anlami veritabanindaki damgayi tazelemektir ve
+ * onu sahtelemek, olcmek istedigi seyi olcmemek olurdu.
+ */
+export async function sleepWithLiveness(
+  pool: Pool,
+  totalMs: number,
+  sleep: (ms: number) => Promise<void>,
+): Promise<void> {
+  /**
+   * CANLILIK YAZMASI GERI CEKILMEYI OLDUREMEZ.
+   *
+   * Bu satir bir duzeltmenin ICINE konan bir kusuru kapatiyor: `noteAlive`
+   * ciplak birakilsaydi, veritabani da erisilemez oldugunda (RPC hiz siniri ve
+   * DB kesintisi ayni anda gayet olabilir) bir HIZ SINIRI yeniden denemesi,
+   * veritabani hatasiyla YUKARI kacardi -- `isTransient` onu bilmez, dongu
+   * dusun. Yani "sessiz kalmayalim" diye eklenen sey, sureci oldururdu.
+   *
+   * Yutulmasi da sessiz degil: veritabani gercekten kapaliysa `runOnce` bir
+   * sonraki denemede zaten kendi hatasini verir, ve o hata TESHIS EDICIDIR.
+   */
+  const beat = async (): Promise<void> => {
+    try {
+      await noteAlive(pool)
+    } catch {
+      /* bkz. yukarisi */
+    }
+  }
+  let remaining = totalMs
+  while (remaining > 0) {
+    await beat()
+    const slice = Math.min(remaining, LIVENESS_BEAT_MS)
+    await sleep(slice)
+    remaining -= slice
+  }
+  await beat()
+}
+
 export function backoffMs(
   attempt: number,
   random: () => number = Math.random,
@@ -703,7 +768,10 @@ export async function runWithRetry(
         ? backoffMs(rateLimited - 1, Math.random, RATE_LIMIT_BACKOFF_BASE_MS)
         : backoffMs(attempts - 1)
       onRetry({ rateLimited: limited, attempt, delayMs, error })
-      await sleep(delayMs)
+      // UYURKEN DE CANLIYIZ, VE BUNU SOYLEMEK ZORUNDAYIZ. Duz bir
+      // `await sleep(delayMs)` idi; o sessizlik okuma katmanina "surec durmus"
+      // dedirtiyordu (bkz. `LIVENESS_BEAT_MS`).
+      await sleepWithLiveness(pool, delayMs, sleep)
     }
   }
 }

@@ -12,7 +12,7 @@ import {
   listTrades,
 } from '../src/queries'
 import { putDeployment } from '../src/deployment'
-import { noteHead, replayRange, setCursor } from '../src/apply'
+import { noteAlive, noteHead, replayRange, setCursor } from '../src/apply'
 import { pool, resetSchema } from './setup'
 import {
   ALICE,
@@ -366,6 +366,59 @@ describe('indexer tazeligi', () => {
     // Surec ekseni TAZE der -- eski sozlesmenin verdigi cevap tam da buydu.
     expect(status.at?.stalenessSeconds).toBeLessThan(5)
     expect(status.at?.blocksBehind).toBe(767_504n)
+  })
+
+  /**
+   * C1. IKI OLGU BIRDEN DOGRUYSA IKISI DE SOYLENIR.
+   *
+   * Eski hal bir `if` zinciriydi ve ilk dal ikincisini yutuyordu: yazma
+   * bayatligi kazandigi anda `blocksBehind` cumleden dusuyordu. Olculdu: 25
+   * cizimin 25'i "durmus olabilir" dedi, 727.334 bloklu gecikme hicbirinde
+   * gorunmedi.
+   */
+  it('YAZMIYOR VE GERIDE ise sebep ikisini birden adlandirir', async () => {
+    await setCursor(pool, 54_671_436n, hashFor(54_671_436n), 55_438_940n)
+    await pool.query("UPDATE sync_state SET updated_at = now() - interval '10 minutes'")
+    const status = await getIndexerStatus(pool)
+    expect(status.stale).toBe(true)
+    if (!status.stale) throw new Error('unreachable')
+    expect(status.why).toBe('stopped-and-behind')
+    // IKI OLGU DA ELDE, ve ikisi de kullanilabilir.
+    expect(status.at?.stalenessSeconds).toBeGreaterThan(590)
+    expect(status.at?.blocksBehind).toBe(767_504n)
+  })
+
+  it('YAZMIYOR ama GERIDE DEGILSE sebep yalnizca writes-stalled', async () => {
+    await setCursor(pool, 54_671_436n, hashFor(54_671_436n), 54_671_436n)
+    await pool.query("UPDATE sync_state SET updated_at = now() - interval '10 minutes'")
+    const status = await getIndexerStatus(pool)
+    if (!status.stale) throw new Error('unreachable')
+    expect(status.why).toBe('writes-stalled')
+    expect(status.at?.blocksBehind).toBe(0n)
+  })
+
+  /**
+   * `noteAlive` -- GERI CEKILEN INDEXER'IN SESI.
+   *
+   * Imlece de basa da DOKUNMAZ: bir geri cekilme sirasinda ilerleme iddia
+   * etmek, duzeltilen yalanin yerine baskasini koymak olurdu.
+   */
+  it('noteAlive yalnizca canliligi tazeler; imlec, bas ve sebep aynen kalir', async () => {
+    await setCursor(pool, 54_671_436n, hashFor(54_671_436n), 55_438_940n)
+    await pool.query("UPDATE sync_state SET updated_at = now() - interval '10 minutes'")
+    expect((await getIndexerStatus(pool)).stale).toBe(true)
+    expect(((await getIndexerStatus(pool)) as { why?: string }).why).toBe('stopped-and-behind')
+
+    expect(await noteAlive(pool)).toBe(1)
+
+    const after = await getIndexerStatus(pool)
+    if (!after.stale) throw new Error('unreachable')
+    // Canlilik tazelendi -> "durmus" DUSER, ama veri yasi DUSMEZ.
+    expect(after.why).toBe('behind-head')
+    expect(after.at?.stalenessSeconds).toBeLessThan(5)
+    expect(after.at?.lastBlock).toBe(54_671_436n)
+    expect(after.at?.headBlock).toBe(55_438_940n)
+    expect(after.at?.blocksBehind).toBe(767_504n)
   })
 
   it('esik BLOK cinsinden de parametriktir ve 90 varsayilani ~30 saniyedir', async () => {

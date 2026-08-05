@@ -561,6 +561,33 @@ export async function setCursor(
  * `finalized` etiketinin geri dusmesi Arc'ta olculmedi, ama dusseydi verinin
  * yasini SIFIRLAMASI kabul edilemezdi.
  */
+/**
+ * ================== "HALA BURADAYIM" -- ILERLEME IDDIASI YOK ==============
+ *
+ * `updated_at` SURECIN CANLILIGIDIR, verinin yasi degil; verinin yasini
+ * `head_block - last_block` tasir. Ama indexer canliligini yalnizca BIR SEY
+ * YAZDIGINDA bildiriyordu, ve hiz siniri merdiveni buyuyunce (`6f2b0a4`) o
+ * sessizlik bayatlik esigini duzenli olarak asmaya basladi.
+ *
+ * OLCULDU (kompozisyon kosusu): tek tek uykular 26-29 saniye, tam merdiven
+ * 62,3 saniye; esik 30 saniye. 4 saniye arayla 25 sayfa cizimi, **25'i de**
+ * "Our indexer last updated 47s ago and may have stopped" dedi -- indexer
+ * gayet canliyken, 8 denemenin 7.'sinde geri cekilirken. Ve GERCEKTEN olmus
+ * bir indexer AYNI cumleyi uretiyordu.
+ *
+ * Cozum esigi buyutmek DEGIL: bu, olu bir indexer'in fark edilmesini de o
+ * kadar geciktirirdi. Cozum, susan tarafin KONUSMASIDIR. Geri cekilme
+ * uykusunun icinde bu satir atilir, yani "yaziyorum" ile "yasiyorum" ayrilir
+ * ve ikisi de olculebilir kalir.
+ *
+ * IMLECE VE BASA DOKUNMAZ. Yalnizca `updated_at`. Geri cekilirken bir ilerleme
+ * iddia etmek, duzeltilen yalanin yerine baskasini koymak olurdu.
+ */
+export async function noteAlive(db: Queryable): Promise<number> {
+  const { rowCount } = await db.query('UPDATE sync_state SET updated_at = now() WHERE id = 1')
+  return rowCount ?? 0
+}
+
 export async function noteHead(db: Queryable, headBlock: bigint): Promise<number> {
   const { rowCount } = await db.query(
     `UPDATE sync_state

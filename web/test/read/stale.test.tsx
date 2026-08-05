@@ -58,12 +58,42 @@ describe('<StaleNotice> -- canli ama geride', () => {
     expect(notice).not.toHaveTextContent('may have stopped')
   })
 
-  it('sebep basina AYRI cumle -- dordu de ayri ariza', () => {
+  it('sebep basina AYRI cumle -- besi de ayri ariza', () => {
     expect(describeStaleness(STALE_INDEXER)).toContain('may have stopped')
     expect(describeStaleness({ stale: true, why: 'never-ran', at: null })).toContain('never run')
     expect(describeStaleness({ ...BEHIND_INDEXER, why: 'head-unknown' })).toContain(
       'CANNOT be measured',
     )
+  })
+
+  /**
+   * ============ C1: IKI OLGU, IKI CUMLE, HICBIRI DIGERINI YUTMAZ ==========
+   *
+   * Kompozisyon kosusunda 25 cizimin 25'i "may have stopped" dedi -- indexer
+   * canliyken -- ve `blocksBehind: 727334` ekrana hic gelmedi. Ustelik olu bir
+   * indexer'in cumlesi de birebir aynisiydi.
+   */
+  it('"yetisiyor" ile "durmus" AYNI cumle degildir, ve ucuncu bir durum ikisini birden soyler', () => {
+    const alive = describeStaleness(BEHIND_INDEXER)
+    const stopped = describeStaleness(STALE_INDEXER)
+    const both = describeStaleness({ ...BEHIND_INDEXER, why: 'stopped-and-behind' })
+
+    // (1) YASIYOR AMA GERIDE: "durmus" DEMEZ.
+    expect(alive).toContain('still catching up')
+    expect(alive).toContain('510,000 blocks')
+    expect(alive).not.toContain('may have stopped')
+
+    // (2) DURMUS: gecikmeyi YINE DE soyler -- eski hal onu dusuruyordu.
+    expect(stopped).toContain('may have stopped')
+    expect(stopped).toContain('behind the chain')
+    expect(stopped).not.toContain('still catching up')
+
+    // (3) IKISI BIRDEN: iki olgu da cumlededir, ve cumle (1) ile (2)'nin
+    // hicbirine esit DEGILDIR.
+    expect(both).toContain('may have stopped')
+    expect(both).toContain('ALREADY 510,000 blocks')
+    expect(both).not.toBe(alive)
+    expect(both).not.toBe(stopped)
   })
 })
 

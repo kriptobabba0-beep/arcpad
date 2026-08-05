@@ -54,24 +54,41 @@ export function StaleNotice({
 export const ARC_BLOCK_SECONDS = 0.35
 
 /**
- * BAYATLIGIN CUMLESI, SEBEBINE GORE.
+ * ============ BAYATLIGIN CUMLESI -- IKI OLGU, HICBIRI DUSMEZ ============
  *
- * Dordu de ayri bir ariza ve ayri bir runbook dalidir; hepsini "indexer
- * geride" diye yazmak, olu bir indexer ile yavas bir indexer'i ayni ekrana
- * katlardi. `behind-head` dalinda GERIDE OLDUGU SAYIYLA yazilir -- bu, canli
- * kosuda hicbir yerde gorunmeyen sayinin ta kendisi.
+ * Bes sebebin her biri ayri bir ariza ve ayri bir runbook dalidir. Bir
+ * onceki hal DORT sebep tasiyordu ve `writes-stalled` dali gecikmeyi
+ * SOYLEMIYORDU; kompozisyon kosusunda 25 cizimin 25'i o dala dustu ve
+ * `blocksBehind: 727334` -- aynen elde olan tek eyleme donusebilir sayi --
+ * ekrana hic gelmedi. Ustelik GERCEKTEN olmus bir indexer de birebir ayni
+ * cumleyi yaziyordu.
+ *
+ * SIMDI:
+ *   - "yasiyor ama geride" (`behind-head`) ile "durmus" (`writes-stalled`)
+ *     ayri cumlelerdir, ve ikincisi birincisinden ULASILAMAZ: geri cekilen
+ *     indexer artik `noteAlive` ile canliligini yaziyor;
+ *   - ikisi AYNI ANDA dogruysa (`stopped-and-behind`) cumle IKISINI DE soyler,
+ *     birini otekinin altina gizlemez.
  */
 export function describeStaleness(indexer: StaleIndexer): string {
   const at = indexer.at
+  const age = describeLag(at?.stalenessSeconds ?? null)
+  const lag = describeBlockLag(at?.blocksBehind ?? null)
   switch (indexer.why) {
     case 'never-ran':
       return 'Our indexer has never run against this database, so nothing here has been checked against the chain.'
     case 'head-unknown':
-      return `Our indexer last updated ${describeLag(at?.stalenessSeconds ?? null)} but did not record where the chain head was, so how far behind this page is CANNOT be measured.`
+      return `Our indexer last reported ${age} but did not record where the chain head was, so how far behind this page is CANNOT be measured.`
     case 'writes-stalled':
-      return `Our indexer last updated ${describeLag(at?.stalenessSeconds ?? null)} and may have stopped.`
+      // GECIKME DE YAZILIR, kucuk olsa bile: "durmus olabilir" tek basina
+      // operatore verinin NE KADAR eski oldugunu soylemez, ve bu sayfa tam
+      // olarak o soruyu cevaplamak icin var.
+      return `Our indexer has not reported for ${age.replace(/ ago$/, '')} and may have stopped. Its last reading was ${lag} behind the chain.`
+    case 'stopped-and-behind':
+      return `Our indexer has not reported for ${age.replace(/ ago$/, '')} and may have stopped, and it was ALREADY ${lag} behind the chain when it last reported.`
     case 'behind-head':
-      return `Our indexer is ${describeBlockLag(at?.blocksBehind ?? null)} behind the chain (last updated ${describeLag(at?.stalenessSeconds ?? null)}).`
+      // "hala yetisiyor": son rapor TAZE, yani surec calisiyor.
+      return `Our indexer is ${lag} behind the chain and still catching up (last reported ${age}).`
   }
 }
 
