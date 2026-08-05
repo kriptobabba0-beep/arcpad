@@ -17,6 +17,7 @@ import { loadRepoEnv } from './env'
 import {
   assertFactoryMatchesGovernance,
   fileCursorStore,
+  pinnedAddress,
   runWatcher,
 } from './watch/graduationWindow'
 
@@ -37,7 +38,15 @@ async function main(): Promise<void> {
   // ZINCIR PINI, HER SEYDEN ONCE. Defterin dizini env'e acik oldugu icin
   // factory'yi commit'li bir dosyaya baglayan tek sey budur; bkz.
   // `assertFactoryMatchesGovernance`. Bir poll bile atilmadan once duser.
-  await assertFactoryMatchesGovernance(reader, watcher.factory, watcher.allowlist)
+  //
+  // SONUCU KULLANILIR, VE BU SATIR SIRASI DEGIL VERI BAGIMLILIGIDIR. Olculdu:
+  // bu cagriyi silmek, `await`ini dusurmek ve `poll()`dan sonraya almak -- ucu
+  // de typecheck'ten geciyor ve TUM birim suitini gecirtiyordu. Artik izleyici
+  // `Address` degil `PinnedFactory` ister (bkz. `PinnedFactory`), dolayisiyla
+  // ucu de DERLENMEZ; `pinnedAddress` ayni kapiyi `tsx`in tip denetlemeyen
+  // calisma yolu icin de kurar, ve asagidaki `watching ...` satirindan ONCE.
+  const pinned = await assertFactoryMatchesGovernance(reader, watcher.factory, watcher.allowlist)
+  const factory: Address = pinnedAddress(pinned)
 
   const liveness = createLiveness({ pollIntervalMs: config.pollIntervalMs }, Date.now())
   const throttle = createThrottle({ repeatAfterMs: watcher.alertRepeatMs })
@@ -63,7 +72,7 @@ async function main(): Promise<void> {
   // anda sifirdan yeniden kuruluyor" sorusunun cevabi bu satirdir.
   const store = fileCursorStore(
     watcher.cursorPath,
-    { chainId: watcher.chainId, factory: watcher.factory, startBlock: watcher.startBlock },
+    { chainId: watcher.chainId, factory, startBlock: watcher.startBlock },
     (reason) => {
       alert('ok', `cursor-reset: ${reason}`, sink)
     },
@@ -73,11 +82,10 @@ async function main(): Promise<void> {
     `keeper ready chainId=${ARC_TESTNET_CHAIN_ID} pollIntervalMs=${config.pollIntervalMs} dryRun=${config.dryRun}`,
   )
   console.log(
-    `watching graduation window factory=${watcher.factory} startBlock=${watcher.startBlock} chainKey=${watcher.chainKey} allowedTargets=${watcher.allowlist.graduationTargets.length} cursor=${watcher.cursorPath} alertLog=${watcher.alertLogPath ?? 'stdout+stderr only'} repeatAfterMs=${watcher.alertRepeatMs ?? DEFAULT_REPEAT_AFTER_MS}`,
+    `watching graduation window factory=${factory} startBlock=${watcher.startBlock} chainKey=${watcher.chainKey} allowedTargets=${watcher.allowlist.graduationTargets.length} cursor=${watcher.cursorPath} alertLog=${watcher.alertLogPath ?? 'stdout+stderr only'} repeatAfterMs=${watcher.alertRepeatMs ?? DEFAULT_REPEAT_AFTER_MS}`,
   )
 
   let stopped = false
-  const factory: Address = watcher.factory
 
   // KENDINI YENIDEN ZAMANLAYAN DONGU, `setInterval` DEGIL. Yavas bir RPC ile
   // `setInterval` poll'lari ust uste bindirir; bindiginde imlec dosyasina iki
@@ -86,7 +94,7 @@ async function main(): Promise<void> {
     if (stopped) return
     await runWatcher({
       client: reader,
-      factory,
+      factory: pinned,
       startBlock: watcher.startBlock,
       allowlist: watcher.allowlist,
       alert: (level, message) => {

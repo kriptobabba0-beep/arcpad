@@ -28,6 +28,8 @@ import {
   knownCurves,
   LogScanError,
   assertFactoryMatchesGovernance,
+  type PinnedFactory,
+  pinnedAddress,
   readWindowState,
   runWatcher,
   scanFactoryLogs,
@@ -200,6 +202,31 @@ const ALLOW_EMPTY: Allowlist = {
   governor: addr('601'),
 }
 
+/** Yalnizca `governor()` cevaplayan zincir; pin jetonunu uretmek icin. */
+const governorChain = (governor: unknown): ChainReader => ({
+  getBlock: () => Promise.resolve({ number: 10n, timestamp: NOW }),
+  readContract: (call) =>
+    call.functionName === 'governor'
+      ? Promise.resolve(governor)
+      : Promise.reject(new Error('unexpected call')),
+  getLogs: () => Promise.resolve([]),
+})
+
+/**
+ * TESTLERDEKI JETON DA GERCEK FONKSIYONDAN GELIR.
+ *
+ * `PinnedFactory`nin markasi (`PIN_MARK`) DISARI VERILMEZ, yani burada bir
+ * jeton UYDURULAMAZ; tek yol `assertFactoryMatchesGovernance`i gercekten
+ * cagirmaktir. Bu bilincli: bu depoda tekrar tekrar olculen ariza, testin
+ * test ettigi kodu ATLAYAN bir yoldan iddia etmesidir (M23/M24/M30). Sahte
+ * bir jeton uretici, tam olarak onun bir ornegi olurdu.
+ */
+const PINNED: PinnedFactory = await assertFactoryMatchesGovernance(
+  governorChain(ALLOW_GOOD.governor),
+  FACTORY,
+  ALLOW_GOOD,
+)
+
 /** Alarm lavabosu -- her seyi tutar, boylece SESSIZLIK de olculebilir. */
 function recorder(): {
   events: AlertEvent[]
@@ -230,7 +257,7 @@ function watch(fixture: Fixture, allowlist: Allowlist = ALLOW_GOOD, store?: Curs
   const sink = recorder()
   const deps = {
     client,
-    factory: FACTORY,
+    factory: PINNED,
     startBlock: 1n,
     allowlist,
     alert: sink.alert,
@@ -872,7 +899,7 @@ describe('runWatcher: SESSIZLIK ISPATI', () => {
     for (let i = 0; i < 10; i += 1) {
       await runWatcher({
         client,
-        factory: FACTORY,
+        factory: PINNED,
         startBlock: 1n,
         allowlist: ALLOW_GOOD,
         alert: sink.alert,
@@ -1083,7 +1110,7 @@ describe('kirilma 2: izleyici poll etmeyi birakti', () => {
     for (let t = NOW_MS; t <= NOW_MS + 3 * POLL; t += POLL) {
       await runWatcher({
         client,
-        factory: FACTORY,
+        factory: PINNED,
         startBlock: 1n,
         allowlist: ALLOW_GOOD,
         alert: sink.alert,
@@ -1135,7 +1162,7 @@ describe('kirilma 3: RPC bayat blok besliyor', () => {
     for (let t = NOW_MS; t <= NOW_MS + 2 * POLL; t += POLL) {
       await runWatcher({
         client,
-        factory: FACTORY,
+        factory: PINNED,
         startBlock: 1n,
         allowlist: ALLOW_GOOD,
         alert: sink.alert,
@@ -1633,7 +1660,7 @@ describe('kirilma 4: RPC saati kaymis (kanarya tarafi)', () => {
     const sink = recorder()
     await runWatcher({
       client,
-      factory: FACTORY,
+      factory: PINNED,
       startBlock: 1n,
       allowlist: ALLOW_GOOD,
       alert: sink.alert,
@@ -1688,7 +1715,7 @@ describe('runWatcher: ASLA REJECT ETMEZ', () => {
     await expect(
       runWatcher({
         client,
-        factory: FACTORY,
+        factory: PINNED,
         startBlock: 1n,
         allowlist: exploding,
         alert: sink.alert,
@@ -1863,7 +1890,7 @@ describe('alarm tekrari', () => {
     for (let i = 0; i < 20; i += 1) {
       await runWatcher({
         client,
-        factory: FACTORY,
+        factory: PINNED,
         startBlock: 1n,
         allowlist: ALLOW_GOOD,
         alert: sink.alert,
@@ -1883,7 +1910,7 @@ describe('alarm tekrari', () => {
     for (let i = 0; i < 3; i += 1) {
       await runWatcher({
         client,
-        factory: FACTORY,
+        factory: PINNED,
         startBlock: 1n,
         allowlist: ALLOW_GOOD,
         alert: sink.alert,
@@ -1900,7 +1927,7 @@ describe('alarm tekrari', () => {
     for (const target of [EVIL_TARGET, addr('bee5')]) {
       await runWatcher({
         client: syntheticChain({ pendingTarget: target, pendingEta: NOW + 100n }),
-        factory: FACTORY,
+        factory: PINNED,
         startBlock: 1n,
         allowlist: ALLOW_GOOD,
         alert: sink.alert,
@@ -2057,25 +2084,18 @@ describe('assertFactoryMatchesGovernance', () => {
     treasuries: [TREASURY],
     governor: GOVERNOR,
   }
-  const chainWithGovernor = (governor: unknown): ChainReader => ({
-    getBlock: () => Promise.resolve({ number: 10n, timestamp: NOW }),
-    readContract: (call) =>
-      call.functionName === 'governor'
-        ? Promise.resolve(governor)
-        : Promise.reject(new Error('unexpected call')),
-    getLogs: () => Promise.resolve([]),
-  })
+  const chainWithGovernor = governorChain
 
   it('zincirin governor"u governance dosyasiyla ayniysa gecer', async () => {
     await expect(
       assertFactoryMatchesGovernance(chainWithGovernor(GOVERNOR), FACTORY, allow),
-    ).resolves.toBeUndefined()
+    ).resolves.toMatchObject({ address: FACTORY, governor: GOVERNOR })
   })
 
   it('buyuk-kucuk harf farki gecerli bir eslesmeyi bozmaz', async () => {
     await expect(
       assertFactoryMatchesGovernance(chainWithGovernor(GOVERNOR.toLowerCase()), FACTORY, allow),
-    ).resolves.toBeUndefined()
+    ).resolves.toMatchObject({ address: FACTORY })
   })
 
   // BAYAT TATBIKAT DIZINI SEKLI: defter BASKA, gercek, sessiz bir factory'yi
@@ -2099,6 +2119,71 @@ describe('assertFactoryMatchesGovernance', () => {
     await expect(
       assertFactoryMatchesGovernance(chainWithGovernor('0x'), FACTORY, allow),
     ).rejects.toThrow(/governor\(\)/)
+  })
+})
+
+// ---------------------------------------------------------------
+// 16b. PIN ATLANAMAZ  (index.ts P1/P2/P3'un kapatilmasi)
+// ---------------------------------------------------------------
+//
+// OLCULEN DELIK, uc turdur ayni sekilde: `index.ts`teki pin cagrisini SILMEK
+// (P1), `await`ini DUSURMEK (P2) ve onu `poll()`dan SONRAYA ALMAK (P3) --
+// ucu de typecheck'ten geciyor ve birim suitinin TAMAMINI gecirtiyordu. Tek
+// yakalayan sey `pin-mutants.mjs` idi, cunku `index.ts` bir surectir ve
+// suit ona ERISEMEZ.
+//
+// Kapatma, siralamayi VERI BAGIMLILIGINA cevirmektir: `runWatcher` artik
+// `Address` degil `PinnedFactory` ister, ve o jetonu uretebilen tek yer
+// pindir. Uc mutasyon da artik DERLENMEZ. Asagidakiler o kapinin CALISMA ANI
+// yarisidir -- `index.ts` `tsx` altinda kosar ve `tsx` tip DENETLEMEZ, yani
+// tip tarafi tek basina uretimde hicbir sey ifade etmezdi.
+describe('pin atlanamaz: PinnedFactory', () => {
+  const unpinned = (value: unknown): PinnedFactory => value as PinnedFactory
+
+  it('P1 SEKLI: hic pinlenmemis (undefined) factory ADIYLA duser', () => {
+    expect(() => pinnedAddress(unpinned(undefined))).toThrow(/never pinned/)
+  })
+
+  it('P2 SEKLI: `await` dusurulmus -- bir Promise jeton DEGILDIR', () => {
+    const notAwaited = assertFactoryMatchesGovernance(
+      governorChain(ALLOW_GOOD.governor),
+      FACTORY,
+      ALLOW_GOOD,
+    )
+    expect(() => pinnedAddress(unpinned(notAwaited))).toThrow(/never pinned/)
+  })
+
+  // ELDE UYDURULMUS BIR JETON DA GECMEZ. Marka disari verilmedigi icin bu
+  // sekli bu modulun disinda hicbir sey uretemez -- ne uretim kodu ne test.
+  it('elde uydurulmus bir jeton (dogru alanlar, marka yok) GECMEZ', () => {
+    expect(() => pinnedAddress(unpinned({ address: FACTORY, governor: addr('601') }))).toThrow(
+      /never pinned/,
+    )
+    expect(() => pinnedAddress(unpinned(FACTORY))).toThrow(/never pinned/)
+  })
+
+  it('GERCEK jeton gecer ve pinlendigi adresi tasir', () => {
+    expect(pinnedAddress(PINNED)).toBe(FACTORY)
+  })
+
+  // ASIL IDDIA: pin atlanirsa izleyici KOSMAZ. Sayfa cikarip devam etmek
+  // DOGRU sonuc DEGILDIR -- yanlis factory'ye karsi dogru sayfalar cikaran
+  // bir izleyici, tam olarak bu kontrolun onlemek icin var oldugu seydir.
+  it('pinlenmemis factory ile runWatcher KOSMAZ: sifir sayfa, SIFIR kalp atisi', async () => {
+    const sink = recorder()
+    await expect(
+      runWatcher({
+        client: syntheticChain({ pendingTarget: EVIL_TARGET, pendingEta: NOW + 100n }),
+        factory: unpinned(FACTORY),
+        startBlock: 1n,
+        allowlist: ALLOW_GOOD,
+        alert: sink.alert,
+        heartbeat: sink.heartbeat,
+        nowMs: localClock(NOW),
+      }),
+    ).rejects.toThrow(/never pinned/)
+    expect(sink.beats()).toBe(0)
+    expect(sink.pages()).toEqual([])
   })
 })
 

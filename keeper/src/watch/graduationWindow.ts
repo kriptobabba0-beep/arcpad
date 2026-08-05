@@ -438,6 +438,57 @@ export type Allowlist = {
 }
 
 /**
+ * PIN'IN CIKTISI, VE `runWatcher`IN FACTORY ALANININ TIPI.
+ *
+ * NEDEN BIR TIP, NEDEN BIR YORUM DEGIL. Olculdu (round 4, round 7'de aynen
+ * yeniden uretildi): `index.ts`teki pin cagrisini SILMEK, `await`ini
+ * DUSURMEK ve onu `poll()`dan SONRAYA ALMAK -- ucu de typecheck'ten geciyor,
+ * ucu de 179 birim testinin TAMAMINI gecirtiyordu. Yani tek savunma hatti ile
+ * "yeniden yonlendirilmis defter" arasinda duran sey, bir SIRALAMA
+ * ALISKANLIGIYDI: kimsenin bozmamayi hatirlamasi gereken bir satir sirasi.
+ *
+ * `PinnedFactory`, o siralamayi bir VERI BAGIMLILIGINA cevirir. `runWatcher`
+ * artik `Address` degil bu jetonu ister, ve jetonu uretebilen tek yer
+ * `assertFactoryMatchesGovernance`tir. Uc mutasyonun ucu de artik DERLENMEZ:
+ *
+ *   cagri silinirse      -> `pinned` tanimsiz            (TS2304)
+ *   `await` dusurulurse  -> `Promise<PinnedFactory>`     (TS2345)
+ *   `poll()`dan sonraya  -> bildiriminden once kullanim  (TS2448)
+ *
+ * MARKA GERCEK BIR `Symbol`DUR, yalnizca `declare`li bir tip degil: `index.ts`
+ * `tsx` altinda kosar ve `tsx` TIP DENETLEMEZ, yani tip tarafi tek basina
+ * CALISMA ANINDA hicbir sey ifade etmezdi. `PIN_MARK` disari VERILMEZ, o
+ * yuzden bu modulun disinda hicbir yerde -- testler dahil -- bir jeton
+ * uydurulamaz; testler de jetonu gercek fonksiyondan alir.
+ */
+const PIN_MARK = Symbol('arcpad.keeper.pinnedFactory')
+
+export type PinnedFactory = {
+  readonly address: Address
+  /** Zincirin bildirdigi governor. Jeton, KIME karsi pinlendigini tasir. */
+  readonly governor: Address
+  readonly [PIN_MARK]: true
+}
+
+/**
+ * Jetonu ACAR, ve acarken MARKAYI CALISMA ANINDA dogrular.
+ *
+ * Tip tarafi derleme aninda yeterlidir; bu, `tsx`in tip denetlemeden kosan
+ * uretim yolu icin ayni kapiyi calisma aninda kurar. Bir `undefined` ya da bir
+ * `Promise` buraya geldiginde SESSIZCE `undefined` bir adrese cozulmez --
+ * ADIYLA duser.
+ */
+export function pinnedAddress(pinned: PinnedFactory): Address {
+  const mark = (pinned as { [PIN_MARK]?: unknown } | null | undefined)?.[PIN_MARK]
+  if (mark !== true) {
+    throw new Error(
+      'the factory handed to the watcher was never pinned: only assertFactoryMatchesGovernance() produces a PinnedFactory, and it must be awaited BEFORE the watcher starts. A watcher pointed at an unpinned factory is silent about the right one.',
+    )
+  }
+  return pinned.address
+}
+
+/**
  * DEFTERDEN BAGIMSIZ PIN. Baslangicta bir kez.
  *
  * Adres defterinin DIZINI env'e acilinca (`KEEPER_ADDRESS_BOOK_DIR`) factory
@@ -484,7 +535,7 @@ export async function assertFactoryMatchesGovernance(
   client: ChainReader,
   factory: Address,
   allowlist: Allowlist,
-): Promise<void> {
+): Promise<PinnedFactory> {
   const head = await client.getBlock()
   const raw = await client.readContract({
     address: factory,
@@ -498,6 +549,9 @@ export async function assertFactoryMatchesGovernance(
       `the factory at ${factory} reports governor ${onChain}, but expected-governance.json says ${allowlist.governor}. Either the address book points at a different factory than the governance file describes -- the shape a stale KEEPER_ADDRESS_BOOK_DIR produces -- or the governor was rotated without updating the file. Refusing to start: a watcher pointed at the wrong factory is silent about the right one.`,
     )
   }
+  // JETON YALNIZCA BURADA URETILIR. `runWatcher`in factory alani bu tiptir,
+  // yani pin ADIMI ATLANAMAZ -- atlanirsa derlenmez.
+  return { address: factory, governor: onChain, [PIN_MARK]: true }
 }
 
 export type FindingCode =
@@ -1097,7 +1151,11 @@ export async function exposure(
 
 export interface WatcherDeps {
   client: ChainReader
-  factory: Address
+  /**
+   * `Address` DEGIL. Bkz. `PinnedFactory`: izleyici, zincire karsi pinlenmemis
+   * bir factory'ye karsi kosturulamaz -- ne derleme aninda ne calisma aninda.
+   */
+  factory: PinnedFactory
   startBlock: bigint
   allowlist: Allowlist
   alert: (level: AlertLevel, message: string) => void
@@ -1127,6 +1185,13 @@ export interface WatcherDeps {
  * hatanin ta kendisidir.
  */
 export async function runWatcher(deps: WatcherDeps): Promise<void> {
+  // TEK ISTISNA, VE BILINCLI. Bu fonksiyonun "ASLA REJECT ETMEZ" sozu ZINCIR
+  // GOZLEMLERI icindir: bir RPC hatasi sayfaya cevrilir, dongu yasar. Bu satir
+  // bir gozlem degil, bir KULLANIM HATASIDIR -- pinlenmemis bir factory'ye
+  // karsi kosan izleyici, izlemesi gereken seyi izlemiyordur. Onun dogru
+  // sonucu sayfa DEGIL, BASLAMAMAKTIR; sessizce dogru sayfalar cikarip yanlis
+  // factory'yi izlemek, bu izleyicinin var olma sebebinin tam tersidir.
+  const factory = pinnedAddress(deps.factory)
   const nowMs = deps.nowMs ?? Date.now
   const at = nowMs()
   const activeKeys = new Set<string>()
@@ -1138,7 +1203,7 @@ export async function runWatcher(deps: WatcherDeps): Promise<void> {
 
   let state: WindowState
   try {
-    state = await readWindowState(deps.client, deps.factory, { nowMs })
+    state = await readWindowState(deps.client, factory, { nowMs })
   } catch (error) {
     emit(
       'page',
@@ -1161,7 +1226,7 @@ export async function runWatcher(deps: WatcherDeps): Promise<void> {
     }
     if (deps.store !== undefined) scanOpts.store = deps.store
     if (deps.chunk !== undefined) scanOpts.chunk = deps.chunk
-    const scan = await scanFactoryLogs(deps.client, deps.factory, deps.startBlock, scanOpts)
+    const scan = await scanFactoryLogs(deps.client, factory, deps.startBlock, scanOpts)
     curves = scan.curves
     history = scan.history
   } catch (error) {
