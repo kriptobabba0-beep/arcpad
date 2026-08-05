@@ -3,7 +3,8 @@ import { isAddress } from 'viem'
 import { notFound } from 'next/navigation'
 import { verifyCanonical } from '@/lib/canonical'
 import { resolveMetadata } from '@/lib/metadata'
-import { readHolders, readTokenOverview, readTrades, valueOf } from '@/lib/read'
+import { readHolders, readTokenOverview, readTrades, TABLE_PAGE_SIZE, valueOf } from '@/lib/read'
+import { loadMoreHolders, loadMoreTrades } from './actions'
 import {
   asHex,
   type Canonicity,
@@ -96,8 +97,8 @@ export default async function TokenPage({ params }: { params: Promise<{ address:
 async function IndexedToken({ overview }: { overview: TokenOverview }) {
   const [metadata, trades, holders, profile] = await Promise.all([
     resolveMetadata(overview.uri),
-    readTrades(asHex(overview.token), { cursor: null, limit: 25 }),
-    readHolders(asHex(overview.token), { cursor: null, limit: 25 }),
+    readTrades(asHex(overview.token), { cursor: null, limit: TABLE_PAGE_SIZE }),
+    readHolders(asHex(overview.token), { cursor: null, limit: TABLE_PAGE_SIZE }),
     // PROFIL FACTORY'DEN, ve dusmesi sayfayi dusurmez: al-sat paneli o zaman
     // cizilmez, geri kalan her sey cizilir. Uydurulmus bir yedek KONMAZ --
     // testnet ile uretim yalnizca `V`de ve tam 1000 kat ayrisir.
@@ -156,12 +157,28 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
             Iki okuma AYRI: bir tabin okumasi dusse otekinin tabi calismaya
             devam eder. Tek bir `Promise.all` reddi ikisini birden karartirdi.
 
-            Task 12'nin <TradePanel>'i hâlâ BURADA DEGIL, ve bu bilincli: bos
-            bir cerceve, kullaniciya gelmeyecek bir sey vaat eder.
+            ==================================================================
+             `loadMore*` IKI PROP, VE YOKLUKLARI EKRANDA HICBIR IZ BIRAKMIYORDU.
+            ==================================================================
+
+            Bu iki satir gelene kadar sayfa EN COK 25 islem ve 25 holder
+            gosterebiliyordu. Eksik olan bir dugme degildi: `useKeysetRows`
+            `loadMore` olmadan `canLoadMore: false` doner ve `LoadMoreFooter`
+            hicbir sey cizmez -- DOGRU davranis, cunku hicbir sey yapmayan bir
+            dugme olmayandan kotudur. Sonuc, dort bin islemi olan bir token ile
+            yirmi bes islemi olanin AYNI gorunmesiydi; ekranda "devami var"
+            diyen tek bir piksel yoktu. `readTrades` bu sure boyunca gercek bir
+            `nextCursor` donduruyordu, kimsenin gecmedigi bir prop'a.
+
+            `.bind` sunucu eylemini token'a BAGLAR, yani istemcinin gonderdigi
+            tek sey imlectir. Adres yine de eylemin icinde dogrulanir: bir
+            sunucu eylemi acik bir uc noktadir.
           */}
           <TableTabs
             trades={trades}
             holders={holders}
+            loadMoreTrades={loadMoreTrades.bind(null, overview.token)}
+            loadMoreHolders={loadMoreHolders.bind(null, overview.token)}
             overview={{
               curve: overview.curve,
               launchCreator: overview.launchCreator,

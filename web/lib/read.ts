@@ -13,6 +13,7 @@
  */
 
 import {
+  encodeHolderCursor,
   getIndexerStatus,
   getTokenOverview,
   type HolderRow,
@@ -20,6 +21,7 @@ import {
   listHolders,
   listTokens,
   listTrades,
+  parseHolderCursor,
   type SearchSortKey,
   searchTokens,
   type SortKey,
@@ -151,6 +153,22 @@ export type ListParams = {
 }
 
 export type PageParams = { readonly cursor: string | null; readonly limit: number }
+
+/**
+ * THE TOKEN PAGE'S PAGE SIZE, IN ONE PLACE.
+ *
+ * It lives here rather than in the page because the SERVER ACTION that fetches
+ * page two has to ask for the same size, and the two sitting in different files
+ * is how a "load more" quietly returns a differently-sized page.
+ *
+ * IT MUST STAY <= `packages/db`'s 200-row clamp. `listTrades`/`listHolders`
+ * clamp `limit` to `[1, 200]`, and `nextCursorFrom` decides "there is more" by
+ * `rows.length < limit` -- so a caller asking for 500 would get 200 rows, read
+ * `200 < 500`, and report NO next page while 4,000 trades sat behind it. That
+ * is the exact shape of the paging loss Explore already paid for, so the bound
+ * is named here instead of being an unstated precondition.
+ */
+export const TABLE_PAGE_SIZE = 25
 
 /** The cursor is the sort key of the LAST row, or null when the page is short. */
 function nextCursorFrom<T>(
@@ -311,12 +329,22 @@ export async function readTrades(
 /**
  * Holders, curve EXCLUDED by the query itself (`h.holder <> c.curve`).
  *
- * NO CURSOR YET, and that is a dependency rather than an oversight:
- * `listHolders` in `packages/db` takes only `{ limit }`. Paging it needs a
- * keyset on `(balance_tok DESC, holder ASC)` -- the second key is REQUIRED
- * because balances tie -- and `packages/db` belongs to another track. Named in
- * the report; `nextCursor` is null here until it lands, which is honest rather
- * than a cursor that silently repeats rows.
+ * THE CURSOR IS REAL NOW, and the dependency it was waiting on is named
+ * because the wait is the interesting part. This function used to hard-code
+ * `nextCursor: null` with a comment saying `listHolders` "takes only
+ * `{ limit }`". That stopped being true at `c035a88`: it takes
+ * `{ after?: HolderCursor | null, limit? }` and exports
+ * `encodeHolderCursor`/`parseHolderCursor`. A comment describing a dependency
+ * does not notice when the dependency lands, so the holders tab was capped at
+ * one page for every commit in between -- and the cap was INVISIBLE, because a
+ * null cursor draws no button and an absent button looks like a short list.
+ *
+ * THE CURSOR IS TWO-PART AND MUST BE. The order is `balance_tok DESC, holder
+ * ASC`; `balance_tok` alone cannot be a keyset because balances TIE, most
+ * densely in the tail where an airdrop gave hundreds of wallets the same
+ * number. `packages/db` builds the cursor out of the returned row's own fields
+ * rather than re-deriving an expression, so the ORDER BY and the cursor cannot
+ * drift apart -- this layer only stringifies it.
  */
 export async function readHolders(
   token: string,
@@ -324,8 +352,19 @@ export async function readHolders(
 ): Promise<ReadResult<Page<HolderRow>>> {
   return guard(async () => {
     const pool = getPool()
-    const rows = await listHolders(pool, token as `0x${string}`, { limit: params.limit })
+    const rows = await listHolders(pool, token as `0x${string}`, {
+      // A malformed cursor is the FIRST PAGE, never a 500: this value arrives
+      // from a URL or a client-supplied server-action argument.
+      after: parseHolderCursor(params.cursor),
+      limit: params.limit,
+    })
     const indexer = await getIndexerStatus(pool)
-    return { value: { rows, nextCursor: null }, indexer }
+    // A short page is the last page. Same rule as `nextCursorFrom`, but the
+    // key is a PAIR rather than a bigint, so it cannot share that helper.
+    const last = rows.length < params.limit ? undefined : rows[rows.length - 1]
+    return {
+      value: { rows, nextCursor: last === undefined ? null : encodeHolderCursor(last) },
+      indexer,
+    }
   })
 }

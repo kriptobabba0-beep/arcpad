@@ -178,7 +178,14 @@ export function UnavailableNotice({ what }: { what: string }) {
 // Keyset sayfalama
 // --------------------------------------------------------------------------
 
-/** Bir imlecten SONRAKI sayfayi getirir. Task 7 indiginde bu bir server action olur. */
+/**
+ * Bir imlecten SONRAKI sayfayi getirir.
+ *
+ * Uretimde bu BIR SUNUCU EYLEMIDIR (`app/token/[address]/actions.ts`), token'a
+ * `.bind` ile bagli. Imza bilerek dar: yalnizca imlec. Bir `limit` parametresi
+ * olsaydi istemci 200 satirlik siniri tekrar tekrar isteyebilirdi ve bu urunde
+ * hicbir ekran farkli bir sayi istemiyor.
+ */
 export type LoadMore<T> = (cursor: string) => Promise<ReadResult<Page<T>>>
 
 export type KeysetRows<T> = {

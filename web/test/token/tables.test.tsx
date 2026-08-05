@@ -642,3 +642,98 @@ describe('<TableTabs>', () => {
     ).toBeInTheDocument()
   })
 })
+
+/**
+ * =========================================================================
+ *  SEKME ETIKETI, CIZILEN SATIRLARI SAYAR -- VE BU, DUZELTMENIN ICINDEKI HATA.
+ * =========================================================================
+ *
+ * Token sayfasi `loadMoreTrades`/`loadMoreHolders` gecmeye baslayana kadar
+ * tablo hicbir zaman ikinci sayfayi gormuyordu, dolayisiyla "gelen sayfanin
+ * uzunlugu" ile "ekrandaki satir sayisi" HER ZAMAN ayniydi. Boslugu kapatan
+ * degisiklik ikisini ayirdi: 50 satirin ustunde "Trades (25)" yazan bir
+ * etiket, tam olarak duzeltilen sinifin duzeltmenin icinde yeniden dogmus
+ * hâli olurdu. Bu yuzden sayfalama durumu `<TableTabs>`e tasindi ve etiket ile
+ * tablo AYNI diziyi sayiyor.
+ */
+describe('<TableTabs> -- sayfalama ve etiketteki sayi', () => {
+  it('sunucu eyleminden gelen sayfa eklenir VE etiketteki sayi onunla birlikte artar', async () => {
+    const user = userEvent.setup()
+    const loadMore = vi.fn(async () => ok(trades([LATE_TRADE])))
+
+    render(
+      <TableTabs
+        trades={ok(trades([BUY_ONE_USDC, SELL_ONE_USDC], 'seq-4194304'))}
+        holders={ok(holders([]))}
+        overview={CLIMBING}
+        loadMoreTrades={loadMore}
+        now={TRADE_AT}
+      />,
+    )
+
+    expect(screen.getByRole('tab', { name: 'Trades (2)' })).toBeInTheDocument()
+    // Basliksiz satir dahil 3: 1 baslik + 2 govde.
+    expect(screen.getAllByRole('row')).toHaveLength(3)
+
+    await user.click(screen.getByRole('button', { name: 'Load more trades' }))
+
+    await waitFor(() => expect(screen.getAllByRole('row')).toHaveLength(4))
+    expect(loadMore).toHaveBeenCalledWith('seq-4194304')
+    // MUTANT: sayiyi `valueOf(trades).rows.length`ten al -> burada "(2)" yazar.
+    expect(screen.getByRole('tab', { name: 'Trades (3)' })).toBeInTheDocument()
+  })
+
+  it('`loadMore` gecilmediginde dugme HIC cizilmez -- eski davranis aynen duruyor', () => {
+    render(
+      <TableTabs
+        trades={ok(trades([BUY_ONE_USDC], 'seq-4194304'))}
+        holders={ok(holders([]))}
+        overview={CLIMBING}
+        now={TRADE_AT}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: 'Load more trades' })).toBeNull()
+  })
+
+  it('holders etiketi CURVE satirini saymaz, cunku tablo onu cizmiyor', () => {
+    // SQL zaten curve'u disliyor; bu satir son savunma hattinin karsiligi.
+    // Etiket `page.rows.length` okusaydi "(2)" yazardi ve tabloda 1 satir
+    // olurdu -- basligin altindaki sayinin tablodan farkli olmasi.
+    render(
+      <TableTabs
+        trades={ok(trades([]))}
+        holders={ok(holders([holder(CURVE, 1000n), holder(RANDOM_TRADER, 500n)]))}
+        overview={CLIMBING}
+      />,
+    )
+    expect(screen.getByRole('tab', { name: 'Holders (1)' })).toBeInTheDocument()
+  })
+
+  it('holders sayfasi da eklenir ve sayisi buyur', async () => {
+    const user = userEvent.setup()
+    const A = holder('0x00000000000000000000000000000000000000a1', 300000000000000000000000000n)
+    const B = holder('0x00000000000000000000000000000000000000b2', 100000000000000000000000000n)
+    const loadMore = vi.fn(async () => ok(holders([B])))
+
+    render(
+      <TableTabs
+        trades={ok(trades([]))}
+        holders={ok(
+          holders([A], '300000000000000000000000000:0x00000000000000000000000000000000000000a1'),
+        )}
+        overview={CLIMBING}
+        loadMoreHolders={loadMore}
+      />,
+    )
+
+    await user.click(screen.getByRole('tab', { name: 'Holders (1)' }))
+    await user.click(screen.getByRole('button', { name: 'Load more holders' }))
+
+    await waitFor(() =>
+      expect(screen.getByRole('tab', { name: 'Holders (2)' })).toBeInTheDocument(),
+    )
+    expect(loadMore).toHaveBeenCalledWith(
+      '300000000000000000000000000:0x00000000000000000000000000000000000000a1',
+    )
+  })
+})

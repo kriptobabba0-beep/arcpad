@@ -4,9 +4,9 @@ import { useState } from 'react'
 import type { HolderRow, Page, ReadResult, TokenOverview, TradeRow } from '@/components/read/types'
 import { cx } from '@/components/ui/cx'
 import { Tabs } from '@/components/ui/Tabs'
-import { HoldersTable } from './HoldersTable'
+import { HoldersTable, visibleHolders } from './HoldersTable'
 import type { LoadMore } from './tableShell'
-import { UnavailableNotice } from './tableShell'
+import { UnavailableNotice, useKeysetRows } from './tableShell'
 import { TradesTable } from './TradesTable'
 import { valueOf } from '@/components/read/result'
 
@@ -26,6 +26,16 @@ export type TableTabsProps = {
 
 const IDS = { trades: 'trades', holders: 'holders' } as const
 type TableTabId = (typeof IDS)[keyof typeof IDS]
+
+/**
+ * SABIT BIR BOS DIZI, ve bu referansin sabit olmasi ZORUNLU.
+ *
+ * `useKeysetRows` `state.base !== rows` gordugunde RENDER SIRASINDA
+ * `setState` cagirir -- biriken sayfalari atmanin dogru yolu budur. Her
+ * render'da yeni bir `[]` verilseydi bu kosul HER SEFERINDE dogru olur ve
+ * bileşen sonsuz dongude yeniden cizilirdi.
+ */
+const NO_ROWS: readonly never[] = []
 
 /**
  * IKI TABLO, IKI SEKME, VE IKI BAGIMSIZ DUSUS.
@@ -62,17 +72,45 @@ export function TableTabs({
   const tradePage = valueOf(trades)
   const holderPage = valueOf(holders)
 
-  const count = (result: ReadResult<Page<unknown>>): string => {
-    const page = valueOf(result)
-    return page === undefined ? '' : ` (${page.rows.length})`
-  }
+  /*
+   * SAYFALAMA DURUMU BURADA, TABLONUN ICINDE DEGIL.
+   *
+   * Sebep dogrudan yukaridaki sayidir. "Load more" calisir hale geldiginde
+   * tablo 50 satir cizerken sunucunun ilk sayfasindan okunan etiket hâlâ
+   * "Trades (25)" derdi -- yani bir bosluğu kapatan degisiklik, KENDI ICINDE
+   * yanlis bir sayi uretirdi. Durum ust bileşende oldugunda etiket ile tablo
+   * AYNI diziyi sayar ve ayrisamazlar.
+   *
+   * Holders tarafinda ikinci bir sebep var: `page.rows.length` curve satirini
+   * ve tekrarlanan bir holder'i SAYAR ama tablo onlari CIZMEZ. `visibleHolders`
+   * tablonun kullandigi suzgecin ta kendisidir.
+   */
+  const tradeKeyset = useKeysetRows(
+    tradePage?.rows ?? NO_ROWS,
+    tradePage?.nextCursor ?? null,
+    loadMoreTrades,
+  )
+  const holderKeyset = useKeysetRows(
+    holderPage?.rows ?? NO_ROWS,
+    holderPage?.nextCursor ?? null,
+    loadMoreHolders,
+  )
+
+  const shownHolders = visibleHolders(holderKeyset.rows, overview?.curve)
+
+  /**
+   * Sayi YALNIZCA okuma basarili oldugunda yazilir -- ve o sayi EKRANDAKI
+   * satir sayisidir, gelen sayfanin uzunlugu degil.
+   */
+  const count = (result: ReadResult<Page<unknown>>, shown: number): string =>
+    valueOf(result) === undefined ? '' : ` (${shown})`
 
   return (
     <div className={cx('flex flex-col gap-3', className)}>
       <Tabs
         items={[
-          { id: IDS.trades, label: `Trades${count(trades)}` },
-          { id: IDS.holders, label: `Holders${count(holders)}` },
+          { id: IDS.trades, label: `Trades${count(trades, tradeKeyset.rows.length)}` },
+          { id: IDS.holders, label: `Holders${count(holders, shownHolders.length)}` },
         ]}
         value={tab}
         onChange={(id) => setTab(id === IDS.holders ? IDS.holders : IDS.trades)}
@@ -94,9 +132,9 @@ export function TableTabs({
           <TradesTable
             rows={tradePage.rows}
             nextCursor={tradePage.nextCursor}
+            keyset={tradeKeyset}
             tradePanelHref={tradePanelHref}
             {...(overview ? { symbol: overview.symbol } : {})}
-            {...(loadMoreTrades ? { loadMore: loadMoreTrades } : {})}
             {...(now === undefined ? {} : { now })}
           />
         ) : (
@@ -115,6 +153,7 @@ export function TableTabs({
           <HoldersTable
             rows={holderPage.rows}
             nextCursor={holderPage.nextCursor}
+            keyset={holderKeyset}
             {...(overview
               ? {
                   curve: overview.curve,
@@ -122,7 +161,6 @@ export function TableTabs({
                   symbol: overview.symbol,
                 }
               : {})}
-            {...(loadMoreHolders ? { loadMore: loadMoreHolders } : {})}
           />
         ) : (
           <UnavailableNotice what="Holder data" />

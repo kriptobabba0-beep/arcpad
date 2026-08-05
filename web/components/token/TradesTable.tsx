@@ -24,6 +24,7 @@ import {
   TBODY_CLASS,
   THEAD_CLASS,
   useKeysetRows,
+  type KeysetRows,
   type LoadMore,
 } from './tableShell'
 import { feeBreakdown, walletDeltaWei } from './walletDelta'
@@ -36,6 +37,16 @@ export type TradesTableProps = {
   /** Bos durumdaki baglantinin hedefi -- al-sat paneli. */
   readonly tradePanelHref?: string
   readonly loadMore?: LoadMore<TradeRow>
+  /**
+   * SAYFALAMA DURUMU DISARIDAN, VERILDIGINDE.
+   *
+   * `<TableTabs>` bunu verir cunku SEKME ETIKETI cizilen satir sayisini
+   * yazar: durum burada kalsaydi "Trades (25)" etiketi 50 satirin ustunde
+   * durabilirdi -- "Load more"i calistiran duzeltmenin KENDI ICINDE urettigi
+   * yanlis sayi. Verilmediginde bilesen kendi durumunu tutar, yani tek basina
+   * kullanimi (ve testleri) degismez.
+   */
+  readonly keyset?: KeysetRows<TradeRow>
   /** Yas hesabinin referans ani. Testler sabitler; uretimde `Date.now()`. */
   readonly now?: number
   readonly className?: string
@@ -146,10 +157,15 @@ export function TradesTable({
   symbol,
   tradePanelHref = '#trade',
   loadMore,
+  keyset: provided,
   now,
   className,
 }: TradesTableProps) {
-  const keyset = useKeysetRows(rows, nextCursor, loadMore)
+  // Kanca HER ZAMAN calisir (kosullu bir kanca yasak); disaridan bir durum
+  // geldiginde sonucu kullanilmaz. `loadMore` de o durumda gelmez, yani
+  // ictekinin getirecek bir sayfasi zaten yoktur.
+  const own = useKeysetRows(rows, nextCursor, loadMore)
+  const keyset = provided ?? own
   const at = now ?? Date.now()
 
   if (keyset.rows.length === 0) {

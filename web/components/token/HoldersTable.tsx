@@ -15,6 +15,7 @@ import {
   TBODY_CLASS,
   THEAD_CLASS,
   useKeysetRows,
+  type KeysetRows,
   type LoadMore,
 } from './tableShell'
 import { supplyPercent, TOTAL_SUPPLY_TOK } from './walletDelta'
@@ -37,6 +38,8 @@ export type HoldersTableProps = {
   readonly launchCreator?: string
   readonly symbol?: string
   readonly loadMore?: LoadMore<HolderRow>
+  /** Bkz. `<TradesTable>`: sekme etiketi CIZILEN satirlari saymak zorunda. */
+  readonly keyset?: KeysetRows<HolderRow>
   readonly className?: string
 }
 
@@ -76,6 +79,24 @@ function dedupeByHolder(rows: readonly HolderRow[]): readonly HolderRow[] {
 }
 
 /**
+ * CIZILEN SATIRLAR -- ve DISARIDAN da sorulabilir olmasi bir zorunluluk.
+ *
+ * `<TableTabs>` sekme etiketine bir sayi yaziyor. O sayi `page.rows.length`
+ * olsaydi BU IKI SUZGECI atlardi: curve satiri (SQL zaten disliyor, bu son
+ * savunma hatti) ve tekrarlanan bir holder listeden cikar ama sayiya girerdi.
+ * Yani etiket, tablonun ustunde duran ve tablodan FARKLI bir sayi olurdu.
+ * Kural tek yerde durur ve iki taraf ayni fonksiyonu cagirir.
+ */
+export function visibleHolders(
+  rows: readonly HolderRow[],
+  curve: string | undefined,
+): readonly HolderRow[] {
+  return dedupeByHolder(
+    curve === undefined ? rows : rows.filter((row) => !sameAddress(row.holder, curve)),
+  )
+}
+
+/**
  * HOLDERS -- CURVE HARIC.
  *
  * Curve arzin satilmamis kismini tutar, yani "en buyuk holder curve" satiri her
@@ -96,15 +117,13 @@ export function HoldersTable({
   launchCreator,
   symbol,
   loadMore,
+  keyset: provided,
   className,
 }: HoldersTableProps) {
-  const keyset = useKeysetRows(rows, nextCursor, loadMore)
+  const own = useKeysetRows(rows, nextCursor, loadMore)
+  const keyset = provided ?? own
 
-  const visible = dedupeByHolder(
-    curve === undefined
-      ? keyset.rows
-      : keyset.rows.filter((row) => !sameAddress(row.holder, curve)),
-  )
+  const visible = visibleHolders(keyset.rows, curve)
 
   // Locale ACIKCA en-US: kok eslint yapilandirmasi locale'siz `Intl`i
   // reddediyor ve sebebi CONTRIBUTING.md'de -- ayni sayi bir kullanicida

@@ -1,11 +1,12 @@
 import { createPool, type Pool } from '@arcpad/db'
 import { createServer, type Server } from 'node:net'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { setPoolForTesting } from '../lib/db'
 import {
   fold,
   guard,
   type ReadResult,
+  readHolders,
   readTokenList,
   readTokenOverview,
   valueOf,
@@ -188,5 +189,124 @@ describe('a reading that is present but lagging', () => {
     // ...and notFound still carries the indexer status, because "no row" from
     // a lagging indexer is a different statement than "no row" from a fresh one.
     expect(result.indexer).not.toBeNull()
+  })
+})
+
+/**
+ * =========================================================================
+ *  THE HOLDERS CURSOR: THE PARAMETER HAS TO REACH THE QUERY.
+ * =========================================================================
+ *
+ * `readHolders` used to hard-code `nextCursor: null` with a comment saying
+ * `listHolders` "takes only `{ limit }`". It has taken `{ after, limit }` since
+ * `c035a88`. A comment cannot notice that its dependency landed, so the holders
+ * tab was capped at one page and NOTHING ON SCREEN SAID SO -- a null cursor
+ * draws no button, and an absent button is indistinguishable from a short list.
+ *
+ * WHAT IS FAKED HERE IS `pg`, AND NOTHING ELSE. `listHolders`,
+ * `parseHolderCursor` and `encodeHolderCursor` are the real functions from
+ * `@arcpad/db`; only the driver is replaced, so what is measured is that this
+ * layer's cursor ARRIVES IN THE STATEMENT'S PARAMETERS and comes back out
+ * encoded. The SQL's own semantics -- that `balance_tok < $2 OR (= $2 AND
+ * holder > $3)` is the right keyset for `DESC, ASC` -- are proved against a
+ * real Postgres in `packages/db`'s suite, and re-asserting them against a fake
+ * would be a double doing the real code's job.
+ */
+describe('readHolders -- the keyset that was hard-coded to null', () => {
+  const STATUS_ROW = {
+    last_block: '1000',
+    last_block_hash: '0xabc',
+    updated_at: new Date('2026-08-05T00:00:00Z'),
+    staleness_seconds: '2',
+  }
+
+  type Call = { text: string; params: unknown[] }
+
+  /** Replaces the DRIVER. Dispatches on the statement, records every call. */
+  function fakePool(holderRows: { holder: string; balance_tok: string }[]) {
+    const calls: Call[] = []
+    const pool = {
+      query: async (text: string, params: unknown[] = []) => {
+        calls.push({ text, params })
+        if (text.includes('sync_state')) return { rows: [STATUS_ROW] }
+        if (text.includes('FROM holders')) return { rows: holderRows }
+        throw new Error(`unexpected statement: ${text}`)
+      },
+      on: () => undefined,
+      end: async () => undefined,
+    }
+    return { pool: pool as unknown as Pool, calls }
+  }
+
+  function rows(n: number, balance: bigint) {
+    return Array.from({ length: n }, (_, i) => ({
+      holder: `0x${(0xa0 + i).toString(16).padStart(40, '0')}`,
+      balance_tok: balance.toString(),
+    }))
+  }
+
+  afterEach(() => setPoolForTesting(deadPool))
+
+  it('a FULL page returns a two-part cursor built from the last row', async () => {
+    const { pool } = fakePool(rows(3, 500n))
+    setPoolForTesting(pool)
+
+    const result = await readHolders('0x00000000000000000000000000000000000000aa', {
+      cursor: null,
+      limit: 3,
+    })
+    const page = valueOf(result)
+    expect(page?.rows).toHaveLength(3)
+    // `<balance>:<holder>` -- the balance ALONE cannot be a keyset, because
+    // balances tie, most densely in the tail of the list.
+    expect(page?.nextCursor).toBe('500:0x00000000000000000000000000000000000000a2')
+  })
+
+  it('a SHORT page is the last page: no cursor, so no button', async () => {
+    const { pool } = fakePool(rows(2, 500n))
+    setPoolForTesting(pool)
+
+    const result = await readHolders('0x00000000000000000000000000000000000000aa', {
+      cursor: null,
+      limit: 3,
+    })
+    expect(valueOf(result)?.nextCursor).toBeNull()
+  })
+
+  it('the cursor REACHES the statement as its parameters, both halves', async () => {
+    const { pool, calls } = fakePool(rows(1, 400n))
+    setPoolForTesting(pool)
+
+    await readHolders('0x00000000000000000000000000000000000000aa', {
+      cursor: '500:0x00000000000000000000000000000000000000a2',
+      limit: 3,
+    })
+
+    const holders = calls.find((c) => c.text.includes('FROM holders'))
+    // $1 token, $2 balance, $3 holder, $4 limit. THIS is the assertion the
+    // hard-coded `nextCursor: null` would have passed happily: without it, a
+    // page-two request silently re-served page one.
+    expect(holders?.params).toEqual([
+      '0x00000000000000000000000000000000000000aa',
+      '500',
+      '0x00000000000000000000000000000000000000a2',
+      3,
+    ])
+  })
+
+  it('a MALFORMED cursor is the first page, not a 500', async () => {
+    const { pool, calls } = fakePool(rows(1, 400n))
+    setPoolForTesting(pool)
+
+    // This value arrives from a URL or a client-supplied server-action
+    // argument. Both halves must be null, or the statement gets a broken
+    // numeric and Postgres -- not the user -- decides what happens next.
+    await readHolders('0x00000000000000000000000000000000000000aa', {
+      cursor: 'not-a-cursor',
+      limit: 3,
+    })
+    const holders = calls.find((c) => c.text.includes('FROM holders'))
+    expect(holders?.params[1]).toBeNull()
+    expect(holders?.params[2]).toBeNull()
   })
 })
