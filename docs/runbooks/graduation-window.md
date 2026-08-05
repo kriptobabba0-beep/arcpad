@@ -45,6 +45,8 @@ The watcher polls every `KEEPER_POLL_INTERVAL_MS` (default 5s) and reads **both 
 - `Launched` — where the curve set comes from until Phase 3's indexer exists
 - `GraduationTargetProposed`, `GraduationTargetChanged`, `ProtocolTreasuryChanged` — the history the slots cannot reconstruct
 
+The page size is `KEEPER_LOG_SCAN_CHUNK` (default 10 000 blocks, which is what Arc serves today). **If the endpoint rejects that width, the scan halves it and retries rather than failing the poll** — a permanent range error would otherwise wedge the cursor at one chunk forever, and a wedged cursor means pages with no heartbeats, which §8's drill reads as *there was no watcher*. See §6.
+
 `BondingCurve.Completed` is **deliberately not** queried, and the reason is worth knowing when you are reading a page: the watcher already reads `complete()` **from the slot, on every known curve, every poll**. For that one fact the slot is strictly better than the log — `complete` latches true and never goes back, so the log carries nothing newer. For the governance events the opposite holds, which is why those three *are* queried.
 
 **Why both, and it is not belt-and-braces.** An RPC can drop a log range; a reorg can unsee one; the keeper can be restarted past a gap. The slot cannot lie about the *current* state, but it cannot tell you a proposal was made and overwritten either. The log stream gives *history*; the slot gives *truth*.
@@ -198,6 +200,20 @@ Two consequences, both of which are now handled in code — do not re-derive the
 
 If you ever see `watcher-state-read-failed` naming `request limit reached`, the retry budget has been exhausted, not bypassed: the endpoint is degraded beyond what 14 attempts can ride out. That is a real page.
 
+**Arc has at least two rate-limit codes, and the second was documented as "unused".** The first round measured `-32011` and `chainReader.ts` recorded that `-32005` "is not used by Arc; accepted for completeness". Re-measured against the same endpoint on 2026-08-02, the answers came back **mixed** — `-32005`, `-32011`, `-32005` on consecutive ids. Both are in the retry set so the behaviour was always right, but the *reason written down* was wrong, and a wrong reason is what gets a working guard deleted as dead code. **Do not trim either code.** If `-32005` were removed, every rate limit carrying it would go un-retried: the poll fails, **no heartbeat is emitted**, and the weekly drill reports "there was no watcher" for a watcher that is alive.
+
+### A range error is not a rate limit, and only one of them is fixed by waiting
+
+`withRateLimitRetry` retries **transient** errors. A **range/size** error (`-32012 requested range too large`, `-32614`, `-32602`, or a body saying `more than N results`) is permanent for that request: the same chunk fails identically on every poll, so the cursor can never advance past it. The measured consequence is the one that matters — **pages fire, heartbeats do not, forever**, and §8's drill reads zero heartbeats as *there was no watcher*. That is the same shape as the cold-scan failure fixed in round 7, but persisting the successful prefix does not help here, because there is no successful next attempt to make.
+
+`scanFactoryLogs` therefore **halves the block span and retries the same range** on a range error, keeping the reduced span for the rest of that scan. It never grows back inside a call. Three properties, all tested:
+
+- **It is bounded by construction** — each step halves and stops at 1, so at most `log2(chunk)` extra requests (14 at the default 10,000). There is no separate attempt counter: a counter would stop the shrink *above* the provider's real limit and reintroduce exactly the non-convergence it was meant to prevent.
+- **It is not a blanket retry.** Any error that is not a range error still surfaces on the first attempt and becomes a `log-scan-failed` page. The narrowing exists so that the fix cannot become a mask for the failures the watcher is there to report.
+- **Arc's rate-limit text is deliberately excluded from the match.** The live message is `Request exceeds defined limit ... rate limit exceeded`; a generic "exceeds limit" pattern would read a *transient* error as a *permanent* one and shrink the window for no reason.
+
+If you see the scan converge only at a very small span, the endpoint's log limit has changed — record the new number here and set `KEEPER_LOG_SCAN_CHUNK` to it, so the watcher stops paying `log2` probe requests per poll to rediscover it.
+
 ### First live startup, for the record
 
 Run 2026-08-01 against the production book `contracts/deploy/addresses.5042002.json` and chain 5042002 — **the first time anything loaded that book.** The whole chain passed with no changes to the book: `loadAddressBook(5042002)` → chainId/chainKey → book↔`expected-governance.json` → env agreement → `assertArcChain` → `assertFactoryMatchesGovernance` against the live factory. Then, steady state:
@@ -309,11 +325,27 @@ The two failures are reported differently on purpose, because they go to differe
 
 ### Drill status
 
-**The live drill has never been run, because there is no deployed factory yet.** Task 5 lands *before* the deploy, by design — so that the factory is never live without something watching it.
+**The live drill HAS been run — 2026-08-04, against the live chain.** (This section said the opposite for several rounds after it stopped being true. If you are reading it during an incident, that is the failure mode this note exists to prevent: a status block that reassures by being stale.)
 
-What *is* executed by the unit suite: the drill's own logic and its failure modes (an empty sink fails, an *unrelated* page fails, a revert that is not `GraduationTargetProposalExpired` fails), **and the sink pipe end to end** — `fileSink` writes a real page to a real file, `fileAlertSink` reads it back, and `drillObserve` decides. The same test asserts the negative: a file containing only `OK` and `HEARTBEAT` lines makes the drill fail. What remains unexecuted is only the network hop and the chain itself.
+`observe`, against the standing `0x…dEaD` proposal on the rehearsal factory, through the harness described above:
 
-**The first live run is a release gate for the deploy, not an optional follow-up:** run `observe` the same day the factory goes live, and record its page here.
+```
+PAGE keeper.graduationWindow at=2026-08-04T00:13:04.071Z pendingGraduationTarget is
+0x000000000000000000000000000000000000dEaD, which is NOT on the allowlist.
+opensAt=1785795980 expiresAt=1786055180 phase=open chainNow=1785802282
+exposure=0 completed-but-ungraduated curve(s), 0.00 USDC (0 wei, exact) ...
+DRILL PASS observe: paged on attempt 1/3, and the watcher was alive for it (13 heartbeat(s) inside the window)
+```
+
+**`phase=open` is the part to read.** At the moment of the page the three-day delay had already elapsed, so `applyGraduationTarget()` was landable by anyone. That is the state this watcher exists for, seen on a real chain.
+
+`expiry`, against **production**, also real: `DRILL FAIL expiry: applyGraduationTarget() reverted with NoPendingGraduationTarget, not GraduationTargetProposalExpired.` Correct — production has no pending proposal, so there is nothing to expire, and the gate refuses to go green on the wrong revert. **The `expiry` phase has not been run against the rehearsal factory**, whose window is *open*; that branch has unit coverage only.
+
+The first attempt **failed**, and the reason is §9 in miniature: a cold cursor over 660k blocks is 67 chunks, the retry budget died around chunk 15, nothing was persisted, and every poll restarted from chunk 1. Forty-five seconds gave two pages and **zero heartbeats** — which this drill reads as *there was no watcher*, for a watcher that was alive and paging correctly. Fixed by persisting the scanned prefix; see §6 for the sibling case (a *permanent* range error), which the same fix does **not** cover and which is handled by narrowing the span instead.
+
+What the unit suite executes independently: the drill's own logic and its failure modes (an empty sink fails, an *unrelated* page fails, a revert that is not `GraduationTargetProposalExpired` fails), **and the sink pipe end to end** — `fileSink` writes a real page to a real file, `fileAlertSink` reads it back, and `drillObserve` decides. The same test asserts the negative: a file containing only `OK` and `HEARTBEAT` lines makes the drill fail.
+
+**Still a release gate:** run `observe` against the *production* factory the first time a real proposal stands there, and record its page here.
 
 ---
 

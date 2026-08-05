@@ -812,6 +812,50 @@ export class LogScanError extends Error {
   }
 }
 
+/**
+ * ARC'IN ARALIK/BOYUT HATALARI. `chainReader.ts`teki `isRateLimited`in
+ * KARDESI, VE ONDAN AYRI TUTULMASI SART: hiz siniri GECICIDIR ve beklemek
+ * cozer; aralik hatasi KALICIDIR ve beklemek ASLA cozmez -- ayni parca her
+ * poll ayni sekilde duser.
+ *
+ * NEDEN ONEMLI: `scanFactoryLogs` bir parcada kalici olarak duserse imlec o
+ * parcanin ONUNE gecemez. Tarama HICBIR ZAMAN yakinsamaz, `runWatcher`
+ * basarisiz poll'da KALP ATISI YAYMAZ, ve haftalik tatbikat "there was no
+ * watcher" der -- ayakta, dogru sayfa cikaran bir izleyici icin. Bu, round
+ * 7'de hiz siniri yuzunden CANLI OLARAK olculen sekildir (45 saniye, 2 sayfa,
+ * SIFIR kalp atisi); orada care basarili on eki kaydetmekti, ama o care
+ * yalnizca GECICI hata icin yeterlidir. Kalici olani ancak ARALIGI KUCULTMEK
+ * cozer.
+ *
+ * KODLAR TAHMIN DEGIL, OLCUM: bu depoda indexer izi Arc'a karsi olctu --
+ * span 50.000 -> `-32012 requested range too large`, span 100.000 -> `-32614`,
+ * ve `-32602` ayni ailede gozlendi. `-32602` genel bir "invalid params"tir ve
+ * onu buraya almak, gercekten gecersiz bir parametreyi de kucultme dongusune
+ * sokar; bu ZARARSIZDIR cunku dongu SINIRLIDIR (span 1'e kadar) ve sonunda
+ * yine sayfa cikarir. Ters yon -- kalici bir aralik hatasini taniyamamak --
+ * izleyiciyi SESSIZ birakir.
+ */
+const RANGE_ERROR_CODES = new Set([-32602, -32012, -32614])
+// METIN DAR TUTULUR, BILINCLI OLARAK. Arc'in hiz siniri mesaji canli olarak
+// `Request exceeds defined limit ... rate limit exceeded` seklinde olculdu --
+// yani genel bir "exceeds limit" kaligi, GECICI bir hatayi KALICI sanip
+// araligi bosuna kucultur ve gercek teshisi bulandirirdi. Yalnizca aralik/boyut
+// icin AYIRT EDICI olan kaliplar.
+const RANGE_ERROR_TEXT =
+  /requested range too large|range is too large|more than \d+ results|too many (logs|results|blocks)|block range/i
+
+export function isRangeTooLarge(error: unknown): boolean {
+  for (let node = error, depth = 0; node !== null && node !== undefined && depth < 12; depth += 1) {
+    const o = node as { code?: unknown; details?: unknown; message?: unknown }
+    if (typeof o.code === 'number' && RANGE_ERROR_CODES.has(o.code)) return true
+    for (const field of [o.details, o.message]) {
+      if (typeof field === 'string' && RANGE_ERROR_TEXT.test(field)) return true
+    }
+    node = (node as { cause?: unknown }).cause
+  }
+  return false
+}
+
 /** Governance olaylarindan kurulan GECMIS. Bkz. `GOVERNANCE_EVENTS`. */
 export type GovernanceHistory = {
   proposedTargets: Address[]
@@ -1038,8 +1082,12 @@ export async function scanFactoryLogs(
     },
   })
 
+  // ETKIN ARALIK, `chunk` DEGIL. Aralik hatasinda KUCULUR ve kuculmus haliyle
+  // bu cagrinin geri kalaninda kalir; asla buyumez. Bkz. `isRangeTooLarge`.
+  let span = chunk
+
   while (from <= head) {
-    const to = from + chunk - 1n > head ? head : from + chunk - 1n
+    const to = from + span - 1n > head ? head : from + span - 1n
     let logs: ReadonlyArray<ObservedLog>
     try {
       logs = await client.getLogs({
@@ -1049,6 +1097,25 @@ export async function scanFactoryLogs(
         toBlock: to,
       })
     } catch (cause) {
+      // KALICI ARALIK HATASI: BEKLEMEK DEGIL, KUCULMEK.
+      //
+      // `withRateLimitRetry` yalnizca GECICI hatayi cozer. Aralik hatasi her
+      // poll ayni parcada ayni sekilde duser, yani imlec o parcanin ONUNE
+      // GECEMEZ: tarama yakinsamaz, `runWatcher` basarisiz poll'da kalp atisi
+      // YAYMAZ, ve tatbikat "there was no watcher" der. Kalici bir hatanin
+      // tek caresi istegi KUCULTMEKTIR.
+      //
+      // KUCULME KENDILIGINDEN SINIRLIDIR: her adim ikiye boler ve 1'de durur,
+      // yani cagri basina en fazla log2(chunk) fazladan istek -- varsayilan
+      // 10.000 icin 14. Tek bir bloga bile cevap alinamiyorsa bu bir aralik
+      // sorunu DEGILDIR ve sayfaya cikar. Ayri bir sayac YOKTUR: sayac,
+      // saglayicinin gercek sinirinin ALTINA inmeyi engelleyip tam da
+      // onlemek istedigi yakinsamamayi geri getirirdi (olculdu: 6'lik bir
+      // tavan 10.000'den ancak 156'ya iner, 20 blokluk bir sinirda yakinsamaz).
+      if (isRangeTooLarge(cause) && span > 1n) {
+        span = span / 2n > 0n ? span / 2n : 1n
+        continue
+      }
       // BASARILI ON EK KAYDEDILIR, VE BU ONCEKI KARARIN TERSIDIR.
       //
       // Onceki hal hicbir sey yazmiyordu, gerekcesi "yarim yazilmis bir imlec

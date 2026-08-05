@@ -54,7 +54,23 @@ type ArcClient = ReturnType<typeof createArcClient>
  */
 export const ARC_RATE_LIMIT_RPC_CODE = -32011
 
-/** viem `LimitExceededRpcError`. Arc bunu KULLANMAZ; tamlik icin kabul edilir. */
+/**
+ * viem `LimitExceededRpcError`.
+ *
+ * BURADA "ARC BUNU KULLANMAZ; TAMLIK ICIN KABUL EDILIR" YAZIYORDU. YANLIS, VE
+ * DOGRU DAVRANIS SIRF SANSTI.
+ *
+ * Arc'in hiz sinirinin `-32011` OLDUGU, tek bir kosuda gorulen ORNEKLEMIN
+ * tamamiydi; ayni depoda indexer izi 2026-08-02'de ayni ucu tekrar olctu ve
+ * cevaplar KARISIK geldi -- id 5 `-32005`, id 6 `-32011`, id 7 `-32005`. Yani
+ * Arc'in EN AZ IKI hiz siniri kodu var ve ikincisi tam olarak buradaki
+ * "kullanilmaz" diye isaretlenen koddu.
+ *
+ * Ikisi de listede oldugu icin davranis dogru; kayit yanlisti, ve yanlis kayit
+ * calisir haldeki bir korumayi "olu kod" gibi gosterip sildirir. `-32005`
+ * silinseydi ikinci koddaki her hiz siniri YENIDEN DENENMEZ, poll duser,
+ * KALP ATISI YAYILMAZ ve tatbikat "there was no watcher" derdi.
+ */
 export const LIMIT_EXCEEDED_RPC_CODE = -32005
 
 /**

@@ -25,6 +25,7 @@ import {
   type CursorStore,
   exposure,
   fileCursorStore,
+  isRangeTooLarge,
   knownCurves,
   LogScanError,
   assertFactoryMatchesGovernance,
@@ -102,12 +103,23 @@ type Fixture = {
   /** Log taramasinin RPC hatasi atmasi. */
   failLogs?: boolean
   /**
+   * `failLogs`in mesaji. Varsayilani bir BOYUT hatasidir, yani kucultme
+   * dalindan gecer -- aralikla ILGISIZ bir hatayi test etmek isteyen bunu
+   * acikca verir.
+   */
+  failLogsMessage?: string
+  /**
    * Log taramasinin YALNIZCA bu blogu iceren parcadan itibaren dusmesi.
    * Canli sekil budur: ilk N parca gecer, sonra hiz siniri butceyi tuketir.
    */
   failLogsFrom?: bigint
   /** Log taramasinin SESSIZCE bos donmesi -- dusmus bir abonelik. */
   dropLogs?: boolean
+  /**
+   * Saglayicinin KALICI aralik siniri: bu genislikten genis her `getLogs`
+   * `-32012 requested range too large` ile duser. Beklemek COZMEZ.
+   */
+  rangeLimit?: bigint
   /** Slot okumalarinin atmasi. */
   failReads?: boolean
   /** Belirli bir curve okumasinin atmasi. */
@@ -169,10 +181,21 @@ function syntheticChain(fixture: Fixture = {}): SyntheticChain {
         toBlock: query.toBlock,
       })
       if (fixture.failLogs) {
-        return Promise.reject(new Error('query returned more than 10000 results'))
+        return Promise.reject(
+          new Error(fixture.failLogsMessage ?? 'query returned more than 10000 results'),
+        )
       }
       if (fixture.failLogsFrom !== undefined && query.toBlock >= fixture.failLogsFrom) {
         return Promise.reject(new Error('rate limit exceeded'))
+      }
+      if (
+        fixture.rangeLimit !== undefined &&
+        query.toBlock - query.fromBlock + 1n > fixture.rangeLimit
+      ) {
+        // Arc'in olculen sekli: sayisal kod + metin, ikisi birlikte.
+        return Promise.reject(
+          Object.assign(new Error('requested range too large'), { code: -32012 }),
+        )
       }
       if (fixture.dropLogs) return Promise.resolve([])
       const inRange = <T extends { block: bigint }>(entry: T): boolean =>
@@ -624,6 +647,102 @@ describe('knownCurves', () => {
       [21n, 25n],
     ])
     expect(found).toEqual([CURVE_C])
+  })
+
+  // -------------------------------------------------------------
+  // KALICI ARALIK HATASI: BEKLEMEK COZMEZ, KUCULMEK COZER
+  // -------------------------------------------------------------
+  //
+  // Round 7 GECICI hatayi (hiz siniri) cozdu: basarili on ek kaydedilir, bir
+  // sonraki poll oradan devam eder, tarama YAKINSAR. Ayni care KALICI hatada
+  // ise yaramaz -- ayni parca her poll ayni sekilde duser, imlec o parcanin
+  // onune GECEMEZ, ve olculen sonuc aynidir: sayfa var, KALP ATISI YOK,
+  // tatbikat "there was no watcher" der. Yani izleyici, calisiyorken, YOK
+  // SAYILIR.
+
+  it('saglayicinin araligi bizimkinden DARSA tarama yine YAKINSAR', async () => {
+    const client = syntheticChain({
+      blockNumber: 40n,
+      rangeLimit: 10n,
+      launched: [
+        { block: 5n, curve: CURVE_A },
+        { block: 37n, curve: CURVE_C },
+      ],
+    })
+    // Bizim istedigimiz 40 blokluk parca saglayicinin 10'luk sinirini asar.
+    // `scanFactoryLogs` KUCUK HARFE gore siralar; `.sort()` degil.
+    await expect(knownCurves(client, FACTORY, 1n, { chunk: 40n })).resolves.toEqual([
+      CURVE_A,
+      CURVE_C,
+    ])
+    const ok = client.logQueries.filter((q) => q.toBlock - q.fromBlock + 1n <= 10n)
+    // ARALIK BOSLUKSUZ TARANIR: basarili parcalar 1..40'i tam kapsar.
+    expect(ok[0]?.fromBlock).toBe(1n)
+    expect(ok[ok.length - 1]?.toBlock).toBe(40n)
+    for (let i = 1; i < ok.length; i += 1) {
+      expect(ok[i]?.fromBlock).toBe((ok[i - 1]?.toBlock as bigint) + 1n)
+    }
+  })
+
+  it('kuculen aralik SADECE KUCULUR, cagri boyunca yeniden buyumez', async () => {
+    const client = syntheticChain({ blockNumber: 200n, rangeLimit: 25n })
+    await knownCurves(client, FACTORY, 1n, { chunk: 100n })
+    const spans = client.logQueries.map((q) => q.toBlock - q.fromBlock + 1n)
+    for (let i = 1; i < spans.length; i += 1) {
+      expect(spans[i] as bigint).toBeLessThanOrEqual(spans[i - 1] as bigint)
+    }
+  })
+
+  // KUCULTME BIR MASKE DEGILDIR. Aralikla ILGISI OLMAYAN bir hata TEK
+  // denemede yukari cikar; yoksa duzeltme, `runWatcher`in sayfaya cevirmesi
+  // gereken her arizayi geciktiren genel bir "her seyi yeniden dene"ye
+  // donerdi.
+  it('aralik DISI bir hata KUCULTULMEZ: tek deneme, sonra firlatir', async () => {
+    const client = syntheticChain({
+      blockNumber: 200n,
+      failLogs: true,
+      failLogsMessage: 'execution reverted: node is unhappy',
+    })
+    await expect(knownCurves(client, FACTORY, 1n, { chunk: 100n })).rejects.toThrow(LogScanError)
+    expect(client.logQueries.length).toBe(1)
+  })
+
+  // Kucultme KENDILIGINDEN SINIRLIDIR, ve bu da bir sessizlik savunmasidir:
+  // sinirsiz bir dongu, saglayici hicbir genislige cevap veremiyorsa poll'u
+  // SONSUZA KADAR surdururdu, ve TAKILMIS bir poll dusen bir poll'dan daha
+  // sessizdir. Her adim ikiye boler ve 1'de durur:
+  //   1000, 500, 250, 125, 62, 31, 15, 7, 3, 1  = 10 deneme, sonra sayfa.
+  it('hicbir genislik tutmuyorsa SINIRLI denemeden sonra sayfaya cikar', async () => {
+    const client = syntheticChain({ blockNumber: 5_000n, rangeLimit: 0n })
+    await expect(knownCurves(client, FACTORY, 1n, { chunk: 1_000n })).rejects.toThrow(LogScanError)
+    expect(client.logQueries.length).toBe(10)
+    expect(client.logQueries[client.logQueries.length - 1]?.toBlock).toBe(1n)
+  })
+
+  it('isRangeTooLarge: OLCULEN kodlari tanir, hiz sinirini TANIMAZ', () => {
+    for (const code of [-32012, -32614, -32602]) {
+      expect(isRangeTooLarge(Object.assign(new Error('x'), { code }))).toBe(true)
+    }
+    expect(isRangeTooLarge(new Error('requested range too large'))).toBe(true)
+    expect(isRangeTooLarge(new Error('query returned more than 10000 results'))).toBe(true)
+    // Arc'in CANLI olculen hiz siniri mesaji. Aralik sanilirsa, GECICI bir
+    // hata yuzunden aralik bosuna kuculur ve teshis bulanir.
+    expect(isRangeTooLarge(new Error('Request exceeds defined limit: rate limit exceeded'))).toBe(
+      false,
+    )
+    expect(
+      isRangeTooLarge(Object.assign(new Error('request limit reached'), { code: -32011 })),
+    ).toBe(false)
+  })
+
+  // ASIL IDDIA, `runWatcher` SEVIYESINDE: dar aralikli bir saglayicida
+  // izleyici KALP ATISI YAYAR. Kalp atisi tatbikatin "izleyici vardi"
+  // olcusudur; onsuz dogru sayfalar bile "there was no watcher" okunur.
+  it('dar aralikli saglayicida runWatcher KALP ATISI YAYAR', async () => {
+    const { sink, run } = watch({ blockNumber: 400n, rangeLimit: 20n })
+    await run()
+    expect(sink.beats()).toBe(1)
+    expect(sink.pages()).toEqual([])
   })
 
   // MARUZIYETI EKSIK BILDIREN BIR SAYFA HIC SAYFA CIKARMAMAKTAN KOTUDUR.
