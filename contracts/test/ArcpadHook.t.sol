@@ -20,6 +20,7 @@ import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {HookMiner} from "@uniswap/v4-periphery/test/shared/HookMiner.sol";
 
 import {ArcpadHook} from "../src/ArcpadHook.sol";
+import {PoolDeployLib} from "../script/PoolDeployLib.sol";
 import {GraduationMath} from "../src/libraries/GraduationMath.sol";
 import {CurveMath} from "../src/libraries/CurveMath.sol";
 import {FeeSchedule} from "../src/FeeSchedule.sol";
@@ -388,6 +389,15 @@ contract ArcpadHookTest is Test {
         assertEq(derived, address(hook), "salt + creationCode artik bu adresi uretmiyor -- hook YENIDEN madenlenmeli");
         assertEq(
             uint160(derived) & Hooks.ALL_HOOK_MASK, ARCPAD_HOOK_FLAGS, "turetilen adres arcpad bayraklarini tasimiyor"
+        );
+
+        // ...VE ARTIK BIR LITERAL DE PINLENIYOR. Yukaridaki NatSpec "kanonik
+        // adres yoktur ve olamaz" diyor; Task 7'nin dortlusu sabitlendigi
+        // icin bu ARTIK DOGRU DEGILDIR ve pin `PoolDeployLib`tedir.
+        assertEq(
+            keccak256(type(ArcpadHook).creationCode),
+            PoolDeployLib.ARC_HOOK_CREATION_CODE_HASH,
+            "bu paketin sinadigi hook bytecode'u DeployPool'un yayinlayacagi bytecode DEGIL"
         );
 
         // KONTROL: turetme GERCEKTEN initcode'a duyarli. Bir bayt eklemek
