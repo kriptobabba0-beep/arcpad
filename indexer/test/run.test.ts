@@ -211,6 +211,7 @@ describe('runOnce', () => {
       launches: 1,
       trades: 4,
       completed: 1,
+      graduated: 0,
       transfers: 5,
       fees: 8,
       total: 19,

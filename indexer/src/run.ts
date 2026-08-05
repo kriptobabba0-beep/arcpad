@@ -240,11 +240,20 @@ export async function touchedTokens(
   const tokens = new Set<string>()
   const curves = new Set<string>()
   for (const event of events) {
-    if (event.kind === 'launched' || event.kind === 'completed' || event.kind === 'transfer') {
+    if (
+      event.kind === 'launched' ||
+      event.kind === 'completed' ||
+      event.kind === 'graduated' ||
+      event.kind === 'transfer'
+    ) {
       tokens.add(event.token.toLowerCase())
     }
     if (event.kind === 'trade') curves.add(event.curve.toLowerCase())
     if (event.kind === 'completed') curves.add(event.curve.toLowerCase())
+    // `Graduated` token'i topic1'de TASIR, yani curve->token cozumune ihtiyaci
+    // yoktur; curve yine de ekleniyor cunku bu kume `curve_state` uzerinden
+    // cozulur ve iki yoldan gelen ayni token bir Set'te tek kalir.
+    if (event.kind === 'graduated') curves.add(event.curve.toLowerCase())
   }
   if (curves.size > 0) {
     const { rows } = await db.query<{ token: string }>(
@@ -410,6 +419,12 @@ const PERMANENT = new Set([
   'LedgerGap',
   'ReorgDetected',
   'UnknownCurve',
+  // Bir curve, bagli OLMADIGI bir token icin olay bildirdi. Yeniden denemek
+  // ayni cevabi verir -- zincir degismez -- ve devam etmek BASKA bir token'in
+  // satirini terminal isaretlerdi. Bu adi buraya EKLEMEYI unutmak mumkun
+  // degildi: `rpc-errors.test.ts`in kaynak-tarayan kapisi sinifi yazildigi anda
+  // kirildi ve siniflandirma kararini ZORLADI.
+  'CurveTokenMismatch',
   'UnorderedLogs',
   'SingleBlockTooLarge',
   'SplitDepthExceeded',

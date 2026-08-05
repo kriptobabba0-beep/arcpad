@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { toEventSelector } from 'viem'
 import {
+  bondingCurveAbi,
+  feeEscrowAbi,
+  launchFactoryAbi,
+  launchTokenAbi,
+} from '@arcpad/shared/browser'
+import {
   ADDRESS_FILTER_CHUNK,
   ARC_GETLOGS_MAX_RESULTS,
   EIP7708_SYSTEM_EMITTER,
@@ -25,6 +31,9 @@ describe('topic0 kimlikleri', () => {
     expect(TOPIC0.trade).toBe('0x733bb99acb17010119efa3b694a341a4be53fb2e7ea4800188314660780de278')
     expect(TOPIC0.completed).toBe(
       '0x5f364ec8cbeb22a7121d682d8fbbf96032bfc28c76d26628d8562dfbb285b50a',
+    )
+    expect(TOPIC0.graduated).toBe(
+      '0x18a56450d3c666e2bae9e0829fcada82a9ab0deef6e33c2496752c88d4155c9d',
     )
     expect(TOPIC0.deposited).toBe(
       '0x8752a472e571a816aea92eec8dae9baf628e840f4929fbcc2d155e6233ff68a7',
@@ -89,6 +98,37 @@ describe('topic0 kimlikleri', () => {
     }
   })
 
+  /**
+   * FIXTURE'I HENUZ OLMAYAN OLAYLAR -- VE NEDEN, VE KIM KAPATIR.
+   *
+   * `contracts/fixtures/*.json` YALNIZCA `make fixtures` ile uretilir
+   * (`FixtureGen.t.sol`, `vm.recordLogs()`), yani `forge` gerektirir. Bu izlek
+   * `forge` KOSAMAZ (kontrat izlegi tek yetkilidir), dolayisiyla `Graduated`
+   * icin gercek bir yurutme logu URETILEMEDI. Zincirden bir tane almak da
+   * mumkun degil: `graduate()` YALNIZCA `graduationTarget`in kendisi
+   * tarafindan cagrilabilir (`BondingCurve.sol:889`), uretim factory'sinde o
+   * hedef sifirdir ve prova factory'sinde `0x…dEaD` -- yani kimsenin anahtari
+   * olmayan bir adres.
+   *
+   * BOSLUK KAPATILMADI, ISIMLENDIRILDI, VE YERINE BASKA BIR KAPI KONDU. Bu
+   * listedeki bir olayin imzasi asagida DERLENMIS ABI'ye karsi dogrulanir --
+   * `packages/shared/src/abi/bondingCurve.ts`, ki `abi-parity` CI is'i onu
+   * gercek bir `forge build` ciktisiyla IKI YONLU karsilastirir. Fixture'in
+   * yaptigi is ("yanlis yazilmis bir imza hicbir gercek logla ortusmez") tam
+   * olarak budur; kaybedilen sey, ODEME VE MIKTAR ALANLARININ gercek bir
+   * yurutmeden gelmesidir.
+   *
+   * KAPATMA YOLU, TEK CUMLE: kontrat izlegi `FixtureGen.t.sol`e bir
+   * `graduate()` senaryosu ekler, `make fixtures` kosar, ve bu giris SILINIR
+   * -- asagidaki ikinci test onu silmeye ZORLAR.
+   */
+  const AWAITING_FIXTURE: Record<string, string> = {
+    graduated:
+      'Graduated -- `make fixtures` forge ister; bu izlek forge kosamaz ve zincirde ' +
+      'graduate() yalnizca hedefin kendisi tarafindan cagrilabilir (uretimde hedef sifir, ' +
+      'provada 0x…dEaD). Imza DERLENMIS ABI ile dogrulaniyor.',
+  }
+
   // IKINCI YON: her `TOPIC0` degeri en az bir gercek logda GORULUR. Yalnizca
   // birinci yon olsaydi, hic yayilmayan uydurma bir imza yesil kalirdi.
   it('her TOPIC0 degeri en az bir gercek logda gorulur', () => {
@@ -96,7 +136,88 @@ describe('topic0 kimlikleri', () => {
     for (const name of fixtureNames()) {
       for (const log of loadFixtureFile(name).logs) seen.add(log.topics[0]!)
     }
-    expect([...Object.values(TOPIC0)].filter((t) => !seen.has(t))).toEqual([])
+    const missing = (Object.entries(TOPIC0) as [keyof typeof TOPIC0, string][])
+      .filter(([kind, topic]) => !seen.has(topic) && AWAITING_FIXTURE[kind] === undefined)
+      .map(([kind]) => kind)
+    expect(missing).toEqual([])
+  })
+
+  // Ve muafiyet OLU OLAMAZ: fixture indigi anda giris SILINMEK ZORUNDA. Aksi
+  // halde liste, kapandigini kimsenin fark etmedigi bir bosluga donusur --
+  // bu depodaki `OPEN_CELLS` mekanizmasinin ayni kurali.
+  it('fixture bekleyen her olay GERCEKTEN fixture larda yok', () => {
+    const seen = new Set<string>()
+    for (const name of fixtureNames()) {
+      for (const log of loadFixtureFile(name).logs) seen.add(log.topics[0]!)
+    }
+    for (const kind of Object.keys(AWAITING_FIXTURE)) {
+      const topic = TOPIC0[kind as keyof typeof TOPIC0]
+      expect(topic, `${kind} bilinen bir olay degil`).toBeDefined()
+      expect(
+        seen.has(topic),
+        `${kind} artik fixture'larda VAR; AWAITING_FIXTURE girisini SIL`,
+      ).toBe(false)
+    }
+  })
+
+  /**
+   * IMZALARIN KAYNAGI: DERLENMIS ABI, ELLE YAZILMIS BIR TABLO DEGIL.
+   *
+   * `EVENT_SIGNATURES` elle yazilidir ve oyle kalmalidir (indexer `contracts/`
+   * derlemesine bagimli OLAMAZ). Bu test o elle yazilmis dizgeleri
+   * `packages/shared/src/abi/*`in -- deponun `forge build` ciktisina IKI YONLU
+   * pinlenmis tek ABI kopyasi -- karsisina koyar. Fixture'i olmayan bir olay
+   * icin TEK provenance kapisi budur; olani icin de ikinci bir kapidir.
+   */
+  it('her imza DERLENMIS ABI den yeniden turetilebilir', () => {
+    const CONTRACT_OF: Partial<Record<keyof typeof EVENT_SIGNATURES, readonly unknown[]>> = {
+      launched: launchFactoryAbi,
+      trade: bondingCurveAbi,
+      completed: bondingCurveAbi,
+      graduated: bondingCurveAbi,
+      deposited: feeEscrowAbi,
+      claimed: feeEscrowAbi,
+      transfer: launchTokenAbi,
+    }
+    // Bos kume uzerinde "hepsi gecti" dogru olurdu; sayi sabitlenir.
+    expect(Object.keys(CONTRACT_OF).length).toBe(Object.keys(EVENT_SIGNATURES).length)
+
+    for (const [kind, signature] of Object.entries(EVENT_SIGNATURES)) {
+      const abi = CONTRACT_OF[kind as keyof typeof EVENT_SIGNATURES]
+      expect(abi, `${kind} icin ABI secilmemis`).toBeDefined()
+      const name = signature.slice(0, signature.indexOf('('))
+      const entry = (abi as { type: string; name?: string; inputs?: { type: string }[] }[]).find(
+        (e) => e.type === 'event' && e.name === name,
+      )
+      expect(entry, `${name} derlenmis ABI'de yok`).toBeDefined()
+      const derived = `${name}(${entry?.inputs?.map((i) => i.type).join(',') ?? ''})`
+      expect(derived, kind).toBe(signature)
+    }
+  })
+
+  /**
+   * `Graduated`IN INDEKSLI ALANLARI DA ABI'DEN OLCULUR.
+   *
+   * Bir imza dogru olup indeksleme YANLIS olabilir: `topic0` yalnizca
+   * tiplerden hesaplanir, `indexed` bayraklarindan degil. Cozucu iki topic
+   * bekler (`expect('graduated', log, 3, 2)`) ve iki data kelimesi; bu sayilar
+   * dogrudan asagidaki bayraklardan cikar. Yanlis bir varsayim burada
+   * yakalanir, uretimde `MalformedLog` olarak degil.
+   */
+  it('Graduated in indeksli alanlari ABI de token ve to dur', () => {
+    const entry = (
+      bondingCurveAbi as unknown as {
+        type: string
+        name?: string
+        inputs?: { name: string; indexed?: boolean }[]
+      }[]
+    ).find((e) => e.type === 'event' && e.name === 'Graduated')
+    expect(entry?.inputs?.map((i) => `${i.name}:${i.indexed === true}`)).toEqual([
+      'token:true',
+      'to:true',
+      'baseAmount:false',
+      'quoteAmount:false',
+    ])
   })
 
   // UCUNCU: CANLI zincir. Yerel fixture'lar Foundry'den, bunlar Arc'tan.

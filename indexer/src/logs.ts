@@ -123,6 +123,35 @@ export interface CompletedEvent extends LogRef {
   poolSeedSupplyTok: bigint
 }
 
+/**
+ * TERMINAL DURUM -- BIR TICARET DURUMU DEGIL.
+ *
+ * `Completed`den AYRI bir olaydir ve ayri olmasi TASIYICIDIR: `complete` bir
+ * curve hala okunabilir bir fiyat tasir (son ticaretin biraktigi rezervler) ve
+ * havuz HENUZ acilmamistir; `graduated` bir curve ise `R` ile `D`yi
+ * odemistir ve o rezervler artik hicbir seyi fiyatlamaz. Ikisini ayirmayan bir
+ * okuma modeli, mezun olmus bir token'in sayfasinda son curve fiyatini CANLI
+ * gibi gosterirdi -- bu deponun `Fresh<T>`/`stale` sozlesmesinin var olma
+ * sebebi olan yalan sinifinin ta kendisi.
+ */
+export interface GraduatedEvent extends LogRef {
+  kind: 'graduated'
+  /** Logu yayan curve. `Trade` gibi, kimlik `log.address`tir. */
+  curve: Address
+  /** `topic1`. `Graduated` token'i TASIR (`Trade`in aksine). */
+  token: Address
+  /**
+   * `topic2` -- graduation hedefi. INDEKSLIDIR cunku hedef yeniden
+   * isaretlenebilir (factory'nin 3 gunluk gecikmeli setter'i) ve "bu havuzu
+   * hangi hedef tohumladi" indexer'in cevaplamasi gereken bir sorudur.
+   */
+  to: Address
+  /** Hedefe odenen token (`poolSeedSupply`). */
+  baseAmountTok: bigint
+  /** Hedefe odenen quote (`realQuoteReserves`). */
+  quoteAmountWei: bigint
+}
+
 export interface DepositedEvent extends LogRef {
   kind: 'deposited'
   escrow: Address
@@ -148,7 +177,13 @@ export interface TransferEvent extends LogRef {
 }
 
 export type DecodedEvent =
-  LaunchedEvent | TradeEvent | CompletedEvent | DepositedEvent | ClaimedEvent | TransferEvent
+  | LaunchedEvent
+  | TradeEvent
+  | CompletedEvent
+  | GraduatedEvent
+  | DepositedEvent
+  | ClaimedEvent
+  | TransferEvent
 
 /**
  * Izlenen adresler. `curves` ve `tokens` KUME'dir cunku her aralikta buyurler
@@ -719,6 +754,22 @@ function decodeCompleted(log: RawLog, ref: LogRef): CompletedEvent {
   }
 }
 
+function decodeGraduated(log: RawLog, ref: LogRef): GraduatedEvent {
+  // UC topic (topic0 + iki indeksli) ve IKI kelime data. `expect` sekli
+  // dogrular; ayni sekli tasiyan bir sahtenin adres filtresiyle elendigi yer
+  // `fetchRange`tir, burasi degil.
+  expect('graduated', log, 3, 2)
+  return {
+    kind: 'graduated',
+    ...ref,
+    curve: addressOf(log),
+    token: addressFrom(log.topics[1] as Hex),
+    to: addressFrom(log.topics[2] as Hex),
+    baseAmountTok: uint(log.data, 0),
+    quoteAmountWei: uint(log.data, 1),
+  }
+}
+
 function decodeDeposited(log: RawLog, ref: LogRef): DepositedEvent {
   expect('deposited', log, 3, 1)
   return {
@@ -766,6 +817,7 @@ export const DECODERS: Readonly<Record<EventKind, (log: RawLog, ref: LogRef) => 
     launched: decodeLaunched,
     trade: decodeTrade,
     completed: decodeCompleted,
+    graduated: decodeGraduated,
     deposited: decodeDeposited,
     claimed: decodeClaimed,
     transfer: decodeTransfer,
@@ -841,11 +893,25 @@ export async function fetchRange(
   // gecer (bkz. `createPacer`), yani `Promise.all` es zamanlilik ISTEMEZ --
   // yalnizca sirayi cagirana birakir.
   const [curveLogs, escrowLogs, transferLogs] = await Promise.all([
-    // `Trade`/`Completed` topic0'lari arcpad'e ozgudur AMA adres filtresi yine
-    // de ZORUNLUDUR: herkes ayni imzayi tasiyan bir olay YAYABILIR (bkz.
-    // `contracts/fixtures/forged.json` -- gercek `topic0`, sahte yayinci).
-    // Filtre olmadan sahte bir `Trade` gercek bir islem gibi girerdi.
-    getLogsChunked(client, [...curves], [[TOPIC0.trade, TOPIC0.completed]], from, to, pacer, chunk),
+    // `Trade`/`Completed`/`Graduated` topic0'lari arcpad'e ozgudur AMA adres
+    // filtresi yine de ZORUNLUDUR: herkes ayni imzayi tasiyan bir olay
+    // YAYABILIR (bkz. `contracts/fixtures/forged.json` -- gercek `topic0`,
+    // sahte yayinci). Filtre olmadan sahte bir `Trade` gercek bir islem gibi
+    // girerdi.
+    //
+    // `Graduated` BURAYA AITTIR VE ESCROW SORGUSUNA DEGIL: yayinci curve'dur
+    // (`emit Graduated(...)` `BondingCurve.graduate()` icindedir), yani izleme
+    // kumesi `curves`tir. Escrow filtresine konsaydi HICBIR ZAMAN doner ve
+    // "cekiliyor ama hic gelmiyor" arizasi tamamen sessiz olurdu.
+    getLogsChunked(
+      client,
+      [...curves],
+      [[TOPIC0.trade, TOPIC0.completed, TOPIC0.graduated]],
+      from,
+      to,
+      pacer,
+      chunk,
+    ),
     getLogs(
       client,
       { from, to, address: watch.escrow, topics: [[TOPIC0.deposited, TOPIC0.claimed]] },

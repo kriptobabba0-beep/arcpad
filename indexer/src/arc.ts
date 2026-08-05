@@ -92,6 +92,27 @@ export const EVENT_SIGNATURES = {
   launched: 'Launched(address,address,address,string,string,string,bytes32)',
   trade: 'Trade(address,bool,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)',
   completed: 'Completed(address,uint256,uint256)',
+  /**
+   * TERMINAL DURUM. `BondingCurve.sol:283`.
+   *
+   * `Completed` "satis arzi bitti"dir, `Graduated` "curve artik hicbir sey
+   * fiyatlamiyor"dur ve IKISI AYNI SEY DEGILDIR: canli smoke curve'u
+   * `0x7938BE34...` SU AN complete AMA graduated DEGIL (uretim factory'sinde
+   * `graduationTarget` sifir, `graduate()` `0xfe30fa5b` ile revert eder).
+   * Aradaki fark bir kullanicinin ekraninda gorunur -- biri "havuz aciliyor",
+   * oteki "curve kapandi, fiyat artik havuzda".
+   *
+   * BU IMZA ELLE YAZILDI AMA ELLE DOGRULANMADI: `topics.test.ts` onu
+   * `packages/shared/src/abi/bondingCurve.ts`ten -- `abi-parity` CI is'inin
+   * GERCEK bir `forge build` ciktisiyla IKI YONLU karsilastirdigi tek kopya --
+   * yeniden turetir. Dolayisiyla buradaki bir yazim hatasi, `Launched`in
+   * fixture kontrolunun yaptigi isin aynisini yapan bir kapiya carpar.
+   *
+   * ISIM CARPISMASI YOK, OLCULDU: Faz 2'nin havuz katmani bilerek
+   * `PoolSeeded` adini tasir (`ArcpadLocker.sol:62`, gerekcesi `:58`de yazili),
+   * yani bu topic0 tek bir kontrata aittir.
+   */
+  graduated: 'Graduated(address,address,uint256,uint256)',
   deposited: 'Deposited(address,address,uint256)',
   claimed: 'Claimed(address,uint256)',
   transfer: 'Transfer(address,address,uint256)',

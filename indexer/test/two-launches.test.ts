@@ -168,6 +168,7 @@ describe('iki launch iceren bir aralik', () => {
       launches: 2,
       trades: 2,
       completed: 0,
+      graduated: 0,
       transfers: 4,
       fees: 4,
       total: 12,

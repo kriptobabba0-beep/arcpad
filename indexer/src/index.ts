@@ -60,6 +60,11 @@ async function main(): Promise<void> {
     console.log(
       `[indexer] ${result.from}-${result.to} events=${result.events} ` +
         `launches=${result.counts.launches} trades=${result.counts.trades} ` +
+        // `completed` ve `graduated` AYRI BASILIR. Bir curve'un terminal
+        // olusu, arayuzun gosterdigi her sayinin anlamini degistiren tek
+        // olaydir; onu `events=` toplaminin icinde birakmak, ilk mezuniyeti
+        // operatorun logunda GORUNMEZ yapardi.
+        `completed=${result.counts.completed} graduated=${result.counts.graduated} ` +
         `transfers=${result.counts.transfers} fees=${result.counts.fees}`,
     )
   }

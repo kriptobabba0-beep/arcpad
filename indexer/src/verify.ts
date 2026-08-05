@@ -72,6 +72,11 @@ const LEDGER_OF: Record<DecodedEvent['kind'], string | null> = {
   // uzerinde `WHERE NOT complete` ile idempotenttir. Kapsam kontrolu onu
   // ATLAR ve bu bir bosluk degil, olayin dogasidir.
   completed: null,
+  // `Graduated` de oyle: `WHERE NOT graduated`. Bir DELTA tasimaz -- mezuniyet
+  // odemesinin holder muhasebesi, zincirin gercekten yaydigi `Transfer`
+  // logundan gelir ve ONUN defteri `token_transfers`tir. Buraya bir defter
+  // adi yazmak, ayni hareketi iki tabloda aramak olurdu.
+  graduated: null,
 }
 
 /**

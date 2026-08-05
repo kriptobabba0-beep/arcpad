@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Address, Hex } from 'viem'
+import { decodeEventLog } from 'viem'
+import { bondingCurveAbi } from '@arcpad/shared/browser'
 import { toSeq } from '@arcpad/db'
 import { TOPIC0 } from '../src/arc'
 import type { DecodedEvent, RawLog, WatchSet } from '../src/logs'
@@ -18,6 +20,8 @@ import {
   UnorderedLogs,
 } from '../src/logs'
 import {
+  AWAITING_FIXTURE,
+  constructedGraduatedLog,
   FakeNode,
   fixtureNames,
   LIVE,
@@ -88,6 +92,7 @@ describe('kapsam', () => {
       'claimed',
       'completed',
       'deposited',
+      'graduated',
       'launched',
       'trade',
       'transfer',
@@ -96,9 +101,21 @@ describe('kapsam', () => {
 
   // (b) (a) BUNU KAPSAMAZ: bir handler yazilip hic cagrilmadan da (a) yesil
   //     kalir.
+  //
+  //     `AWAITING_FIXTURE` GERCEK BIR EKSIKLIKTIR ve boyle okunmalidir: o
+  //     olaylarin cozucusu bir FIXTURE tarafindan degil, ABI'den KURULMUS bir
+  //     logla ve viem'in ABI cozucusune karsi diferansiyel olarak egzersiz
+  //     edilir (asagida, "kurulmus Graduated"). Muafiyetin olu kalmasi
+  //     `topics.test.ts`teki es testle imkansizdir.
   it('her handler en az bir fixture tarafindan egzersiz edilir', async () => {
     const seen = new Set((await loadAllFixtures()).flatMap((f) => f.events.map((e) => e.kind)))
-    expect([...seen].sort()).toEqual(Object.keys(DECODERS).sort())
+    const expected = Object.keys(DECODERS)
+      .filter((k) => AWAITING_FIXTURE[k] === undefined)
+      .sort()
+    expect([...seen].sort()).toEqual(expected)
+    // Muafiyetin BOS OLMADIGI da olculur: liste bosalirsa yukaridaki filtre
+    // hicbir sey yapmaz ve bu satir onu soyler.
+    expect(Object.keys(AWAITING_FIXTURE)).toEqual(['graduated'])
   })
 
   // (c) (a) ve (b) BUNU KAPSAMAZ: tek bir `Trade` fixture'i ikisini de yesil
@@ -451,6 +468,163 @@ describe('yanit uzerindeki sert iddialar', () => {
         }),
       ).rejects.toThrow(MissingTimestamp)
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Graduated -- KURULMUS bir log, ve BAGIMSIZ bir cozucu ile karsilastirma
+//
+// FIXTURE'DAN GELMIYOR VE BU ACIKCA YAZILI. Yuk `vm.recordLogs()` ciktisi
+// DEGILDIR; sekli derlenmis ABI'den, degerleri buradan gelir. Kaybedilen sey
+// "bu tam olarak zincirin yaydigi baytlar" garantisidir. Yerine konan sey iki
+// bagimsiz kapidir:
+//
+//   1. SEKIL derleyiciden gelir -- `topics.test.ts` imzayi ve indeksli alan
+//      bayraklarini `packages/shared/src/abi/*`ten dogrular ve `abi-parity` CI
+//      is'i o kopyayi gercek bir `forge build` ciktisiyla IKI YONLU tutar.
+//   2. COZUCU DIFERANSIYELDIR -- bizim elle yazilmis kelime dilimleyicimizin
+//      ciktisi viem'in `decodeEventLog`una karsi tutulur. Ikisinin AYNI hatayi
+//      yapmasi icin sebep yok: biri ofsetleri elle sayar, oteki ABI'yi okur.
+//
+// Kalan bosluk isimlendirilmistir: gercek bir `graduate()` yurutmesinin
+// miktarlari (`poolSeedSupply`, `realQuoteReserves`) burada IDDIA EDILMEZ.
+// Onu kapatan sey `make fixtures`tir ve kimin kapatacagi `AWAITING_FIXTURE`ta
+// yazilidir.
+// ---------------------------------------------------------------------------
+
+describe('kurulmus Graduated', () => {
+  const BLOCK = 54_661_500n
+  // Canli smoke'un OLCULMUS degerleri: mezuniyet tam olarak bunlari oder.
+  const BASE = 206_886_011_183_597_390_493_942_218n // poolSeedSupply
+  const QUOTE = 12_161_433_369_060_378_714n // realQuoteReserves
+  const TARGET = '0x000000000000000000000000000000000000dead' as Address
+
+  const log = (): RawLog =>
+    constructedGraduatedLog({
+      curve: LIVE.curve,
+      token: LIVE.token,
+      to: TARGET,
+      baseAmountTok: BASE,
+      quoteAmountWei: QUOTE,
+      block: BLOCK,
+      logIndex: 3,
+    })
+
+  it('topic0 kodlanan logda GERCEKTEN TOPIC0.graduated tir', () => {
+    // Kurulmus yukun kendisi de dogrulanir: viem'in kodlayicisi ile bizim
+    // `toEventSelector` hesabimiz ayni degeri vermeseydi, asagidaki her sey
+    // baska bir olayi test ediyor olurdu.
+    expect(log().topics[0]).toBe(TOPIC0.graduated)
+    expect(log().topics).toHaveLength(3)
+  })
+
+  it('cozucu viem in ABI cozucusuyle ALAN ALAN ortusur', async () => {
+    const raw = log()
+    const [event] = await decodeAll(new FakeNode([]), [raw], BLOCK, BLOCK, createPacer())
+    if (event?.kind !== 'graduated') throw new Error('graduated cozulmedi')
+
+    const oracle = decodeEventLog({
+      abi: bondingCurveAbi,
+      data: raw.data,
+      topics: raw.topics as [Hex, ...Hex[]],
+    }) as { eventName: string; args: Record<string, unknown> }
+
+    expect(oracle.eventName).toBe('Graduated')
+    expect(event.token).toBe((oracle.args['token'] as string).toLowerCase())
+    expect(event.to).toBe((oracle.args['to'] as string).toLowerCase())
+    expect(event.baseAmountTok).toBe(oracle.args['baseAmount'])
+    expect(event.quoteAmountWei).toBe(oracle.args['quoteAmount'])
+    // `curve` bir ABI alani DEGILDIR -- yayincidir. Oracle onu goremez, yani
+    // bu satir diferansiyelin DISINDA ve ayrica iddia edilmeli.
+    expect(event.curve).toBe(LIVE.curve)
+    expect(event.seq).toBe(toSeq(BLOCK, 3))
+  })
+
+  it('eksik bir data kelimesi SESSIZCE sifir okunmaz', async () => {
+    const raw = log()
+    const short: RawLog = { ...raw, data: `0x${raw.data.slice(2, 66)}` }
+    await expect(decodeAll(new FakeNode([]), [short], BLOCK, BLOCK, createPacer())).rejects.toThrow(
+      MalformedLog,
+    )
+  })
+
+  it('iki topic li (indekssiz to) bir Graduated reddedilir', async () => {
+    const raw = log()
+    const twoTopics: RawLog = { ...raw, topics: [raw.topics[0]!, raw.topics[1]!] }
+    await expect(
+      decodeAll(new FakeNode([]), [twoTopics], BLOCK, BLOCK, createPacer()),
+    ).rejects.toThrow(MalformedLog)
+  })
+
+  it('curve sorgusu Graduated topic ini GERCEKTEN ister', async () => {
+    // Cozucu yazilip topic sorgudan atlanmis olsaydi butun testler yesil
+    // kalir ve URETIMDE hicbir sey gelmezdi -- "cekilmiyor" ve "cozulemiyor"
+    // ayni sessizlige duser. Filtre burada OLCULUYOR.
+    const node = new FakeNode([log()])
+    const watch: WatchSet = {
+      factory: LIVE.factory,
+      escrow: LIVE.escrow,
+      curves: new Set([LIVE.curve]),
+      tokens: new Set([LIVE.token]),
+    }
+    const events = await fetchRange(node, watch, BLOCK, BLOCK)
+    expect(events.map((e) => e.kind)).toEqual(['graduated'])
+
+    const curveFilter = node.logFilters.find(
+      (f) => Array.isArray(f['address']) && (f['address'] as string[]).includes(LIVE.curve),
+    )
+    expect((curveFilter?.['topics'] as Hex[][] | undefined)?.[0]).toEqual([
+      TOPIC0.trade,
+      TOPIC0.completed,
+      TOPIC0.graduated,
+    ])
+  })
+
+  it('ESCROW sorgusu Graduated i ISTEMEZ (yayinci curve dur)', async () => {
+    const node = new FakeNode([log()])
+    await fetchRange(
+      node,
+      {
+        factory: LIVE.factory,
+        escrow: LIVE.escrow,
+        curves: new Set([LIVE.curve]),
+        tokens: new Set([LIVE.token]),
+      },
+      BLOCK,
+      BLOCK,
+    )
+    const escrowFilter = node.logFilters.find((f) => f['address'] === LIVE.escrow)
+    expect((escrowFilter?.['topics'] as Hex[][] | undefined)?.[0]).toEqual([
+      TOPIC0.deposited,
+      TOPIC0.claimed,
+    ])
+  })
+
+  it('BASKA bir adresten gelen ayni topic hic cekilmez (sahte mezuniyet)', async () => {
+    // `forged.json`in `Launched` icin olctugu seyin aynisi: topic0 gercek,
+    // yayinci sahte. Adres filtresi tek savunmadir.
+    const rogue = constructedGraduatedLog({
+      curve: '0x00000000000000000000000000000000deadbe01' as Address,
+      token: LIVE.token,
+      to: TARGET,
+      baseAmountTok: BASE,
+      quoteAmountWei: QUOTE,
+      block: BLOCK,
+      logIndex: 4,
+    })
+    const node = new FakeNode([rogue])
+    const events = await fetchRange(
+      node,
+      {
+        factory: LIVE.factory,
+        escrow: LIVE.escrow,
+        curves: new Set([LIVE.curve]),
+        tokens: new Set([LIVE.token]),
+      },
+      BLOCK,
+      BLOCK,
+    )
+    expect(events).toEqual([])
   })
 })
 

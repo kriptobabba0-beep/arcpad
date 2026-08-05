@@ -1,7 +1,7 @@
 import type { Address } from 'viem'
 import type { Deployment, Queryable } from '@arcpad/db'
-import { applyCompleted, applyTrade } from '@arcpad/db'
-import type { CompletedEvent, TradeEvent } from '../logs'
+import { applyCompleted, applyGraduated, applyTrade } from '@arcpad/db'
+import type { CompletedEvent, GraduatedEvent, TradeEvent } from '../logs'
 
 /**
  * `Trade` ve `Completed` UYGULAYICISI.
@@ -162,5 +162,63 @@ export async function applyCompletedEvent(db: Queryable, event: CompletedEvent):
     token: event.token,
     realQuoteReservesWei: event.realQuoteReservesWei,
     poolSeedSupplyTok: event.poolSeedSupplyTok,
+  })
+}
+
+/**
+ * Bir curve, KENDI TOKEN'I OLMAYAN bir token icin olay yaydi. HALT.
+ *
+ * Zincirde imkansizdir -- `BondingCurve.token` `bind()`ten sonra degismez ve
+ * `graduate()` tam olarak onu yayar -- ama "bugun imkansiz" bir kontrol
+ * DEGILDIR. Yazim `token` uzerinden anahtarlandigi icin, eslesmeyen bir cift
+ * BASKA bir curve'un satirini terminal isaretlerdi: bir kullanicinin ekraninda
+ * hala islem goren bir curve'un "mezun oldu" demesi. Bu, hicbir kisitin
+ * yakalayamayacagi -- her iki satir da gecerli oldugu icin -- ve sessiz
+ * kalacak bir hata sinifi.
+ */
+export class CurveTokenMismatch extends Error {
+  constructor(
+    readonly curve: Address,
+    readonly claimed: Address,
+    readonly bound: Address,
+  ) {
+    super(
+      `CurveTokenMismatch: ${curve} bir olayda ${claimed} token'ini bildirdi ama ` +
+        `curve_state'e gore bagli token ${bound}.`,
+    )
+    this.name = 'CurveTokenMismatch'
+  }
+}
+
+/**
+ * `Graduated`. TERMINAL GECIS.
+ *
+ * SQL `@arcpad/db`dedir (`applyGraduated`) -- `Completed` ile ayni gerekce.
+ * Burada duran sey, o yazima GIRMEDEN once yapilmasi gereken TEK sey:
+ * curve->token esleşmesinin dogrulanmasi.
+ *
+ * `Graduated` token'i `topic1`de TASIR (`Trade`in aksine), yani yazim icin bir
+ * veritabani okumasi GEREKMEZ. Okuma yine de yapiliyor ve sebebi yazim degil
+ * DOGRULAMA: `tokenOfCurve` bilinmeyen bir curve'de `UnknownCurve` atar
+ * (izleme kumesinin ya da kabul yolunun bozuldugunun isareti) ve eslesmeyen
+ * bir cift `CurveTokenMismatch` atar. Ikisi de, sessizce YANLIS BIR SATIRI
+ * terminal isaretlemenin alternatifidir.
+ */
+export async function applyGraduatedEvent(db: Queryable, event: GraduatedEvent): Promise<number> {
+  const bound = await tokenOfCurve(db, event.curve)
+  if (bound.toLowerCase() !== event.token.toLowerCase()) {
+    throw new CurveTokenMismatch(event.curve, event.token, bound)
+  }
+  return applyGraduated(db, {
+    kind: 'graduated',
+    eventSeq: event.seq,
+    blockNumber: event.blockNumber,
+    logIndex: event.logIndex,
+    txHash: event.txHash,
+    blockTime: event.blockTime,
+    token: event.token,
+    target: event.to,
+    baseAmountTok: event.baseAmountTok,
+    quoteAmountWei: event.quoteAmountWei,
   })
 }

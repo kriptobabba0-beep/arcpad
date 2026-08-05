@@ -1,5 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs'
-import type { Address, Hex } from 'viem'
+import type { AbiEvent, Address, Hex } from 'viem'
+import { encodeAbiParameters, encodeEventTopics } from 'viem'
+import { bondingCurveAbi } from '@arcpad/shared/browser'
 import type { DecodedEvent, RawLog, RpcClient } from '../src/logs'
 import { createPacer, decodeAll, fetchRange } from '../src/logs'
 
@@ -228,6 +230,88 @@ export function donationLog(
     data: `0x${amountWei.toString(16).padStart(64, '0')}`,
     blockNumber: `0x${block.toString(16)}`,
     logIndex: `0x${logIndex.toString(16)}`,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// FIXTURE'I OLMAYAN OLAYLAR
+// ---------------------------------------------------------------------------
+
+/**
+ * GERCEK BIR YURUTME LOGU HENUZ URETILEMEYEN OLAYLAR, ADIYLA VE SEBEBIYLE.
+ *
+ * TEK BIR LISTE, iki test dosyasi tarafindan okunur (`topics.test.ts` ve
+ * `logs.test.ts`). Ikisine ayri ayri yazilsaydi, biri kapatilip oteki
+ * kapatilmadiginda ikisi de yesil kalirdi -- muafiyetin kendisi bir bosluga
+ * donusurdu.
+ *
+ * `graduated`: `contracts/fixtures/*.json` YALNIZCA `make fixtures` ile
+ * uretilir ve o `forge` ister; bu izlek `forge` kosamaz. Zincirden almak da
+ * mumkun degil -- `graduate()` yalnizca `graduationTarget`in KENDISI
+ * tarafindan cagrilabilir (`BondingCurve.sol:889`) ve o hedef uretimde sifir,
+ * provada `0x…dEaD`. Yerine konan kapi: imza + indeksleme DERLENMIS ABI'den
+ * dogrulanir ve cozucu, viem'in ABI cozucusune karsi diferansiyel test edilir.
+ */
+export const AWAITING_FIXTURE: Readonly<Record<string, string>> = Object.freeze({
+  graduated:
+    'make fixtures forge ister; zincirde graduate() yalnizca hedefin kendisi tarafindan cagrilabilir',
+})
+
+/**
+ * KURULMUS (URETILMEMIS) bir `Graduated` logu. ADI BUNU SOYLUYOR.
+ *
+ * BU BIR FIXTURE DEGILDIR ve `contracts/fixtures/` altina KONMAZ: o dizindeki
+ * her bayt `vm.recordLogs()` ciktisidir ve elle yazilmis bir yuk oraya
+ * girseydi, "fixture kontrattan sapamaz" iddiasi sessizce yalan olurdu.
+ *
+ * Yuk yine de bu takimin UYDURDUGU bir sekil DEGILDIR: topic'ler ve data,
+ * `packages/shared/src/abi/bondingCurve.ts`teki ABI girisinden viem ile
+ * kodlanir -- `abi-parity` CI is'inin gercek bir `forge build` ciktisiyla iki
+ * yonlu karsilastirdigi tek kopya. Yani sekil derleyiciden gelir, degerler
+ * cagirandan.
+ */
+export function constructedGraduatedLog(args: {
+  curve: Address
+  token: Address
+  to: Address
+  baseAmountTok: bigint
+  quoteAmountWei: bigint
+  block: bigint
+  logIndex: number
+  timestamp?: bigint
+  txHash?: Hex
+}): RawLog {
+  const event = (bondingCurveAbi as unknown as AbiEvent[]).find(
+    (e) => e.type === 'event' && e.name === 'Graduated',
+  )
+  if (event === undefined) throw new Error('derlenmis ABI de Graduated yok')
+  // `encodeEventTopics` `(Hex | Hex[] | null)[]` doner cunku BIR FILTRE de
+  // kodlayabilir (bir topic'e birden cok deger, ya da "her sey"). Burada iki
+  // arguman da TEK bir adres, yani sonuc duz `Hex[]`tir -- ve bu VARSAYILMAZ,
+  // OLCULUR: sekli bozuk bir topic dizisi cozucuyu sessizce baska bir yola
+  // sokardi.
+  const encoded = encodeEventTopics({
+    abi: [event],
+    eventName: 'Graduated',
+    args: { token: args.token, to: args.to },
+  })
+  const topics = encoded.map((t) => {
+    if (typeof t !== 'string') throw new Error(`beklenmeyen topic sekli: ${JSON.stringify(t)}`)
+    return t
+  })
+  const data = encodeAbiParameters(
+    event.inputs.filter((i) => i.indexed !== true),
+    [args.baseAmountTok, args.quoteAmountWei],
+  )
+  return {
+    address: args.curve,
+    topics,
+    data,
+    blockNumber: `0x${args.block.toString(16)}`,
+    logIndex: `0x${args.logIndex.toString(16)}`,
+    transactionHash: args.txHash ?? syntheticTxHash('graduate'),
+    blockTimestamp: `0x${(args.timestamp ?? 1_780_000_000n).toString(16)}`,
+    removed: false,
   }
 }
 

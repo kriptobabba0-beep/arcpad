@@ -3,7 +3,7 @@ import { withTransaction } from '@arcpad/db'
 import { admit } from '../admit'
 import type { DecodedEvent } from '../logs'
 import { applyClaimedEvent, applyDepositedEvent } from './fees'
-import { applyCompletedEvent, applyTradeEvent } from './trade'
+import { applyCompletedEvent, applyGraduatedEvent, applyTradeEvent } from './trade'
 import { applyTransferEvent } from './transfer'
 
 /**
@@ -26,6 +26,8 @@ export async function applyDecodedEvent(
       return applyTradeEvent(db, deployment, event)
     case 'completed':
       return applyCompletedEvent(db, event)
+    case 'graduated':
+      return applyGraduatedEvent(db, event)
     case 'transfer':
       return applyTransferEvent(db, event)
     case 'deposited':
@@ -43,6 +45,8 @@ export interface ApplyCounts {
   launches: number
   trades: number
   completed: number
+  /** `Graduated`. `completed`TEN AYRI SAYILIR -- ayri bir olgudur. */
+  graduated: number
   transfers: number
   fees: number
   total: number
@@ -82,6 +86,7 @@ export async function applyEvents(
     launches: 0,
     trades: 0,
     completed: 0,
+    graduated: 0,
     transfers: 0,
     fees: 0,
     total: 0,
@@ -95,6 +100,7 @@ export async function applyEvents(
     if (event.kind === 'launched') counts.launches += n
     else if (event.kind === 'trade') counts.trades += n
     else if (event.kind === 'completed') counts.completed += n
+    else if (event.kind === 'graduated') counts.graduated += n
     else if (event.kind === 'transfer') counts.transfers += n
     else counts.fees += n
     counts.total += n
@@ -135,7 +141,9 @@ export async function applyRange(
 export { applyClaimedEvent, applyDepositedEvent } from './fees'
 export {
   applyCompletedEvent,
+  applyGraduatedEvent,
   applyTradeEvent,
+  CurveTokenMismatch,
   tokenOfCurve,
   UnknownCurve,
   writeMarketCap,
