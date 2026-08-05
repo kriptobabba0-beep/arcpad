@@ -147,6 +147,47 @@ def check_hashes():
                  % (name, got, expected))
 
 
+def check_every_compared_contract_has_a_literal():
+    """KAYNAKTAN TURETILEN KAPI: `DeployLib`in karsilastirdigi HER kontratin
+    burada ELLE YAZILMIS bir hash'i olmali.
+
+    NICIN. `assertMatchesFrozenBuild`in referansi `out-frozen/`dir ve o dizini
+    BU KAPI her cagrida yeniden uretir; `Makefile`in `test: frozen-hash` on
+    kosulu da bunu otomatik yapar. Yani o iddia, literal olmayan bir kontrat
+    icin duzenlenmis derlemeyi KENDISIYLE karsilastirir -- olculdu:
+    `FeeSchedule` 95 -> 94 ile kapi YESIL, `Deploy.t.sol` 53/53.
+
+    Literal'ler eklendi, ama BIR SONRAKI kontrat icin ayni delik yeniden
+    acilirdi. Bu satir onu kapatir ve elle tutulan bir listeye guvenmez:
+    isimler `DeployLib.sol` KAYNAGINDAN, `_frozenCreationCode(dir, "X")`
+    cagrilarindan okunur.
+
+    `LaunchFactory` TEK ISTISNADIR ve gerekcesi yazilidir: Faz 2 ona
+    `feeSchedule` argumani ekledi, yani initcode'unun DEGISMESI beklenir.
+    Task 7 onu yayinladigi ANDA `FROZEN`a eklenmelidir -- o andan sonra
+    hareket etmesi turetilen her curve ve token adresini kaydirir.
+    """
+    print("== DeployLib'in karsilastirdigi her kontratin literali var mi ==")
+    excused = {"LaunchFactory": "Faz 2'de initcode'u degisiyor; Task 7 yayinladiginda EKLENMELI"}
+    src_path = os.path.join(CONTRACTS, "script", "DeployLib.sol")
+    with open(src_path, encoding="utf-8") as f:
+        src = f.read()
+    compared = sorted(set(re.findall(r'_frozenCreationCode\(\s*dir\s*,\s*"([A-Za-z0-9_]+)"\s*\)', src)))
+    if not compared:
+        fail("DeployLib.sol icinde `_frozenCreationCode(dir, \"...\")` cagrisi BULUNAMADI -- "
+             "kapi kaynaktan turetiyor ve turetme BOS dondu")
+        return
+    for name in compared:
+        if name in FROZEN:
+            ok("%-14s karsilastiriliyor VE literali var" % name)
+        elif name in excused:
+            print("  --    %-14s literali YOK (bilincli): %s" % (name, excused[name]))
+            notes.append("%s'nin literali yok: %s" % (name, excused[name]))
+        else:
+            fail("%s `assertMatchesFrozenBuild` tarafindan karsilastiriliyor ama FROZEN'da literali YOK -- "
+                 "referansi bu agactan uretiliyor, yani iddia kendisiyle karsilastiriyor" % name)
+
+
 def check_factory_embeds():
     """(1)-(2) YUZEYLERI SABITLER, BU SATIR BAGIMLILIGI SABITLER.
 
@@ -337,6 +378,7 @@ def main():
         build_frozen()
     check_settings()
     check_hashes()
+    check_every_compared_contract_has_a_literal()
     check_factory_embeds()
     check_no_restriction_touches_the_frozen_closure()
     check_indexer_pin()
