@@ -1,3 +1,4 @@
+import { ipfsGatewayOrigin } from './ipfs'
 import { sanitiseForDisplay } from '@arcpad/shared/browser'
 
 /**
@@ -37,17 +38,6 @@ export const METADATA_BODY_LIMIT = 64 * 1024
 export const METADATA_REVALIDATE_SECONDS = 300
 export const DESCRIPTION_LIMIT = 256
 
-const DEFAULT_GATEWAY = 'https://ipfs.io'
-
-function gatewayOrigin(): string {
-  const configured = process.env.NEXT_PUBLIC_IPFS_GATEWAY ?? DEFAULT_GATEWAY
-  try {
-    return new URL(configured).origin
-  } catch {
-    return new URL(DEFAULT_GATEWAY).origin
-  }
-}
-
 /** `ipfs://<cid>[/path]`, with a CID that looks like a CID and nothing else. */
 const IPFS_URI = /^ipfs:\/\/([A-Za-z0-9]{46,}|Qm[1-9A-HJ-NP-Za-km-z]{44})(\/[\w\-./%]*)?$/
 
@@ -64,7 +54,7 @@ export function resolvableUrl(uri: string): string | null {
 
   const ipfs = IPFS_URI.exec(trimmed)
   if (ipfs?.[1] !== undefined) {
-    return `${gatewayOrigin()}/ipfs/${ipfs[1]}${ipfs[2] ?? ''}`
+    return `${ipfsGatewayOrigin()}/ipfs/${ipfs[1]}${ipfs[2] ?? ''}`
   }
 
   // The only other acceptable shape: an https URL on the gateway's OWN origin.
@@ -75,7 +65,7 @@ export function resolvableUrl(uri: string): string | null {
     return null
   }
   if (parsed.protocol !== 'https:') return null
-  if (parsed.origin !== gatewayOrigin()) return null
+  if (parsed.origin !== ipfsGatewayOrigin()) return null
   return parsed.toString()
 }
 

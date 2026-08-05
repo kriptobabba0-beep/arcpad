@@ -1,4 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
+import { ipfsGatewayOrigin } from '../../lib/ipfs'
 import { auditRoutes } from './routes'
 
 /**
@@ -63,7 +64,9 @@ function allowedHosts(): Set<string> {
   const rpc = process.env.E2E_RPC_URL ?? ''
   expect(base, 'the global setup must publish E2E_BASE_URL').not.toBe('')
   expect(rpc, 'the global setup must publish E2E_RPC_URL').not.toBe('')
-  const gateway = process.env.NEXT_PUBLIC_IPFS_GATEWAY ?? 'https://ipfs.io'
+  // The SAME resolver the app and the CSP use. A fourth copy of this default
+  // is what let the artwork point somewhere the CSP had stopped allowing.
+  const gateway = ipfsGatewayOrigin()
   return new Set([new URL(base).host, new URL(rpc).host, new URL(gateway).host])
 }
 

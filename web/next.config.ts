@@ -1,5 +1,6 @@
 import { ARC_TESTNET_CHAIN_ID, getArcChain } from '@arcpad/shared/browser'
 import type { NextConfig } from 'next'
+import { ipfsGatewayOrigin } from './lib/ipfs'
 
 /**
  * SECURITY HEADERS, AND A CSP THAT IS MEASURED RATHER THAN DECLARED.
@@ -47,11 +48,19 @@ function originOf(raw: string | undefined, fallback: string): string {
  * `next.config.ts` is compiled by Next itself, so importing the workspace
  * package here is the same path the app uses.
  */
-const DEFAULT_IPFS_GATEWAY = 'https://ipfs.io'
 const registryRpc = getArcChain(ARC_TESTNET_CHAIN_ID).rpcUrls.default.http[0] as string
 
 const rpcOrigin = originOf(process.env.NEXT_PUBLIC_ARC_RPC_URL, registryRpc)
-const gatewayOrigin = originOf(process.env.NEXT_PUBLIC_IPFS_GATEWAY, DEFAULT_IPFS_GATEWAY)
+/*
+ * THE GATEWAY COMES FROM `lib/ipfs.ts`, THE SAME FUNCTION THE APP CALLS.
+ *
+ * It used to be a second copy of the read plus a second copy of the default
+ * here -- and the app's IMAGE path was a THIRD copy that read no env at all,
+ * so a configured gateway opened `img-src` to one origin while every <img>
+ * still pointed at ipfs.io. Every token image was then refused by this very
+ * header. One function, one default, one origin.
+ */
+const gatewayOrigin = ipfsGatewayOrigin()
 
 const csp = [
   "default-src 'self'",

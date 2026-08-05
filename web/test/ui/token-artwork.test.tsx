@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import {
-  IPFS_GATEWAY,
+  ipfsGateway,
   resolveArtworkSrc,
   TokenArtwork,
   tokenGradient,
@@ -42,8 +42,20 @@ describe('tokenGradient', () => {
 })
 
 describe('resolveArtworkSrc', () => {
-  it('ipfs:// izinli TEK gateway’e cevrilir', () => {
-    expect(resolveArtworkSrc('ipfs://bafyfoo/image.png')).toBe(`${IPFS_GATEWAY}bafyfoo/image.png`)
+  /**
+   * SOLDA SABIT BIR DIZE VAR, `ipfsGateway()` DEGIL -- ve bu fark onemli.
+   *
+   * Onceki hal `\`${IPFS_GATEWAY}bafyfoo/image.png\`` ile karsilastiriyordu,
+   * yani iddia OLCTUGU KODUN KENDISINDEN turetiliyordu: gateway ne olursa
+   * olsun test yesildi ve sabit yanlis bir degere donse bile hicbir sey
+   * soylemezdi. Varsayilan burada ACIKCA yaziliyor.
+   */
+  it('ipfs:// varsayilan gateway’e cevrilir', () => {
+    expect(resolveArtworkSrc('ipfs://bafyfoo/image.png')).toBe(
+      'https://ipfs.io/ipfs/bafyfoo/image.png',
+    )
+    // ...ve bu, yapilandirilmis olanla AYNI fonksiyondur.
+    expect(resolveArtworkSrc('ipfs://bafyfoo/image.png')).toBe(`${ipfsGateway()}bafyfoo/image.png`)
   })
 
   it('https gecer', () => {
@@ -80,7 +92,7 @@ describe('<TokenArtwork>', () => {
 
     const img = screen.getByTestId('token-artwork').querySelector('img')
     expect(img).not.toBeNull()
-    expect(img).toHaveAttribute('src', `${IPFS_GATEWAY}bafyfoo/image.png`)
+    expect(img).toHaveAttribute('src', 'https://ipfs.io/ipfs/bafyfoo/image.png')
     expect(img).toHaveAttribute('loading', 'lazy')
     expect(img).toHaveAttribute('decoding', 'async')
     // Rastgele bir IPFS gateway'ine kendi URL'imizi sizdirmayiz.

@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { cx } from '@/components/ui/cx'
+import { ipfsPathPrefix } from '@/lib/ipfs'
 
 /**
  * `next/image` KULLANILMIYOR, ve gerekcesi uc somut madde:
@@ -28,11 +29,16 @@ import { cx } from '@/components/ui/cx'
  * dolayisiyla "kullanicinin verdigi gateway" diye bir sey yoktur ve olsaydi
  * acik bir yonlendirme yuzeyi olurdu.
  *
- * TODO(task-1-veya-7): esikte `NEXT_PUBLIC_IPFS_GATEWAY` olarak
- * `web/lib/addresses.ts`'in okudugu env blokuna tasinacak. Bu dalgada o dosya
- * baska bir izin sahibinde oldugu icin sabit burada duruyor.
+ * ARTIK BIR SABIT DEGIL, CUNKU SABIT OLMASI CANLI BIR KUSURDU. Burada
+ * `'https://ipfs.io/ipfs/'` yaziyordu; `next.config.ts`in CSP'si ve
+ * `lib/metadata.ts` ise `NEXT_PUBLIC_IPFS_GATEWAY`i OKUYORDU. Yani gateway'i
+ * degistiren bir operatorde `img-src` yeni origin'e aciliyor, gorseller ise
+ * hâlâ ipfs.io'dan isteniyordu: BUTUN TOKEN GORSELLERI kendi CSP'miz
+ * tarafindan reddedilir. Cozum `web/lib/ipfs.ts`, tek kaynak.
  */
-export const IPFS_GATEWAY = 'https://ipfs.io/ipfs/'
+export function ipfsGateway(): string {
+  return ipfsPathPrefix()
+}
 
 /** FNV-1a. Adres olmayan bir tohum icin deterministik 8 nibble uretir. */
 function seedHex(value: string): string {
@@ -88,7 +94,7 @@ export function resolveArtworkSrc(uri: string | null | undefined): string | null
   const value = uri.trim()
   if (value.startsWith('ipfs://')) {
     const path = value.slice('ipfs://'.length).replace(/^ipfs\//, '')
-    return path ? `${IPFS_GATEWAY}${path}` : null
+    return path ? `${ipfsGateway()}${path}` : null
   }
   return value.startsWith('https://') ? value : null
 }
