@@ -539,15 +539,17 @@ export function isTransient(error: unknown): boolean {
   const { code, status, details } = asRpcError(error)
 
   // HIZ SINIRI EN ONCE. Arc'in BILINEN iki kodu var ve ikisi de HTTP 429 ile
-  // geliyor; bilinmeyen bir ucuncusu de 429 ile gelirdi. Bu iki satiri kalici
+  // geliyor; bilinmeyen bir ucuncusu de 429 ile gelirdi. Bu satiri kalici
   // kararin ONUNE almak, `-32011`de bir kez yasanmis olan "hiz siniri
   // yuzunden HALT"i bilinmeyen bir kodla tekrarlamayi yapisal olarak
   // imkansiz kilar.
-  if (status === RATE_LIMIT_STATUS) return true
-  if (RATE_LIMIT_TEXT.test(details)) return true
+  //
+  // `isRateLimit` AYNI kararin tek kopyasidir ve geri cekilme merdivenini de o
+  // secer -- iki yerde iki kopya, "gecici sayilan ama kisa butceyle yeniden
+  // denenen" bir kodun yeniden dogmasi demekti.
+  if (isRateLimit(error)) return true
 
   if (code !== undefined) {
-    if (TRANSIENT_RPC_CODES.has(code)) return true
     if (PERMANENT_RPC_CODES.has(code)) return false
   }
   if (status !== undefined) return TRANSIENT_HTTP_STATUS.has(status)
@@ -573,31 +575,135 @@ export function isTransient(error: unknown): boolean {
   return false
 }
 
-export function backoffMs(attempt: number, random: () => number = Math.random): number {
-  const base = Math.min(30_000, 250 * 2 ** attempt)
+/**
+ * HIZ SINIRI MI. `isTransient`in ILK IKI SATIRIYLA AYNI KARAR, TEK YERDE.
+ *
+ * Ayri bir kopya yazmak, iki siniflandirmanin sessizce ayrismasi demekti --
+ * ve bu dosya zaten "ayni olguya iki yerden bakan iki kod" arizasini bir kez
+ * yasadi. `isTransient` bunu cagirir; geri cekilme merdivenini secen de bu.
+ */
+export function isRateLimit(error: unknown): boolean {
+  const { code, status, details } = asRpcError(error)
+  if (status === RATE_LIMIT_STATUS) return true
+  if (RATE_LIMIT_TEXT.test(details)) return true
+  return code !== undefined && TRANSIENT_RPC_CODES.has(code)
+}
+
+/** Genel gecici hata merdiveninin tabani. Degismedi. */
+export const DEFAULT_BACKOFF_BASE_MS = 250
+
+/**
+ * ================== HIZ SINIRININ KENDI MERDIVENI ==================
+ *
+ * OLCULDU (2026-08-05, canli `rpc.testnet.arc.network`). Once limit tetiklendi
+ * -- HER TURDA tam UC bosluksuz `eth_getLogs` yetti, bes turun besinde -- sonra
+ * AYNI istek sabit araliklarla bes kez tekrar edildi:
+ *
+ *   after    0ms spacing: -32005 ok ok -32005 -32005
+ *   after  250ms spacing: ok ok -32005 ok -32005
+ *   after 1000ms spacing: ok ok ok ok ok
+ *   after 3000ms spacing: ok ok ok ok -32005
+ *   after 6000ms spacing: ok ok ok ok ok
+ *
+ * IKI SEY OKUNUYOR, ve ikincisi bir sabiti buyutmekten daha onemli:
+ *
+ *   1. 250ms'lik taban YETERSIZ: o aralikta bes denemenin ikisi reddedildi.
+ *      Eski merdiven `min(30s, 250*2^a)`'nin YARISI + jitter'di ve
+ *      `maxAttempts = 5` ile TOPLAM bekleme 1,9-3,75 saniyeydi. Yani indexer,
+ *      limitin gectigi araliga VARMADAN pes ediyordu.
+ *   2. "YETERINCE YAVAS" DIYE BIR SAYI YOK: 3000ms'de bir ret var, 1000ms'de
+ *      hic yok. Esik sabit degil, ucun genel yukune bagli (`chainReader.ts`
+ *      ayni sonucu bagimsiz olcmustu). Dolayisiyla dogru care "daha buyuk bir
+ *      sabit" DEGIL, "yeterince cok deneme + jitter"dir; sabit yalnizca ilk
+ *      denemenin bosa gitmemesini saglar.
+ *
+ * Taban 1 saniye, ve butce ayri (`rateLimitMaxAttempts`, varsayilan 8):
+ * denemeler bagimsiz kabul edilirse (olculen ret orani ~%24) sekiz denemeden
+ * sonra kalan ariza olasiligi ~1e-5, ve en kotu durumda toplam bekleme ~90
+ * saniyedir. Bir indexer icin 90 saniyelik gecikme, `exit 1`den kiyaslanamaz
+ * olcude ucuzdur.
+ */
+export const RATE_LIMIT_BACKOFF_BASE_MS = 1_000
+
+export function backoffMs(
+  attempt: number,
+  random: () => number = Math.random,
+  baseMs: number = DEFAULT_BACKOFF_BASE_MS,
+): number {
+  const base = Math.min(30_000, baseMs * 2 ** attempt)
   // JITTER: sabit gecikmeler, ayni anda geri cekilen iki indexer'i AYNI anda
   // geri getirir.
   return Math.floor(base / 2 + random() * (base / 2))
 }
 
+/**
+ * IKI AYRI BUTCE, TEK DONGU.
+ *
+ * Hiz siniri ile "bilinmeyen gecici hata" ayni sey degildir ve ayni butceyi
+ * paylasmamalari gerekir: birincisi GECER (olculdu), ikincisi hakkinda bir
+ * sey bilmiyoruz ve onu sekiz kez tekrarlamak gercek bir kusuru gizler.
+ * Sayaclar ayri oldugu icin, bir hiz siniri firtinasi genel butceyi TUKETMEZ.
+ */
 export async function runWithRetry(
   pool: Pool,
   client: RpcClient,
   deployment: Deployment,
   config: IndexerConfig,
-  options: RunOnceOptions & { sleep?: (ms: number) => Promise<void> } = {},
+  options: RunOnceOptions & {
+    sleep?: (ms: number) => Promise<void>
+    /**
+     * HER GERI CEKILME GORUNURDUR.
+     *
+     * Eski hal her yeniden denemeyi SESSIZCE yutuyordu: operatorun gordugu tek
+     * sey ya normal ilerleme ya da `exit 1`di. Yani "hiz sinirina carpiyorum
+     * ama toparliyorum" -- yani duzeltmenin ta kendisinin CALISTIGI durum --
+     * hicbir yerde gorunmuyordu, ve gorunmeyen bir toparlanma ile hic olmayan
+     * bir sorun ayni loga sahiptir.
+     */
+    onRetry?: (info: {
+      rateLimited: boolean
+      attempt: number
+      delayMs: number
+      error: unknown
+    }) => void
+  } = {},
 ): Promise<RunResult | null> {
   const sleep =
     options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+  const onRetry =
+    options.onRetry ??
+    ((info): void => {
+      const { details } = asRpcError(info.error)
+      console.warn(
+        `[indexer] ${info.rateLimited ? 'RATE LIMITED' : 'transient RPC error'}, ` +
+          `retrying in ${info.delayMs}ms (attempt ${info.attempt}/${
+            info.rateLimited ? config.rateLimitMaxAttempts : config.maxAttempts
+          }): ${details}`,
+      )
+    })
   let lastError: unknown
-  for (let attempt = 0; attempt < config.maxAttempts; attempt += 1) {
+  let attempts = 0
+  let rateLimited = 0
+  for (;;) {
     try {
       return await runOnce(pool, client, deployment, config, options)
     } catch (error) {
       if (!isTransient(error)) throw error
       lastError = error
-      if (attempt + 1 < config.maxAttempts) await sleep(backoffMs(attempt))
+      const limited = isRateLimit(error)
+      if (limited) {
+        rateLimited += 1
+        if (rateLimited >= config.rateLimitMaxAttempts) throw lastError
+      } else {
+        attempts += 1
+        if (attempts >= config.maxAttempts) throw lastError
+      }
+      const attempt = limited ? rateLimited : attempts
+      const delayMs = limited
+        ? backoffMs(rateLimited - 1, Math.random, RATE_LIMIT_BACKOFF_BASE_MS)
+        : backoffMs(attempts - 1)
+      onRetry({ rateLimited: limited, attempt, delayMs, error })
+      await sleep(delayMs)
     }
   }
-  throw lastError
 }

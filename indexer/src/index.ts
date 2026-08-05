@@ -3,7 +3,7 @@ import { ARC_TESTNET_CHAIN_ID, assertArcChain, createArcClient } from '@arcpad/s
 import { createPool } from '@arcpad/db'
 import { loadConfig } from './config'
 import { createPacer, type RpcClient } from './logs'
-import { ensureDeployment, readFactoryProfile, runWithRetry } from './run'
+import { ensureDeployment, isRateLimit, readFactoryProfile, runWithRetry } from './run'
 
 /**
  * INDEXER'IN GIRIS NOKTASI.
@@ -24,7 +24,16 @@ import { ensureDeployment, readFactoryProfile, runWithRetry } from './run'
  */
 async function main(): Promise<void> {
   const config = loadConfig()
-  const client = createArcClient(config.rpcUrl)
+  // `retryCount: 0` -- YENIDEN DENEMENIN TAMAMI BU SURECIN.
+  //
+  // viem'in varsayilani (3) TEK bir paced istegi DORT bosluksuz HTTP istegine
+  // cevirir ve bunu pacer'in GORMEDIGI yerde yapar. Olculdu: Arc'in limiti
+  // UC bosluksuz `eth_getLogs`ta tetikleniyor (5/5), yani varsayilan tek
+  // basina limiti asmaya yetiyor -- ve tam da limit yaniti geldiginde
+  // devreye giriyor. Bu satirdan once indexer canliya karsi bes aralik sonra
+  // `-32005` ile `exit 1` etti; stack'te `withRetry.delay.count.count`
+  // (viem/utils/buildRequest.ts) goruluyordu.
+  const client = createArcClient(config.rpcUrl, { retryCount: 0 })
   await assertArcChain(client)
 
   const pool = createPool(config.databaseUrl)
@@ -76,5 +85,21 @@ main().catch((error: unknown) => {
   // `DeploymentMismatch`, `NonCanonicalLaunch` ve `ReorgDetected` operatorun
   // mudahalesini isteyen olgulardir, kendiliginden gecmezler.
   console.error(error)
+  // HIZ SINIRI YUZUNDEN OLMEK BASKA BIR OLGUDUR ve yigin izinden ANLASILMAZ.
+  //
+  // Bir yigin izi "-32005" der ve operator onu bir kusur sanir; oysa bu, butce
+  // tukendigi icin -- yani ucun ISRARLA reddettigi icin -- verilmis bir karardir
+  // ve caresi de baskadir (butceyi buyut, ya da ucu duzelt). OLCULDU: kasitli
+  // doygunluk altinda (5.376 istegin 5.374'u reddedildi) indexer YEDI kez geri
+  // cekildi, toplam 74,5 saniye bekledi, sonra bu satirdan cikti. Eski tavan
+  // 3,75 saniyeydi.
+  if (isRateLimit(error)) {
+    console.error(
+      `[indexer] EXITING because Arc's rate limit did not clear across ${loadConfig().rateLimitMaxAttempts} attempts. ` +
+        `This is a BUDGET decision, not a classification bug: the code is retried, and it was retried. ` +
+        `Raise INDEXER_RATE_LIMIT_MAX_ATTEMPTS, raise INDEXER_MIN_REQUEST_INTERVAL_MS, or use a less contended endpoint. ` +
+        `The cursor was NOT advanced, so a restart resumes exactly where this run stopped.`,
+    )
+  }
   process.exitCode = 1
 })

@@ -8,6 +8,8 @@ import type { RawLog, RpcClient } from '../src/logs'
 import { createPacer } from '../src/logs'
 import {
   backoffMs,
+  isRateLimit,
+  RATE_LIMIT_BACKOFF_BASE_MS,
   DeploymentMismatch,
   ensureDeployment,
   isTransient,
@@ -40,6 +42,7 @@ const CONFIG: IndexerConfig = {
   pollMs: 10,
   volumeRefreshBatch: 100,
   maxAttempts: 3,
+  rateLimitMaxAttempts: 3,
   minRequestIntervalMs: 0,
 }
 
@@ -537,6 +540,27 @@ describe('gecici hata politikasi', () => {
     expect(backoffMs(3, () => 0)).toBe(1_000)
     // Tavan: 30 saniye.
     expect(backoffMs(20, () => 1)).toBeLessThanOrEqual(30_000)
+    // TABAN PARAMETRIK, ve hiz sinirininki DORT KAT: olculen kurtarma araligi
+    // 250ms'de guvenilir DEGIL (5 denemede 2 ret), 1.000ms'de 5/5.
+    expect(backoffMs(0, () => 0, RATE_LIMIT_BACKOFF_BASE_MS)).toBe(500)
+    expect(backoffMs(3, () => 0, RATE_LIMIT_BACKOFF_BASE_MS)).toBe(4_000)
+    expect(backoffMs(20, () => 1, RATE_LIMIT_BACKOFF_BASE_MS)).toBeLessThanOrEqual(30_000)
+  })
+
+  /**
+   * SINIFLANDIRMA TEK YERDE. `isTransient` ile `isRateLimit` ayrisirsa,
+   * "gecici sayilan ama 250ms'lik butceyle denenen" bir kod yeniden dogar --
+   * yani B2-c'nin ta kendisi.
+   */
+  it('isRateLimit, Arc in OLCULEN iki kodunu ve 429 u tanir', () => {
+    expect(isRateLimit(Object.assign(new Error('x'), { code: -32005 }))).toBe(true)
+    expect(isRateLimit(Object.assign(new Error('x'), { code: -32011 }))).toBe(true)
+    expect(isRateLimit(Object.assign(new Error('x'), { status: 429 }))).toBe(true)
+    // Bilinmeyen bir UCUNCU kod da 429 ile gelirse yakalanir.
+    expect(isRateLimit(Object.assign(new Error('x'), { code: -32099, status: 429 }))).toBe(true)
+    // ...ama her gecici hata hiz siniri DEGILDIR.
+    expect(isRateLimit(Object.assign(new Error('x'), { status: 503 }))).toBe(false)
+    expect(isRateLimit(new Error('fetch failed'))).toBe(false)
   })
 
   it('gecici hatada tekrar dener ve IMLEC ilerlemez', async () => {
@@ -560,6 +584,80 @@ describe('gecici hata politikasi', () => {
     expect(slept).toHaveLength(2)
     expect(result?.counts.total).toBe(19)
     expect((await getCursor(pool))?.lastBlock).toBe(LAST)
+  })
+
+  /**
+   * ================== B2-c: BUTCE, SINIFLANDIRMA DEGIL ==================
+   *
+   * `-32005` ZATEN dogru siniflandiriliyordu (gecici). Indexer yine de canliya
+   * karsi bes aralik sonra `exit 1` etti, cunku BUTCE limitin gectigi araligin
+   * ALTINDAYDI: `min(30s, 250*2^a)/2 + jitter`, bes deneme -> toplam 1,9-3,75
+   * saniye. Olculen merdiven (bkz. `RATE_LIMIT_BACKOFF_BASE_MS`) 250ms'lik
+   * araliklarda bes denemenin ikisinin REDDEDILDIGINI gosteriyor.
+   *
+   * Bu test uyku SURELERINI olcer, sayisini degil: "bes kez denedi" iddiasi
+   * arizayi ISKALARDI -- eski kod da bes kez deniyordu.
+   */
+  it('HIZ SINIRI kendi butcesini ve merdivenini kullanir -- saniyeler, milisaniyeler degil', async () => {
+    const limited: RpcClient = {
+      request: async (args) => {
+        if (args.method === 'eth_getLogs') {
+          throw Object.assign(new Error('rate limit exceeded'), { code: -32005, status: 429 })
+        }
+        return new ChainNode(logs).request(args)
+      },
+    }
+    const slept: number[] = []
+    await expect(
+      runWithRetry(
+        pool,
+        limited,
+        LIVE_DEPLOYMENT,
+        { ...CONFIG, maxAttempts: 3, rateLimitMaxAttempts: 8 },
+        {
+          sleep: async (ms) => {
+            slept.push(ms)
+          },
+        },
+      ),
+    ).rejects.toThrow(/rate limit/)
+
+    // GENEL butce (3) DEGIL, hiz siniri butcesi (8) harcandi.
+    expect(slept).toHaveLength(7)
+    const total = slept.reduce((a, b) => a + b, 0)
+    // Eski davranisin TAVANI 3.750ms idi ve limit 3.000ms araliklarda bile
+    // bir kez reddediyordu. Yeni taban tek basina onu asiyor.
+    expect(total).toBeGreaterThan(3_750)
+    // Ilk bekleme bile saniye mertebesinde -- eskisi 125-250ms idi.
+    expect(slept[0]).toBeGreaterThanOrEqual(500)
+    // Ve imlec YERINDE: butce tukendiginde bile hicbir sey yazilmadi.
+    expect(await getCursor(pool)).toBeNull()
+  })
+
+  it('hiz siniri butcesi GENEL butceyi tuketmez -- sayaclar ayri', async () => {
+    // Once iki hiz siniri, sonra bilinmeyen bir gecici hata: genel butce
+    // (3) hala DOLU olmali, yani istek yine de basariya ulasabilmeli.
+    let calls = 0
+    const mixed: RpcClient = {
+      request: async (args) => {
+        if (args.method === 'eth_getLogs') {
+          calls += 1
+          if (calls <= 2) {
+            throw Object.assign(new Error('rate limit exceeded'), { code: -32005, status: 429 })
+          }
+          if (calls === 3) throw new Error('503 Service Unavailable')
+        }
+        return new ChainNode(logs).request(args)
+      },
+    }
+    const result = await runWithRetry(
+      pool,
+      mixed,
+      LIVE_DEPLOYMENT,
+      { ...CONFIG, maxAttempts: 3, rateLimitMaxAttempts: 8 },
+      { sleep: async () => undefined },
+    )
+    expect(result?.counts.total).toBe(19)
   })
 
   it('deneme hakki bitince hata YUKARI cikar ve imlec YERINDE kalir', async () => {

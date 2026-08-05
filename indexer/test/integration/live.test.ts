@@ -152,6 +152,7 @@ const CONFIG: IndexerConfig = {
   pollMs: 500,
   volumeRefreshBatch: 100,
   maxAttempts: 5,
+  rateLimitMaxAttempts: 5,
   minRequestIntervalMs: MIN_INTERVAL_MS,
 }
 

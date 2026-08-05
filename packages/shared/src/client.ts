@@ -10,11 +10,49 @@ import { ARC_TESTNET_CHAIN_ID, arcTestnet } from './chain'
  * donus tipi bunu `Chain | undefined`'a genisletir ve her kullanimda
  * gereksiz bir null-check dogurur.
  */
-export function createArcClient(rpcUrl: string) {
+export function createArcClient(rpcUrl: string, options?: ArcClientOptions) {
   return createPublicClient({
     chain: arcTestnet,
-    transport: http(rpcUrl),
+    transport: http(rpcUrl, {
+      ...(options?.retryCount === undefined ? {} : { retryCount: options.retryCount }),
+    }),
   })
+}
+
+/**
+ * ================== `retryCount` NEDEN BURADA ==================
+ *
+ * viem'in `http()` VARSAYILANI `retryCount: 3`tur ve o denemeler CAGIRANIN
+ * yeniden-deneme/pacing katmaninin ICINDE, ondan GORUNMEDEN olur. Indexer'in
+ * `createPacer({ minIntervalMs: 600 })`i `client.request`i sarmalar; viem'in uc
+ * ek HTTP istegi o TEK sarmalamanin icinde, ~150/300/600ms araliklarla gider.
+ * Yani "600ms bosluk birak" sozlesmesi, tam da var olma sebebi olan durumda
+ * bozulur -- cunku viem'in yeniden denemesini TETIKLEYEN sey zaten bir hiz
+ * siniri yanitidir.
+ *
+ * OLCULDU (2026-08-05, canli `rpc.testnet.arc.network`, bes ayri tur):
+ *
+ *   [probe] provoked after 3 unpaced calls: HTTP 429 code=-32005
+ *   [probe] provoked after 3 unpaced calls: HTTP 429 code=-32005   (5/5 ayni)
+ *
+ * UC bosluksuz `eth_getLogs` limiti tetikliyor. viem'in varsayilani tek bir
+ * mantiksal istegi DORT bosluksuz HTTP istegine cevirir; yani varsayilan,
+ * limiti kendi basina asmaya YETER. Indexer'in olumu (canli, ayni gun, `exit 1`
+ * / `-32005`) bunun stack'inde aynen goruluyordu:
+ *
+ *   at withRetry.delay.count.count (viem/utils/buildRequest.ts:206)
+ *
+ * `retryCount: 0` gecen bir cagiran, yeniden denemenin TAMAMINA sahip olur ve
+ * pacing yeniden anlamli hale gelir. Varsayilan DEGISMEDI: bu paketi kullanan
+ * her yol (web, drill) aynen eskisi gibi davranir; degistirmek, olcmedigim
+ * cagiranlarin davranisini sessizce degistirmek olurdu.
+ */
+export interface ArcClientOptions {
+  /**
+   * viem'in transport ici yeniden deneme sayisi. `0` = yeniden deneme YOK,
+   * yani her HTTP istegi cagiranin pacing'inden ve butcesinden gecer.
+   */
+  retryCount?: number
 }
 
 /**

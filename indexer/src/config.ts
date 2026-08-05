@@ -32,6 +32,16 @@ export interface IndexerConfig {
   volumeRefreshBatch: number
   /** Gecici RPC hatalarinda en fazla kac deneme. */
   maxAttempts: number
+  /**
+   * HIZ SINIRINDA en fazla kac deneme -- AYRI BIR BUTCE.
+   *
+   * `maxAttempts` ile paylasilmamasinin sebebi olculdu: Arc'in hiz siniri
+   * GECER (bkz. `run.ts`in merdiven olcumu), bilinmeyen bir gecici hata ise
+   * hakkinda hicbir sey bilmedigimiz seydir. Ikisini ayni sayaca baglamak, ya
+   * hiz sinirinda erken pes etmek (olculdu: `exit 1`) ya da gercek bir kusuru
+   * sekiz kez tekrarlayip gizlemek demekti.
+   */
+  rateLimitMaxAttempts: number
   /** Istekler arasindaki en kucuk bosluk (Arc ardisik istekleri de sinirlar). */
   minRequestIntervalMs: number
 }
@@ -103,6 +113,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IndexerConfig 
     pollMs: number(env, 'INDEXER_POLL_MS', 500),
     volumeRefreshBatch: number(env, 'INDEXER_VOLUME_REFRESH_BATCH', 500),
     maxAttempts: number(env, 'INDEXER_MAX_ATTEMPTS', 5),
+    // 8: olculen ret orani ~%24 ise sekiz bagimsiz denemeden sonra kalan
+    // ariza olasiligi ~1e-5. Bkz. `run.ts`, `RATE_LIMIT_BACKOFF_BASE_MS`.
+    rateLimitMaxAttempts: number(env, 'INDEXER_RATE_LIMIT_MAX_ATTEMPTS', 8),
     minRequestIntervalMs: number(
       env,
       'INDEXER_MIN_REQUEST_INTERVAL_MS',
