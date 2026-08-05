@@ -140,10 +140,47 @@ export const COMPLETED = 2
 /** And this many are OLD: created outside the 24h window, for the age filter. */
 export const OLD = 6
 
+/**
+ * ONE TOKEN WITH MORE HISTORY THAN A PAGE, because a page size that is never
+ * exceeded proves nothing about paging.
+ *
+ * The token page asks for `TABLE_PAGE_SIZE` (25) rows per tab. A fixture whose
+ * busiest token has two trades and one holder makes the "Load more" button
+ * UNREACHABLE, and every assertion about paging would then pass by never being
+ * exercised -- which is exactly how the missing `loadMoreTrades` prop survived:
+ * the component's own tests drove `loadMore` directly and were green while NO
+ * PAGE PASSED IT.
+ *
+ * 30 > 25, so page one is full and page two has five rows.
+ */
+export const DEEP_TRADES = 30
+export const DEEP_HOLDERS = 30
+
+/**
+ * THE LAST TEN HOLDERS SHARE ONE BALANCE, ON PURPOSE.
+ *
+ * The holders keyset is `(balance_tok DESC, holder ASC)` and the SECOND key
+ * exists because balances tie. With 30 holders and a 25-row page the boundary
+ * falls INSIDE the tied group, so a single-key cursor would repeat or skip a
+ * wallet right where a user would see it. A fixture with 30 distinct balances
+ * would let that mutant live.
+ */
+const TIED_FROM = 20
+
 export type Seeded = {
   readonly tokens: readonly `0x${string}`[]
   /** A token with trades and holders, for the token page's tables. */
   readonly busy: `0x${string}`
+  /**
+   * A token with MORE than one page of both trades and holders.
+   *
+   * Its exact row counts are deliberately NOT promised here: the shared
+   * transfer the main loop writes lands among these balances, so the specs
+   * read the counts and the expected order out of the DATABASE. A fixture
+   * that states a number this file has to keep true is a number that goes
+   * quietly wrong.
+   */
+  readonly deep: `0x${string}`
   /** A canonical-looking address that is NOT in the database. */
   readonly absent: `0x${string}`
   readonly names: readonly string[]
@@ -328,6 +365,52 @@ export async function seed(pool: Pool): Promise<Seeded> {
     }
   }
 
+  /*
+   * THE DEEP TOKEN. Index 3, and the index is chosen rather than incidental:
+   *   - `i % 3 === 0`, so it already carries two trades and the shared shape;
+   *   - `i >= COMPLETED`, so it is NOT complete — a `Completed` at log index 9
+   *     would sit between the trades below and force them into an ordering
+   *     nothing in the product produces;
+   *   - `i < SEEDED - OLD`, so it is inside the 24h window like a real one.
+   *
+   * `SEEDED` DOES NOT CHANGE, so every count this file already promises stays
+   * exactly as it was and the Explore assertions keep their meaning.
+   */
+  const deep = tokens[3]!
+  const deepBlock = START_BLOCK + 30n
+  const deepAt = new Date(now - 3 * 60_000)
+
+  // Trades 3..DEEP_TRADES, at log indices 200+ so they cannot collide with the
+  // transfer at 8 or the `Completed` at 9 that other tokens use.
+  for (let nth = 2; nth < DEEP_TRADES; nth += 1) {
+    const base = tradeEvent(3, nth, deepAt, deepBlock)
+    await applyTrade(pool, {
+      ...base,
+      eventSeq: toSeq(deepBlock, 200 + nth),
+      logIndex: 200 + nth,
+      txHash: hash32(0x20_000 + nth),
+    })
+  }
+
+  for (let k = 0; k < DEEP_HOLDERS; k += 1) {
+    const holder = addr(0xd000 + k)
+    await applyTransfer(pool, {
+      kind: 'transfer',
+      eventSeq: toSeq(deepBlock, 400 + k),
+      blockNumber: deepBlock,
+      logIndex: 400 + k,
+      txHash: hash32(0x30_000 + k),
+      blockTime: deepAt,
+      token: deep,
+      from: '0x0000000000000000000000000000000000000000',
+      to: holder,
+      // Strictly descending until `TIED_FROM`, then FLAT. `addr()` pads
+      // ascending, so the tied wallets are already in `holder ASC` order and
+      // the expected page boundary is readable from this array.
+      amountTok: BigInt(DEEP_HOLDERS - Math.min(k, TIED_FROM)) * 10n ** 24n,
+    })
+  }
+
   // The cursor is what `getIndexerStatus` reads to decide whether the data is
   // stale. Advancing it keeps the stale notice out of the way of every other
   // assertion — the notice has its own test elsewhere.
@@ -336,6 +419,7 @@ export async function seed(pool: Pool): Promise<Seeded> {
   return {
     tokens,
     busy: tokens[0]!,
+    deep,
     absent: addr(0xdead),
     names,
   }

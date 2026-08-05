@@ -407,3 +407,108 @@ test('a token with NO trades shows the empty state, not a zero', async ({ page }
   // true for a launch nobody has touched.
   await expect(page.getByText(/No trades yet/i).first()).toBeVisible()
 })
+
+/**
+ * =========================================================================
+ *  THE TOKEN PAGE'S "LOAD MORE" — THE HALF NO UNIT TEST COULD SEE.
+ * =========================================================================
+ *
+ * `<TradesTable>` and `<HoldersTable>` had working keyset paging and tests
+ * that drove `loadMore` directly. Both were green for the whole of Phase 4
+ * while `app/token/[address]/page.tsx` PASSED NEITHER PROP, so the button did
+ * not exist on any real page and the product was capped at 25 trades and 25
+ * holders. A component test cannot see that: it supplies the prop itself.
+ *
+ * This is the same failure mode as `<TradePanel>` — written, tested, and
+ * rendered by nothing — and it is why this assertion lives in a browser
+ * against a real server action rather than in jsdom.
+ *
+ * EVERY NUMBER BELOW COMES FROM THE DATABASE. The page size (25) is the only
+ * literal, and it is asserted to be smaller than the row count before anything
+ * is clicked; otherwise "the button appeared" would be a claim about a button
+ * that had nothing to fetch.
+ */
+const TOKEN_PAGE_SIZE = 25
+
+async function countOf(sql: string, token: string): Promise<number> {
+  const { rows } = await pool!.query<{ n: string }>(sql, [token])
+  return Number(rows[0]!.n)
+}
+
+test('the trades tab pages past 25, and the tab label counts what is DRAWN', async ({ page }) => {
+  const deep = fixture!.deep
+  const total = await countOf('SELECT count(*)::text AS n FROM trades WHERE token = $1', deep)
+  expect(total, 'the fixture must exceed one page or this test proves nothing').toBeGreaterThan(
+    TOKEN_PAGE_SIZE,
+  )
+
+  await page.goto(url(`/token/${deep}`))
+
+  // NAMED, not `getByRole('table')`. The curve chart draws its own <table> as
+  // the sr-only text alternative for the SVG, so an unnamed locator counts a
+  // row that is not a trade -- measured here as 27 where 26 was expected.
+  const bodyRows = page.getByRole('table', { name: /Recent trades/ }).getByRole('row')
+  // The header row is a row too; the page size plus it.
+  await expect(bodyRows).toHaveCount(TOKEN_PAGE_SIZE + 1)
+  await expect(page.getByRole('tab', { name: `Trades (${TOKEN_PAGE_SIZE})` })).toBeVisible()
+
+  const more = page.getByRole('button', { name: 'Load more trades' })
+  await expect(more, 'a next cursor exists, so the button must be reachable').toBeVisible()
+  await more.click()
+
+  // EVERY remaining row arrives, and the LABEL moves with the table. A label
+  // read from the server's first page would still say (25) here — the defect
+  // the fix itself introduced, and the reason the paging state was lifted.
+  await expect(bodyRows).toHaveCount(total + 1)
+  await expect(page.getByRole('tab', { name: `Trades (${total})` })).toBeVisible()
+  // The cursor is exhausted, so the button goes away rather than fetching
+  // an empty page forever.
+  await expect(more).toHaveCount(0)
+})
+
+test('the holders tab pages past 25, and no wallet is repeated across the tie', async ({
+  page,
+}) => {
+  const deep = fixture!.deep
+  const total = await countOf(
+    `SELECT count(*)::text AS n
+       FROM holders h JOIN curve_state c ON c.token = h.token
+      WHERE h.token = $1 AND h.balance_tok > 0 AND h.holder <> c.curve`,
+    deep,
+  )
+  expect(total).toBeGreaterThan(TOKEN_PAGE_SIZE)
+
+  // THE TIE IS THE POINT. The keyset is `(balance_tok DESC, holder ASC)` and
+  // the page boundary is inside a group of equal balances, which is where a
+  // single-key cursor repeats or skips a row.
+  const { rows: tied } = await pool!.query<{ n: string }>(
+    `SELECT count(*)::text AS n FROM (
+       SELECT balance_tok FROM holders WHERE token = $1 AND balance_tok > 0
+        GROUP BY balance_tok HAVING count(*) > 1) t`,
+    [deep],
+  )
+  expect(Number(tied[0]!.n), 'the fixture must contain tied balances').toBeGreaterThan(0)
+
+  await page.goto(url(`/token/${deep}`))
+  await page.getByRole('tab', { name: /Holders/ }).click()
+
+  const table = page.getByRole('table', { name: /Token holders/ })
+  await expect(table.getByRole('row')).toHaveCount(TOKEN_PAGE_SIZE + 1)
+
+  const more = page.getByRole('button', { name: 'Load more holders' })
+  await expect(more).toBeVisible()
+  await more.click()
+
+  await expect(table.getByRole('row')).toHaveCount(total + 1)
+  await expect(page.getByRole('tab', { name: `Holders (${total})` })).toBeVisible()
+
+  // NO DUPLICATES. The rank column is positional, so a repeated wallet would
+  // show the same shortened address twice with two different numbers beside
+  // it — and the percentages already do not sum to 100, so nothing else on
+  // screen would give it away.
+  const shown = await table
+    .getByRole('row')
+    .locator('td:nth-child(2)')
+    .evaluateAll((cells) => cells.map((c) => c.textContent ?? ''))
+  expect(new Set(shown).size, 'a wallet must not appear on both pages').toBe(shown.length)
+})
