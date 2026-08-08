@@ -281,6 +281,103 @@ describe('EIP-7708 duvari', () => {
     expect((node.logFilters[0]!['address'] as string[]).length).toBe(500)
     expect((node.logFilters[2]!['address'] as string[]).length).toBe(201)
   })
+
+  // -------------------------------------------------------------------------
+  // IKINCI EKSEN: TEK BIR BLOK TASINCA ADRES FILTRESI KUCULUR
+  // -------------------------------------------------------------------------
+
+  const addressAt = (i: number): Address => `0x${(i + 1).toString(16).padStart(40, '0')}` as Address
+
+  /** Tek blokta, adres basina tek `Transfer` logu. */
+  function oneBlockLogs(count: number, block = 5n, perAddress = 1): RawLog[] {
+    const out: RawLog[] = []
+    for (let a = 0; a < count; a += 1) {
+      for (let k = 0; k < perAddress; k += 1) {
+        out.push({
+          address: addressAt(a),
+          topics: [TOPIC0.transfer],
+          data: '0x',
+          blockNumber: `0x${block.toString(16)}`,
+          logIndex: `0x${out.length.toString(16)}`,
+          transactionHash: `0x${'11'.repeat(32)}`,
+        })
+      }
+    }
+    return out
+  }
+
+  /**
+   * `SingleBlockTooLarge`'in KENDI yorumu kurtarmayi yaziyordu ("adres
+   * filtresini bolmek gerekir") ve hicbir yerde UYGULANMAMISTI: adi KALICI
+   * kumede, yani tek bir sicak blok ingest'i kalici olarak durduruyordu.
+   * Bugunku hacimde ulasilamaz; BIR LAUNCH GUNU ulasilir.
+   */
+  it('tek blok tasarsa ADRES FILTRESI yarilanir ve tarama TAMAMLANIR', async () => {
+    // 8 adres, blok 5'te 8 log; dugum 2'den fazlasini reddediyor.
+    const node = new FakeNode(oneBlockLogs(8), { maxResults: 2 })
+    const out = await getLogsChunked(
+      node,
+      Array.from({ length: 8 }, (_, i) => addressAt(i)),
+      [TOPIC0.transfer],
+      5n,
+      5n,
+      createPacer(),
+      8,
+    )
+    // HICBIR LOG KAYBOLMADI -- kurtarma "daralt ve devam et", "atla" degil.
+    expect(out).toHaveLength(8)
+    const widths = node.logFilters.map((f) => (f['address'] as string[]).length)
+    // 8 (ret) -> 4 (ret) -> 2 ... ve YAPISKAN: kalan parcalar da 2'lik.
+    expect(widths).toEqual([8, 4, 2, 2, 2, 2])
+  })
+
+  it('daralma MONOTON: bir kez kuculen filtre cagri boyunca geri buyumez', async () => {
+    const node = new FakeNode(oneBlockLogs(4), { maxResults: 1 })
+    await getLogsChunked(
+      node,
+      Array.from({ length: 4 }, (_, i) => addressAt(i)),
+      [TOPIC0.transfer],
+      5n,
+      5n,
+      createPacer(),
+      4,
+    )
+    const widths = node.logFilters.map((f) => (f['address'] as string[]).length)
+    expect(widths).toEqual([4, 2, 1, 1, 1, 1])
+  })
+
+  /**
+   * VE EKSEN TUKENEBILIR. Tek adres tek blokta bile tasiyorsa yapacak bir sey
+   * kalmaz -- ama hata artik BUNU soyler, cunku caresi baskadir (topic ekseni
+   * ya da baska bir saglayici) ve eski mesaj hala "adres filtresini bolmek
+   * gerekir" diyerek YAPILMIS olan seyi oneriyordu.
+   */
+  it('tek adres tek blokta bile tasarsa FIRLATIR ve eksenin tukendigini soyler', async () => {
+    const node = new FakeNode(oneBlockLogs(1, 5n, 3), { maxResults: 2 })
+    await expect(
+      getLogsChunked(node, [addressAt(0)], [TOPIC0.transfer], 5n, 5n, createPacer(), 1),
+    ).rejects.toThrow(/adres bolme \(1 adrese kadar\) tukendi/)
+  })
+
+  /**
+   * DARALMA BU SINIFA OZELDIR. Genel bir yeniden deneme, aralik disi her
+   * hatayi da sessizce maskelerdi (keeper'in M42 mutanti tam olarak budur).
+   */
+  it('aralik DISI bir hata daraltilmaz: tek deneme, sonra firlatir', async () => {
+    const node = new FakeNode(oneBlockLogs(4), { maxResults: 1, errorCode: -32601 })
+    await expect(
+      getLogsChunked(
+        node,
+        Array.from({ length: 4 }, (_, i) => addressAt(i)),
+        [TOPIC0.transfer],
+        5n,
+        5n,
+        createPacer(),
+        4,
+      ),
+    ).rejects.toThrow(/limited to a 10,000 range|method/)
+    expect(node.logFilters).toHaveLength(1)
+  })
 })
 
 // ---------------------------------------------------------------------------

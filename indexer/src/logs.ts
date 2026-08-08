@@ -269,15 +269,25 @@ export class MissingTimestamp extends Error {
 }
 
 /**
- * TEK BIR BLOK sonuc sinirini asiyor. Blok bolme burada TUKENIR; geriye adres
- * filtresini bolmek kalir. Yol yazilmistir cunku "burada duruyoruz" demek, bir
- * gun sessizce sonsuz donmek demektir.
+ * TEK BIR BLOK sonuc sinirini asiyor. BLOK BOLME BURADA TUKENIR.
+ *
+ * IKINCI EKSEN ARTIK VAR: `getLogsChunked` bu hatayi yakalar ve ADRES
+ * FILTRESINI yariya bolerek AYNI parcayi tekrar sorar (bkz. orada). Yani bu
+ * sinif cagirana ancak ADRES EKSENI DE TUKENDIGINDE ulasir. `addressCount`
+ * dolu geldiginde mesaj bunu soyler, cunku o halin caresi baskadir: kalan tek
+ * eksen topic'tir ya da saglayicidir.
  */
 export class SingleBlockTooLarge extends Error {
-  constructor(readonly blockNumber: bigint) {
+  constructor(
+    readonly blockNumber: bigint,
+    readonly addressCount?: number,
+  ) {
     super(
       `SingleBlockTooLarge: blok ${blockNumber} tek basina sonuc sinirini asiyor; ` +
-        `blok bolme tukendi, adres filtresini bolmek gerekir`,
+        (addressCount === undefined
+          ? `blok bolme tukendi, adres filtresini bolmek gerekir`
+          : `blok bolme VE adres bolme (${addressCount} adrese kadar) tukendi -- ` +
+            `geriye topic ekseni ya da baska bir saglayici kaliyor`),
     )
     this.name = 'SingleBlockTooLarge'
   }
@@ -627,14 +637,44 @@ export async function getLogsChunked(
 ): Promise<RawLog[]> {
   if (addresses.length === 0) return []
   const out: RawLog[] = []
-  for (let i = 0; i < addresses.length; i += chunkSize) {
-    out.push(
-      ...(await getLogs(
-        client,
-        { from, to, address: addresses.slice(i, i + chunkSize), topics },
-        pacer,
-      )),
-    )
+  // IKINCI EKSEN: ADRES FILTRESI DE KUCULUR.
+  //
+  // `SingleBlockTooLarge`, blok bolmenin tukendigi yerdir (`to === from`) ve
+  // ADI KALICI KUMEDE oldugu icin ingest'i DURDURUYORDU -- kurtarma yolu
+  // sinifin KENDI yorumunda yaziliydi ("adres filtresini bolmek gerekir") ama
+  // hicbir yerde uygulanmamisti. Bugunku hacimde ulasilamaz; BIR LAUNCH GUNU
+  // ulasilir, ve orada tek bir sicak blok ingest'i kalici olarak durdururdu.
+  //
+  // Daralma KEEPER'IN OLCULMUS SEKLIYLE AYNI: monoton (asla geri buyumez),
+  // kendiliginden sinirli (her adimda yarilanir, 1'de durur -- 500 icin en
+  // fazla 9 fazladan istek) ve AYRI BIR SAYAC YOKTUR. Bir sayac, saglayicinin
+  // gercek sinirinin altina inmeyi engelleyip tam da onlemek istedigi
+  // yakinsamamayi geri getirirdi.
+  //
+  // YAPISKAN, cunku ilk parcayi reddeden bir blok sonrakileri de reddeder;
+  // her parcada duvara yeniden tosladigi bir hal, ayni islem icin O(n log n)
+  // fazladan istek demekti.
+  let size = Math.max(1, Math.min(chunkSize, addresses.length))
+  let i = 0
+  while (i < addresses.length) {
+    const slice = addresses.slice(i, i + size)
+    try {
+      out.push(...(await getLogs(client, { from, to, address: slice, topics }, pacer)))
+    } catch (error) {
+      // YALNIZCA BU SINIF. Genel bir yeniden deneme maskesi, aralik disi her
+      // hatayi da sessizce yutardi -- keeper'da M42 tam olarak bu mutanttir.
+      if (error instanceof SingleBlockTooLarge && size > 1) {
+        size = Math.max(1, Math.floor(size / 2))
+        continue // AYNI parcadan, DAR filtreyle. `i` ILERLEMEZ.
+      }
+      // Tek adres tek blokta bile tasiyorsa adres ekseni de tukendi; hata bunu
+      // ADIYLA soyler, cunku caresi baskadir.
+      if (error instanceof SingleBlockTooLarge) {
+        throw new SingleBlockTooLarge(error.blockNumber, slice.length)
+      }
+      throw error
+    }
+    i += size
   }
   return out
 }

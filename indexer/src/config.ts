@@ -73,11 +73,32 @@ function required(env: NodeJS.ProcessEnv, key: string): string {
   return value
 }
 
-function number(env: NodeJS.ProcessEnv, key: string, fallback: number): number {
+/**
+ * TABAN ANAHTAR BASINA, CUNKU SIFIR HER ANAHTARDA AYNI SEY DEGIL.
+ *
+ * Onceki hal her sayisal alani `value <= 0` ile reddediyordu ve bu, BIR
+ * ANAHTARDA yanlisti: `INDEXER_MIN_REQUEST_INTERVAL_MS=0` MESRU bir degerdir
+ * ("pacing yok") ve `createPacer` onu zaten destekliyor -- `minIntervalMs`in
+ * KENDI varsayilani 0 ve fonksiyon `Math.max(0, ...)` ile kelepceliyor. Yani
+ * kutuphane kabul ediyor, konfigurasyon yuzeyi ETMIYORDU: kendi RPC'sini
+ * kosturan ya da testte pacing'i kapatmak isteyen bir operator degeri
+ * geciremez, `0` verirse surec ACILISTA olur.
+ *
+ * Otekilerin tabani 1 KALIR ve bu da anlamli: `INDEXER_POLL_MS=0` mesgul
+ * dongu, `INDEXER_MAX_ATTEMPTS=0` "hic deneme", `INDEXER_VOLUME_REFRESH_BATCH=0`
+ * hicbir zaman tazelenmeyen 24s hacmi demektir. Ucu de sessiz arizadir.
+ *
+ * `min` ayrica (0,1) araligindaki kesirleri de reddeder; eskiden gecerlerdi ve
+ * hicbiri anlamli degildi (`INDEXER_MAX_SPAN=0.5` zaten `BigInt()`te patliyordu,
+ * ama ACILIS hatasi degil CALISMA ZAMANI hatasi olarak).
+ */
+function number(env: NodeJS.ProcessEnv, key: string, fallback: number, min = 1): number {
   const raw = env[key]
   if (raw === undefined || raw === '') return fallback
   const value = Number(raw)
-  if (!Number.isFinite(value) || value <= 0) throw new RangeError(`${key} pozitif bir sayi olmali`)
+  if (!Number.isFinite(value) || value < min) {
+    throw new RangeError(`${key} en az ${min} olan bir sayi olmali (verilen: ${raw})`)
+  }
   return value
 }
 
@@ -116,10 +137,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IndexerConfig 
     // 8: olculen ret orani ~%24 ise sekiz bagimsiz denemeden sonra kalan
     // ariza olasiligi ~1e-5. Bkz. `run.ts`, `RATE_LIMIT_BACKOFF_BASE_MS`.
     rateLimitMaxAttempts: number(env, 'INDEXER_RATE_LIMIT_MAX_ATTEMPTS', 8),
+    // TABAN 0: bkz. `number`. Varsayilan 600 kalir; SIFIR ancak ACIKCA
+    // yazildiginda gecer ve "pacing yok" demektir.
     minRequestIntervalMs: number(
       env,
       'INDEXER_MIN_REQUEST_INTERVAL_MS',
       DEFAULT_MIN_REQUEST_INTERVAL_MS,
+      0,
     ),
   }
 }

@@ -897,6 +897,30 @@ describe('config', () => {
     expect(cfg.factory).toBe(LIVE.factory)
     expect(cfg.startBlock).toBe(54_661_437n)
   })
+
+  /**
+   * SIFIR, TEK BIR ANAHTARDA MESRU BIR DEGERDIR.
+   *
+   * `createPacer`in KENDI varsayilani 0 ve `Math.max(0, ...)` ile kelepceliyor,
+   * yani kutuphane "pacing yok"u destekliyordu; konfigurasyon yuzeyi
+   * ETMIYORDU ve `0` veren operator ACILISTA hata aliyordu. Varsayilan
+   * DEGISMEDI (600, olculmus) -- degisen sey, acikca yazilan sifirin
+   * gecebilmesi.
+   */
+  it('minRequestIntervalMs SIFIR olabilir; digerlerinin tabani 1 kalir', () => {
+    expect(loadConfig({ ...base, INDEXER_MIN_REQUEST_INTERVAL_MS: '0' }).minRequestIntervalMs).toBe(
+      0,
+    )
+    // Varsayilan hala olculmus 600.
+    expect(loadConfig(base).minRequestIntervalMs).toBe(600)
+    // Negatif hala reddedilir -- sifir bir taban, kapi degil.
+    expect(() => loadConfig({ ...base, INDEXER_MIN_REQUEST_INTERVAL_MS: '-1' })).toThrow(/en az 0/)
+    // Ve gevseme YALNIZCA o anahtarda: sifir poll = mesgul dongu, sifir
+    // deneme = hic denememek, sifir batch = hic tazelenmeyen 24s hacmi.
+    for (const key of ['INDEXER_POLL_MS', 'INDEXER_MAX_ATTEMPTS', 'INDEXER_VOLUME_REFRESH_BATCH']) {
+      expect(() => loadConfig({ ...base, [key]: '0' }), key).toThrow(/en az 1/)
+    }
+  })
 })
 
 /**
