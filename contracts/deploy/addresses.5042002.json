@@ -22,6 +22,6 @@
   "escrowInitcodeHash": "0xd99a4f910483ee8e40e4898fee5ef732462b55888427cd00c89697b0bff435e8",
   "factoryInitcodeHash": "0xd9177cabe2f31945eb6a64ac14ca862cadbe52d401e1b4d27c7c4ba8c0ada0b4",
   "commit": "8dec4e92c245d277dbb6f1189302fee70d244513",
-  "smokeToken": null,
-  "smokeCurve": null
+  "smokeToken": "0x085C926e24Ed64bb045e67D26D9E76e5730c21b3",
+  "smokeCurve": "0xDdB9e739a948c968eB4C7E1449B94C598B1cf27B"
 }

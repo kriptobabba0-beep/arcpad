@@ -53,3 +53,7 @@ Thumbs.db
 
 # SDD workspace (scratch)
 .superpowers/
+
+# Python bytecode from scripts/integration/ harnesses
+__pycache__/
+*.pyc

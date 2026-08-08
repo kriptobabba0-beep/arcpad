@@ -22,12 +22,17 @@
 // workspace package does not declare `@arcpad/shared`, and module resolution
 // happens from THIS file's directory, not from the cwd the harness is run in.
 import {
+  ARC_TESTNET_CHAIN_ID,
   assertEnvMatchesBook,
   loadAddressBook,
   webEnvBlock,
 } from '../../packages/shared/src/index'
 
-const chainId = Number(process.argv[2] ?? 5042002)
+// The default comes from the REGISTRY, never a literal: `chain-registry.test.ts`
+// asserts that no tracked source outside `chain.ts` carries the chain id, and a
+// hardcoded 5042002 here turned that suite red while this harness's own scoped
+// run stayed green.
+const chainId = Number(process.argv[2] ?? ARC_TESTNET_CHAIN_ID)
 const book = loadAddressBook(chainId)
 const block = webEnvBlock(book)
 
