@@ -1296,32 +1296,26 @@ export async function scanFactoryLogs(
         span = span / 2n > 0n ? span / 2n : 1n
         continue
       }
-      // BASARILI ON EK KAYDEDILIR, VE BU ONCEKI KARARIN TERSIDIR.
+      // BURADA HICBIR SEY YAZILMAZ, VE BU BIR SILME KARARIDIR.
       //
-      // Onceki hal hicbir sey yazmiyordu, gerekcesi "yarim yazilmis bir imlec
-      // bir sonraki kosuya 'bu araligi taradim' der"di. O gerekce, kaydedilen
-      // aralik GERCEKTEN taranmis oldugu icin gecerli degil: `from` DUSEN
-      // parcanin baslangicidir, dolayisiyla `from - 1` son BASARILI blogudur ve
-      // taranmamis tek bir blok bile "tarandi" diye kaydedilmez.
+      // Burada `if (from > startBlock) store?.write(snapshot(from - 1n))`
+      // duruyordu. Yazdigi deger, asagidaki parca-basina kaydin BIR ONCEKI
+      // turda zaten yazdigi degerdi: `from` ancak basarili bir parcadan sonra
+      // `to + 1` olur ve o kayit `from` ILERLEDIKTEN SONRA yapilir, yani
+      // `snapshot(from - 1n)` ile `snapshot(to)` AYNI anlik goruntu. Iki set
+      // arasinda hicbir mutasyon yok: `logs` dongusu kayittan ONCE kosar.
       //
-      // KARSI TARAFI OLCULDU, canli Arc testnet'e karsi, 2026-08-03:
+      // OLCULDU, tahmin degil: mutasyon kampanyasi M39 (bu satiri kaldir)
+      // 208/208 YESIL geciyor -- yani hicbir test onu ayirt etmiyordu --
+      // kardesi M40 (dusen parcayi da kaydet) ise iki testle oluyor. Satir
+      // yasamiyordu; onu hakli cikaran yirmi satirlik gerekce ise `store`
+      // guvencesinin ARTIK BASKA BIR YERDE oldugunu gizliyordu. Bir duzeltme
+      // (parca basina kayit) bir onceki duzeltmeyi (hata yolunda kayit) OLU
+      // KOD yapmisti ve kimse fark etmemisti.
       //
-      //   startBlock 54519071, head ~55182283 -> 10.000'lik 67 parca.
-      //   14 denemelik geri cekilme butcesi 15. parcada tukendi
-      //   (`Request exceeds defined limit / rate limit exceeded`), tarama
-      //   FIRLATTI, imlec YAZILMADI, ve bir sonraki poll BIRINCI PARCADAN
-      //   basladi. Yani tarama HICBIR ZAMAN ilerlemez: kalp atisi HIC
-      //   yayilmaz (`runWatcher` basarisiz poll'da atmaz), maruziyet kalici
-      //   olarak UNMEASURED kalir, ve haftalik tatbikat "there was no
-      //   watcher" der -- CALISAN ve dogru sayfa cikaran bir izleyici icin.
-      //   Olculdu: 45 saniyelik canli kosumda 2 sayfa, SIFIR kalp atisi.
-      //
-      // Bu tam olarak Faz 2 redeploy'unun uretecegi durumdur: yeni factory =
-      // yeni `startBlock` = SOGUK imlec = tam aralik taramasi.
-      //
-      // Bir sey KAYDEDILMEZ: `from === startBlock` iken, yani hicbir parca
-      // tamamlanmamisken. O halde yazilacak ilerleme de yoktur.
-      if (from > startBlock) store?.write(snapshot(from - 1n))
+      // Guvencenin kendisi ve olculmus gerekcesi asagida, YASADIGI YERDE.
+      // `graduationWindow.test.ts` yazim SAYISINI pinliyor, boylece hem bu
+      // satirin geri gelmesi hem de asagidakinin kaybolmasi KIRMIZI olur.
       throw new LogScanError(from, to, cause)
     }
     for (const log of logs) {
@@ -1352,7 +1346,7 @@ export async function scanFactoryLogs(
     }
     from = to + 1n
 
-    // PARCA BASINA KAYIT, YALNIZCA HATADA VE SONDA DEGIL.
+    // PARCA BASINA KAYIT -- ILERLEMEYI KALICI KILAN TEK YER.
     //
     // Eski hal ilerlemeyi SADECE bir `LogScanError` firlatildiginda ya da
     // tarama BITTIGINDE yaziyordu. Yani SIGTERM, OOM ya da makine kapanmasi --
@@ -1362,6 +1356,21 @@ export async function scanFactoryLogs(
     //
     // Ayrica `onProgress`in ANLAMINI tasiyan sey budur: "yasiyorum" demek,
     // ilerlemeyi KALICI kilmadan yarim bir iddiadir.
+    //
+    // TARANMAMIS BLOK "TARANDI" DIYE KAYDEDILMEZ, ve bunu saglayan sey SIRA:
+    // kayit `from = to + 1n`DEN SONRA yapilir, yani depoda duran deger her
+    // zaman son BASARILI blok. Dusen bir parca hicbir sey yazmaz -- yazacak
+    // ilerlemesi yoktur, ve bir onceki parcaninki zaten yazilmistir.
+    //
+    // OLCULDU, canli Arc testnet, 2026-08-03: startBlock 54519071, head
+    // ~55182283 -> 10.000'lik 67 parca; 14 denemelik geri cekilme butcesi 15.
+    // parcada tukendi, tarama firlatti, imlec YAZILMADI ve bir sonraki poll
+    // BIRINCI PARCADAN basladi. Yani tarama HICBIR ZAMAN yakinsamaz: kalp
+    // atisi HIC yayilmaz (`runWatcher` basarisiz poll'da atmaz), maruziyet
+    // kalici olarak UNMEASURED kalir ve haftalik tatbikat CALISAN bir izleyici
+    // icin "there was no watcher" der. 45 saniyelik canli kosum: 2 sayfa,
+    // SIFIR kalp atisi. Faz 2 redeploy'u tam bu durumu uretir (yeni factory =
+    // yeni startBlock = SOGUK imlec = tam aralik taramasi).
     store?.write(snapshot(to))
     scannedThrough = to
     done += 1

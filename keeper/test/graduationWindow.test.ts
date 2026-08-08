@@ -860,6 +860,40 @@ describe('knownCurves', () => {
     expect(found).toEqual([CURVE_A, CURVE_B].sort())
   })
 
+  /**
+   * ILERLEMEYI KIM KAYDEDIYOR -- SAYIYLA, DEGERLE DEGIL.
+   *
+   * Yukaridaki test "20 kaydedildi" diyor ve BU IKI FARKLI MEKANIZMAYLA
+   * DOGRU CIKIYORDU: parca basina kayit, ve hata yolunda duran ikinci bir
+   * kayit. Mutasyon kampanyasi bunu OLCTU -- M39 ("hata yolundaki kaydi
+   * kaldir") 208/208 YESIL gecti, cunku degeri zaten parca basina kayit
+   * yazmisti. Yirmi satirlik gerekcesiyle birlikte OLU bir satirdi ve
+   * guvencenin gercekte nerede oldugunu gizliyordu.
+   *
+   * Bu test degeri degil SAYIYI pinler, yani ayirt eder:
+   *   - hata yolunda bir kayit GERI GELIRSE  -> 3 yazim, KIRMIZI;
+   *   - parca basina kayit KAYBOLURSA        -> 0 yazim, KIRMIZI;
+   *   - dusen parca kaydedilirse (M40)       -> son deger 30, KIRMIZI.
+   */
+  it('ILERLEME parca basina TAM BIR KEZ yazilir, dusen parcada HIC', async () => {
+    const path = join(tempDir(), '.cursor')
+    const inner = cursorAt(path)
+    const written: bigint[] = []
+    const store: CursorStore = {
+      read: () => inner.read(),
+      write: (cursor) => {
+        written.push(cursor.lastScannedBlock)
+        inner.write(cursor)
+      },
+    }
+    // [1,10] ve [11,20] gecer, [21,30] duser.
+    const client = syntheticChain({ blockNumber: 30n, failLogsFrom: 21n })
+    await expect(knownCurves(client, FACTORY, 1n, { store, chunk: 10n })).rejects.toBeInstanceOf(
+      LogScanError,
+    )
+    expect(written).toEqual([10n, 20n])
+  })
+
   it('imleci diske yazar ve yeniden baslatma genesis"ten taramaz', async () => {
     const path = join(tempDir(), '.cursor')
     const store = cursorAt(path)
