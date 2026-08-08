@@ -271,6 +271,33 @@ contract GovernanceForkTest is Test {
     ///      Task 8B bu alanlari Faz 2'nin kendi tamamlanmis curve'uyle
     ///      dolduracak; o zamana kadar iddia "alan bos, ve bos olmasi
     ///      MESRU"dur. Sessizce gecmez: bos olduguNU iddia eder.
+    ///
+    /// @dev `graduated == false` IDDIASI KALDIRILDI (Task 8B). BU BIR
+    ///      GEVSETME DEGIL, ALTINCI ARIZA MODUNUN DUZELTILMESIDIR: bir kapinin
+    ///      MEVCUT DURUMUN BIR RASTLANTISINI KANUN GIBI KODLAMASI.
+    ///
+    ///      Fixture'in ANLAMI defterin kendi semasinda yazilidir: "CI fork
+    ///      kapisinin okudugu KALICI tamamlanmis-curve fixture'i". Tasidigi
+    ///      ozellikler MONOTONDUR ve hepsi burada duruyor -- kod var, token
+    ///      kanonik, curve token'a isaret ediyor, `complete` (ki geri
+    ///      alinamaz), ve hasilat graduation esigini gecmis. Bunlarin hicbiri
+    ///      graduation'dan sonra degismez.
+    ///
+    ///      `graduated == false` ise fixture'in anlaminin PARCASI DEGILDI:
+    ///      yalnizca "uretim fabrikasinin hedefi henuz silahlanmadi"
+    ///      demekti -- ki onu ZATEN `ArcV4.fork.t.sol`daki
+    ///      `test_theGraduationTargetIsStillUnset` dogrudan ve kendi adiyla
+    ///      olcuyor. Hedef silahlandigi gun bu curve mezun olur, `graduated`
+    ///      SONSUZA KADAR `true` olur ve bu kapi HICBIR ARIZA OLMADAN kirmizi
+    ///      olurdu -- projenin ilerledigi yon tam olarak orasi oldugu icin de
+    ///      bu ertelenmis bir kesinlik, bir risk degil.
+    ///
+    ///      YERINE GECEN SEY BIR KANUNDUR, BIR DURUM DEGIL: `graduated`
+    ///      YALNIZCA hedef silahliyken mumkundur (`BondingCurve.graduate()`
+    ///      once `GraduationTargetUnset()` ile doner). Yani mezun bir curve,
+    ///      hedefi HALA BOS olan bir fabrikayla birlikte GORULEMEZ. Bu
+    ///      cift, hangi tarafa giderse gitsin, tutarli olmak ZORUNDADIR --
+    ///      ve tutarsizligi gercek bir ariza olurdu.
     function test_theSmokeCurveInTheBookIsRealAndComplete() public view {
         string memory book = vm.readFile("deploy/addresses.5042002.json");
         if (vm.keyExistsJson(book, ".smokeToken") && _isJsonNull(book, ".smokeToken")) {
@@ -290,7 +317,6 @@ contract GovernanceForkTest is Test {
         assertTrue(LaunchFactory(factory).isCanonical(smokeToken), "the smoke token is not canonical");
         assertEq(BondingCurve(payable(smokeCurve)).token(), smokeToken, "curve and token disagree");
         assertTrue(BondingCurve(payable(smokeCurve)).complete(), "the smoke curve is not complete");
-        assertFalse(BondingCurve(payable(smokeCurve)).graduated(), "the smoke curve has graduated");
 
         // "Tamamlandi"nin EKONOMIK anlami: hasilat graduation esigini gecti.
         assertGe(
@@ -298,5 +324,18 @@ contract GovernanceForkTest is Test {
             LaunchFactory(factory).MIN_GRADUATION_RAISE(),
             "the completed curve did not reach the graduation raise"
         );
+
+        // KANUN, DURUM DEGIL. Iki yon de yurunur, cunku ikisi de gercek bir
+        // arizanin sekli:
+        //   mezun ama hedef bos  -> `graduate()`in `GraduationTargetUnset`
+        //                           korumasi asilmis demektir.
+        //   mezun ama tamam degil -> `NotComplete` korumasi asilmis demektir
+        //                           (ustteki `complete` iddiasiyla birlikte).
+        if (BondingCurve(payable(smokeCurve)).graduated()) {
+            assertTrue(
+                LaunchFactory(factory).graduationTarget() != address(0),
+                "a graduated curve on a factory whose graduationTarget is still unset"
+            );
+        }
     }
 }

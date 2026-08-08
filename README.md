@@ -52,7 +52,8 @@ Test USDC'si: https://faucet.circle.com
 | `make install` | pnpm'i etkinleştirir, bağımlılıkları kurar, submodule'leri günceller |
 | `make build` | Kontratları ve TypeScript paketlerini derler |
 | `make test` | Birim testleri (fork testleri hariç) |
-| `make fork-test` | Arc testnet fork'una karşı davranış testleri |
+| `make fork-test` | Arc testnet fork'una karşı davranış testleri — CI'ın koştuğu salt-okuma alt kümesi |
+| `make fork-test-live` | Tam graduation döngüsü, **geçici** bir factory üzerinde. Elle tetiklenir; CI'da koşmaz |
 | `make fmt` | Solidity ve TypeScript'i formatlar |
 | `make fmt-check` | Formatı değiştirmeden doğrular — **CI'ın çalıştırdığı komut budur** |
 | `make lint` | TypeScript'i ESLint ile denetler (`en-US` locale kuralı dahil) |

@@ -107,11 +107,28 @@ jobs:
       # test basarisizligi CI'yi kirmizi yapar, aninda bir ag hatasi yapmaz.
       # Ikisi de basarisiz olursa is GERCEKTEN basarisiz olur -- eskiden
       # `continue-on-error` bunu da yutuyordu.
+      # ALT KATMAN B (`--no-match-contract 'LiveForkTest'`) BU ISTE KOSMAZ VE
+      # BU BIR DOGRULUK GEREGIDIR, MALIYET DEGIL. B tam graduation dongusunu
+      # yurutur: her kosuda GECICI bir factory + hook (yeniden madenlenir) +
+      # locker kurar ve canli `PoolManager`a karsi havuz acar. Bir kapinin
+      # sagladigi sey deterministik ve IDEMPOTENT olmalidir; dongu testi
+      # ikisini de saglamaz ve basarisizligini RPC gurultusunden ayirt
+      # edilemez kilar.
+      #
+      # AYRIM IKI EKSENLIDIR VE TEK EKSEN YETMEZ: dosya `test/fork/` altinda
+      # durdugu icin yukaridaki `Test` adimi (`--no-match-path 'test/fork/*'`)
+      # onu zaten dislar; bu satirdaki kontrat adi filtresi de FORK kapisinin
+      # onu cekmesini engeller. Iki filtre birbirinin tumleyeni oldugu icin
+      # yalnizca dizin degistirmek B'yi fork'suz pakete tasirdi.
+      #
+      # Ayni filtre Makefile'in `fork-test` hedefinde de vardir; ikisi
+      # ayrisirsa yerelde yesil gorunen bir ayrim CI'da delik olur.
       - name: Arc fork test
         run: |
           set -o pipefail
           run_fork() {
             forge test --root contracts --match-path 'test/fork/*' \
+              --no-match-contract 'LiveForkTest' \
               --fork-url https://rpc.testnet.arc.io -vv
           }
           run_fork || {

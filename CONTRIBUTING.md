@@ -59,11 +59,22 @@ yeniden değerlendirilmeli: Uniswap yeni bir tag keserse o tag'e geçilmeli.
 | Katman | Komut | Nerede koşar |
 |---|---|---|
 | Birim / fuzz / invariant | `make test` | Standart EVM |
-| Fork | `make fork-test` | Gerçek Arc testnet |
+| Fork — salt okuma | `make fork-test` | Gerçek Arc testnet · **CI kapısı** |
+| Fork — tam graduation döngüsü | `make fork-test-live` | Gerçek Arc testnet · **elle** |
 
 `anvil` Arc'ı simüle **edemez** — native USDC davranışı, EIP-7708 `Transfer`
 logları ve blocklist yalnızca gerçek RPC'de görünür. Arc'a özgü her iddia bir
 fork testiyle desteklenmelidir.
+
+Fork bile Arc'ın **tamamını** veremez ve sınırı ölçülmüştür: EIP-7708
+`Transfer` logları ile blocklist zorlaması **düğümdedir**, EVM'de değil, yani
+yerel bir fork ikisini de üretmez. `fork-test-live` bu iki gerçeği taklit
+etmez; `vm.eth_getLogs` ve `vm.rpc` ile **canlı düğüme sorar**.
+
+`fork-test-live` CI'da koşmaz ve ayrım **iki eksenlidir**: dosya `test/fork/`
+altındadır (fork'suz paket dışlar) ve kontrat adı `...LiveForkTest`tir (fork
+kapısı `--no-match-contract` ile dışlar). İki filtre birbirinin tümleyeni
+olduğu için yalnızca dizin değiştirmek yetmez.
 
 ## Statik analiz
 

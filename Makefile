@@ -1,4 +1,4 @@
-.PHONY: install build test fixtures fmt fmt-check lint fork-test slither dev clean frozen-hash frozen-hash-chain
+.PHONY: install build test fixtures fmt fmt-check lint fork-test fork-test-live slither dev clean frozen-hash frozen-hash-chain
 
 install:
 	corepack enable pnpm || pnpm --version
@@ -77,8 +77,30 @@ lint:
 # CWD'sini (bu Makefile'in bulundugu depo koku) kullanir ve ARC_RPC_URL'i
 # oradaki .env dosyasindan dogrudan kendisi okur. Bu yuzden takma ad, make'in
 # ortamina hic ihtiyac duymadan calisir; `cp .env.example .env` yeterlidir.
+#
+# ALT KATMAN B BURADAN DISLANIR VE AYRIM SADECE YOLLA YAPILAMAZ. Iki filtre
+# birbirinin TUMLEYENIDIR: paket `--no-match-path 'test/fork/*'`, kapi
+# `--match-path 'test/fork/*'`. Bir dosya ikisinden BIRINE mutlaka duser,
+# dolayisiyla "B'yi baska bir dizine koy" tek basina B'yi FORK'SUZ PAKETE
+# tasirdi -- ve orada fork olmadan kirmizi olurdu. Ayrim bu yuzden IKI
+# EKSENLIDIR: dosya `test/fork/` altinda durur (paket dislar), kontrat adi
+# `...LiveForkTest`tir ve bu hedef onu KONTRAT ADIYLA dislar (kapi dislar).
+# Ayni `--no-match-contract` .github/workflows/contracts.yml'deki fork isinde
+# de vardir; ikisi ayrisirsa CI B'yi ceker.
 fork-test:
-	forge test --root contracts --match-path 'test/fork/*' --fork-url arc_testnet -vv
+	forge test --root contracts --match-path 'test/fork/*' --no-match-contract 'LiveForkTest' \
+	  --fork-url arc_testnet -vv
+
+# ALT KATMAN B -- ELLE TETIKLENIR, CI'DA ASLA KOSMAZ.
+#
+# NICIN AYRI: B tam graduation dongusunu yurutur -- GECICI bir factory, GECICI
+# bir hook (her kosuda yeniden madenlenir) ve GECICI bir locker uzerinde, ama
+# CANLI `PoolManager`, `FeeEscrow`, `FeeSchedule` ve CANLI USDC kontratina
+# karsi. Uretim fabrikasina HIC dokunmaz ve dokunmamalidir: `graduationTarget`
+# silahlandiginda ilk graduation havuzu acar ve HOOK ADRESINI KALICI OLARAK
+# DONDURUR.
+fork-test-live:
+	forge test --root contracts --match-contract 'LiveForkTest' --fork-url arc_testnet -vv
 
 # `pip install slither-analyzer` konsol betigini her ortamda PATH'e koymaz --
 # Windows'ta koymadigi olculdu ve `make slither` ciplak `slither` ile exit 127
