@@ -103,6 +103,41 @@ LIVE = {
     "LaunchFactory": "0x0d75a4fFb8CD6dB4237557E9519591b94d6Ab439",
 }
 
+# ---------------------------------------------------------------------------
+# FAZ 2, TASK 7 -- ZINCIRE YAZILDI. Bu tablo ZINCIRDEN degil BROADCAST
+# DOSYASINDAN alindi ve sebebi olculdu: bir adresi kisaltilmis bir metinden
+# ("0x5CA156f1...6B47") ELLE TAMAMLAMAK, kodsuz bir adres uretir ve o adres
+# "deploy olmamis" gibi okunur. Adresler yalnizca uretildikleri yerden gelir.
+#
+# HER SATIRIN ARTIFACT'I FARKLI OLABILIR VE BU KASITLIDIR:
+#   out-frozen/  -> `[profile.frozen]`, 800. YALNIZCA o profil yazabilir.
+#   out/...v4core.json -> `PoolManager`a ULASAN birimler 44444444'te derlenir,
+#                         ve YAYINLANAN bytecode ODUR (`ArcpadHook.t.sol`,
+#                         `ArcpadLocker.t.sol`, `PoolSeedInvariants.t.sol` de
+#                         `PoolManager`i ismiyle import eder, yani PAKETIN
+#                         SINADIGI baytlar 44444444'lulardir).
+# Yanlis varyanti secmek SESSIZ DEGILDIR: uzunluklar tutmaz ve kapi duser.
+LIVE_PHASE2 = [
+    # (ad, adres, artifact dizini, artifact yolu)
+    ("FeeEscrow", "0xEEd4431eAD3E27F16D97f677A9C4c1a963DF8dC6",
+     "out-frozen", "FeeEscrow.sol/FeeEscrow.json"),
+    ("FeeSchedule", "0x47548C1ce996b24846E948B815459D98BB08dc84",
+     "out-frozen", "FeeSchedule.sol/FeeSchedule.json"),
+    ("LaunchFactory", "0x5CA156f1809aB784655410d0f4B0704d2b306B47",
+     "out-frozen", "LaunchFactory.sol/LaunchFactory.json"),
+    ("PoolManager", "0x617321A877e024C870516CD599A581dCDCa6c09b",
+     "out", "PoolManager.sol/PoolManager.json"),
+    ("ArcpadHook", "0xd95198Cd806B736C8EcEcfFC23976b59F565e0cC",
+     "out", "ArcpadHook.sol/ArcpadHook.v4core.json"),
+    ("ArcpadLocker", "0x0e7771091a3471Dc12CbfE38836BaDC7bf5a98E8",
+     "out", "ArcpadLocker.sol/ArcpadLocker.v4core.json"),
+]
+
+# `ArcpadHook`un izin kumesi, adresin ALT 14 BITINDE. `PoolDeployLib`teki
+# literalin ve `V4Wiring.t.sol`un bayraklardan turettigi degerin aynisi.
+ARCPAD_HOOK_FLAGS = 0x20CC
+HOOK_MASK = 0x3FFF
+
 failures = []
 notes = []
 
@@ -350,6 +385,52 @@ def immutable_mask(art):
     return spans
 
 
+def artifact_at(dirname, relpath):
+    """`artifact()`in dizin-parametreli ikizi. `ArcpadHook` ve `ArcpadLocker`
+    `[profile.frozen]`in `skip` listesindedir (v4-core'a ulasirlar), yani
+    `out-frozen/` altinda HIC uretilmezler -- onlar icin tek kaynak `out/`tur."""
+    p = os.path.join(CONTRACTS, dirname, relpath)
+    if not os.path.exists(p):
+        fail("artifact yok: %s" % p)
+        return None
+    with open(p) as f:
+        return json.load(f)
+
+
+def compare_artifact_to_chain(name, address, art, rpc):
+    """`compare_to_chain`in govdesi, artifact DISARIDAN verilmis hali."""
+    if art is None:
+        return
+    local = art["deployedBytecode"]["object"][2:].lower()
+    r = subprocess.run(["cast", "code", address, "--rpc-url", rpc],
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if r.returncode != 0:
+        fail("%s: `cast code` basarisiz -- %s" % (name, r.stdout.decode(errors="replace").strip()[:200]))
+        return
+    onchain = r.stdout.decode().strip()[2:].lower()
+    if len(onchain) == 0:
+        fail("%s: %s adresinde kod YOK" % (name, address))
+        return
+    if len(onchain) != len(local):
+        fail("%s: uzunluk farkli -- zincir %d bayt, artifact %d bayt (AYNI KONTRAT DEGIL)"
+             % (name, len(onchain) // 2, len(local) // 2))
+        return
+    spans = immutable_mask(art)
+
+    def masked(i):
+        return any(a <= i < b for a, b in spans)
+    bad = [i for i in range(len(onchain) // 2)
+           if onchain[2 * i:2 * i + 2] != local[2 * i:2 * i + 2] and not masked(i)]
+    if bad:
+        fail("%s: immutable ARALIKLARININ DISINDA %d bayt farkli (ilk offset %d)"
+             % (name, len(bad), bad[0]))
+        return
+    differing = sum(1 for i in range(len(onchain) // 2)
+                    if onchain[2 * i:2 * i + 2] != local[2 * i:2 * i + 2])
+    ok("%-14s %s  %d bayt, fark YALNIZCA immutable slotlarda (%d bayt, %d aralik)"
+       % (name, address, len(local) // 2, differing, len(spans)))
+
+
 def compare_to_chain(name, address, rpc):
     art = artifact(name)
     local = art["deployedBytecode"]["object"][2:].lower()
@@ -413,6 +494,108 @@ def check_chain():
             ok("CANLI fabrika, frozen %s initcode'unu iceriyor" % name)
         else:
             fail("CANLI fabrika frozen %s initcode'unu ICERMIYOR -- bu agac zinciri URETEMIYOR" % name)
+
+    check_chain_phase2(rpc)
+
+
+def call(rpc, address, sig):
+    r = subprocess.run(["cast", "call", address, sig, "--rpc-url", rpc],
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    if r.returncode != 0:
+        return None
+    return r.stdout.decode(errors="replace").strip()
+
+
+def same_addr(a, b):
+    return a is not None and b is not None and a.lower() == b.lower()
+
+
+def check_chain_phase2(rpc):
+    """TASK 7'NIN INDIRDIGI BES YENI ADRES + YENIDEN KULLANILAN ESCROW.
+
+    BU KONTROLUN PENCERESI KAPANIYOR VE SEBEBI YAPISALDIR: `ArcpadHook`un
+    adresi izin kumesini kodlar ve her `PoolKey`in ALANIDIR, yani Task 8'in
+    ILK havuz initialize'ina kadar yeniden madenlenebilir, ondan SONRA asla.
+    Burada bulunan bir uyusmazlik duzeltilebilir; ayni uyusmazlik Task 8'den
+    sonra duzeltilemez."""
+    print("== FAZ 2 / Task 7, canli zincir ==")
+    for name, address, dirname, relpath in LIVE_PHASE2:
+        compare_artifact_to_chain(name, address, artifact_at(dirname, relpath), rpc)
+
+    addr = dict((n, a) for n, a, _, _ in LIVE_PHASE2)
+
+    # IZIN KUMESI ARTIK BIR TAHMIN DEGIL, GERCEK KOD. Adresin alt 14 biti
+    # zincirdeki hook'un ta kendisinden okunur.
+    low = int(addr["ArcpadHook"], 16) & HOOK_MASK
+    if low == ARCPAD_HOOK_FLAGS:
+        ok("ArcpadHook adresinin alt 14 biti 0x%04X -- arcpad izin kumesi" % low)
+    else:
+        fail("ArcpadHook adresinin alt 14 biti 0x%04X, beklenen 0x%04X -- HOOK YANLIS IZINLERLE INDI"
+             % (low, ARCPAD_HOOK_FLAGS))
+
+    # ...VE O SAYI BAYRAKLARIN TOPLAMI. `V4Wiring.t.sol` bunu Solidity'de
+    # `Hooks.*` sabitlerinden turetir; burada literal durur, iki taraf
+    # birbirini olcsun diye.
+    flags = {"BEFORE_INITIALIZE": 0x2000, "BEFORE_SWAP": 0x80, "AFTER_SWAP": 0x40,
+             "BEFORE_SWAP_RETURNS_DELTA": 0x8, "AFTER_SWAP_RETURNS_DELTA": 0x4}
+    total = 0
+    for v in flags.values():
+        total |= v
+    if total == ARCPAD_HOOK_FLAGS:
+        ok("0x%04X == %s" % (total, " | ".join(flags)))
+    else:
+        fail("bayraklarin toplami 0x%04X, pin 0x%04X" % (total, ARCPAD_HOOK_FLAGS))
+
+    # BAGLANTILAR. `assertAsDeployed` bunlari `run()` icinde okur -- ama
+    # `--resume` yolunda KOSMAZ (olculdu), yani zincirden bagimsiz okumak
+    # opsiyonel degildir.
+    wiring = [
+        ("hook.poolManager", addr["ArcpadHook"], "poolManager()(address)", addr["PoolManager"]),
+        ("hook.factory", addr["ArcpadHook"], "factory()(address)", addr["LaunchFactory"]),
+        ("hook.escrow", addr["ArcpadHook"], "escrow()(address)", addr["FeeEscrow"]),
+        ("locker.poolManager", addr["ArcpadLocker"], "poolManager()(address)", addr["PoolManager"]),
+        ("locker.factory", addr["ArcpadLocker"], "factory()(address)", addr["LaunchFactory"]),
+        ("locker.hook", addr["ArcpadLocker"], "hook()(address)", addr["ArcpadHook"]),
+        ("factory.escrow", addr["LaunchFactory"], "escrow()(address)", addr["FeeEscrow"]),
+        ("factory.feeSchedule", addr["LaunchFactory"], "feeSchedule()(address)", addr["FeeSchedule"]),
+        ("poolManager.owner", addr["PoolManager"], "owner()(address)",
+         "0x970534698e4592932F31892759147f79EB0D2C22"),
+    ]
+    for label, target, sig, want in wiring:
+        got = call(rpc, target, sig)
+        if same_addr(got, want):
+            ok("%-20s -> %s" % (label, want))
+        else:
+            fail("%s -> %s, beklenen %s" % (label, got, want))
+
+    # PROFIL SAYILARI. Yanlis BUYUKLUKTEKI bir `V` yedi korumadan da gecer;
+    # onu yakalayan tek yer zincirin kendisidir.
+    for sig, want in (("VIRTUAL_TOKEN_RESERVES()(uint256)", "1073000000000000000000000000"),
+                      ("VIRTUAL_QUOTE_RESERVES()(uint256)", "4292000000000000000"),
+                      ("SALE_SUPPLY()(uint256)", "793100000000000000000000000"),
+                      ("launchCount()(uint256)", "0")):
+        got = call(rpc, addr["LaunchFactory"], sig)
+        got = (got or "").split()[0] if got else got
+        if got == want:
+            ok("factory.%-28s = %s" % (sig.split("(")[0], want))
+        else:
+            fail("factory.%s = %s, beklenen %s" % (sig.split("(")[0], got, want))
+
+    # YENIDEN KULLANIM KOLU GERCEKTEN ISLEDI MI. Faz 1'in alacaklari IKINCI
+    # bir escrow'a yetim dusmediyse bu sayi KIMILDAMAMIS olmali.
+    owed = call(rpc, addr["FeeEscrow"], "totalOwed()(uint256)")
+    owed = (owed or "").split()[0] if owed else owed
+    if owed == "152069146725900635":
+        ok("FeeEscrow.totalOwed = 152069146725900635 -- YENIDEN KULLANILDI, Faz 1 alacaklari YERINDE")
+    else:
+        fail("FeeEscrow.totalOwed = %s, beklenen 152069146725900635 -- IKINCI BIR ESCROW MU INDI?" % owed)
+
+    # `graduationTarget` HENUZ BOS OLMALI: Task 8 ayri ve INCELENMIS bir adim.
+    gt = call(rpc, addr["LaunchFactory"], "graduationTarget()(address)")
+    if same_addr(gt, "0x0000000000000000000000000000000000000000"):
+        ok("factory.graduationTarget = 0x0 -- Task 8 HENUZ KOSMADI")
+    else:
+        fail("factory.graduationTarget = %s -- BOS OLMALIYDI" % gt)
 
 
 def main():
