@@ -15,7 +15,7 @@ import { NonCanonicalLaunch, recordRejection, rejectionOf } from './admit'
 import { applyEvents, type ApplyCounts } from './apply'
 import type { IndexerConfig } from './config'
 import { nextRange } from './cursor'
-import type { DecodedEvent, Pacer, RpcClient, WatchSet } from './logs'
+import type { AddressWidthMemo, DecodedEvent, Pacer, RpcClient, WatchSet } from './logs'
 import { asRpcError, createPacer, fetchRange } from './logs'
 import { assertRangeApplied } from './verify'
 
@@ -365,6 +365,12 @@ export interface RunOnceOptions {
   /** Head'i okuma yolu. Testler sabit bir head verir; uretimde `finalized`. */
   head?: (client: RpcClient) => Promise<bigint>
   volumeRefreshBatch?: number
+  /**
+   * OGRENILEN ADRES GENISLIGI. `pacer` ile AYNI omru tasir ve ayni sebeple
+   * disaridan gelir: dongunun tamami tek bir tane paylasir, yoksa her aralik
+   * saglayicinin adres limitini BASTAN kesfeder (bkz. `AddressWidthMemo`).
+   */
+  widthMemo?: AddressWidthMemo
 }
 
 async function finalizedHeadVia(client: RpcClient, pacer: Pacer): Promise<bigint> {
@@ -407,7 +413,10 @@ export async function runOnce(
   }
 
   const watch = await loadWatchSet(pool, deployment)
-  const events = await fetchRange(client, watch, range.from, range.to, { pacer })
+  const events = await fetchRange(client, watch, range.from, range.to, {
+    pacer,
+    ...(options.widthMemo !== undefined ? { widthMemo: options.widthMemo } : {}),
+  })
 
   // ZINCIR BAGI: isledigimiz araligin ILK blogunun `parentHash`'i, kayitli
   // imlecin hash'iyle uyusmali. Iki ek cagri (parentHash + to'nun hash'i)

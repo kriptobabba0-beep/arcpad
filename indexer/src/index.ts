@@ -2,7 +2,7 @@ import 'dotenv/config'
 import { ARC_TESTNET_CHAIN_ID, assertArcChain, createArcClient } from '@arcpad/shared'
 import { createPool } from '@arcpad/db'
 import { loadConfig } from './config'
-import { createPacer, type RpcClient } from './logs'
+import { createAddressWidthMemo, createPacer, type RpcClient } from './logs'
 import { ensureDeployment, isRateLimit, readFactoryProfile, runWithRetry } from './run'
 
 /**
@@ -38,6 +38,12 @@ async function main(): Promise<void> {
 
   const pool = createPool(config.databaseUrl)
   const pacer = createPacer({ minIntervalMs: config.minRequestIntervalMs })
+  // PACER ILE AYNI OMUR, AYNI SEBEP. Round 7'de canli olculdu: dongu basina
+  // yeni bir memo, saglayicinin adres limitini HER ARALIKTA bastan
+  // kesfetmek demekti (41 -> 20 -> 10 -> 5, sonraki blokta yine 41'den),
+  // yani aralik basina alti bosa istek ve surekli mesgul bir hiz siniri
+  // merdiveni. Tek nesne, butun dongu.
+  const widthMemo = createAddressWidthMemo()
   // viem'in `PublicClient`'i `request`i tasir; indexer yalnizca o yuzeyi ister.
   const rpc = client as unknown as RpcClient
 
@@ -59,7 +65,7 @@ async function main(): Promise<void> {
     new Promise<void>((resolve) => setTimeout(resolve, ms))
 
   for (;;) {
-    const result = await runWithRetry(pool, rpc, deployment, config, { pacer })
+    const result = await runWithRetry(pool, rpc, deployment, config, { pacer, widthMemo })
     if (result === null) {
       // Head'e yetistik. `nextRange` `null` dondugunde HICBIR SEY yapilmaz --
       // ozellikle imlec ILERLETILMEZ.

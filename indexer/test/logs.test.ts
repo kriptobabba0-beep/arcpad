@@ -6,6 +6,7 @@ import { toSeq } from '@arcpad/db'
 import { TOPIC0 } from '../src/arc'
 import type { DecodedEvent, RawLog, WatchSet } from '../src/logs'
 import {
+  createAddressWidthMemo,
   createPacer,
   DECODERS,
   decodeAll,
@@ -329,6 +330,73 @@ describe('EIP-7708 duvari', () => {
     const widths = node.logFilters.map((f) => (f['address'] as string[]).length)
     // 8 (ret) -> 4 (ret) -> 2 ... ve YAPISKAN: kalan parcalar da 2'lik.
     expect(widths).toEqual([8, 4, 2, 2, 2, 2])
+  })
+
+  /**
+   * ============ ROUND 7: DARALMA CAGRILAR ARASINDA DA TASINIR ============
+   *
+   * Yukaridaki iki test daralmayi TEK BIR CAGRI icinde olcuyor ve geciyordu.
+   * CANLI kompozisyonda (proxy + gercek zincir + 41 adreslik izleme kumesi)
+   * olculen sey baskaydi:
+   *
+   *   blok N   : 41 RED, 20 RED, 10 RED, 5 kabul, 5 x8 ...
+   *   blok N+1 : 41 RED, 20 RED, 10 RED, 5 kabul, ...    <-- BASTAN
+   *
+   * Genislik bir YEREL degiskendi, yani her aralik duvari yeniden kesfediyor
+   * ve parcali sorgu basina UC bosa istek harciyordu. Olculen endpoint uc
+   * bosluksuz `eth_getLogs`ta hiz sinirini tetikliyor: canli kosumda indexer
+   * bu yuzden 5/8. denemede bekliyordu. Keeper'in "yakinsamayan tarama"
+   * wedge'iyle ayni sekil.
+   */
+  it('OGRENILEN genislik SONRAKI cagriya tasinir -- duvar bir kez kesfedilir', async () => {
+    const memo = createAddressWidthMemo()
+    const addresses = Array.from({ length: 8 }, (_, i) => addressAt(i))
+    const first = new FakeNode(oneBlockLogs(8), { maxResults: 2 })
+    await getLogsChunked(first, addresses, [TOPIC0.transfer], 5n, 5n, createPacer(), 8, memo)
+    expect(first.logFilters.map((f) => (f['address'] as string[]).length)).toEqual([
+      8, 4, 2, 2, 2, 2,
+    ])
+    expect(memo.width).toBe(2)
+
+    // IKINCI ARALIK: ayni cagri, ayni memo. Duvar YENIDEN kesfedilmez.
+    const second = new FakeNode(oneBlockLogs(8, 6n), { maxResults: 2 })
+    await getLogsChunked(second, addresses, [TOPIC0.transfer], 6n, 6n, createPacer(), 8, memo)
+    const widths = second.logFilters.map((f) => (f['address'] as string[]).length)
+    expect(widths).toEqual([2, 2, 2, 2])
+    // Ve BOSA GIDEN ISTEK YOK: her sorgu kabul edildi.
+    expect(widths.some((w) => w > 2)).toBe(false)
+  })
+
+  it('memo MONOTONDUR: genis bir cagri onu geri buyutemez', async () => {
+    const memo = createAddressWidthMemo()
+    memo.width = 2
+    const node = new FakeNode(oneBlockLogs(8), { maxResults: 100 })
+    await getLogsChunked(
+      node,
+      Array.from({ length: 8 }, (_, i) => addressAt(i)),
+      [TOPIC0.transfer],
+      5n,
+      5n,
+      createPacer(),
+      8,
+      memo,
+    )
+    // Cagiran 8 istedi, memo 2 diyor -> 2 kazanir, ve hicbir ret olmadigi
+    // halde memo BUYUMEZ.
+    expect(node.logFilters.map((f) => (f['address'] as string[]).length)).toEqual([2, 2, 2, 2])
+    expect(memo.width).toBe(2)
+  })
+
+  it('memo VERILMEZSE davranis eskisi gibi kalir -- cagri basina unutulur', async () => {
+    const addresses = Array.from({ length: 8 }, (_, i) => addressAt(i))
+    const a = new FakeNode(oneBlockLogs(8), { maxResults: 2 })
+    await getLogsChunked(a, addresses, [TOPIC0.transfer], 5n, 5n, createPacer(), 8)
+    const b = new FakeNode(oneBlockLogs(8, 6n), { maxResults: 2 })
+    await getLogsChunked(b, addresses, [TOPIC0.transfer], 6n, 6n, createPacer(), 8)
+    // Ikinci cagri 8'den BASLAR: bu, canlida olculen kusurun ta kendisi ve
+    // burada bilerek pinlenmis -- memo'yu gecirmeyi unutan bir cagri yeri
+    // sessizce eski maliyeti geri getirir.
+    expect((b.logFilters[0]!['address'] as string[]).length).toBe(8)
   })
 
   it('daralma MONOTON: bir kez kuculen filtre cagri boyunca geri buyumez', async () => {

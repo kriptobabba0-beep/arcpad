@@ -634,6 +634,7 @@ export async function getLogsChunked(
   to: bigint,
   pacer: Pacer,
   chunkSize: number = ADDRESS_FILTER_CHUNK,
+  memo?: AddressWidthMemo,
 ): Promise<RawLog[]> {
   if (addresses.length === 0) return []
   const out: RawLog[] = []
@@ -654,7 +655,10 @@ export async function getLogsChunked(
   // YAPISKAN, cunku ilk parcayi reddeden bir blok sonrakileri de reddeder;
   // her parcada duvara yeniden tosladigi bir hal, ayni islem icin O(n log n)
   // fazladan istek demekti.
-  let size = Math.max(1, Math.min(chunkSize, addresses.length))
+  // BASLANGIC GENISLIGI, ONCEKI ARALIKLARIN OGRENDIGIYLE KELEPCELI. Bkz.
+  // `AddressWidthMemo`: bu satir olmadan her aralik duvari BASTAN kesfeder ve
+  // bosa giden istekler hiz siniri merdivenini surekli mesgul tutar.
+  let size = Math.max(1, Math.min(chunkSize, addresses.length, memo?.width ?? chunkSize))
   let i = 0
   while (i < addresses.length) {
     const slice = addresses.slice(i, i + size)
@@ -665,6 +669,10 @@ export async function getLogsChunked(
       // hatayi da sessizce yutardi -- keeper'da M42 tam olarak bu mutanttir.
       if (error instanceof SingleBlockTooLarge && size > 1) {
         size = Math.max(1, Math.floor(size / 2))
+        // MONOTON, ve `Math.min` bunu saglayan sey: iki es zamanli sorgu
+        // (curve'ler ve token'lar `Promise.all` icinde) ayni memo'yu paylasir
+        // ve biri otekinin ogrendigini GENISLETEMEZ.
+        if (memo !== undefined) memo.width = Math.min(memo.width, size)
         continue // AYNI parcadan, DAR filtreyle. `i` ILERLEMEZ.
       }
       // Tek adres tek blokta bile tasiyorsa adres ekseni de tukendi; hata bunu
@@ -867,9 +875,48 @@ export const DECODERS: Readonly<Record<EventKind, (log: RawLog, ref: LogRef) => 
 // fetchRange
 // ---------------------------------------------------------------------------
 
+/**
+ * OGRENILEN ADRES GENISLIGI, CAGRILAR ARASINDA TASINIR.
+ *
+ * ROUND 7'DE OLCULEN KUSUR, VE O KUSUR BU DOSYANIN KENDI DUZELTMESININ
+ * ICINDEYDI. `getLogsChunked` daralmayi bir YEREL degiskende tutuyordu, yani
+ * YAPISKANLIK yalnizca TEK BIR CAGRI boyunca yasiyordu. Birim testi tam da
+ * onu olcuyor ve geciyor. Canlida (proxy, gercek zincir, 41 adreslik izleme
+ * kumesi) sonuc soyleydi:
+ *
+ *   blok N   : 41 RED, 20 RED, 10 RED, 5 kabul, 5 x8 ...
+ *   blok N+1 : 41 RED, 20 RED, 10 RED, 5 kabul, ...     <-- BASTAN
+ *
+ * Yani duvar HER ARALIKTA yeniden kesfediliyordu: parcali sorgu basina 3
+ * bosa istek, aralik basina 6, SONSUZA KADAR. Olculen endpoint UC bosluksuz
+ * `eth_getLogs`ta hiz sinirini tetikliyor, yani bu tam olarak `runWithRetry`
+ * merdivenini surekli mesgul tutan sey; canli kosumda indexer 5/8. denemede
+ * bekliyordu. Keeper'in "yakinsamayan tarama" wedge'iyle AYNI sekil, ve o
+ * orada imleci kalici kilarak cozulmustu.
+ *
+ * TASIYICI ACIK, KURESEL DEGIL. Modul seviyesinde bir degisken testleri
+ * birbirine baglardi (bir testin daralttigi genislik sonrakinin beklentisini
+ * degistirirdi) -- yani gizli bir on kosul, ki bu depo onu bir kusur sayar.
+ * Bunun yerine `pacer` ile AYNI omru ve AYNI threading'i tasiyan bir nesne:
+ * `index.ts` bir tane yaratir, dongunun tamami onu paylasir.
+ *
+ * MONOTON: yalnizca KUCULUR. Geri buyuyen bir genislik, duvari her seferinde
+ * yeniden bulup ayni firtinayi uretirdi.
+ */
+export interface AddressWidthMemo {
+  /** Bugune kadar KABUL EDILDIGI gorulen en genis adres filtresi. */
+  width: number
+}
+
+export const createAddressWidthMemo = (): AddressWidthMemo => ({
+  width: Number.POSITIVE_INFINITY,
+})
+
 export interface FetchOptions {
   pacer?: Pacer
   addressChunk?: number
+  /** Bkz. `AddressWidthMemo`. Verilmezse daralma cagri basina unutulur. */
+  widthMemo?: AddressWidthMemo
   /**
    * `blockTimestamp` eksik oldugunda cagrilir. SESSIZ DUSMEK YASAK: o yol blok
    * basina bir ek istek demektir ve sessiz bir performans ucurumu bir hatadan
@@ -951,6 +998,7 @@ export async function fetchRange(
       to,
       pacer,
       chunk,
+      options.widthMemo,
     ),
     getLogs(
       client,
@@ -960,7 +1008,16 @@ export async function fetchRange(
     // EIP-7708 DUVARI: `Transfer` ASLA adres filtresi olmadan sorulmaz.
     // Filtresiz sorgunun olculen hacmi 11.692 log / 1.000 blok ve icinde her
     // native hareket var.
-    getLogsChunked(client, [...tokens], [TOPIC0.transfer], from, to, pacer, chunk),
+    getLogsChunked(
+      client,
+      [...tokens],
+      [TOPIC0.transfer],
+      from,
+      to,
+      pacer,
+      chunk,
+      options.widthMemo,
+    ),
   ])
 
   return decodeAll(
