@@ -8,6 +8,7 @@ export {
   applyTransfer,
   type CompletedEvent,
   type FeeLedgerEvent,
+  clearCursor,
   getCursor,
   type GraduatedEvent,
   type IngestEvent,

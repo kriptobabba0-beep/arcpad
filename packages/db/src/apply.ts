@@ -628,6 +628,33 @@ export async function getCursor(
   return { lastBlock: BigInt(row.last_block), lastBlockHash: row.last_block_hash }
 }
 
+/**
+ * IMLECI SIL. SAHIPSIZ BIR IMLEC ICIN, BASKA HICBIR SEY ICIN DEGIL.
+ *
+ * `sync_state` FACTORY TASIMAZ, ve tasimasi da gerekmez: imlecin anlamini
+ * veren sey `deployment` satiridir ve `ensureDeployment` uyusmazlikta HALT
+ * eder. AMA IKISI AYRILABILIR -- `deployment` satiri silinip `sync_state`
+ * kalirsa, `ensureDeployment` "kayit yok" dalina girer, YENI factory'yi yazar
+ * ve dongu ESKI factory'nin imlecinden devam eder.
+ *
+ * OLCULDU (2026-08-08, canli): `deployment` bosaltildi, imlec 54721436'da
+ * birakildi, indexer YENI bir factory ile baslatildi. Yeni dagitim yazildi
+ * (`start_block = 55000000`) ve tarama 54721437'DEN devam etti -- yani imlec
+ * ve dagitim BASKA BASKA seylerden bahsediyordu. Bu yonde maliyet yalnizca
+ * bosa tarama; TERS YONDE (imlec yeni `startBlock`in ILERISINDE) aradaki her
+ * launch KALICI OLARAK ATLANIR, cunku `nextRange` `cursor + 1`den acar ve
+ * `start_block` yalnizca imlec YOKKEN kullanilir.
+ *
+ * Keeper ayni soruyu bir tur once cozdu ve cozumu de ayni: baska bir factory
+ * icin yazilmis imlec YOK SAYILIR ve sebep loglanir. Yeniden taramak
+ * PAHALIDIR ama GUVENLIDIR (exactly-once `event_seq` birincil anahtarlarindan
+ * gelir); launch kaybetmek geri alinamaz.
+ */
+export async function clearCursor(db: Queryable): Promise<number> {
+  const { rowCount } = await db.query('DELETE FROM sync_state WHERE id = 1')
+  return rowCount ?? 0
+}
+
 export async function applyEvent(db: Queryable, e: IngestEvent): Promise<number> {
   switch (e.kind) {
     case 'launch':

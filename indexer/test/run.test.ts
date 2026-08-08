@@ -36,6 +36,8 @@ import { FakeNode, LIVE, loadSmoke, rawLogs, smokeLogs } from './fixtures'
 import { LIVE_DEPLOYMENT, pool, resetSchema, seedDeployment } from './db'
 
 const logs = smokeLogs()
+/** Canli zincirdeki IKINCI gercek factory (tek kullanimlik tatbikat factory'si). */
+const OTHER_FACTORY = '0xfed991c6b9ad7144df3d670c6b9ecf3620ac6ea5' as Address
 const FIRST = BigInt(logs[0]!.blockNumber)
 const LAST = BigInt(logs[logs.length - 1]!.blockNumber)
 
@@ -495,6 +497,62 @@ describe('volume_24h_wei', () => {
     )
     expect(decoded).toHaveLength(1)
     expect(await touchedTokens(pool, decoded)).toEqual([LIVE.token])
+  })
+})
+
+/**
+ * ============ SAHIPSIZ IMLEC: FAZ 2 REDEPLOY'UNUN GERCEK RISKI ============
+ *
+ * `sync_state` factory TASIMAZ. Imlece anlamini veren sey `deployment`
+ * satiridir ve uyusmazlikta `ensureDeployment` HALT eder -- ama IKISI
+ * AYRILABILIR. Canli olculdu (2026-08-08): `deployment` bosaltilip imlec
+ * 54721436'da birakildi, indexer YENI bir factory ile baslatildi; yeni
+ * dagitim `start_block = 55000000` ile yazildi ve tarama 54721437'DEN, yani
+ * ONCEKI factory'nin imlecinden devam etti.
+ *
+ * O yonde maliyet bosa taramadir. TERS YON kalicidir: imlec yeni
+ * `startBlock`in ILERISINDEYSE aradaki her launch atlanir ve bir daha
+ * cekilmez -- `nextRange` `cursor + 1`den acar, `start_block` yalnizca imlec
+ * YOKKEN kullanilir. Faz 2 tam olarak bunu uretebilir.
+ */
+describe('sahipsiz imlec', () => {
+  beforeEach(async () => {
+    await resetSchema()
+  })
+
+  it('dagitim satiri YOKKEN duran bir imlec ATILIR, devralinmaz', async () => {
+    // Eski dagitimin birakabilecegi hal: imlec var, `deployment` yok.
+    await setCursor(pool, 54_721_436n, `0x${'ab'.repeat(32)}`, 54_800_000n)
+    expect((await getCursor(pool))?.lastBlock).toBe(54_721_436n)
+
+    const fresh = { ...LIVE_DEPLOYMENT, factory: OTHER_FACTORY, startBlock: 55_000_000n }
+    const out = await ensureDeployment(pool, fresh)
+
+    expect(out.factory).toBe(OTHER_FACTORY)
+    // ASIL IDDIA: imlec GITTI, yani bir sonraki tur `startBlock`tan acar.
+    expect(await getCursor(pool)).toBeNull()
+  })
+
+  it('NEGATIF KONTROL: dagitim satiri VARSA imlec KORUNUR', async () => {
+    await putDeployment(pool, LIVE_DEPLOYMENT)
+    await setCursor(pool, 54_721_436n, `0x${'cd'.repeat(32)}`, 54_800_000n)
+
+    const out = await ensureDeployment(pool, LIVE_DEPLOYMENT)
+
+    expect(out.factory).toBe(LIVE_DEPLOYMENT.factory)
+    // Ayni dagitim -> ilerleme SILINMEZ. Bu satir olmadan yukaridaki test
+    // "her acilista bastan tara" ile de gecerdi.
+    expect((await getCursor(pool))?.lastBlock).toBe(54_721_436n)
+  })
+
+  it('ve BASKA bir factory dagitim satiriyla birlikte gelirse HALT eder', async () => {
+    await putDeployment(pool, LIVE_DEPLOYMENT)
+    await setCursor(pool, 54_721_436n, `0x${'ef'.repeat(32)}`, 54_800_000n)
+    await expect(
+      ensureDeployment(pool, { ...LIVE_DEPLOYMENT, factory: OTHER_FACTORY }),
+    ).rejects.toBeInstanceOf(DeploymentMismatch)
+    // HALT, yani imlece DOKUNULMAZ: operator karar verene kadar ilerleme durur.
+    expect((await getCursor(pool))?.lastBlock).toBe(54_721_436n)
   })
 })
 

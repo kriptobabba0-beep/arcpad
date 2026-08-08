@@ -3,6 +3,7 @@ import { toFunctionSelector } from 'viem'
 import type { Deployment, Pool, PoolClient, Queryable } from '@arcpad/db'
 import {
   assertContinuous,
+  clearCursor,
   getCursor,
   getDeployment,
   noteAlive,
@@ -171,6 +172,34 @@ export function sameDeployment(a: Deployment, b: Deployment): boolean {
 export async function ensureDeployment(pool: Pool, onChain: Deployment): Promise<Deployment> {
   const stored = await getDeployment(pool)
   if (stored === null) {
+    // SAHIPSIZ IMLEC BURADA OLUR, VE BU BIR OLCUMDEN GELIYOR.
+    //
+    // `sync_state` factory tasimaz; imlece anlamini veren sey `deployment`
+    // satiridir. Ikisi AYRILABILIR -- satir silinip imlec kalirsa bu dal
+    // calisir, YENI dagitimi yazar ve dongu ESKI factory'nin blogundan devam
+    // ederdi. Olculdu (2026-08-08, canli): dagitim bosaltilip yeni bir factory
+    // ile baslatildiginda `start_block = 55000000` yazildi ama tarama
+    // 54721437'den, yani onceki factory'nin imlecinden surdu.
+    //
+    // O yonde maliyet bosa taramaydi; TERS YONDE -- imlec yeni `startBlock`in
+    // ilerisindeyse -- aradaki her launch KALICI olarak atlanir, cunku
+    // `nextRange` `cursor + 1`den acar. Faz 2 redeploy'u tam olarak bu
+    // durumu uretebilir.
+    //
+    // Keeper ayni soruyu ayni sekilde cozuyor: baska bir factory icin yazilmis
+    // imlec YOK SAYILIR ve sebep loglanir. Yeniden tarama pahalidir ama
+    // guvenlidir (exactly-once `event_seq` birincil anahtarlarindan gelir).
+    const orphan = await getCursor(pool)
+    if (orphan !== null) {
+      await clearCursor(pool)
+      console.warn(
+        `[indexer] SAHIPSIZ IMLEC ATILDI: blok ${orphan.lastBlock}'te bir imlec vardi ama ` +
+          `hangi dagitima ait oldugunu soyleyen \`deployment\` satiri YOKTU. ` +
+          `Tarama ${onChain.factory} icin ${onChain.startBlock}'ten YENIDEN baslar. ` +
+          `Bir factory redeploy'undan sonra bu BEKLENEN durumdur; imleci korumak, ` +
+          `iki dagitimin verisini ayni veritabaninda karistirmak demekti.`,
+      )
+    }
     await putDeployment(pool, onChain)
     return onChain
   }

@@ -1,5 +1,5 @@
 import { launchFactoryAbi } from '@arcpad/shared/browser'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { encodeAbiParameters, hexToBytes, keccak256, stringToHex } from 'viem'
@@ -99,6 +99,62 @@ describe('verifyCanonical is fail-closed', () => {
     expect(source).toMatch(/config\.addresses\.launchFactory/)
     // No 20-byte hex literal anywhere in the module.
     expect(source).not.toMatch(/0x[0-9a-fA-F]{40}/)
+  })
+
+  /**
+   * ============ THE SAME DISCIPLINE, ACROSS THE WHOLE APP ============
+   *
+   * The test above covers ONE FILE. That is this repository's standing failure
+   * mode stated exactly -- "a property covered on one entrypoint reads as
+   * covered on all of them" -- and Task 7 is the moment it would cost
+   * something: the new `LaunchFactory` supersedes
+   * `0x0d75a4fFb8CD6dB4237557E9519591b94d6Ab439`, and any second copy of that
+   * address outlives the address book.
+   *
+   * Measured when this was written: zero 20-byte literals in `web/lib`,
+   * `web/app` and `web/components` other than the two allowed below. So this
+   * gate is not closing a hole -- it is keeping a hole shut that is currently
+   * closed by nothing but habit.
+   *
+   * THE TWO ALLOWANCES ARE NAMED, NOT PATTERN-MATCHED. A blanket "ignore
+   * addresses that look like constants" would let the next factory literal
+   * through if it happened to be written in a comment.
+   */
+  it('NO deployment address is inlined anywhere in the app, not just in one file', () => {
+    // The zero address is a SENTINEL, not a deployment: it names "nobody",
+    // and it cannot be superseded by a redeploy.
+    const ZERO = '0x0000000000000000000000000000000000000000'
+    // Arc's USDC predeploy is a CHAIN CONSTANT, fixed by the L1 itself, and it
+    // appears here only inside prose explaining the two-view balance. The
+    // value that code reads lives in `packages/shared` (`USDC_ERC20_ADDRESS`).
+    const USDC_PREDEPLOY = '0x3600000000000000000000000000000000000000'
+    const ALLOWED = new Set([ZERO.toLowerCase(), USDC_PREDEPLOY.toLowerCase()])
+
+    const roots = ['web/lib', 'web/app', 'web/components']
+    const offenders: string[] = []
+    let scanned = 0
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(join(REPO_ROOT, dir), { withFileTypes: true })) {
+        const rel = `${dir}/${entry.name}`
+        if (entry.isDirectory()) {
+          walk(rel)
+          continue
+        }
+        if (!/\.tsx?$/.test(entry.name)) continue
+        scanned += 1
+        const text = readFileSync(join(REPO_ROOT, rel), 'utf8')
+        for (const m of text.matchAll(/0x[0-9a-fA-F]{40}/g)) {
+          if (!ALLOWED.has(m[0].toLowerCase())) offenders.push(`${rel}: ${m[0]}`)
+        }
+      }
+    }
+    for (const root of roots) walk(root)
+
+    // The gate's INPUT must not be empty -- a walker that silently found no
+    // files would pass forever. This repository has shipped exactly that
+    // (a restore check that examined zero files, three times).
+    expect(scanned).toBeGreaterThan(50)
+    expect(offenders).toEqual([])
   })
 
   it('isCanonical is in the distributed ABI with the shape this depends on', () => {
