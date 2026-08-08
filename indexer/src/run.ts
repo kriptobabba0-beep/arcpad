@@ -274,25 +274,89 @@ export interface RunResult {
   counts: ApplyCounts
 }
 
+/**
+ * BIR BLOK OKUNAMADI. GECICIDIR, VE BU BIR KARARDIR.
+ *
+ * Uc cagri yeri var (`finalized` head, `parentHash`, `to`nun hash'i) ve ucu de
+ * ONCEDEN GORULMUS bir basi ya da onun altini sorar -- yani "gelecege bakmak"
+ * degildir. Bir dugumun o blogu VERMEMESI iki bilinen sebepten olur ve ikisi
+ * de kendiliginden gecer:
+ *
+ *   - `finalized` etiketi, HENUZ hicbir sey finalize etmemis bir dugumde
+ *     `null` doner (yeniden baslamis / senkronize olan dugum);
+ *   - bir yuk dengeleyicinin arkasindaki GERI KALMIS bir dugum, baska bir
+ *     dugumde coktan final olan blok icin `null` ya da `-32001 block not
+ *     found` doner.
+ *
+ * ONCESI: ucu de CIPLAK `new Error(...)` firlatiyordu. `name` `'Error'`di, yani
+ * `PERMANENT`e girmezdi, bes metin sezgisinin hicbirine takilmazdi ve
+ * `isTransient` SON SATIRINA -- "bilinmeyen KALICIDIR" -- duserdi. Sonuc: tek
+ * bir bos yanit ingest'i TAMAMEN durduruyordu, ve `run.ts`in kendi yazili
+ * asimetrisi ("gecici bir seyi kalici saymak sureci OLDURUR; kalici bir seyi
+ * gecici saymak bes deneme + geri cekilmeye mal olur ve yine firlatir") tam
+ * olarak bunun tersini soyluyordu.
+ *
+ * `-32001` ("block not found") BURADA cevrilir, `PERMANENT_RPC_CODES`te degil:
+ * karar CAGRI YERINDE anlamlidir. Ayni kod `eth_call`/`eth_getBalance`
+ * head'in USTUNDE sorulunca gercekten kalicidir (olculdu, 2026-08-05) ve o
+ * yollar bundan etkilenmez.
+ */
+export class BlockUnavailable extends Error {
+  constructor(
+    readonly tag: string,
+    readonly missing: string,
+    cause?: unknown,
+  ) {
+    super(`BlockUnavailable: RPC ${tag} blogunu vermedi (${missing} yok)`)
+    this.name = 'BlockUnavailable'
+    if (cause !== undefined) this.cause = cause
+  }
+}
+
+/** `-32001`: "block not found". Bkz. `BlockUnavailable`'in gerekcesi. */
+const BLOCK_NOT_FOUND_RPC_CODE = -32001
+
+/**
+ * `eth_getBlockByNumber`, ve BOS YANIT ILE HATA AYNI OLGUYA CEVRILIR.
+ *
+ * Tek yer olmasi bilerek: uc cagirandan birinin ceviriyi unutmasi, o yolu
+ * sessizce "bilinmeyen -> kalici" dalina geri koyardi.
+ */
+async function readBlock<T>(
+  client: RpcClient,
+  tag: string,
+  field: string,
+  pacer: Pacer,
+): Promise<T> {
+  let result: T | null
+  try {
+    result = (await pacer.run(() =>
+      client.request({ method: 'eth_getBlockByNumber', params: [tag, false] }),
+    )) as T | null
+  } catch (error) {
+    if (asRpcError(error).code === BLOCK_NOT_FOUND_RPC_CODE) {
+      throw new BlockUnavailable(tag, field, error)
+    }
+    throw error
+  }
+  if (result === null || (result as Record<string, unknown>)[field] === undefined) {
+    throw new BlockUnavailable(tag, field)
+  }
+  return result
+}
+
 async function blockHash(client: RpcClient, block: bigint, pacer: Pacer): Promise<Hex> {
-  const result = (await pacer.run(() =>
-    client.request({
-      method: 'eth_getBlockByNumber',
-      params: [`0x${block.toString(16)}`, false],
-    }),
-  )) as { hash?: Hex; parentHash?: Hex } | null
-  if (result?.hash === undefined) throw new Error(`blok ${block} okunamadi`)
+  const result = await readBlock<{ hash: Hex }>(client, `0x${block.toString(16)}`, 'hash', pacer)
   return result.hash
 }
 
 async function parentHashOf(client: RpcClient, block: bigint, pacer: Pacer): Promise<Hex> {
-  const result = (await pacer.run(() =>
-    client.request({
-      method: 'eth_getBlockByNumber',
-      params: [`0x${block.toString(16)}`, false],
-    }),
-  )) as { parentHash?: Hex } | null
-  if (result?.parentHash === undefined) throw new Error(`blok ${block} parentHash yok`)
+  const result = await readBlock<{ parentHash: Hex }>(
+    client,
+    `0x${block.toString(16)}`,
+    'parentHash',
+    pacer,
+  )
   return result.parentHash
 }
 
@@ -304,10 +368,7 @@ export interface RunOnceOptions {
 }
 
 async function finalizedHeadVia(client: RpcClient, pacer: Pacer): Promise<bigint> {
-  const block = (await pacer.run(() =>
-    client.request({ method: 'eth_getBlockByNumber', params: ['finalized', false] }),
-  )) as { number?: Hex } | null
-  if (block?.number === undefined) throw new Error('finalized blok okunamadi')
+  const block = await readBlock<{ number: Hex }>(client, 'finalized', 'number', pacer)
   return BigInt(block.number)
 }
 
@@ -446,6 +507,23 @@ const PERMANENT = new Set([
 ])
 
 /**
+ * ADI OLAN AMA KALICI OLMAYAN SINIFLAR -- VE KAPININ NEDEN IKI KUMEYE
+ * IHTIYACI OLDUGU.
+ *
+ * Kaynak tarayan kapi (`rpc-errors.test.ts`) once "TANIMLANAN HER hata sinifi
+ * ADIYLA kalicidir" diyordu. O cumle bir SINIFLANDIRMA degil, bir SAYIMDI: o
+ * gune kadar yazilmis her sinifin kalici OLMASI dogruydu, ve kapi bunu bir
+ * KURAL sanmisti. `BlockUnavailable` o kurali yanlislar -- bos bir blok yaniti
+ * gercekten gecicidir -- ve kapinin korudugu sey aslinda "kimse siniflandirma
+ * kararini ATLAYAMAZ"di, "her sey kalicidir" degil.
+ *
+ * Kapi bugun sunu olcuyor: TANIMLANAN HER ad, bu iki kumeden TAM OLARAK
+ * BIRINDE. Kesisim bos. Yeni bir sinif yazan kisi hala karar vermek zorunda;
+ * verecegi karar artik iki degerli.
+ */
+const RETRYABLE = new Set(['BlockUnavailable'])
+
+/**
  * SINIFLANDIRMA KODA GORE YAPILIR, METNE GORE DEGIL -- CUNKU METIN BIZIM
  * ISTEGIMIZI DE TASIYOR.
  *
@@ -529,6 +607,12 @@ const TRANSIENT_HTTP_STATUS = new Set([408, 425, 429, 500, 502, 503, 504])
 export function isTransient(error: unknown): boolean {
   const name = (error as { name?: string } | null)?.name
   if (name !== undefined && PERMANENT.has(name)) return false
+  // ADI OLAN SINIFIN KARARI HER SEYIN ONUNDE, IKI YONE DE. `BlockUnavailable`
+  // govdesi hicbir sezgiye TAKILMAZ ("blok ... vermedi" -- ne durum kodu ne
+  // zaman asimi kelimesi) -- yani bu satir olmadan son satira, "bilinmeyen
+  // KALICIDIR"a duserdi. `rpc-errors.test.ts` bunu adi DUSURULMUS ayni
+  // nesneyle olcuyor.
+  if (name !== undefined && RETRYABLE.has(name)) return true
 
   // `details`, `message` DEGIL. OLCULDU (2026-08-04): viem bicimlendirilmis
   // mesaja `URL: https://rpc.testnet.arc.network` ve `Request body: {...}`

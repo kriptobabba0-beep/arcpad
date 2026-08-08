@@ -19,6 +19,7 @@ import {
   isRateLimit,
   LIVENESS_BEAT_MS,
   RATE_LIMIT_BACKOFF_BASE_MS,
+  BlockUnavailable,
   DeploymentMismatch,
   ensureDeployment,
   isTransient,
@@ -593,6 +594,112 @@ describe('gecici hata politikasi', () => {
     expect(slept).toHaveLength(2)
     expect(result?.counts.total).toBe(19)
     expect((await getCursor(pool))?.lastBlock).toBe(LAST)
+  })
+
+  /**
+   * ============ BOS BLOK YANITI: GECICI, VE ESKIDEN OYLE DEGILDI ============
+   *
+   * Uc blok okuma yeri de CIPLAK `new Error(...)` firlatiyordu. `name`
+   * `'Error'`di, `PERMANENT`e girmezdi, BES metin sezgisinin hicbirine
+   * takilmazdi ("blok 54661437 okunamadi": ne durum kodu, ne "timeout") ve
+   * `isTransient`in son satirina -- "bilinmeyen KALICIDIR" -- duserdi. Yani
+   * `finalized`i bir kez `null` donduren bir dugum ingest'i TAMAMEN
+   * durduruyordu; oysa `finalized` HENUZ hicbir sey finalize etmemis bir
+   * dugumde (yeniden baslamis, senkronize olan) tam olarak boyle doner.
+   *
+   * Asagidaki uc test uc AYRI seyi olcer ve ucu de gerekli:
+   * yol (sinif gercekten firlatiliyor mu), politika (gecici mi), butce
+   * (sonsuza kadar denemiyor mu).
+   */
+  it('null `finalized` BlockUnavailable firlatir -- ciplak Error DEGIL', async () => {
+    const nullHead: RpcClient = {
+      request: async (args) => {
+        if (args.method === 'eth_getBlockByNumber') {
+          const [tag] = args.params as [string, boolean]
+          if (tag === 'finalized') return null
+        }
+        return new ChainNode(logs).request(args)
+      },
+    }
+    await expect(runOnce(pool, nullHead, LIVE_DEPLOYMENT, CONFIG)).rejects.toBeInstanceOf(
+      BlockUnavailable,
+    )
+    // VE POLITIKA: ayni nesne GECICI sayilir. Iki iddia ayri cunku sinifi
+    // firlatmak ile onu dogru siniflandirmak IKI ayri kusurdur -- ve bu depo
+    // "adi olan ama kumede olmayan" halini bir kez yasadi.
+    expect(isTransient(new BlockUnavailable('finalized', 'number'))).toBe(true)
+  })
+
+  /**
+   * `-32001 block not found`, CAGRI YERINDE cevrilir. Ayni kod head'in
+   * USTUNDE `eth_call`/`eth_getBalance` icin KALICIDIR (olculdu 2026-08-05) ve
+   * o yollar degismedi -- burada cevrilmesinin sebebi, ONCEDEN GORULMUS bir
+   * basi ya da altini sormus olmamiz.
+   */
+  it('-32001, blok okumasinda BlockUnavailable olur (ama genel kod tablosunda degil)', async () => {
+    const notFound: RpcClient = {
+      request: async (args) => {
+        if (args.method === 'eth_getBlockByNumber') {
+          const [tag] = args.params as [string, boolean]
+          if (tag !== 'finalized') {
+            throw Object.assign(new Error('block not found'), { code: -32001 })
+          }
+        }
+        return new ChainNode(logs).request(args)
+      },
+    }
+    await expect(runOnce(pool, notFound, LIVE_DEPLOYMENT, CONFIG)).rejects.toBeInstanceOf(
+      BlockUnavailable,
+    )
+    // Cagri yeri disinda -32001 hala siniflandirilmamis => kalici.
+    expect(isTransient(Object.assign(new Error('block not found'), { code: -32001 }))).toBe(false)
+  })
+
+  it('bos blok yaniti TEKRAR DENENIR ve gecerse tur NORMAL biter', async () => {
+    let nulls = 0
+    const flapping: RpcClient = {
+      request: async (args) => {
+        if (args.method === 'eth_getBlockByNumber') {
+          const [tag] = args.params as [string, boolean]
+          if (tag === 'finalized' && nulls < 2) {
+            nulls += 1
+            return null
+          }
+        }
+        return new ChainNode(logs).request(args)
+      },
+    }
+    const slept: number[] = []
+    const result = await runWithRetry(pool, flapping, LIVE_DEPLOYMENT, CONFIG, {
+      sleep: async (ms) => {
+        slept.push(ms)
+      },
+    })
+    expect(nulls).toBe(2)
+    expect(slept).toHaveLength(2)
+    expect(result?.counts.total).toBe(19)
+    expect((await getCursor(pool))?.lastBlock).toBe(LAST)
+  })
+
+  it('...ama BUTCESI VAR: hic gecmezse maxAttempts sonunda FIRLATIR', async () => {
+    let calls = 0
+    const dead: RpcClient = {
+      request: async (args) => {
+        if (args.method === 'eth_getBlockByNumber') {
+          const [tag] = args.params as [string, boolean]
+          if (tag === 'finalized') {
+            calls += 1
+            return null
+          }
+        }
+        return new ChainNode(logs).request(args)
+      },
+    }
+    await expect(
+      runWithRetry(pool, dead, LIVE_DEPLOYMENT, CONFIG, { sleep: async () => {} }),
+    ).rejects.toBeInstanceOf(BlockUnavailable)
+    expect(calls).toBe(CONFIG.maxAttempts)
+    expect((await getCursor(pool))?.lastBlock).toBeUndefined()
   })
 
   /**

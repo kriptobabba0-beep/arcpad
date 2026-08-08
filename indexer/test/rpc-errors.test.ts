@@ -291,25 +291,83 @@ describe('HALT sinifi -- kaynaktan turetilen kapi', () => {
     return [...out].sort()
   }
 
-  it('kapinin girdisi BOS DEGIL -- ve bugun on uc sinif var', () => {
+  /**
+   * KUMELER KAYNAKTAN OKUNUR, TESTE ELLE YAZILMAZ. Elle yazilan bir kopya,
+   * `run.ts`teki kume degisince SESSIZCE ayrisirdi -- yani kapi kendi
+   * girdisini uydururdu.
+   */
+  function declaredSet(constName: string): string[] {
+    const text = readFileSync(new URL('../src/run.ts', import.meta.url), 'utf8')
+    const m = new RegExp(`const ${constName} = new Set\\(\\[([\\s\\S]*?)\\]\\)`).exec(text)
+    if (m?.[1] === undefined) throw new Error(`${constName} kaynakta bulunamadi`)
+    return [...m[1].matchAll(/'([A-Za-z]+)'/g)].map((x) => x[1] as string).sort()
+  }
+
+  it('kapinin girdisi BOS DEGIL -- ve bugun on dort sinif var', () => {
     const names = declaredNames()
-    expect(names.length).toBeGreaterThanOrEqual(13)
+    expect(names.length).toBeGreaterThanOrEqual(14)
     // Ucu eksikti; adlariyla anilmalari kapinin neyi kapattigini yaziyor.
     expect(names).toContain('UnorderedLogs')
     expect(names).toContain('SingleBlockTooLarge')
     expect(names).toContain('SplitDepthExceeded')
+    // Dorduncusu kapiyi DEGISTIRDI: adi olan ama KALICI OLMAYAN ilk sinif.
+    expect(names).toContain('BlockUnavailable')
   })
 
-  it('TANIMLANAN HER hata sinifi ADIYLA kalicidir', async () => {
+  /**
+   * KAPI: TANIMLANAN HER AD, IKI KUMEDEN TAM OLARAK BIRINDE.
+   *
+   * Onceki hali "her ad `PERMANENT`te" idi ve bu bir SAYIMDI, bir kural degil:
+   * o gune kadar yazilmis her sinifin kalici olmasi dogruydu. Kapinin gercek
+   * isi "kimse siniflandirma kararini atlayamaz"; bugun ayni isi iki degerli
+   * bir kararla yapiyor. `BlockUnavailable` (bos blok yaniti) GECICIDIR ve
+   * kapiyi yumusatmadan gecmesinin tek yolu buydu.
+   */
+  it('TANIMLANAN HER hata sinifi TAM OLARAK BIR kumede siniflandirilmis', () => {
+    const permanent = new Set(declaredSet('PERMANENT'))
+    const retryable = new Set(declaredSet('RETRYABLE'))
+    // Iki kume de DOLU olmali: bos bir `RETRYABLE`, kapinin "iki degerli"
+    // oldugu iddiasini vakum yapardi.
+    expect(permanent.size).toBeGreaterThan(0)
+    expect(retryable.size).toBeGreaterThan(0)
+    for (const name of declaredNames()) {
+      const memberships = Number(permanent.has(name)) + Number(retryable.has(name))
+      // 0 = siniflandirilmamis (metin sezgilerine duser), 2 = celiskili.
+      expect(
+        memberships,
+        `${name}: ${memberships === 0 ? 'siniflandirilmamis' : 'IKI kumede'}`,
+      ).toBe(1)
+    }
+  })
+
+  it('KALICI kumedeki her ad, HIZ SINIRI govdesine ragmen kalicidir', async () => {
     const c = await client(jsonRpcError(-32011, 'request limit reached'))
     const base = (await c.fail()) as Error
-    for (const name of declaredNames()) {
+    for (const name of declaredSet('PERMANENT')) {
       // Govde bir HIZ SINIRI -- yani ad kontrolu olmasaydi GECICI cikardi.
       // Testin ayirt edici olmasi tam olarak buradan geliyor.
       const error = Object.assign(Object.create(Object.getPrototypeOf(base) as object), base, {
         name,
       }) as Error
       expect(isTransient(error), name).toBe(false)
+    }
+  })
+
+  /**
+   * TERS YON, VE AYNI OLCUDE AYIRT EDICI OLMAK ZORUNDA. Hiz siniri govdesi
+   * kullanmak burada HICBIR SEY olcmezdi (govde zaten gecici). Govde
+   * `-32601`dir: KALICI bir kod. Yani gecen tek sey ADIN kendisi.
+   */
+  it('GECICI kumedeki her ad, KALICI bir govdeye ragmen gecicidir', async () => {
+    const c = await client(jsonRpcError(-32601, 'method not supported'))
+    const base = (await c.fail()) as Error
+    for (const name of declaredSet('RETRYABLE')) {
+      const bare = Object.assign(Object.create(Object.getPrototypeOf(base) as object), base, {
+        name,
+      }) as Error
+      expect(isTransient(bare), name).toBe(true)
+      // NEGATIF KONTROL: adi dusurulen AYNI nesne KALICI olur.
+      expect(isTransient(Object.assign(bare, { name: 'Bilinmeyen' })), name).toBe(false)
     }
   })
 
