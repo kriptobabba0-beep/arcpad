@@ -14,7 +14,7 @@
     "e2e:local": "playwright test --project=local-chain",
     "e2e:db": "playwright test --project=local-db",
     "e2e:audit": "playwright test --project=audit",
-    "e2e:arc": "playwright test --project=arc"
+    "e2e:arc": "playwright test -c playwright.arc.config.ts"
   },
   "dependencies": {
     "@arcpad/db": "workspace:*",

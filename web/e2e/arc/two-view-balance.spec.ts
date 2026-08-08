@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import {
   ARC_TESTNET_CHAIN_ID,
+  bondingCurveAbi,
   getArcChain,
   launchFactoryAbi,
   USDC_ERC20_ADDRESS,
@@ -8,6 +9,23 @@ import {
 } from '@arcpad/shared/browser'
 import { type Address, createPublicClient, type Hex, http, parseAbi } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
+/*
+ * STATICALLY IMPORTED, AND IT USED TO BE A DYNAMIC `await import(...)` INSIDE
+ * THE TEST. MEASURED, on the first run this leg ever had:
+ *
+ *   ReferenceError: exports is not defined in ES module scope
+ *     at packages/shared/src/browser.ts:3
+ *     at web/lib/decodeRevert.ts:7
+ *     at e2e/arc/two-view-balance.spec.ts:386
+ *
+ * Playwright transpiles the files IT loads to CommonJS, but a dynamic `import()`
+ * evaluated at run time goes through Node's own ESM loader instead -- and
+ * `@arcpad/shared` is a `"type": "module"` package, so the CommonJS body arrived
+ * in an ES module scope and `exports` did not exist. The static import above it
+ * (`@arcpad/shared/browser`, line 2) proves the static path works in this very
+ * file. The dynamic one could never have passed, on any chain, with any curve.
+ */
+import { decodeArcpadError } from '../../lib/decodeRevert'
 import { connectWallet, injectedWallet } from '../fixtures/wallet'
 
 /**
@@ -270,14 +288,67 @@ test.describe('Arc testnet', () => {
      */
     const chip = page.getByRole('button', { name: /Your wallet/ })
     await expect(chip).toHaveCount(1)
-    const shown = (await chip.textContent()) ?? ''
     const sixDecimal = `${units / 1_000_000n}.${(units % 1_000_000n).toString().padStart(6, '0')}`
     const withGrouping = `${(units / 1_000_000n).toLocaleString('en-US')}.${(units % 1_000_000n).toString().padStart(6, '0')}`
-    expect(
-      shown.includes(sixDecimal) || shown.includes(withGrouping),
-      `the wallet chip shows "${shown}" but the six-decimal view is ${withGrouping}`,
-    ).toBe(true)
+
+    /*
+     * IT POLLS, AND THE ONE-SHOT VERSION FAILED ON THE FIRST RUN THIS LEG EVER
+     * HAD. The chip is rendered as soon as the connection lands; the BALANCE
+     * inside it arrives later, from a query the page still has in flight, and
+     * until then `<Money>` draws an em dash. `toHaveCount(1)` resolves at the
+     * first of those two moments, so a `textContent()` taken straight after it
+     * read:
+     *
+     *     Your wallet: 0xe92c…2fD2—
+     *
+     * against a live RPC. On anvil the query answers on a loopback socket in
+     * microseconds and the same code passes every time -- an UNSTATED
+     * LOAD-BEARING PRECONDITION, which this repository counts as a finding even
+     * while the test is green. The claim is unchanged: ONE row, showing the
+     * SIX-DECIMAL view. Only the sampling retries. Measured against the same
+     * build with a poll: the chip reads "Your wallet: 0xe92c…2fD2 74.617997
+     * USDC" ~1.1 s after `goto`.
+     */
+    const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    await expect
+      .poll(async () => ((await chip.textContent()) ?? '').replace(/\s+/g, ' '), {
+        message: `the wallet chip never showed the six-decimal view ${withGrouping}`,
+        timeout: 30_000,
+      })
+      .toMatch(new RegExp(`${escapeRegExp(sixDecimal)}|${escapeRegExp(withGrouping)}`))
   })
+
+  /**
+   * THE PRECONDITION THE NEXT THREE TESTS NEVER STATED.
+   *
+   * Every one of them needs an OPEN curve: two need a trade panel, which the
+   * application deliberately does not render once `complete()` is true (see
+   * `components/token/LifecycleNotice.tsx` -- leaving it up would ask the user
+   * to sign a transaction that is certain to revert), and the third needs a buy
+   * to fail with `NetTooSmall()` rather than with `CurveComplete()`.
+   *
+   * Without this, a complete curve costs TWO MINUTES PER TEST of locator
+   * timeout and reports "waiting for getByLabel('Amount to spend')" -- which
+   * reads like a missing label, i.e. a UI defect, when the truth is that the
+   * chain state cannot support the measurement. MEASURED on the live Phase 2
+   * stack, 2026-08-09: `launchCount() == 1`, and that one curve is complete.
+   */
+  async function requireOpenCurve(): Promise<void> {
+    const curve = process.env.E2E_ARC_CURVE ?? ''
+    expect(curve, 'E2E_ARC=1 requires E2E_ARC_CURVE').toMatch(/^0x[0-9a-fA-F]{40}$/)
+    const complete = (await arcClient().readContract({
+      address: curve as Address,
+      abi: bondingCurveAbi,
+      functionName: 'complete',
+    })) as boolean
+    expect(
+      complete,
+      `the configured curve ${curve} is COMPLETE. This test needs an OPEN one: the ` +
+        'trade panel is not rendered on a complete curve and every entry point reverts ' +
+        'CurveComplete(). Launch a token on the configured factory (a WRITE) or point ' +
+        'E2E_ARC_TOKEN / E2E_ARC_CURVE at an open pair.',
+    ).toBe(false)
+  }
 
   /**
    * GAS COMES OUT OF THE SAME BALANCE.
@@ -285,6 +356,7 @@ test.describe('Arc testnet', () => {
   test('a buy costs exactly spend + gasUsed x effectiveGasPrice from the one balance', async ({
     page,
   }) => {
+    await requireOpenCurve()
     const account = privateKeyToAccount(KEY)
     const client = arcClient()
     const wallet = await injectedWallet(page, {
@@ -297,6 +369,22 @@ test.describe('Arc testnet', () => {
     expect(token, 'E2E_ARC=1 requires E2E_ARC_TOKEN — an open curve to trade against').toMatch(
       /^0x[0-9a-fA-F]{40}$/,
     )
+    /*
+     * AND IT NEEDS A FUNDED SIGNING KEY, which `E2E_ARC_WATCH` cannot stand in
+     * for: this is the ONE test in the file that BROADCASTS. The balance it
+     * measures is the SIGNING account's, so a throwaway key does not make the
+     * claim merely unfunded, it makes it unmeasurable -- `before - after` would
+     * be `0 - 0`. Asserted as a READ of the real balance, because "the key is
+     * configured" is not the property that matters and a regex on the key would
+     * pass for the harness-generated one.
+     */
+    const funding = await client.getBalance({ address: account.address })
+    expect(
+      funding > 0n,
+      `this test broadcasts a real buy, and the signing account ${account.address} holds ` +
+        'nothing. Set E2E_ARC_PRIVATE_KEY to a FUNDED key; the harness generates an ' +
+        'unfunded throwaway so that a read-only run cannot broadcast by accident.',
+    ).toBe(true)
 
     await page.goto(`${BASE}/token/${token}`)
     await connectWallet(page)
@@ -322,6 +410,7 @@ test.describe('Arc testnet', () => {
    * MAX MUST NOT SPEND EVERYTHING.
    */
   test('MAX leaves room for gas: the transaction is not rejected for funds', async ({ page }) => {
+    await requireOpenCurve()
     const client = arcClient()
     const account = privateKeyToAccount(KEY)
     const token = process.env.E2E_ARC_TOKEN ?? ''
@@ -348,6 +437,7 @@ test.describe('Arc testnet', () => {
   test('a sub-quantum value reverts with NetTooSmall and the interface names it', async ({
     page,
   }) => {
+    await requireOpenCurve()
     const curve = process.env.E2E_ARC_CURVE ?? ''
     expect(curve).toMatch(/^0x[0-9a-fA-F]{40}$/)
     const client = arcClient()
@@ -383,9 +473,6 @@ test.describe('Arc testnet', () => {
       )
 
     expect(failure, 'a 1-wei buy must revert on Arc').not.toBeNull()
-    const { decodeArcpadError } = (await import('../../lib/decodeRevert')) as {
-      decodeArcpadError: (e: unknown, ctx: { action: 'buyExactQuoteIn' }) => { name: string }
-    }
     const decoded = decodeArcpadError(failure, { action: 'buyExactQuoteIn' })
     expect(
       decoded.name,
@@ -409,9 +496,52 @@ test.describe('Arc testnet', () => {
       reportedChainId: 1,
     })
     await page.goto(`${BASE}/token/${process.env.E2E_ARC_TOKEN ?? ''}`)
-    await connectWallet(page)
 
-    const button = page.getByRole('button', { name: /Switch to Arc Testnet/ })
+    /*
+     * THE CONNECT IS DONE HERE INSTEAD OF THROUGH `connectWallet`, AND THE
+     * REASON IS THE BUG THIS TEST EXISTS TO CATCH.
+     *
+     * `connectWallet` finishes by waiting for the address chip
+     * (`getByRole('button', { name: /Your wallet/ })`) -- and on a WRONG
+     * NETWORK the shell deliberately renders the switch button INSTEAD of that
+     * chip (`components/layout/WalletButton.tsx`: `if (wrongNetwork) return
+     * <Button>Switch to …</Button>`). So the helper waited for a control this
+     * very scenario is defined by the absence of. MEASURED on the first run this
+     * leg ever had: 120 s of `waiting for getByRole('button', { name: /Your
+     * wallet/ }) to be visible`, then a timeout. The test could not have passed
+     * as written, on any chain.
+     *
+     * `connectWallet` itself is NOT changed: `e2e/local/` drives it and the
+     * connected-chip wait is the right assertion everywhere the wallet is on the
+     * right network. The wrong-network case is the exception, so it lives here.
+     */
+    await page.getByRole('banner').getByRole('button', { name: 'Connect wallet' }).click()
+    await page.getByRole('button', { name: 'Arcpad E2E Wallet' }).click()
+
+    /*
+     * TWO BUTTONS SAY "SWITCH TO ARC TESTNET", AND THE FIRST RUN OF THIS LEG IS
+     * WHAT FOUND THAT OUT. An unscoped locator here was a strict-mode violation:
+     *
+     *   1) getByTestId('network-banner').getByRole('button', …)
+     *   2) getByRole('banner').getByRole('button', …)      <- the header chip slot
+     *
+     * `NetworkBanner` and `WalletButton` each render one, and each is unit-tested
+     * ALONE (`test/ui/shell.test.tsx` for the strip, `test/trade/panel.test.tsx`
+     * and `test/ui/button.test.tsx` for the control). Nothing measured the
+     * COMPOSED screen -- the repository's most repeated defect class, a property
+     * covered on one entry point reading as covered on all of them. Whether one
+     * of the two should go is a product call and is NOT made here; this test's
+     * claim is that pressing the control asks the WALLET, so it presses the one
+     * in the strip and says out loud that the other exists.
+     */
+    const banner = page.getByTestId('network-banner')
+    await expect(banner).toBeVisible()
+    await expect(
+      page.getByRole('button', { name: /Switch to Arc Testnet/ }),
+      'both the network strip and the header offer the switch; if this becomes 1, ' +
+        'the duplication was fixed and this expectation should follow it',
+    ).toHaveCount(2)
+    const button = banner.getByRole('button', { name: /Switch to Arc Testnet/ })
     await expect(button).toBeVisible()
     await button.click()
     await expect

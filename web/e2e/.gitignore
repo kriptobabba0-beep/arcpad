@@ -13,8 +13,19 @@
 # somebody else's machine.
 .state.json
 
+# The Arc leg's own state file. SEPARATE from `.state.json` on purpose: the two
+# harnesses own different processes, and a teardown that read the other's file
+# would kill a pid it does not own -- or, on a machine where both have run, a
+# stale pid that now belongs to something else.
+.arc-state.json
+
 # The generated env for a human debugging a failed run. The addresses in it
 # belong to an anvil that no longer exists.
+#
+# NOTE: `global-setup.ts` writes this next to `package.json` (`web/.env.e2e`),
+# not here -- `writeEnvFile` is called with the WEB ROOT. The copy in this
+# directory is a leftover from an earlier layout; the root `.gitignore`'s
+# `.env.*` is what actually covers the generated one.
 .env.e2e
 
 # The throwaway module the database fixture writes so that `@arcpad/db`'s own
