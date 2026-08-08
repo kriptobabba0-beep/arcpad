@@ -255,7 +255,9 @@ The `log-scan-incomplete` detector's basis — slot `launchCount` as an exact or
 
 > ### ⚠️ UNFILLED — THIS IS NOT YET A ROTA
 >
-> The three fields below marked **`TODO(owner)`** have no value yet, because the governor Safes do not exist until Task 4 creates them and no paging provider has been chosen. **Until they are filled, this document describes a control that nobody operates.** They are deliberately left as visible holes rather than plausible-looking defaults: an invented name is worse than a blank, because a blank gets filled and a wrong name gets trusted at 3 am.
+> The **four** fields below marked **`TODO(owner)`** have no value yet. **Until they are filled, this document describes a control that nobody operates.** They are deliberately left as visible holes rather than plausible-looking defaults: an invented name is worse than a blank, because a blank gets filled and a wrong name gets trusted at 3 am.
+>
+> **Updated 2026-08-09 — three of the four are unblocked and were not before.** The original text said the holes existed "because the governor Safes do not exist until Task 4 creates them and no paging provider has been chosen". **Task 4 is done: both Safes are live** (governor `0x970534698e4592932F31892759147f79EB0D2C22`, treasury `0xebBeCfDA308EA307e173C6eC19a9C48F53d4B10c`, 2-of-3 each, asserted on chain by `test_bothSafesAreTwoOfThreeOrStricter`). So **On-call** and **Escalation** are now waiting on nothing but names — the signers exist and can be listed today. Only **Paging provider** still waits on a choice, and **Drill transport** waits on that choice. A hole whose stated reason has expired reads as blocked when it is merely unstarted, which is why this note replaces the reason rather than sitting beside it.
 >
 > Filling them is a **release gate for the deploy**, alongside the first live drill (§8).
 
