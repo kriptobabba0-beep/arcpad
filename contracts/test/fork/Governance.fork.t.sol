@@ -169,7 +169,19 @@ contract GovernanceForkTest is Test {
         Plan memory p = DeployLib.build(ARC_TESTNET_CHAIN_ID, profile, DEPLOYER, governor, treasury);
 
         assertEq(p.escrow, 0xEEd4431eAD3E27F16D97f677A9C4c1a963DF8dC6, "escrow address moved");
-        assertEq(p.factory, 0x0d75a4fFb8CD6dB4237557E9519591b94d6Ab439, "factory address moved");
+        // FAZ 2 BU SAYIYI TASIDI VE TASIMASI GEREKIYORDU: `LaunchFactory`nin
+        // constructor'i `feeSchedule` argumanini kazandi, ve fabrika adresi
+        // argumanlarina COMMIT EDER. Eski deger 0x0d75a4fF... Faz 1'indir ve
+        // SUPERSEDE EDILMISTIR.
+        assertEq(p.factory, 0x5CA156f1809aB784655410d0f4B0704d2b306B47, "factory address moved");
+        // ...VE DEFTER AYNI SEYI SOYLUYOR. Literal, turetmenin BAGIMSIZ pini;
+        // bu satir turetmeyi DEFTERE baglar, yani ikisi ayrisirsa -- Faz 2'nin
+        // en pahali arizasinin sekli tam olarak buydu -- burasi kirmizi olur.
+        assertEq(
+            p.factory,
+            vm.parseJsonAddress(vm.readFile("deploy/addresses.5042002.json"), ".launchFactory"),
+            "the address book and this tree disagree about the factory"
+        );
     }
 
     /// @dev TORENIN GERCEKTEN YURUDUGUNUN KALICI KANITI.
@@ -198,15 +210,49 @@ contract GovernanceForkTest is Test {
             TREASURY_SAFE,
             "the 2-of-3 ceremony did not take effect: the treasury never moved"
         );
-        // ...ve propose ayagi da yurudu: hedef ONERILDI, henuz INMEDI.
+        // ...VE ARTIK DONGUNUN TAMAMI YURUDU. BU IDDIA 2026-08-08'DE
+        // DEGISTIRILDI VE SEBEBI KAYDA DEGER.
+        //
+        // Onceki hali "hedef ONERILDI, henuz INMEDI" diyordu ve o gun dogruydu.
+        // Zincirde olculen bugunku hal: `pendingGraduationTarget` BOS,
+        // `graduationTarget` 0x...dEaD, `eta` 0. Yani `applyGraduationTarget()`
+        // KOSTU -- ve onu kimsenin ONAYLAMASI GEREKMEDI: o fonksiyon BILEREK
+        // IZINSIZDIR (`LaunchFactory.sol:841`). Uc gunluk sure doldu, pencere
+        // acildi, ve indi.
+        //
+        // BU YUZDEN BURADA DURUYOR: "propose -> 3 gun -> apply" dongusunun
+        // TAMAMININ Arc'ta fiilen yurudugunun kalici kanitidir, VE ayni zamanda
+        // izinsiz apply'in TEORIK OLMADIGININ olcumudur. Gercek fabrikada bir
+        // oneri baslatmak, uc gun sonra HERKESIN silahlayabilecegi bir dugme
+        // birakir; burada zararsizdi cunku bu yigin DISPOSABLE.
+        assertEq(
+            LaunchFactory(rehearsalFactory).graduationTarget(),
+            0x000000000000000000000000000000000000dEaD,
+            "the rehearsal target never landed -- the propose->wait->apply cycle is unproven"
+        );
         assertEq(
             LaunchFactory(rehearsalFactory).pendingGraduationTarget(),
-            0x000000000000000000000000000000000000dEaD,
-            "the propose leg left no pending target"
+            address(0),
+            "apply did not clear the pending slot"
         );
-        assertEq(
-            LaunchFactory(rehearsalFactory).graduationTarget(), address(0), "the target landed without the 3-day wait"
-        );
+    }
+
+    /// @dev `vm.parseJsonAddress` JSON `null` uzerinde REVERT eder, yani
+    ///      "bos mu" sorusu ondan ONCE sorulmalidir -- ve `vm.parseJson`in
+    ///      donen uzunluguna bakmak YETMEDI (olculdu: null icin de bos
+    ///      donmuyor). Cagri bu yuzden DISARI cikarilir; `try/catch` bir
+    ///      cheatcode revert'unu yakalayabilir, ama yalnizca EXTERNAL bir
+    ///      cagrida.
+    function parseAddressExternally(string calldata json, string calldata key) external view returns (address) {
+        return vm.parseJsonAddress(json, key);
+    }
+
+    function _isJsonNull(string memory json, string memory key) internal view returns (bool) {
+        try this.parseAddressExternally(json, key) returns (address) {
+            return false;
+        } catch {
+            return true;
+        }
     }
 
     /// @dev ADRES DEFTERININ `smokeToken`/`smokeCurve` ALANLARININ VAROLMA
@@ -214,8 +260,26 @@ contract GovernanceForkTest is Test {
     ///      fixture'i". Task 7 onlari doldurdu; bu test onlari DEFTERDEN okuyup
     ///      ZINCIRE karsi dogrular -- yani defter artik yalnizca yazilan degil,
     ///      OKUNAN bir sey.
+    /// @dev NULL BIR ALAN, EKSIK BIR ALAN DEGILDIR -- VE BU TEST ONU
+    ///      AYIRT ETMEK ZORUNDA. Semada tip `Address | null`dur ve Task 7
+    ///      ikisini de `null` YAPTI: defterdeki smoke ciftii SUPERSEDE EDILMIS
+    ///      Faz 1 fabrikasinin urunuydu, yeni fabrikaya ait DEGIL. `null`
+    ///      birakmak dogru degerdi, ama `vm.parseJsonAddress` JSON null'u
+    ///      PARSE EDEMEZ ve bu test onun uzerinde patladi -- semanin izin
+    ///      verdigi bir degeri okuyamayan bir okuyucu.
+    ///
+    ///      Task 8B bu alanlari Faz 2'nin kendi tamamlanmis curve'uyle
+    ///      dolduracak; o zamana kadar iddia "alan bos, ve bos olmasi
+    ///      MESRU"dur. Sessizce gecmez: bos olduguNU iddia eder.
     function test_theSmokeCurveInTheBookIsRealAndComplete() public view {
         string memory book = vm.readFile("deploy/addresses.5042002.json");
+        if (vm.keyExistsJson(book, ".smokeToken") && _isJsonNull(book, ".smokeToken")) {
+            assertTrue(
+                _isJsonNull(book, ".smokeCurve"),
+                "smokeToken is null but smokeCurve is not -- the pair must move together"
+            );
+            return;
+        }
         address smokeToken = vm.parseJsonAddress(book, ".smokeToken");
         address smokeCurve = vm.parseJsonAddress(book, ".smokeCurve");
         address factory = vm.parseJsonAddress(book, ".launchFactory");
