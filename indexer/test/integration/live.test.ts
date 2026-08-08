@@ -9,7 +9,13 @@ import { isForbiddenEmitter, TOPIC0 } from '../../src/arc'
 import type { IndexerConfig } from '../../src/config'
 import type { LaunchedEvent, RawLog, RpcClient } from '../../src/logs'
 import { createPacer, decodeAll } from '../../src/logs'
-import { ensureDeployment, isTransient, readFactoryProfile, runOnce } from '../../src/run'
+import {
+  assertStartBlockCoversEscrow,
+  ensureDeployment,
+  isTransient,
+  readFactoryProfile,
+  runOnce,
+} from '../../src/run'
 
 /**
  * CANLI ARC TESTNET ENTEGRASYON TESTI.
@@ -40,8 +46,18 @@ import { ensureDeployment, isTransient, readFactoryProfile, runOnce } from '../.
 
 const RPC_URL = process.env['ARC_RPC_URL']
 const DATABASE_URL = process.env['DATABASE_URL']
+/**
+ * VARSAYILAN, DEFTERIN BUGUNKU `launchFactory`I. CI onu zaten `pnpm
+ * addressbook --env-only` ile gecirir; buradaki literal yalnizca elle kosum
+ * icin var ve defterle AYNI olmak zorunda.
+ *
+ * ONCEKI VARSAYILAN FAZ 1'IN FACTORY'SIYDI ve Faz 2'den sonra bu dosyayi
+ * ZATEN KIRMISTI: CI'in gecirdigi Faz 2 adresiyle `launches` sayisi 0 cikar
+ * (`toBe(1)` duser) ve `ledger === totalOwed` iddiasi da duser, cunku
+ * `totalOwed()` artik 321214784333543529.
+ */
 const FACTORY = (process.env['ARC_FACTORY_ADDRESS'] ??
-  '0x0d75a4ffb8cd6db4237557e9519591b94d6ab439') as Address
+  '0x5ca156f1809ab784655410d0f4b0704d2b306b47') as Address
 
 if (!RPC_URL) {
   throw new Error(
@@ -52,19 +68,56 @@ if (!DATABASE_URL) {
   throw new Error('canli entegrasyon testi DATABASE_URL ister (gercek Postgres).')
 }
 
-/** Olculmus baslangic: factory'nin deploy blogu. */
+/**
+ * ================= IKI PENCERE, VE NEDEN IKI TANE =================
+ *
+ * Defterin `startBlock`u `min(feeEscrowBlock, launchFactoryBlock)` = ESCROW'un
+ * blogudur, factory'ninki degil -- ve Faz 2'den sonra bu bir ihtiyat degil
+ * ZORUNLULUKTUR: escrow DEVRALINDI, yani `[54661437, 55870260)` araliginda
+ * -- CANLI factory henuz YOKKEN -- gercek `Deposited`lar var ve onlar Faz
+ * 2'nin de odedigi AYNI IKI alici slotuna giriyor.
+ *
+ * OLCULDU (2026-08-09, bu RPC, escrow adresine 135 `eth_getLogs`):
+ *
+ *   [54661437, 55870260]  8 Deposited, 152069146725900635  (Faz 1 curve'u)
+ *   [55870261, 56010150]  8 Deposited, 169145637607642894  (Faz 2 curve'u)
+ *   TOPLAM 321214784333543529 = `totalOwed()` = escrow'un bakiyesi
+ *
+ * Ve o 1,21M blogun ICINDE baska HICBIR SEY yok: sekiz olayin hepsi
+ * 54663522-54663673 arasinda, factory'nin ise 55870260'ta KODU YOK (olculdu:
+ * 0 bayt; 55870261'de 14008). Izleme kumesindeki `curves`/`tokens` de Faz
+ * 2'nin launch'ina kadar bostur.
+ *
+ * BU YUZDEN TEST IKI PENCERE KOSUYOR VE ARADAKI BOSLUGU ATLIYOR: atlanan
+ * araligin BOS oldugu OLCULDU, yani atlamak hicbir iddiayi zayiflatmiyor --
+ * yalnizca 1,21M blogun bos oldugunu ispatlamak icin harcanacak ~35 dakikayi
+ * harcamiyor. Atlama, imleci gercek `parentHash`iyle ilerleterek yapilir;
+ * zincir bagi muhafizi devrede kalir.
+ */
 const START_BLOCK = 54_661_437n
-/** Smoke islemlerinin son blogu (0x34219f9) -- aralik burada kapanir. */
-const SMOKE_LAST = 54_663_673n
+/** Faz 1 curve'unun SON escrow olayinin blogu. Birinci pencere burada kapanir. */
+const ESCROW_PREFIX_LAST = 54_663_673n
+/** CANLI factory'nin yaratildigi blok (defterin `launchFactoryBlock`u). */
+const FACTORY_BLOCK = 55_870_261n
+/** Faz 2 smoke'unun son blogu (egriyi tamamlayan alim). */
+const SMOKE_LAST = 55_872_867n
 
 const EXPECTED = {
-  token: '0x1bd93613a7bc470a739d9615cdc65e535d958fab' as Address,
-  curve: '0x7938be340a14a12f94a83aea246d9d2566324c9c' as Address,
+  token: '0x085c926e24ed64bb045e67d26d9e76e5730c21b3' as Address,
+  curve: '0xddb9e739a948c968eb4c7e1449b94c598b1cf27b' as Address,
   escrow: '0xeed4431ead3e27f16d97f677a9c4c1a963df8dc6' as Address,
   protocolTreasury: '0xebbecfda308ea307e173c6ec19a9c48f53d4b10c' as Address,
   creator: '0xe92c64c4f36216ea773f2622f6d5f8530ae92fd2' as Address,
   chainId: 5_042_002n,
 }
+
+/** Faz 1'in curve'u. Faz 2'de ARTIK IZLENMIYOR ama escrow'a odemis. */
+const PHASE1_CURVE = '0x7938be340a14a12f94a83aea246d9d2566324c9c' as Address
+
+/** Iki yarinin OLCULEN toplamlari. */
+const PREFIX_FEES = 152_069_146_725_900_635n
+const SUFFIX_FEES = 169_145_637_607_642_894n
+const LEDGER_TOTAL = PREFIX_FEES + SUFFIX_FEES
 
 /**
  * PACING ZORUNLU. Arc es zamanli VE ardisik istekleri sinirlar; olculdu
@@ -160,6 +213,41 @@ let pool: Pool
 let deployment: Awaited<ReturnType<typeof readFactoryProfile>>
 let firstDump: Record<string, unknown[]>
 
+/**
+ * IMLECI BOS BIR ARALIGIN UZERINDEN ATLATIR -- GERCEK `parentHash` ILE.
+ *
+ * `assertContinuous` bir sonraki araligin ILK blogunun `parentHash`ini kayitli
+ * imlec hash'iyle karsilastirir, yani atlama uydurulmus bir hash'le
+ * YAPILAMAZ: blok `to`nun hash'i zincirden okunur. Muhafiz devrede kalir.
+ */
+async function jumpCursorTo(block: bigint): Promise<void> {
+  const hash = (
+    (await paced.request({
+      method: 'eth_getBlockByNumber',
+      params: [`0x${block.toString(16)}`, false],
+    })) as { hash: Hex }
+  ).hash
+  await pool.query(
+    'UPDATE sync_state SET last_block = $1, last_block_hash = $2, head_block = $1, head_observed_at = now()',
+    [block.toString(), hash],
+  )
+}
+
+/** Iki penceri sirayla kosar. Bkz. `START_BLOCK` yorumu. */
+async function walkBothWindows(): Promise<void> {
+  const first = await runOnce(pool, liveClient, deployment, CONFIG, {
+    pacer,
+    head: async () => ESCROW_PREFIX_LAST,
+  })
+  expect(first).not.toBeNull()
+  await jumpCursorTo(FACTORY_BLOCK - 1n)
+  const second = await runOnce(pool, liveClient, deployment, CONFIG, {
+    pacer,
+    head: async () => SMOKE_LAST,
+  })
+  expect(second).not.toBeNull()
+}
+
 async function ethCallRaw(to: Address, data: Hex): Promise<Hex> {
   return (await paced.request({ method: 'eth_call', params: [{ to, data }, 'latest'] })) as Hex
 }
@@ -191,16 +279,28 @@ describe('canli Arc testnet', () => {
     deployment = await readFactoryProfile(liveClient, FACTORY, EXPECTED.chainId, START_BLOCK, pacer)
     await ensureDeployment(pool, deployment)
 
-    // Butun smoke araligi TEK turda: head'i smoke'un son blogunda sabitliyoruz
-    // ki test zincirin bugunku basina kadar tarayip binlerce bos blok
-    // okumasin.
-    const result = await runOnce(pool, liveClient, deployment, CONFIG, {
-      pacer,
-      head: async () => SMOKE_LAST,
-    })
-    expect(result).not.toBeNull()
+    // (0b) URETIM ACILIS KAPISI, URETIMDEKI SIRAYLA. `index.ts` bunu
+    //      `ensureDeployment`ten sonra cagirir; burada da oyle cagriliyor ki
+    //      kapinin GERCEK zincire karsi ne dedigi olculsun. Defterin
+    //      `startBlock`u escrow'un blogudur, yani gecmesi gerekir.
+    await assertStartBlockCoversEscrow(liveClient, deployment.escrow, START_BLOCK, pacer)
+
+    await walkBothWindows()
     firstDump = await snapshot(pool)
   }, 300_000)
+
+  /**
+   * KAPI, GERCEK ZINCIRE KARSI, IKI YONDE.
+   *
+   * `beforeAll` zaten POZITIF yonu kosuyor. Bu test NEGATIF yonu olcuyor:
+   * `launchFactoryBlock`tan baslamak -- trap 3'un davet ettigi
+   * "optimizasyon" -- CANLI zincirde reddediliyor mu. Iki `eth_getCode`.
+   */
+  it('acilis kapisi factory nin blogundan baslamayi CANLI zincirde reddeder', async () => {
+    await expect(
+      assertStartBlockCoversEscrow(liveClient, deployment.escrow, FACTORY_BLOCK, pacer),
+    ).rejects.toThrow(/StartBlockAfterEscrow/)
+  })
 
   it('zincirden okunan profil TESTNET profilidir', () => {
     expect(deployment.virtualTokenReservesTok).toBe(1_073_000_000n * 10n ** 18n)
@@ -219,10 +319,17 @@ describe('canli Arc testnet', () => {
     expect(rows[0]).toMatchObject({
       token: EXPECTED.token,
       curve: EXPECTED.curve,
-      symbol: 'SMOKE',
+      symbol: 'P2SMOKE',
     })
     // Zincirin kendi sayaci da bir tane diyor.
     expect(await readUint(FACTORY, 'launchCount()')).toBe(1n)
+
+    // VE FAZ 1'IN LAUNCH'I GIRMEDI. Ayni escrow'u paylassalar da `Launched`
+    // YALNIZCA `watch.factory` adresinden cekilir; superseded factory'nin
+    // curve'u burada bir satir acamaz. Bu, "escrow'un gecmisini almak"
+    // ile "iki dagitimin verisini karistirmak" arasindaki farkin ta kendisi.
+    const { rows: curves } = await pool.query<{ curve: string }>('SELECT curve FROM curve_state')
+    expect(curves.map((c) => c.curve)).toEqual([EXPECTED.curve])
   })
 
   /**
@@ -344,10 +451,21 @@ describe('canli Arc testnet', () => {
   })
 
   /**
-   * (4) ESCROW ODEME GUCU. Dogru invariant `totalOwed <= balance`, `==` DEGIL:
-   * escrow'a dogrudan gonderilen USDC TALEP EDILEMEZ (kontratin kisit 1'i).
+   * (4) ESCROW ODEME GUCU -- VE `startBlock`IN TASIYICI OLDUGU YER.
+   *
+   * Dogru invariant `totalOwed <= balance`, `==` DEGIL: escrow'a dogrudan
+   * gonderilen USDC TALEP EDILEMEZ (kontratin kisit 1'i). Bugun bagis yok,
+   * yani ikisi esit.
+   *
+   * ASIL IDDIA IKINCI SATIRDA: defter `totalOwed`in TAMAMINA esit, ve o
+   * toplamin 152069146725900635 wei'si SUPERSEDED factory'nin curve'unden
+   * geldi. Bu esitlik, taramanin escrow'un blogundan basladigini olcen
+   * seydir -- `startBlock`i `launchFactoryBlock` yapan bir kosuda defter tam
+   * o kadar EKSIK cikardi ve ilk `claim()`de `CHECK (claimable_wei >= 0)` ile
+   * kalici olarak kilitlenirdi (`test/shared-escrow.test.ts` bunu ayrica
+   * calistiriyor).
    */
-  it('claimable toplami escrow bakiyesini ASMAZ ve kontratin defteriyle ORTUSUR', async () => {
+  it('claimable toplami totalOwed a esittir -- ON EKIN KATKISI DAHIL', async () => {
     const { rows } = await pool.query<{ s: string }>(
       'SELECT COALESCE(sum(claimable_wei),0)::text AS s FROM fee_balances',
     )
@@ -360,10 +478,26 @@ describe('canli Arc testnet', () => {
     )
     const totalOwed = await readUint(EXPECTED.escrow, 'totalOwed()')
 
-    expect(ledger).toBe(152_069_146_725_900_635n)
+    expect(ledger).toBe(LEDGER_TOTAL)
     expect(ledger).toBe(totalOwed)
     expect(ledger).toBeLessThanOrEqual(balance)
-    console.log(`[live] defter=${ledger} totalOwed=${totalOwed} bakiye=${balance}`)
+
+    // VE DOKUM: on ek gercekten SUPERSEDED curve'den, son ek Faz 2'ninkinden.
+    // `fee_events.from_addr` bu ayrimi tasiyan TEK alan.
+    const { rows: byCurve } = await pool.query<{ from_addr: string; s: string }>(
+      `SELECT from_addr, sum(amount_wei)::text AS s FROM fee_events
+        WHERE kind = 'deposit' GROUP BY from_addr ORDER BY from_addr`,
+    )
+    expect(new Map(byCurve.map((r) => [r.from_addr, BigInt(r.s)]))).toEqual(
+      new Map([
+        [PHASE1_CURVE, PREFIX_FEES],
+        [EXPECTED.curve, SUFFIX_FEES],
+      ]),
+    )
+    console.log(
+      `[live] defter=${ledger} totalOwed=${totalOwed} bakiye=${balance} ` +
+        `(on ek ${PREFIX_FEES} superseded curve ${PHASE1_CURVE}'den)`,
+    )
   })
 
   /**
@@ -416,12 +550,15 @@ describe('canli Arc testnet', () => {
     // Curve tukendi: ilerleme tam 1.000.000.
     expect(rows!.progressPpm).toBe(1_000_000)
     expect(rows!.graduationRaiseWei).toBe(12_161_433_369_060_378_706n)
-    // Toplanan quote, raise'i SEKIZ wei asiyor -- `floor()+1` her alimda.
-    expect(rows!.realQuoteReservesWei - rows!.graduationRaiseWei).toBe(8n)
+    // Toplanan quote, raise'i YEDI wei asiyor -- `floor()+1` her alimda; sayi
+    // ALIM SAYISINA baglidir, sabit degil (Faz 1 smoke'unda 8'di, Faz 2'de 7).
+    // OLCULDU: `curve.realQuoteReserves()` = 12161433369060378713.
+    expect(rows!.realQuoteReservesWei - rows!.graduationRaiseWei).toBe(7n)
     // TAZE, cunku bu kosunun BASI `SMOKE_LAST`e sabitlendi ve imlec tam oraya
     // ulasti -- yani `blocksBehind` SIFIR. Bu bir ayrinti degil: gercek basla
-    // kosulan ayni indexer 767.504 blok geride kalir ve o durumda TAZE DEGILDIR
-    // (bkz. asagidaki iddia ve `packages/db`nin "canli ama geride" testi).
+    // kosulan ayni indexer yuz binlerce blok geride kalir ve o durumda TAZE
+    // DEGILDIR (bkz. asagidaki iddia ve `packages/db`nin "canli ama geride"
+    // testi).
     expect(indexer.stale).toBe(false)
     if (indexer.stale) throw new Error('unreachable')
     expect(indexer.at.lastBlock).toBe(SMOKE_LAST)
@@ -448,28 +585,31 @@ describe('canli Arc testnet', () => {
     if (!behind.stale) throw new Error('unreachable')
     expect(behind.why).toBe('behind-head')
     expect(behind.at?.stalenessSeconds).toBeLessThan(30)
+    // GECIKME SABIT BIR LITERAL DEGIL: zincirin O ANDAKI basi ile imlecin
+    // farki. Bir literal, her gun buyuyen bir sayiyi test icine gomerdi.
     const lag = behind.at?.head.measured === true ? behind.at.head.blocksBehind : null
-    expect(lag).toBeGreaterThan(700_000n)
+    const expectedLag = BigInt(head as string) - SMOKE_LAST
+    expect(lag).toBe(expectedLag)
+    expect(lag).toBeGreaterThan(10_000n)
     await pool.query('UPDATE sync_state SET head_block = $1, head_observed_at = now()', [
       SMOKE_LAST.toString(),
     ])
   })
 
-  /** (7) IKINCI KOSU IDEMPOTENT -- GERCEK zincir verisiyle. */
+  /** (7) IKINCI KOSU IDEMPOTENT -- GERCEK zincir verisiyle, IKI PENCEREDE. */
   it('imleci geri alip yeniden kosturmak ayni veritabanini verir', async () => {
-    await pool.query('UPDATE sync_state SET last_block = $1, last_block_hash = $2', [
-      (START_BLOCK - 1n).toString(),
-      `0x${(START_BLOCK - 1n).toString(16).padStart(64, '0')}`,
-    ])
     // Zincir bagi muhafizi gercek `parentHash`i isteyecek; imlec hash'ini de
     // gercegiyle degistiriyoruz.
     const parent = (await paced.request({
       method: 'eth_getBlockByNumber',
       params: [`0x${START_BLOCK.toString(16)}`, false],
     })) as { parentHash: Hex }
-    await pool.query('UPDATE sync_state SET last_block_hash = $1', [parent.parentHash])
+    await pool.query('UPDATE sync_state SET last_block = $1, last_block_hash = $2', [
+      (START_BLOCK - 1n).toString(),
+      parent.parentHash,
+    ])
 
-    await runOnce(pool, liveClient, deployment, CONFIG, { pacer, head: async () => SMOKE_LAST })
+    await walkBothWindows()
 
     const second = await snapshot(pool)
     expect(stripClocks(second)).toEqual(stripClocks(firstDump))
@@ -494,7 +634,12 @@ async function launchedEvent(): Promise<LaunchedEvent> {
 /** Duvar saati tasiyan alanlar; iki kosu arasinda esit OLAMAZLAR. */
 function stripClocks(dump: Record<string, unknown[]>): Record<string, unknown[]> {
   const clocks: Record<string, readonly string[]> = {
-    sync_state: ['updated_at'],
+    // `head_observed_at` DE BIR DUVAR SAATIDIR ve LISTEDE YOKTU. Migration
+    // 011 onu ekledi, `setCursor` her imlec ilerletmesinde `now()` yazar, ve
+    // bu dosyanin ikinci kosusu imleci geri alip TEKRAR ilerletir -- yani iki
+    // dokum bu sutunda ZORUNLU olarak ayrisir. Eksikligi gorunmuyordu cunku
+    // `indexer-live.yml` adimi `continue-on-error: true` ile kosuyor.
+    sync_state: ['updated_at', 'head_observed_at'],
     // `volume_24h_wei` SEMANIN TEK `now()` BAGIMLI DEGERIDIR: 24 saatlik bir
     // PENCERE toplamidir ve iki kosu arasindaki saniyelerde bile pencere kenari
     // gecilebilir. Canli smoke tam olarak ~24 saat oncesine dustugu icin bu

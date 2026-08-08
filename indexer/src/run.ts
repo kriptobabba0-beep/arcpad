@@ -1,5 +1,6 @@
 import type { Address, Hex } from 'viem'
 import { toFunctionSelector } from 'viem'
+import { USDC_ERC20_ADDRESS } from '@arcpad/shared'
 import type { Deployment, Pool, PoolClient, Queryable } from '@arcpad/db'
 import {
   assertContinuous,
@@ -205,6 +206,138 @@ export async function ensureDeployment(pool: Pool, onChain: Deployment): Promise
   }
   if (!sameDeployment(stored, onChain)) throw new DeploymentMismatch(stored, onChain)
   return stored
+}
+
+/**
+ * ================== PAYLASILAN ESCROW'UN GECMISI ==================
+ *
+ * `startBlock`, ESCROW'UN YARATILISINDAN SONRA OLAMAZ -- ve bu, Faz 2'ye
+ * kadar yalnizca ihtiyatli bir tercihti, bugun TASIYICI bir kisittir.
+ *
+ * OLCULDU (canli Arc testnet, 2026-08-09, tam gecmis taramasi):
+ *
+ *   escrow 0xEEd4431e...  feeEscrowBlock 54661437, launchFactoryBlock 55870261
+ *   [54661437, 55870260]  -- 1.208.824 blok, CANLI factory HENUZ YOKKEN --
+ *     tam SEKIZ `Deposited`, toplam 152069146725900635 wei, hepsi FAZ 1'in
+ *     curve'unden (0x7938be34...).
+ *   Alicilari: 0xebbecfda... (hazine) ve 0xe92c64c4... (creator) -- yani FAZ
+ *     2'nin curve'unun odedigi ILE AYNI IKI ALICI.
+ *   Zincirin kendi defteri: owed(hazine)=244123236093493081,
+ *     owed(creator)=77091548240050448, totalOwed=321214784333543529=bakiye.
+ *     Iki yarinin olay toplamlari bu iki slotu WEI WEI yeniden uretiyor.
+ *
+ * SONUC: `startBlock`i factory'nin blogu yapmak -- yani "1,2M bos blogu
+ * atlayalim" optimizasyonu -- `fee_balances`i TAM OLARAK 152069146725900635
+ * wei EKSIK birakir, ve eksik AYNI IKI ALICIYA dagilmistir. `FeeEscrow.claim()`
+ * slotun TAMAMINI oder ve `Claimed(recipient, owed[recipient])` yayar; o olay
+ * uygulandiginda `claimable_wei` NEGATIFE duser,
+ * `CHECK (claimable_wei >= 0)` patlar, aralik geri alinir, ve hata adi hicbir
+ * kumede olmadigi icin `isTransient` KALICI der: surec oler, her yeniden
+ * baslatma AYNI araligi tekrar oynatir ve AYNI yerde oler. Kurtarma yolu
+ * yoktur; veritabani bastan taranmalidir.
+ *
+ * Bugun zincirde HIC `Claimed` yok (olculdu: iki yarida da sifir), yani ariza
+ * GIZLIDIR: yanlis `startBlock` ile kosan bir indexer aylarca yesil gorunur ve
+ * ILK claim'de kilitlenir.
+ *
+ * BU YUZDEN KAPI VAR. Kontrol tek bir olguya indirgeniyor: `startBlock`tan
+ * ONCEKI blokta escrow'un KODU YOK. Kodu yoksa log da yayamaz, yani o bloga
+ * kadar kacirilmis bir escrow olayi OLAMAZ.
+ *
+ * POZITIF KONTROL ZORUNLU, VE BU DUZELTMENIN ICINDEKI KUSURU KAPATIYOR:
+ * "kod yok" yaniti IKI sebepten gelebilir -- (a) kontrat gercekten yoktu,
+ * (b) dugum o yukseklikte STATE TUTMUYOR (budanmis / snap-sync). (b) halinde
+ * kapi SESSIZCE gecerdi, yani "kimsenin yazmadigi bir sebeple gecen test"in
+ * uretim yolundaki tam karsiligi. Ayrimi yapan sey Arc'in USDC ERC-20
+ * onderlemesidir (`0x3600...0000`): OLCULDU, ayni RPC'den blok 0'da 1798 bayt,
+ * 54661436'da 1798, 55870260'ta 1798, `latest`te 1798 -- yani her yukseklikte
+ * vardir. Ayni blokta o VARSA ve escrow YOKSA, "yok" yaniti bir olgudur.
+ *
+ * Escrow adresi KONFIGURASYONDAN GELMEZ: `readFactoryProfile` onu factory'nin
+ * `escrow()` cagrisindan okur, yani kapi env'e yalan soylenerek gecilemez.
+ */
+export class StartBlockAfterEscrow extends Error {
+  constructor(
+    readonly escrow: Address,
+    readonly startBlock: bigint,
+    readonly probeBlock: bigint,
+    readonly codeBytes: number,
+  ) {
+    super(
+      `StartBlockAfterEscrow: escrow ${escrow} blok ${probeBlock}'te ZATEN VARDI ` +
+        `(${codeBytes} bayt kod), ama tarama ${startBlock}'ten basliyor. Aradaki her ` +
+        `Deposited/Claimed KACIRILIR. Escrow ALICIYA gore anahtarlidir ve iki factory ` +
+        `AYNI slotlara yatirir, yani kacirilan tutar yalnizca eksik degildir: ` +
+        `FeeEscrow.claim() slotun TAMAMINI oder ve o Claimed uygulandiginda ` +
+        `claimable_wei negatife duser, CHECK (claimable_wei >= 0) patlar ve indexer ` +
+        `KALICI olarak durur. ARC_START_BLOCK defterin startBlock'u = ` +
+        `min(feeEscrowBlock, launchFactoryBlock) olmalidir. Kayitli bir deployment ` +
+        `satiri varsa taramanin baslangicini O belirler -- env'i duzeltmek yetmez, ` +
+        `satir da temizlenmelidir.`,
+    )
+    this.name = 'StartBlockAfterEscrow'
+  }
+}
+
+/**
+ * Pozitif kontrol dustu: dugum `probeBlock`ta state VERMIYOR.
+ *
+ * Bu bir yapilandirma hatasi degil bir YETENEK eksigidir, ama SONUCU ayni:
+ * kapinin negatif okumasi hicbir sey ispatlamaz, o yuzden gecmesine izin
+ * verilmez. Caresi arsiv state'i olan bir uca gecmektir.
+ */
+export class HistoricalStateUnavailable extends Error {
+  constructor(
+    readonly probeBlock: bigint,
+    readonly control: Address,
+  ) {
+    super(
+      `HistoricalStateUnavailable: ${control} (Arc'in USDC ERC-20 onderlemesi, her ` +
+        `yukseklikte 1798 bayt -- olculdu) blok ${probeBlock}'te KODSUZ gorunuyor. ` +
+        `Yani bu dugum o yukseklikte state tutmuyor ve "escrow orada yoktu" okumasi ` +
+        `bir olgu degil bir yan etkidir. Arsiv state'i olan bir RPC ucu gerekir.`,
+    )
+    this.name = 'HistoricalStateUnavailable'
+  }
+}
+
+async function codeSize(
+  client: RpcClient,
+  address: Address,
+  block: bigint,
+  pacer: Pacer,
+): Promise<number> {
+  const code = (await pacer.run(() =>
+    client.request({ method: 'eth_getCode', params: [address, `0x${block.toString(16)}`] }),
+  )) as Hex | null
+  if (typeof code !== 'string') return 0
+  return (code.length - 2) / 2
+}
+
+/**
+ * ACILIS KAPISI: taramanin basi escrow'un yaratilisini KAPSIYOR MU.
+ *
+ * Iki `eth_getCode`, bir kez, acilista. Bkz. `StartBlockAfterEscrow`.
+ *
+ * `startBlock <= 1` iken SORU YOK: blok 0'in oncesi yoktur ve blok 0
+ * islem tasimaz, yani makbuz ve log da tasimaz.
+ */
+export async function assertStartBlockCoversEscrow(
+  client: RpcClient,
+  escrow: Address,
+  startBlock: bigint,
+  pacer: Pacer,
+): Promise<void> {
+  if (startBlock <= 1n) return
+  const probe = startBlock - 1n
+  const control = USDC_ERC20_ADDRESS.toLowerCase() as Address
+  // POZITIF KONTROL ONCE. Ters sira da dogru sonucu verirdi ama HATA MESAJI
+  // yanlis olurdu: state'i olmayan bir dugumde escrow "yok" cikar ve kapi
+  // sessizce gecerdi -- yani once kontrolun kendisini dogrulamak gerekir.
+  const controlBytes = await codeSize(client, control, probe, pacer)
+  if (controlBytes === 0) throw new HistoricalStateUnavailable(probe, control)
+  const escrowBytes = await codeSize(client, escrow, probe, pacer)
+  if (escrowBytes > 0) throw new StartBlockAfterEscrow(escrow, startBlock, probe, escrowBytes)
 }
 
 /** Izleme kumesi VERITABANINDAN kurulur, bellekten degil. */
@@ -542,6 +675,12 @@ const PERMANENT = new Set([
   'UnorderedLogs',
   'SingleBlockTooLarge',
   'SplitDepthExceeded',
+  // ACILIS KAPISININ IKI OLGUSU. Ikisi de operatorun mudahalesini ister ve
+  // ikisi de kendiliginden GECMEZ: birincisi bir konfigurasyon karari
+  // (`ARC_START_BLOCK` / kayitli `deployment` satiri), ikincisi bir uc secimi
+  // (arsiv state'i olmayan RPC). Tekrar denemek ayni cevabi verir.
+  'StartBlockAfterEscrow',
+  'HistoricalStateUnavailable',
 ])
 
 /**

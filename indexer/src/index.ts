@@ -3,7 +3,13 @@ import { ARC_TESTNET_CHAIN_ID, assertArcChain, createArcClient } from '@arcpad/s
 import { createPool } from '@arcpad/db'
 import { loadConfig } from './config'
 import { createAddressWidthMemo, createPacer, type RpcClient } from './logs'
-import { ensureDeployment, isRateLimit, readFactoryProfile, runWithRetry } from './run'
+import {
+  assertStartBlockCoversEscrow,
+  ensureDeployment,
+  isRateLimit,
+  readFactoryProfile,
+  runWithRetry,
+} from './run'
 
 /**
  * INDEXER'IN GIRIS NOKTASI.
@@ -55,10 +61,24 @@ async function main(): Promise<void> {
     pacer,
   )
   const deployment = await ensureDeployment(pool, onChain)
+
+  // KAPI, `ensureDeployment`TEN SONRA VE DONGUDEN ONCE.
+  //
+  // SIRA TASIYICI: taramanin gercekten kullandigi `startBlock`,
+  // `config.startBlock` DEGIL `deployment.startBlock`tir -- `sameDeployment`
+  // bu alani kimlige KATMAZ, yani kayitli bir satir varsa env'deki deger
+  // sessizce yok sayilir (`runOnce`: `deployment.startBlock - 1n`). Kapiyi
+  // `onChain` uzerinde kosturmak, tam da tehlikeli olan halde -- bayat bir
+  // satir -- yanlis sayiyi dogrulamak olurdu.
+  //
+  // Escrow adresi zincirden geldi (`factory.escrow()`), env'den degil.
+  await assertStartBlockCoversEscrow(rpc, deployment.escrow, deployment.startBlock, pacer)
+
   console.log(
     `[indexer] chain=${ARC_TESTNET_CHAIN_ID} factory=${deployment.factory} ` +
       `escrow=${deployment.escrow} V=${deployment.virtualQuoteReservesWei} ` +
-      `startBlock=${deployment.startBlock}`,
+      `startBlock=${deployment.startBlock} ` +
+      `(escrow'un yaratilisi taramanin ICINDE -- dogrulandi)`,
   )
 
   const sleep = (ms: number): Promise<void> =>

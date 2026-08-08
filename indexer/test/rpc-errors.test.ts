@@ -1,6 +1,8 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { createServer, type RequestListener, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createPublicClient, http } from 'viem'
 import { afterEach, describe, expect, it } from 'vitest'
 import { loadConfig } from '../src/config'
@@ -272,24 +274,73 @@ describe('isTransient -- GERCEK viem hatalari', () => {
  * tarayan kapisiyla ayni sekil, ayni gerekce.
  */
 describe('HALT sinifi -- kaynaktan turetilen kapi', () => {
-  const SOURCES = [
-    '../src/logs.ts',
-    '../src/run.ts',
-    '../src/admit.ts',
-    '../src/verify.ts',
-    '../src/apply/trade.ts',
-    '../../packages/db/src/reorg.ts',
-  ]
+  /**
+   * KAYNAK LISTESI DE TURETILIR, ELLE YAZILMAZ -- VE BU, KAPININ KENDI
+   * ICINDEKI ARIZANIN AYNISIYDI.
+   *
+   * Onceki hali ALTI dosyalik elle yazilmis bir listeydi. Kapinin isi
+   * "kimse siniflandirma kararini ATLAYAMAZ"; elle yazilmis bir liste ise o
+   * kararin YENI BIR DOSYAYA yazilmasiyla sessizce delinir -- `src/`e yeni
+   * bir modul eklenip icinde bir hata sinifi tanimlandiginda kapi ONU HIC
+   * GORMEZ ve yesil kalir. Bu deponun 1 numarali ariza sinifi ("bir giris
+   * noktasinda kapsanan ozellik, hepsinde kapsanmis gibi okunur") tam olarak
+   * budur, ve `run.ts`e iki yeni sinif eklerken tekrar edilebilecek olan
+   * seydi.
+   *
+   * Bugun `indexer/src/**\/*.ts`in TAMAMI taranir. `packages/db`den yalnizca
+   * `reorg.ts` acikca eklenir: o paketin hata siniflari kendi paketinin
+   * sozlesmesidir, ama `ReorgDetected` indexer'in dongusunden FIRLAR, yani
+   * bu kapinin kapsamindadir.
+   */
+  const SRC = fileURLToPath(new URL('../src', import.meta.url))
+  const EXTRA_SOURCES = [fileURLToPath(new URL('../../packages/db/src/reorg.ts', import.meta.url))]
+
+  function sourceFiles(): string[] {
+    const out: string[] = []
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name)
+        if (entry.isDirectory()) walk(full)
+        else if (entry.name.endsWith('.ts')) out.push(full)
+      }
+    }
+    walk(SRC)
+    return [...out, ...EXTRA_SOURCES]
+  }
 
   /** Her `this.name = 'X'` atamasi bir hata sinifinin CALISMA ZAMANI adidir. */
   function declaredNames(): string[] {
     const out = new Set<string>()
-    for (const rel of SOURCES) {
-      const text = readFileSync(new URL(rel, import.meta.url), 'utf8')
+    for (const file of sourceFiles()) {
+      const text = readFileSync(file, 'utf8')
       for (const m of text.matchAll(/this\.name = '([A-Za-z]+)'/g)) out.add(m[1] as string)
     }
     return [...out].sort()
   }
+
+  /**
+   * KAPININ GIRDISI GERCEKTEN GENISLEDI MI. Turetilen liste, elle yazilan
+   * ALTI dosyanin hepsini KAPSAMALI -- yoksa "genislettim" derken daralttim
+   * olurdu.
+   */
+  it('taranan kaynak kumesi eski elle yazilmis listeyi KAPSAR', () => {
+    const files = sourceFiles().map((f) => f.replaceAll('\\', '/'))
+    for (const rel of [
+      'src/logs.ts',
+      'src/run.ts',
+      'src/admit.ts',
+      'src/verify.ts',
+      'src/apply/trade.ts',
+      'packages/db/src/reorg.ts',
+    ]) {
+      expect(
+        files.some((f) => f.endsWith(rel)),
+        rel,
+      ).toBe(true)
+    }
+    // Ve elle yazilmis listede OLMAYAN dosyalar da giriyor: kapi genisledi.
+    expect(files.some((f) => f.endsWith('src/cursor.ts'))).toBe(true)
+  })
 
   /**
    * KUMELER KAYNAKTAN OKUNUR, TESTE ELLE YAZILMAZ. Elle yazilan bir kopya,
@@ -303,9 +354,14 @@ describe('HALT sinifi -- kaynaktan turetilen kapi', () => {
     return [...m[1].matchAll(/'([A-Za-z]+)'/g)].map((x) => x[1] as string).sort()
   }
 
-  it('kapinin girdisi BOS DEGIL -- ve bugun on dort sinif var', () => {
+  it('kapinin girdisi BOS DEGIL -- ve bugun on alti sinif var', () => {
     const names = declaredNames()
-    expect(names.length).toBeGreaterThanOrEqual(14)
+    expect(names.length).toBeGreaterThanOrEqual(16)
+    // ACILIS KAPISININ IKI OLGUSU. Adlariyla aniliyorlar cunku ikisi de
+    // `run.ts`e SONRADAN eklendi ve elle yazilmis kaynak listesi onlari
+    // gormeye devam ederdi -- ama YENI BIR DOSYAYA yazilsalardi gormezdi.
+    expect(names).toContain('StartBlockAfterEscrow')
+    expect(names).toContain('HistoricalStateUnavailable')
     // Ucu eksikti; adlariyla anilmalari kapinin neyi kapattigini yaziyor.
     expect(names).toContain('UnorderedLogs')
     expect(names).toContain('SingleBlockTooLarge')

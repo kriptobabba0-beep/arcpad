@@ -17,11 +17,34 @@ export interface IndexerConfig {
   databaseUrl: string
   factory: Address
   /**
-   * Taramanin BASLADIGI blok (factory'nin deploy edildigi blok).
+   * Taramanin BASLADIGI blok. Defterin `startBlock`u, yani
+   * `min(feeEscrowBlock, launchFactoryBlock)` -- FACTORY'NIN BLOGU DEGIL.
    *
    * DAHA GEC baslamak launch KAYBEDER ve bu GERI ALINAMAZ: kacirilan
    * launch'in token adresi hic ogrenilmez, yani onun `Transfer`'lari da hic
    * cekilmez. Daha erken baslamak yalnizca bos aralik tarar.
+   *
+   * FAZ 2 BU ASIMETRIYI AGIRLASTIRDI, VE SEMANIN GEREKCESINI ESKITTI.
+   * `contracts/deploy/addresses.schema.json` `min(...)`i "bugun factory
+   * blogundan baslamak hicbir sey kacirmaz; ILERIDE escrow-onceli bir olay
+   * eklenirse kacirirdi" diye gerekcelendiriyor. O cumle 2026-08-06'dan beri
+   * YANLIS: Faz 2 factory'yi yeniden dagitip escrow'u DEVRALDI, yani mesele
+   * gelecekteki bir olay TURU degil, paylasilan escrow'un GECMISI.
+   *
+   * OLCULDU (canli, 2026-08-09): `[feeEscrowBlock, launchFactoryBlock)`
+   * araliginda -- 1.208.824 blok -- tam SEKIZ `Deposited` var,
+   * 152069146725900635 wei, ve alicilari Faz 2'nin odedigi IKI ALICININ TA
+   * KENDISI. Yani `min(...)` artik ihtiyat degil ZORUNLULUKTUR; gerekcesi
+   * degisti, karari degismedi. Ayrintisi ve kilitlenme mekanizmasi:
+   * `run.ts`, `StartBlockAfterEscrow`. O kapi bu alani ACILISTA dogrular.
+   *
+   * BEDELI YAZILI OLSUN: bos on ek (1,21M blok) her SOGUK BASLANGICTA
+   * yeniden yurunur. Olculdu -- 121 `eth_getLogs`, 600ms taban, 52 hiz
+   * siniri geri cekilmesi, 482 saniye -- ve uretim dongusu aralik basina
+   * DORT cagri yapar (factory `Launched`, escrow, `parentHash`, `to` hash'i;
+   * `curves`/`tokens` bos oldugu icin bedava), yani ~32-35 dakika. Bu bir
+   * KUSUR DEGIL, paylasilan escrow'un fiyatidir ve veritabani basina BIR KEZ
+   * odenir; okuma katmani bu sure boyunca zaten `behind-head` der.
    */
   startBlock: bigint
   /** Bir turda taranacak en genis aralik. `ARC_GETLOGS_MAX_RANGE` ile sinirli. */
