@@ -575,3 +575,70 @@ function requireHash(o: Record<string, unknown>, field: string, bytes: number): 
   }
   return v as Hex
 }
+/**
+ * SMOKE CIFTI: bu yayindan, ya da onceki defterden TASINMIS -- ama escrow'un
+ * aksine YENIDEN TURETILEMEZ.
+ *
+ * `escrow` onceki defterden tasinirken initcode hash'inden yeniden turetilir
+ * ve `resolvePool` havuz uclusunu CREATE2'den turetir. Smoke cifti boyle bir
+ * tasima yolu KURAMAZ: bir launch'in artigidir, bir broadcast'in degil.
+ * Tasima yolunu guvenli kilan sey bu yuzden turetme degil YENIDEN KONTROLDUR
+ * (`assertSmokePairMatchesChain`), ve tasimanin kendisi yalnizca FABRIKA
+ * DEGISMEDIYSE mesrudur -- Faz 1'in smoke'u Faz 2 fabrikasinda `isCanonical`
+ * DEGILDIR, dolayisiyla Task 7'den sonra ciftin `null` olmasi DOGRUYDU.
+ *
+ * OLCULEN HATA (2026-08-05, tekrar 2026-08-08): `--smoke-token` IKI ISI birden
+ * yapiyor -- zincirden `TOTAL_SUPPLY()` okunacak token'i secmek VE defterin
+ * alanini doldurmak. `--smoke-curve` ise yalnizca ikincisini yapar, ve ikisini
+ * birlikte gelmeye zorlayan hicbir sey yoktu. Sonuc: zincir okumasi icin
+ * gecmek ZORUNDA oldugunuz `--smoke-token` ile kosmak, `smokeToken` dolu
+ * `smokeCurve` bos bir defter uretiyordu -- yani jenerator, KENDI fork
+ * kapisinin ("the pair must move together") reddettigi bir dosya yaziyordu.
+ */
+export function resolveSmokePair(
+  cliToken: Address | null,
+  cliCurve: Address | null,
+  previous: Record<string, unknown> | null,
+  factory: Address,
+): { smokeToken: Address | null; smokeCurve: Address | null; source: string } {
+  if (cliToken && cliCurve) {
+    return { smokeToken: cliToken, smokeCurve: cliCurve, source: 'command line' }
+  }
+  // CIFT BIRLIKTE HAREKET EDER. Yarim bir cift sessizce yazilamaz.
+  if (cliToken || cliCurve) {
+    const given = cliToken ? '--smoke-token' : '--smoke-curve'
+    const missing = cliToken ? '--smoke-curve' : '--smoke-token'
+    throw new Error(
+      `${given} was given without ${missing}. The smoke pair MOVES TOGETHER: ` +
+        'test_theSmokeCurveInTheBookIsRealAndComplete asserts exactly that and would reject ' +
+        'the book this run would write. Pass both, or pass neither and let the previous book carry them.',
+    )
+  }
+
+  const prevFactory = previous?.launchFactory
+  const prevToken = previous?.smokeToken
+  const prevCurve = previous?.smokeCurve
+
+  // FABRIKA DEGISTIYSE TASIMA YOK. Onceki cift SUPERSEDE EDILMIS fabrikanin
+  // urunudur; yeni fabrikada `isCanonical` degildir ve tasinmasi kapiyi
+  // kirardi. `null` burada bir kayip degil DOGRU degerdir.
+  if (typeof prevFactory !== 'string' || getAddress(prevFactory) !== factory) {
+    return {
+      smokeToken: null,
+      smokeCurve: null,
+      source:
+        prevFactory === undefined
+          ? 'no previous book'
+          : 'DROPPED: the factory changed, so the previous smoke pair belongs to a superseded factory',
+    }
+  }
+  if (typeof prevToken !== 'string' || typeof prevCurve !== 'string') {
+    return { smokeToken: null, smokeCurve: null, source: 'the previous book has no smoke pair' }
+  }
+  return {
+    smokeToken: getAddress(prevToken),
+    smokeCurve: getAddress(prevCurve),
+    source: 'carried from the previous book (same factory)',
+  }
+}
+

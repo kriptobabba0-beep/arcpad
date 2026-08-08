@@ -15,6 +15,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import {
   type Address,
   createPublicClient,
@@ -38,6 +39,7 @@ import {
   loadAddressBook,
   LOCKER_SALT,
   POOL_MANAGER_SALT,
+  resolveSmokePair,
   webEnvBlock,
 } from '../packages/shared/src/addresses'
 import {
@@ -72,6 +74,7 @@ const FACTORY_ABI = parseAbi([
   'function VIRTUAL_TOKEN_RESERVES() view returns (uint256)',
   'function VIRTUAL_QUOTE_RESERVES() view returns (uint256)',
   'function SALE_SUPPLY() view returns (uint256)',
+  'function isCanonical(address token) view returns (bool)',
 ])
 
 /** Zincirden okunan ve defterin dogrulanmasinda kullanilan degerler. */
@@ -453,6 +456,45 @@ export function discoverChainId(dir: string = DEFAULT_BOOK_DIR): number {
 // CLI
 // ---------------------------------------------------------------
 
+/**
+ * Ciftin ZINCIRDEKI karsiligi. `resolveSmokePair` yalnizca defterlerin ne
+ * dedigini bilir; bu fonksiyon zincirin ne dedigini sorar ve ikisi ayrilirsa
+ * DURUR. `resolveEscrow`in "turetme tutmazsa dur"unun turetilemeyen bir alan
+ * icin karsiligidir.
+ */
+export async function assertSmokePairMatchesChain(
+  rpcUrl: string,
+  factory: Address,
+  token: Address,
+  curve: Address,
+): Promise<void> {
+  const client = createPublicClient({ transport: http(rpcUrl) })
+  const canonical = (await client.readContract({
+    address: factory,
+    abi: FACTORY_ABI,
+    functionName: 'isCanonical',
+    args: [token],
+  })) as boolean
+  if (!canonical) {
+    throw new Error(
+      `smokeToken ${token} is NOT canonical on factory ${factory}. It is the residue of a ` +
+        'different (superseded) factory and must not be carried into this book.',
+    )
+  }
+  await new Promise((r) => setTimeout(r, 1500))
+  const curveToken = (await client.readContract({
+    address: curve,
+    abi: parseAbi(['function token() view returns (address)']),
+    functionName: 'token',
+  })) as Address
+  if (getAddress(curveToken) !== getAddress(token)) {
+    throw new Error(
+      `smokeCurve ${curve} reports token() = ${curveToken}, but the book names ${token}. ` +
+        'The pair does not describe one launch.',
+    )
+  }
+}
+
 async function readFromChain(
   rpcUrl: string,
   factory: Address,
@@ -465,7 +507,12 @@ async function readFromChain(
   // konuyor. Bu betik deployment basina BIR KEZ calisir; birkac saniye
   // hicbir sey degil, yarim yazilmis bir adres defteri ise her seydir.
   const pause = () => new Promise((r) => setTimeout(r, 1500))
-  const read = async <T>(functionName: string): Promise<T> => {
+  // `functionName` ABI'DEN TURETILIR, `string` DEGIL. Gevsek hali `scripts/`
+  // hicbir tsc programina girmedigi icin gorunmuyordu; bir yazim hatasi
+  // derlemeden gecer, calisma aninda duserdi. Simdi ABI'de olmayan bir ad
+  // derlenmez.
+  type FactoryView = Extract<(typeof FACTORY_ABI)[number], { type: 'function' }>['name']
+  const read = async <T>(functionName: FactoryView): Promise<T> => {
     const out = (await client.readContract({
       address: factory,
       abi: FACTORY_ABI,
@@ -596,6 +643,21 @@ async function main(): Promise<void> {
     receipt.bySalt.get(FEE_SCHEDULE_SALT),
   )
 
+  // CIFT, ZINCIR OKUMASINDAN ONCE cozulur: `readFromChain` `TOTAL_SUPPLY()`i
+  // ondan okur, dolayisiyla tasinan bir cift ciplak bir yeniden uretimi de
+  // MUMKUN KILAR -- eskiden `--smoke-token` gecmek zorunluydu.
+  const argAddress = (name: string): Address | null => {
+    const v = args.get(name)
+    return v && v !== 'true' ? getAddress(v) : null
+  }
+  const smoke = resolveSmokePair(
+    argAddress('smoke-token'),
+    argAddress('smoke-curve'),
+    previous,
+    receipt.factory.address,
+  )
+  process.stderr.write(`smoke pair: ${smoke.source}\n`)
+
   let reads: ChainReads
   let commit: string
   if (rehearsal) {
@@ -620,24 +682,29 @@ async function main(): Promise<void> {
   } else {
     const rpcUrl = args.get('rpc-url') ?? process.env.ARC_RPC_URL
     if (!rpcUrl) throw new Error('no --rpc-url and no ARC_RPC_URL')
-    const smoke = args.get('smoke-token')
-    reads = await readFromChain(
-      rpcUrl,
-      receipt.factory.address,
-      smoke && smoke !== 'true' ? getAddress(smoke) : null,
-    )
+    reads = await readFromChain(rpcUrl, receipt.factory.address, smoke.smokeToken)
+    // TASIMA YOLUNU GUVENLI KILAN SATIR. Escrow'unki "kendi initcode'undan
+    // turedigi KANITLANMIS bir adres"ti; smoke cifti turetilemedigi icin
+    // karsiligi ZINCIRE SORMAKTIR. Bir yeniden uretim, superseded bir cifti
+    // sessizce tasiyamaz: burada durur.
+    if (smoke.smokeToken && smoke.smokeCurve) {
+      await assertSmokePairMatchesChain(
+        rpcUrl,
+        receipt.factory.address,
+        smoke.smokeToken,
+        smoke.smokeCurve,
+      )
+    }
     commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim()
   }
 
-  const smokeTokenArg = args.get('smoke-token')
-  const smokeCurveArg = args.get('smoke-curve')
   const book = buildAddressBook({
     chainId,
     receipt,
     reads,
     commit,
-    smokeToken: smokeTokenArg && smokeTokenArg !== 'true' ? getAddress(smokeTokenArg) : null,
-    smokeCurve: smokeCurveArg && smokeCurveArg !== 'true' ? getAddress(smokeCurveArg) : null,
+    smokeToken: smoke.smokeToken,
+    smokeCurve: smoke.smokeCurve,
     escrow,
     pool,
   })
@@ -660,7 +727,14 @@ async function main(): Promise<void> {
   process.stdout.write(`wrote ${outPath}\n\n${webEnvBlock(loaded)}\n`)
 }
 
-main().catch((error: unknown) => {
-  process.stderr.write(`${(error as Error).message}\n`)
-  process.exitCode = 1
-})
+// GIRIS NOKTASI KORUMASI. Bu satirlar olmadan `main()` IMPORT ANINDA kosuyordu,
+// yani dosya "test icin" fonksiyon export ediyor ama import EDILEMIYORDU: onu
+// import eden her test bir jenerator kosusu tetiklerdi. Jeneratorun testsiz
+// olmasinin sebebi bir eksiklik degil, yazildigi haliyle TEST EDILEMEZ
+// olmasiydi -- ve testsiz kalan sey de tam olarak smoke ciftini dusuren daldi.
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  main().catch((error: unknown) => {
+    process.stderr.write(`${(error as Error).message}\n`)
+    process.exitCode = 1
+  })
+}

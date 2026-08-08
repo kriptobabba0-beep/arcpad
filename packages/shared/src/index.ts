@@ -56,6 +56,7 @@ export {
   GOVERNANCE_PATH,
   loadAddressBook,
   parseAddressBook,
+  resolveSmokePair,
   toDeployment,
   WEB_ENV_BINDINGS,
   webEnvBlock,
