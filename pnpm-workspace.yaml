@@ -3,6 +3,12 @@ packages:
   - indexer
   - keeper
   - web
+  # `scripts/` is a package so that `pnpm -r typecheck` and `pnpm -r test`
+  # REACH it. Until 2026-08-09 it was a bare directory at the repo root, which
+  # meant the address-book generator -- the tool that decides every address the
+  # product ships with -- sat outside every gate this repo believes it has: no
+  # tsc program ever included it, and no vitest run ever found it.
+  - scripts
 # Tedarik zinciri kapisi: bir paket ancak yayinlandiktan 1440 dakika (24 saat)
 # sonra kurulabilir. Bu, pnpm 11'in yerlesik varsayilanidir; burada acikca
 # yazilmasinin nedeni bir okuyucunun bu kurali gormesini saglamak ve gelecekte
