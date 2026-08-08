@@ -121,6 +121,23 @@ library DeployLib {
     string internal constant FROZEN_REMEDY =
         "ONCE KOS: make frozen-hash (forge test out-frozen/ dizinini YENIDEN DERLEMEZ). Sonra hala kirmiziysa: pin'i YENIDEN URETMEYIN, sebebini bulun.";
 
+    /// @notice DONDURULMUS ARTIFACT DIZINI. TEK YERDE.
+    /// @dev Uretim yolundaki HER okuma bu sabitten gecer; dosyada baska bir
+    ///      `out-frozen` literali KALMADI. Sebep bir mutasyon hijyeni: dizin
+    ///      adi bes ayri cagri yerinde dururken, tek bir yeri degistirmek
+    ///      digerlerini yesil birakiyordu.
+    string internal constant FROZEN_DIR = "out-frozen";
+
+    /// @notice `[profile.frozen]`in SKIP ETTIGI kaynak. DIZIN KIMLIGININ
+    ///         AYIRT EDICISI.
+    /// @dev `foundry.toml`: `skip = ["src/ArcpadHook.sol", "src/ArcpadLocker.sol",
+    ///      "test/**", "script/**"]`. Yani `out-frozen/ArcpadHook.sol/` HICBIR
+    ///      zaman uretilemez, `out/ArcpadHook.sol/` ise HER derlemede uretilir.
+    ///      Ayirt edici olarak SECILDI cunku iki dizinin FARKI budur: baytlarin
+    ///      kendisi ayirt edici DEGILDIR -- `out/` dogru baytlari da tutabilir,
+    ///      ve tam olarak o yuzden mutant hayatta kaliyordu.
+    string internal constant NOT_IN_THE_FROZEN_BUILD = "ArcpadHook.sol";
+
     /// @dev "O ADRESTE BIR SEY VAR, VE O BIZIM DERLEMEMIZ DEGIL."
     ///      `AlreadyDeployed`DEN AYRI BIR HATA OLMASI TASIYICIDIR ve ayrimin
     ///      kendisi guvenlik ozelligidir: bir CREATE2 adresinde KOD BULMAK iki
@@ -129,6 +146,22 @@ library DeployLib {
     ///      degil ZORUNLUDUR (`FeeEscrow` canli ve FONLU). Baska bir sey ise
     ///      adres ele gecirilmistir ve deploy DURMALIDIR.
     error OccupiedByAForeignBuild(string what, address at, bytes32 expected, bytes32 actual);
+
+    /// @dev "OKUNAN DIZIN DONDURULMUS DERLEMENIN DIZINI DEGIL."
+    ///      KAPININ KENDI KAPISI, ve var olma sebebi OLCULMUS BIR MUTANTTIR:
+    ///      bu dosyadaki bes `out-frozen` literalinin hepsini `out` yapmak
+    ///      621/621'i HAYATTA BIRAKIYORDU. Sebep de tam olarak `out-frozen/`in
+    ///      var olma sebebiydi: `out/`u IKI derleme isi yazar, hangisinin
+    ///      kazandigi CAGRI SIRASINA baglidir, dolayisiyla mutant bazen dogru
+    ///      baytlari okur ve kapi "gecer" -- ve bir incelemeci bu hayaleti
+    ///      GERCEKTEN yasadi: bir restore'dan sonra `out/` bir mutantin
+    ///      bytecode'unu tutuyordu.
+    ///
+    ///      AYRIM SU: bu hata bir BAYT karsilastirmasinin sonucu DEGILDIR,
+    ///      REFERANSIN KIMLIGI hakkindadir. `NotTheFrozenBuild` "baytlar
+    ///      tutmuyor" der; bu "yanlis dizine bakiyorsun" der, ve ikisini tek
+    ///      hataya toplamak teshisi tam da en pahali anda kaybettirirdi.
+    error NotTheFrozenArtifactDirectory(string dir, string sawArtifactFor);
 
     /// @dev "BU KONTRAT ICIN RUNTIME CODEHASH KARSILASTIRMASI GECERSIZ."
     ///      Yeniden kullanim kararinin ALTINDAKI on kosul: immutable tasiyan
@@ -231,7 +264,7 @@ library DeployLib {
         Profile memory p = Profiles.forChain(chainId);
         (address governor, address treasury) = Profiles.governanceForChain(chainId);
         bytes memory initcode = abi.encodePacked(
-            _frozenCreationCode("out-frozen", "LaunchFactory"),
+            _frozenCreationCode(FROZEN_DIR, "LaunchFactory"),
             factoryArgs(frozenEscrowAddress(), treasury, governor, p, frozenFeeScheduleAddress())
         );
         return predict(FACTORY_SALT, initcode);
@@ -241,11 +274,11 @@ library DeployLib {
     ///      adresleri ZINCIRDEN BAGIMSIZDIR -- parametre almamalarinin sebebi
     ///      budur.
     function frozenEscrowAddress() internal view returns (address) {
-        return predict(ESCROW_SALT, _frozenCreationCode("out-frozen", "FeeEscrow"));
+        return predict(ESCROW_SALT, _frozenCreationCode(FROZEN_DIR, "FeeEscrow"));
     }
 
     function frozenFeeScheduleAddress() internal view returns (address) {
-        return predict(FEE_SCHEDULE_SALT, _frozenCreationCode("out-frozen", "FeeSchedule"));
+        return predict(FEE_SCHEDULE_SALT, _frozenCreationCode(FROZEN_DIR, "FeeSchedule"));
     }
 
     function assertDeployable(Plan memory plan) internal view {
@@ -264,7 +297,7 @@ library DeployLib {
         assertMatchesFrozenBuild(plan);
         _assertMultisig("governor", plan.governor);
         _assertMultisig("treasury", plan.treasury);
-        assertVacantOrTheFrozenBuildIn(plan, "out-frozen");
+        assertVacantOrTheFrozenBuildIn(plan, FROZEN_DIR);
         assertEscrowMatchesTheAddressBook(plan);
         if (plan.factory.code.length != 0) revert AlreadyDeployed("LaunchFactory", plan.factory);
     }
@@ -366,6 +399,7 @@ library DeployLib {
     ///      arasindaki farki gormeyen bir kontrol, sessizce her seyi kabul
     ///      ederdi.
     function _frozenRuntimeCodehash(string memory dir, string memory name) private view returns (bytes32) {
+        _assertFrozenArtifactDirectory(dir);
         string memory path = string.concat(dir, "/", name, ".sol/", name, ".json");
         string memory json = vm.readFile(path);
         if (vm.keyExistsJson(json, ".deployedBytecode.immutableReferences")) {
@@ -515,7 +549,7 @@ library DeployLib {
     ///      kimligi dogrulanir. `FeeEscrow` ve `FeeSchedule` argumansizdir,
     ///      dolayisiyla onlarda initcode'un TAMAMI esitlenir.
     function assertMatchesFrozenBuild(Plan memory plan) internal view {
-        assertMatchesFrozenBuildIn(plan, "out-frozen");
+        assertMatchesFrozenBuildIn(plan, FROZEN_DIR);
     }
 
     /// @dev DIZIN PARAMETRELIDIR ve YALNIZCA testin eksik-artifact halini
@@ -578,9 +612,35 @@ library DeployLib {
     ///      oldugu icin kapinin dogrulugu bundan etkilenmez, ama iki durumu
     ///      ayri hatalarla raporlayamayiz ve bu yazili duruyor.
     function _frozenCreationCode(string memory dir, string memory name) private view returns (bytes memory code) {
+        _assertFrozenArtifactDirectory(dir);
         string memory path = string.concat(dir, "/", name, ".sol/", name, ".json");
         code = vm.parseJsonBytes(vm.readFile(path), ".bytecode.object");
         if (code.length == 0) revert FrozenArtifactMissing(path);
+    }
+
+    /// @notice OKUNAN DIZININ DONDURULMUS DERLEMENIN DIZINI OLDUGUNU IDDIA
+    ///         EDER -- ICERDIGI BAYTLARA BAKMADAN.
+    ///
+    /// @dev BU KONTROL NEDEN BAYT KARSILASTIRMASI OLAMAZ. `out/` ile
+    ///      `out-frozen/` ayni baytlari TUTABILIR ve cogu zaman TUTAR; ayrisma
+    ///      yalnizca 44444444'lu is `out/`u en son yazdiginda ortaya cikar,
+    ///      yani "baytlar tutuyor mu" sorusu YARISI OLCER, DIZINI DEGIL. Bu
+    ///      yuzden iddia dizinin YAPISINA bakar: `[profile.frozen]`
+    ///      `src/ArcpadHook.sol`u kaynak kumesinden CIKARIR (v4-core'a ulasir),
+    ///      dolayisiyla o artifact dondurulmus dizinde URETILEMEZ. `out/`ta ise
+    ///      HER derlemede vardir.
+    ///
+    /// @dev SKIP LISTESI DEGISIRSE BU AYIRT EDICI DE DEGISIR -- ve o degisiklik
+    ///      SESSIZ OLAMAZ: `ArcpadHook`u dondurulmus kumeye sokmak, kisitlari
+    ///      bosaltilmis o profilde onu 800'de derlemeye calisirdi ve
+    ///      `make frozen-hash` bunu gorurdu. Yine de
+    ///      `test_theTwoArtifactDirectoriesAreActuallyDistinguishable` ayirt
+    ///      edicinin GERCEKTEN ayirt ettigini her kosuda olcer; onsuz bu kontrol
+    ///      bir gun sessizce vakum olurdu.
+    function _assertFrozenArtifactDirectory(string memory dir) private view {
+        if (vm.isDir(string.concat(dir, "/", NOT_IN_THE_FROZEN_BUILD))) {
+            revert NotTheFrozenArtifactDirectory(dir, NOT_IN_THE_FROZEN_BUILD);
+        }
     }
 
     /// @dev DERLEME ZAMANI KONTROLLERININ GOREMEDIGI TEK SINIF: cozulen profil

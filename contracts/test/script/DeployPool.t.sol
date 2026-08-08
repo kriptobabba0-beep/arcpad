@@ -4,9 +4,12 @@ pragma solidity ^0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {PoolManager} from "@uniswap/v4-core/src/PoolManager.sol";
+import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {HookMiner} from "@uniswap/v4-periphery/test/shared/HookMiner.sol";
 import {DeployLib} from "../../script/DeployLib.sol";
 import {DeployPool} from "../../script/DeployPool.s.sol";
 import {PoolDeployLib, PoolPlan} from "../../script/PoolDeployLib.sol";
+import {Profile, Profiles} from "../../script/Profiles.sol";
 import {ArcpadHook} from "../../src/ArcpadHook.sol";
 import {ArcpadLocker} from "../../src/ArcpadLocker.sol";
 import {LaunchFactory} from "../../src/LaunchFactory.sol";
@@ -96,6 +99,94 @@ contract DeployPoolTest is Test {
         assertEq(
             PoolDeployLib.escrowFor(PoolDeployLib.ARC_TESTNET_CHAIN_ID), PoolDeployLib.ARC_ESCROW, "escrow adresi kaydi"
         );
+    }
+
+    /// ...AMA YUKARIDAKI IDDIA TEK BASINA BIR TOTOLOJIYE DONUSEBILIR, VE
+    /// OLCULDU: `factoryFor()`u `return ARC_FACTORY;`e KISALTMAK **621/621
+    /// HAYATTA KALIYORDU**. Sebep basit -- temiz bir agacta pin ile turetme
+    /// AYNI SAYIDIR, dolayisiyla "esitler mi" sorusu ikisi de sabit oldugunda
+    /// da EVET doner. Ankrajin tasidigi anlam ise tam tersidir: fabrika
+    /// KAYDIGINDA bu sayinin ONUNLA BIRLIKTE kaymasi.
+    ///
+    /// @dev BU YUZDEN IKI SEY OLCULUR:
+    ///        (1) BAGIMSIZ TURETME -- CREATE2 formulu bu dosyada YENIDEN
+    ///            YAZILIR ve girdileri `out-frozen/` artifact'lerinden okunur,
+    ///            `DeployLib`in turetmesinden degil;
+    ///        (2) DUYARLILIK -- BASKA bir zincirin governance'i BASKA bir
+    ///            fabrika adresi uretir, ve `factoryFor` onu URETMEK
+    ///            ZORUNDADIR. Sabit donduren bir mutant burada duser.
+    function test_theFactoryAnchorIsAComputationAndNotAConstant() public view {
+        assertEq(
+            PoolDeployLib.factoryFor(PoolDeployLib.ARC_TESTNET_CHAIN_ID),
+            _independentlyDerivedFactory(PoolDeployLib.ARC_TESTNET_CHAIN_ID),
+            "ankraj, bu dosyada yeniden yazilan CREATE2 turetmesinden AYRISTI"
+        );
+
+        address local = _independentlyDerivedFactory(LOCAL_REHEARSAL);
+        assertTrue(
+            local != PoolDeployLib.ARC_FACTORY, "iki zincir AYNI fabrikayi uretiyor -- tanik yok, duyarlilik olculemez"
+        );
+        assertEq(
+            PoolDeployLib.factoryFor(LOCAL_REHEARSAL),
+            local,
+            "factoryFor argumanini YOKSAYDI -- ankraj bir turetme degil, bir SABIT"
+        );
+    }
+
+    /// @dev ESCROW ICIN AYNI DUYARLILIK TESTI YAZILAMAZ, VE SEBEBI YAPISALDIR:
+    ///      `FeeEscrow`un constructor argumani yoktur, dolayisiyla adresi HER
+    ///      ZINCIRDE AYNIDIR -- "baska bir zincir baska bir adres verir"
+    ///      tanigi MEVCUT DEGILDIR. Escrow'un TOTOLOJI OLMAYAN ankraji baska
+    ///      bir yerdedir ve orada KOSULUR:
+    ///      `DeployLib.assertEscrowMatchesTheAddressBook`, escrow initcode
+    ///      hash'ini `deploy/addresses.5042002.json`e -- GECMIS BIR YAYINDAN
+    ///      kalan, bu agactan YENIDEN URETILEMEYEN bir kayda -- baglar
+    ///      (`Deploy.t.sol::test_theAddressBookBindsTheEscrowThisTreeWouldDeploy`,
+    ///      `::test_anAddressBookThatDisagreesStopsTheDeploy`). Escrow bytecode'u
+    ///      kaydiginda `Deploy` ORADA durur ve havuz katmani hic kosmaz.
+    function test_theEscrowAnchorAgreesWithAnIndependentDerivation() public view {
+        assertEq(
+            PoolDeployLib.escrowFor(PoolDeployLib.ARC_TESTNET_CHAIN_ID),
+            _create2(keccak256("arcpad.FeeEscrow.v1"), _frozenCreationCode("FeeEscrow")),
+            "escrow ankraji, bu dosyada yeniden yazilan CREATE2 turetmesinden AYRISTI"
+        );
+    }
+
+    /// @dev CREATE2 FORMULU BURADA YENIDEN YAZILIR. `DeployLib.predict`i
+    ///      cagirmak, olculmek istenen turetmenin bir parcasini olcumun ICINE
+    ///      sokardi.
+    function _create2(bytes32 salt, bytes memory initcode) internal pure returns (address) {
+        return address(
+            uint160(
+                uint256(keccak256(abi.encodePacked(bytes1(0xff), DeployLib.CREATE2_FACTORY, salt, keccak256(initcode))))
+            )
+        );
+    }
+
+    function _frozenCreationCode(string memory name) internal view returns (bytes memory) {
+        return
+            vm.parseJsonBytes(
+                vm.readFile(string.concat("out-frozen/", name, ".sol/", name, ".json")), ".bytecode.object"
+            );
+    }
+
+    /// @dev YAYINLANACAK BAYTLARDAN, PROFILDEN VE GOVERNANCE'TAN. Arguman
+    ///      SIRASI `LaunchFactory`nin constructor'inin sirasidir ve BURAYA
+    ///      ELLE yazilir: `DeployLib.factoryArgs`i cagirmak, sirasi yanlis
+    ///      olan bir dunyada iki tarafi BIRLIKTE kaydiran o "ayni derlemeden
+    ///      gelen iki taraf" kipini yeniden kurardi.
+    function _independentlyDerivedFactory(uint256 chainId) internal view returns (address) {
+        address escrow_ = _create2(keccak256("arcpad.FeeEscrow.v1"), _frozenCreationCode("FeeEscrow"));
+        address schedule_ = _create2(keccak256("arcpad.FeeSchedule.v1"), _frozenCreationCode("FeeSchedule"));
+        Profile memory pr = Profiles.forChain(chainId);
+        (address governor, address treasury) = Profiles.governanceForChain(chainId);
+        bytes memory initcode = abi.encodePacked(
+            _frozenCreationCode("LaunchFactory"),
+            abi.encode(
+                escrow_, treasury, governor, pr.virtualTokenReserves, pr.virtualQuoteReserves, pr.saleSupply, schedule_
+            )
+        );
+        return _create2(keccak256("arcpad.LaunchFactory.v1"), initcode);
     }
 
     /// TURETMEDEN BASKA BIR FABRIKA REDDEDILIR.
@@ -209,6 +300,130 @@ contract DeployPoolTest is Test {
 
     function test_theArcPlanPassesThePreFlight() public view {
         PoolDeployLib.assertDeployable(_arcPlan());
+    }
+
+    // ---------------------------------------------------------------
+    // 2b. ARC CALISMA-ZAMANI PIN BLOGU -- KORUMANIN KORUMASI
+    // ---------------------------------------------------------------
+    //
+    // OLCULEN MUTANT (M1): `assertDeployable` icindeki
+    //
+    //     if (p.chainId == ARC_TESTNET_CHAIN_ID) { ... }
+    //
+    // blogunu TAMAMEN SILMEK **621/621 HAYATTA KALIYORDU**. Bu blok, bu
+    // dosyanin en pahali arizasini -- constructor'daki dort atamanin
+    // anlambilimsel olarak notr yeniden siralanmasini -- yayin aninda durduran
+    // seydir; yani KORUMA CALISIYORDU ve KORUMANIN VAR OLDUGUNU hicbir sey
+    // sinamiyordu.
+    //
+    // NICIN MEVCUT TESTLER YETMIYORDU. Hepsi DUZGUN kurulmus bir plan uzerinde
+    // `p.hookSalt == ARC_HOOK_SALT` iddia eder; o esitlik `build()`in ciktisi
+    // hakkindadir, `assertDeployable`in KOLU hakkinda degil. Blogu silmek o
+    // iddialarin hicbirini kimildatmaz. Asagidaki iki test blogun IKI KOLUNU
+    // da -- ayri ayri -- yurutur.
+
+    /// KOL 1: MADENLENEN TUZ PINDEN AYRISTIGINDA DEPLOY DURUR.
+    ///
+    /// @dev TANIK GERCEK ARIZANIN SEKLIDIR: `PoolManager`in initcode'unu
+    ///      kimildatan HERHANGI bir sey (solc yukseltmesi, v4-core guncellemesi,
+    ///      `compilation_restrictions` degisikligi) onun CREATE2 adresini,
+    ///      o da hook'un constructor kuyrugunu, o da ARAMANIN sonucunu
+    ///      kaydirir -- FABRIKA VE ESCROW ANKRAJLARI YERINDE DURURKEN. Yani
+    ///      bu sinifi ankrajlar goremez; onu goren TEK SATIR pin blogudur.
+    ///
+    /// @dev VE ONCEKI HER KONTROL GECER: adres bayraklari TASIR (asagida
+    ///      iddia edilir) ve tuz adresi YENIDEN URETIR. Pin blogu olmasa bu
+    ///      plan on-kontrolden temiz gecerdi.
+    function test_theArcPinStopsAPlanWhoseHookWasMinedAgainstDifferentBytes() public {
+        PoolPlan memory p = _arcPlan();
+
+        address movedPoolManager = address(0xA11CE);
+        (address minedHook, bytes32 minedSalt) = HookMiner.find(
+            DeployLib.CREATE2_FACTORY,
+            PoolDeployLib.ARCPAD_HOOK_FLAGS,
+            type(ArcpadHook).creationCode,
+            abi.encode(IPoolManager(movedPoolManager), p.factory, p.escrow)
+        );
+        assertTrue(minedSalt != PoolDeployLib.ARC_HOOK_SALT, "tanik pinlenen tuzu buldu -- test hicbir sey olcmuyor");
+
+        p.hookSalt = minedSalt;
+        p.hook = minedHook;
+        p.hookInitcode = PoolDeployLib.hookInitcode(movedPoolManager, p.factory, p.escrow);
+
+        // ONCEKI IKI KONTROLUN BU PLANI GECIRDIGI AYRICA IDDIA EDILIR --
+        // yoksa test, pin blogunu degil onlardan birini olcuyor olabilirdi.
+        assertEq(
+            uint256(uint160(p.hook) & Hooks.ALL_HOOK_MASK),
+            uint256(PoolDeployLib.ARCPAD_HOOK_FLAGS),
+            "tanik bayraklari TASIMIYOR -- o zaman bayrak kontrolu yeterdi"
+        );
+        assertEq(DeployLib.predict(p.hookSalt, p.hookInitcode), p.hook, "tanik kendi icinde tutarsiz");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PoolDeployLib.HookSaltIsNotThePinnedOne.selector, PoolDeployLib.ARC_HOOK_SALT, minedSalt
+            )
+        );
+        this.callAssertDeployable(p);
+    }
+
+    /// KOL 2: PINLENEN TUZ BASKA BIR ADRES URETTIGINDE DE DURUR.
+    ///
+    /// @dev AYRI BIR KOL VE AYRI BIR TESTI HAK EDIYOR, cunku yalnizca tuzu
+    ///      sinayan bir blok "tuz 13, ama adres baska" halini GECIRIRDI --
+    ///      ve o hal, arama uzayinin 1/16.384'unde tam olarak boyle gorunur.
+    ///      Bu depoda ayni sekil defalarca olculdu: iki kol, biri kosulmus.
+    ///
+    /// @dev TANIK ARANIR, PINLENMEZ. Pinlenmis sihirli bir sayi buraya
+    ///      dogrulanamayan bir iddia koyardi; arama, taniginin GERCEKTEN
+    ///      bayraklari tasidigini her kosuda YENIDEN kanitlar.
+    function test_theArcPinStopsThePinnedSaltReproducingADifferentAddress() public {
+        PoolPlan memory p = _arcPlan();
+
+        bytes memory witness;
+        address landing;
+        for (uint256 i = 0; i < 200_000; ++i) {
+            bytes memory candidate = abi.encodePacked(bytes32(uint256(i)));
+            address a = DeployLib.predict(PoolDeployLib.ARC_HOOK_SALT, candidate);
+            if (uint160(a) & Hooks.ALL_HOOK_MASK == PoolDeployLib.ARCPAD_HOOK_FLAGS) {
+                witness = candidate;
+                landing = a;
+                break;
+            }
+        }
+        assertTrue(landing != address(0), "tanik aramasi tukendi -- test hicbir sey olcmuyor");
+        assertTrue(landing != PoolDeployLib.ARC_HOOK, "tanik pinlenen adrese dustu");
+
+        p.hookInitcode = witness;
+        p.hook = landing;
+        // p.hookSalt PINLENEN TUZ OLARAK KALIR.
+        assertEq(p.hookSalt, PoolDeployLib.ARC_HOOK_SALT, "tanik tuzu kimildatti -- olculen kol 1 olurdu");
+        assertEq(DeployLib.predict(p.hookSalt, p.hookInitcode), p.hook, "tanik kendi icinde tutarsiz");
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PoolDeployLib.HookSaltDoesNotReproduceTheAddress.selector,
+                PoolDeployLib.ARC_HOOK_SALT,
+                PoolDeployLib.ARC_HOOK,
+                landing
+            )
+        );
+        this.callAssertDeployable(p);
+    }
+
+    /// KONTROL GRUBU: PIN BLOGU YALNIZCA ARC'TA KOSAR.
+    /// @dev Blogun `chainId` kosulu da tasiyicidir: her zincirde kossaydi
+    ///      `local-rehearsal` provasi -- ki hook'u BASKA bir fabrikaya karsi
+    ///      madenler -- imkansiz olurdu. Yukaridaki iki test, kosulu
+    ///      `true`ya sabitleyen bir mutanti goremez; bu test gorur.
+    function test_thePinBlockDoesNotFireOffArc() public {
+        (address factory_, address escrow_) = _fundLocalWiring();
+        PoolPlan memory local = PoolDeployLib.build(LOCAL_REHEARSAL, PoolDeployLib.ARC_GOVERNOR, factory_, escrow_);
+        assertTrue(
+            local.hookSalt != PoolDeployLib.ARC_HOOK_SALT, "yerel prova pinlenen tuzu buldu -- test hicbir sey olcmuyor"
+        );
+        // ...ve on-kontrol yine de GECER, cunku bu Arc degil.
+        PoolDeployLib.assertDeployable(local);
     }
 
     function test_anOccupiedHookAddressStopsTheDeploy() public {

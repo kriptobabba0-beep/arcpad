@@ -333,7 +333,98 @@ contract DeployTest is Test {
     ///      halinde de gecerdi.
     function test_theMissingArtifactProbeUsesAWorkingWrapper() public view {
         Plan memory p = script.plan();
-        this.callAssertFrozenIn(p, "out-frozen");
+        this.callAssertFrozenIn(p, DeployLib.FROZEN_DIR);
+    }
+
+    // ---------------------------------------------------------------
+    // KAPININ KAPISI: REFERANS DIZININ KENDISI
+    // ---------------------------------------------------------------
+    //
+    // OLCULEN MUTANT (M3): `DeployLib`teki BES `out-frozen` literalinin
+    // hepsini `out` yapmak **621/621 HAYATTA KALIYORDU** -- ve hayatta
+    // kalmasinin sebebi tam olarak `out-frozen/`in var olma sebebiydi:
+    // `out/`u IKI derleme isi yazar, hangisinin kazandigi CAGRI SIRASINA
+    // baglidir, dolayisiyla mutant cogu kosuda DOGRU baytlari okur. Bir
+    // incelemeci bu hayaleti gercekten yasadi: bir restore'dan sonra `out/`
+    // bir mutantin bytecode'unu tutuyordu.
+    //
+    // BU YUZDEN ASAGIDAKI IDDIALAR BAYTLARA BAKMAZ. Referansin KIMLIGINI
+    // olcerler.
+
+    function callAssertVacantIn(Plan memory p, string memory dir) external view {
+        DeployLib.assertVacantOrTheFrozenBuildIn(p, dir);
+    }
+
+    /// @notice AYIRT EDICI GERCEKTEN AYIRT EDIYOR -- VAKUM DEGIL.
+    ///
+    /// @dev Bu test olmadan asagidaki iki iddia bir gun sessizce vakuma
+    ///      duserdi: `out/ArcpadHook.sol/` bir gun uretilmez olsaydi kapi
+    ///      HICBIR dizini reddetmezdi ve yine de yesil kalirdi. Ayirt edicinin
+    ///      kaynagi `foundry.toml`daki `[profile.frozen] skip` listesidir --
+    ///      `src/ArcpadHook.sol` v4-core'a ULASIR, dolayisiyla dondurulmus
+    ///      kaynak kumesinden CIKARILIR ve o artifact orada URETILEMEZ.
+    function test_theTwoArtifactDirectoriesAreActuallyDistinguishable() public view {
+        assertTrue(
+            vm.isDir(string.concat("out/", DeployLib.NOT_IN_THE_FROZEN_BUILD)),
+            "out/ ArcpadHook artifact'ini TUTMUYOR -- ayirt edici vakuma dustu, kapi hicbir seyi reddetmez"
+        );
+        assertFalse(
+            vm.isDir(string.concat(DeployLib.FROZEN_DIR, "/", DeployLib.NOT_IN_THE_FROZEN_BUILD)),
+            "out-frozen/ ArcpadHook artifact'ini TUTUYOR -- skip listesi degismis, DONDURULMUS KAPANISI GOZDEN GECIR"
+        );
+    }
+
+    /// @notice PAYLASILAN ARTIFACT DIZINI REFERANS OLARAK REDDEDILIR.
+    /// @dev Kapi bir BAYT karsilastirmasina HIC VARMAZ; `NotTheFrozenBuild`
+    ///      degil `NotTheFrozenArtifactDirectory` doner, ve ayrim tasiyicidir:
+    ///      "baytlar tutmuyor" ile "yanlis dizine bakiyorsun" operator icin
+    ///      ayni sey degildir.
+    function test_theFrozenReferenceRefusesTheSharedArtifactDirectory() public {
+        Plan memory p = script.plan();
+        (bool ok, bytes memory err) = address(this).staticcall(abi.encodeCall(this.callAssertFrozenIn, (p, "out")));
+        assertFalse(ok, "kapi `out/` dizinini REFERANS olarak kabul etti");
+        assertEq(
+            err,
+            abi.encodeWithSelector(
+                DeployLib.NotTheFrozenArtifactDirectory.selector, "out", DeployLib.NOT_IN_THE_FROZEN_BUILD
+            ),
+            "kapi baska bir sebeple dustu -- dizin kimligi olculmedi"
+        );
+    }
+
+    /// @notice IKINCI GIRIS NOKTASI: YENIDEN KULLANIM KOLU DA AYNI KAPIDAN
+    ///         GECER.
+    ///
+    /// @dev BU DEPONUN ADLANDIRDIGI KIP: "bir ozellik bir giris noktasinda
+    ///      kapsanmissa hepsinde kapsanmis gorunur." Dondurulmus dizin IKI ayri
+    ///      yerden okunur -- `_frozenCreationCode` (initcode karsilastirmasi) ve
+    ///      `_frozenRuntimeCodehash` (yeniden kullanim kimligi) -- ve yalnizca
+    ///      birini korumak, canli VE FONLU escrow'un kimligini `out/`a
+    ///      dayandirirdi.
+    ///
+    /// @dev ESCROW ONCE INDIRILIR, cunku yeniden kullanim kolu BOS bir adreste
+    ///      erken doner; onsuz bu test dosyayi HIC okumazdi.
+    function test_theReuseCheckAlsoRefusesTheSharedArtifactDirectory() public {
+        Plan memory p = script.plan();
+        address pre = DeployLib.deploy(p.escrowSalt, p.escrowInitcode);
+        assertGt(pre.code.length, 0, "on-deploy kod birakmadi -- kol erken doner, test hicbir sey olcmez");
+
+        (bool ok, bytes memory err) = address(this).staticcall(abi.encodeCall(this.callAssertVacantIn, (p, "out")));
+        assertFalse(ok, "yeniden kullanim kolu `out/` dizinini REFERANS olarak kabul etti");
+        assertEq(
+            err,
+            abi.encodeWithSelector(
+                DeployLib.NotTheFrozenArtifactDirectory.selector, "out", DeployLib.NOT_IN_THE_FROZEN_BUILD
+            ),
+            "yeniden kullanim kolu baska bir sebeple dustu"
+        );
+    }
+
+    /// KONTROL GRUBU: ayni sarmalayici, DONDURULMUS dizinle, GECER.
+    function test_theReuseCheckProbeUsesAWorkingWrapper() public {
+        Plan memory p = script.plan();
+        DeployLib.deploy(p.escrowSalt, p.escrowInitcode);
+        this.callAssertVacantIn(p, DeployLib.FROZEN_DIR);
     }
 
     // ---------------------------------------------------------------
