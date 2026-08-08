@@ -10,6 +10,8 @@ import {
   CREATE2_FACTORY,
   ESCROW_SALT,
   FACTORY_SALT,
+  ARCPAD_HOOK_FLAGS,
+  HOOK_ADDRESS_MASK,
   loadAddressBook,
   parseAddressBook,
   toDeployment,
@@ -469,6 +471,103 @@ describe('adres defteri', () => {
       const live = readFileSync(join(REPO_ROOT, '.github', 'workflows', 'indexer-live.yml'), 'utf8')
       expect(withoutComments(live)).not.toMatch(/ARC_FACTORY_ADDRESS:\s*['"]?0x/)
       expect(live).toContain('run: pnpm addressbook --env-only >> "$GITHUB_ENV"')
+    })
+  })
+
+  // =====================================================================
+  // FAZ 2 / TASK 7'NIN DORT ADRESI, VE OLU SEMANIN CANLANDIRILMASI
+  // =====================================================================
+  //
+  // `contracts/deploy/addresses.schema.json` bu depoda BIR SEYI HIC
+  // DOGRULAMIYORDU: onu okuyan tek bir satir yoktu (olculdu -- tum agacta sifur
+  // referans). Sonucu su sekilde gorundu: Task 7'nin defterine dort alan ELLE
+  // eklendi, sema `additionalProperties: false` diyordu, ve HICBIR SEY kirmizi
+  // olmadi. Bir kapinin var OLMASI ile KOSUYOR olmasi arasindaki fark budur.
+  //
+  // Asagidaki uc iddia semayi yukleyiciye ve GERCEK defterlere BAGLAR. Bir
+  // JSON-Schema motoru gerekmedi ve bilerek eklenmedi (`pnpm-lock.yaml`
+  // paylasilan bir dosya): olculen ariza alan KUMESI ayrismasiydi, ve onu
+  // yakalayan sey kume esitligidir.
+  describe('sema, defter ve yukleyici ayni alan kumesi uzerinde anlasir', () => {
+    const schemaPath = join(REPO_ROOT, 'contracts', 'deploy', 'addresses.schema.json')
+    const schema = JSON.parse(readFileSync(schemaPath, 'utf8')) as {
+      required: string[]
+      properties: Record<string, unknown>
+      additionalProperties?: boolean
+    }
+
+    const REAL_BOOKS: Array<[string, string, number]> = [
+      ['arc testnet', join(REPO_ROOT, 'contracts', 'deploy'), 5042002],
+      ['local rehearsal fixture', FIXTURE_DIR, 31337],
+    ]
+
+    it('the schema still forbids unknown fields, or none of this measures anything', () => {
+      expect(schema.additionalProperties).toBe(false)
+      expect(new Set(schema.required)).toEqual(new Set(Object.keys(schema.properties)))
+    })
+
+    for (const [label, dir, chainId] of REAL_BOOKS) {
+      it(`${label}: the file's keys are EXACTLY the schema's`, () => {
+        const raw = JSON.parse(readFileSync(addressBookPath(chainId, dir), 'utf8')) as Record<
+          string,
+          unknown
+        >
+        // Iki yon de tasiyicidir: eksik alan yukleyiciyi patlatir, FAZLA alan
+        // ise `additionalProperties: false`u ihlal eder ve tam olarak boyle
+        // sessizce girdi.
+        expect(new Set(Object.keys(raw))).toEqual(new Set(schema.required))
+      })
+
+      it(`${label}: the loader produces EXACTLY those fields`, () => {
+        // Ucuncu bag: sema ve dosya anlassa bile, TS tipi geride kalabilirdi.
+        expect(new Set(Object.keys(loadAddressBook(chainId, dir)))).toEqual(
+          new Set(schema.required),
+        )
+      })
+    }
+  })
+
+  describe('havuz katmaninin dort adresi', () => {
+    it('loads all four from the fixture', () => {
+      const b = book()
+      expect(b.feeSchedule).toBe('0x47548C1ce996b24846E948B815459D98BB08dc84')
+      expect(b.poolManager).toBe('0x617321A877e024C870516CD599A581dCDCa6c09b')
+      expect(b.arcpadHook).toBe('0xd95198Cd806B736C8EcEcfFC23976b59F565e0cC')
+      expect(b.arcpadLocker).toBe('0x0e7771091a3471Dc12CbfE38836BaDC7bf5a98E8')
+    })
+
+    for (const field of ['feeSchedule', 'poolManager', 'arcpadHook', 'arcpadLocker'] as const) {
+      it(`rejects a book with no ${field}`, () => {
+        const raw = rawFixture()
+        delete raw[field]
+        expectFieldError(() => parseAddressBook(raw, CHAIN), field)
+      })
+    }
+
+    // BU IDDIA DIGER UCUNUN TASIYAMADIGI SEYI TASIR. Bir hook adresi kendi
+    // IZIN KUMESIDIR: alt 14 bit `PoolManager`in kabul ettigi seydir. Yanlis
+    // yazilmis bir hook adresi "kotu veri" degildir, ACILMAYAN BIR HAVUZDUR --
+    // ve hicbir tuketici katman bakmiyordu.
+    it('rejects a hook address that does not carry the arcpad flag bits', () => {
+      // Son karakteri degistirmek alt bitleri kaydirir: ...e0cC -> ...e0cD
+      const broken = '0xd95198Cd806B736C8EcEcfFC23976b59F565e0cD'
+      expectFieldError(() => parseAddressBook(withField('arcpadHook', broken), CHAIN), 'arcpadHook')
+    })
+
+    it('the real arc testnet book carries a hook with the flags', () => {
+      // Pozitif kontrol: negatif test tek basina "her seye kizan bir kontrol"
+      // ile de gecerdi.
+      const live = loadAddressBook(5042002, join(REPO_ROOT, 'contracts', 'deploy'))
+      expect(Number(BigInt(live.arcpadHook) & BigInt(HOOK_ADDRESS_MASK))).toBe(ARCPAD_HOOK_FLAGS)
+      expect(ARCPAD_HOOK_FLAGS).toBe(0x2000 | 0x80 | 0x40 | 0x8 | 0x4)
+    })
+
+    it('rejects a pool address pasted into the wrong field', () => {
+      // Sekiz alan, 28 cift. Elle yazilan bir defterde en olasi hata budur.
+      expectFieldError(
+        () => parseAddressBook(withField('poolManager', rawFixture().arcpadLocker), CHAIN),
+        'poolManager',
+      )
     })
   })
 })

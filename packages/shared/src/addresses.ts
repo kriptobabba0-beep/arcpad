@@ -29,6 +29,29 @@ import {
 export const CREATE2_FACTORY: Address = '0x4e59b44847b379578588920cA78FbF26c0B4956C'
 export const ESCROW_SALT: Hex = keccak256(toBytes('arcpad.FeeEscrow.v1'))
 export const FACTORY_SALT: Hex = keccak256(toBytes('arcpad.LaunchFactory.v1'))
+export const FEE_SCHEDULE_SALT: Hex = keccak256(toBytes('arcpad.FeeSchedule.v1'))
+export const POOL_MANAGER_SALT: Hex = keccak256(toBytes('arcpad.PoolManager.v1'))
+export const LOCKER_SALT: Hex = keccak256(toBytes('arcpad.ArcpadLocker.v1'))
+
+/**
+ * `ArcpadHook`un tuzu, VE TEK TURETILMEYEN OLANI. Digerleri bir dizeden
+ * keccak'lanir; bu bir ARAMA sonucudur (`HookMiner`in 0'dan yukari taradigi
+ * ilk gecerli tuz), dolayisiyla burada bir PIN olarak durur ve
+ * `PoolDeployLib.ARC_HOOK_SALT`in ikizidir. Iki taraf ayri dillerde ve ayri
+ * derleme birimlerinde; ayrisirlarsa biri kirmizi olur.
+ */
+export const ARCPAD_HOOK_SALT: Hex = `0x${(13).toString(16).padStart(64, '0')}` as Hex
+
+/**
+ * V4 izin kumesi hook'un ADRESININ ALT 14 BITINDE kodlanir ve o adres her
+ * `PoolKey`in bir ALANIDIR. Yani bayraklari tasimayan bir hook adresi
+ * "yanlis yazilmis bir adres" degil, CALISMAYAN bir protokoldur:
+ * `PoolManager` onu reddeder ve hicbir havuz acilamaz. Defter bunu
+ * yukleme aninda reddeder, cunku onu tuketen dort katmandan hicbiri
+ * bakmiyordu.
+ */
+export const HOOK_ADDRESS_MASK = 0x3fff
+export const ARCPAD_HOOK_FLAGS = 0x20cc
 
 export const GOVERNANCE_PATH = join(REPO_ROOT, 'contracts', 'deploy', 'expected-governance.json')
 
@@ -54,6 +77,17 @@ export type AddressBook = {
   governor: Address
   protocolTreasury: Address
   graduationTarget: Address
+  /**
+   * FAZ 2 / TASK 7'NIN DORT ADRESI. `smokeToken`in aksine bunlar
+   * NULLABLE DEGILDIR ve bu bilincli: `smokeToken` bir launch'in artigidir
+   * ve olmayabilir, bunlar ise protokolun KENDISIDIR -- havuz katmani
+   * olmadan graduation'in gidecek yeri yoktur. Task 8'in canli sondalari
+   * (`ArcV4.fork.t.sol`) ucunu de deftereden okur.
+   */
+  feeSchedule: Address
+  poolManager: Address
+  arcpadHook: Address
+  arcpadLocker: Address
   feeEscrowBlock: bigint
   launchFactoryBlock: bigint
   startBlock: bigint
@@ -103,7 +137,19 @@ export class AddressBookError extends Error {
  * `expected-governance.json` icinde acikca `"governorIsTreasury": true`
  * olarak KAYDEDILECEK bir karardir, sessiz bir gecis degil.
  */
-const DISTINCT_FIELDS = ['launchFactory', 'feeEscrow', 'governor', 'protocolTreasury'] as const
+const DISTINCT_FIELDS = [
+  'launchFactory',
+  'feeEscrow',
+  'governor',
+  'protocolTreasury',
+  // FAZ 2. Sekiz alan, 28 cift. Bu genisleme dekoratif degil: Task 7'nin
+  // defteri ELLE yazildi (jenerator o gun kosamiyordu, asagiya bak) ve elle
+  // yazilan bir defterde en olasi hata bir adresi yanlis alana yapistirmaktir.
+  'feeSchedule',
+  'poolManager',
+  'arcpadHook',
+  'arcpadLocker',
+] as const
 
 export const DEFAULT_BOOK_DIR = join(REPO_ROOT, 'contracts', 'deploy')
 
@@ -180,6 +226,10 @@ export function parseAddressBook(input: unknown, expectedChainId: number): Addre
     governor: requireAddress(o, 'governor'),
     protocolTreasury: requireAddress(o, 'protocolTreasury'),
     graduationTarget: requireAddress(o, 'graduationTarget'),
+    feeSchedule: requireAddress(o, 'feeSchedule'),
+    poolManager: requireAddress(o, 'poolManager'),
+    arcpadHook: requireAddress(o, 'arcpadHook'),
+    arcpadLocker: requireAddress(o, 'arcpadLocker'),
     feeEscrowBlock: requireBigint(o, 'feeEscrowBlock'),
     launchFactoryBlock: requireBigint(o, 'launchFactoryBlock'),
     startBlock: requireBigint(o, 'startBlock'),
@@ -251,6 +301,23 @@ export function parseAddressBook(input: unknown, expectedChainId: number): Addre
   // defter -- takma ad kontrollerinin varlik sebebi -- burada da yakalanir.
   assertDerivedAddress(book, 'feeEscrow', ESCROW_SALT, book.escrowInitcodeHash)
   assertDerivedAddress(book, 'launchFactory', FACTORY_SALT, book.factoryInitcodeHash)
+
+  // HOOK ADRESI IZIN KUMESINI TASIMAK ZORUNDADIR, ve bu defterin
+  // dogrulayabilecegi TEK Faz 2 adresi ozelligidir -- otekiler icin defterde
+  // bir initcode hash'i yok, ama hook'un izinleri ADRESIN KENDISINDE yazili.
+  //
+  // NICIN BURADA: dort tuketici katman da (indexer, keeper, web, db) bu adresi
+  // defterden okur ve HICBIRI bakmiyordu. Bayraklari tasimayan bir hook adresi
+  // `PoolManager` tarafindan reddedilir -- yani yanlis bir adres, sessiz bir
+  // veri hatasi degil, acilmayan bir havuzdur. Bir karakteri degismis bir
+  // yapistirmanin 16.384'te 16.383 ihtimalle yakalandigi yer burasi.
+  const hookBits = Number(BigInt(book.arcpadHook) & BigInt(HOOK_ADDRESS_MASK))
+  if (hookBits !== ARCPAD_HOOK_FLAGS) {
+    throw new AddressBookError(
+      'arcpadHook',
+      `${book.arcpadHook} carries flag bits 0x${hookBits.toString(16)}, not the arcpad set 0x${ARCPAD_HOOK_FLAGS.toString(16)} — a hook address IS its permission set`,
+    )
+  }
 
   // M-6. Iki dosya da commit'li ve ayni agac tarafindan okunuyor; birbirleriyle
   // celismelerine izin vermek icin bir sebep yok. `expected-governance.json`

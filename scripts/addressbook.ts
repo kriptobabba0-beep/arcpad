@@ -13,7 +13,7 @@
  * jeneratorsuz halden daha kotudur.
  */
 import { execFileSync } from 'node:child_process'
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   type Address,
@@ -31,9 +31,13 @@ import {
   addressBookPath,
   CREATE2_FACTORY,
   DEFAULT_BOOK_DIR,
+  ARCPAD_HOOK_SALT,
   ESCROW_SALT,
   FACTORY_SALT,
+  FEE_SCHEDULE_SALT,
   loadAddressBook,
+  LOCKER_SALT,
+  POOL_MANAGER_SALT,
   webEnvBlock,
 } from '../packages/shared/src/addresses'
 import {
@@ -84,7 +88,22 @@ type ChainReads = {
 
 type Deployed = { address: Address; block: bigint; txHash: Hex; initcodeHash: Hex }
 
-type Receipt = { escrow: Deployed; factory: Deployed }
+/**
+ * `escrow` NULL OLABILIR VE BU BIR GEVSETME DEGIL, OLCULMUS BIR ARIZANIN
+ * DUZELTMESIDIR.
+ *
+ * Task 7 Arc testnet'te KOSTU ve `Deploy.s.sol` UC degil IKI islem gonderdi:
+ * `FeeEscrow` zaten canliydi (`0xEEd4431e...`, 152.069.146.725.900.635 wei) ve
+ * `deployIfAbsent` onu ATLADI -- yeniden kullanim kolunun tam olarak yapmasi
+ * gereken sey. Sonucu su oldu: bu jenerator `broadcast: no FeeEscrow
+ * deployment` ile DURDU ve `pnpm addressbook --chain 5042002` Task 7'den sonra
+ * HIC KOSAMADI (olculdu).
+ *
+ * Yani escrow'u koruyan kol, escrow'u KAYDEDEN araci kirdi. Bu deponun
+ * defalarca adlandirdigi kip: bir sinifin duzeltmesi o sinifin yeni bir
+ * ornegini icerir.
+ */
+type Receipt = { escrow: Deployed | null; factory: Deployed; bySalt: Map<Hex, Deployed> }
 
 // ---------------------------------------------------------------
 // forge broadcast receipt
@@ -110,7 +129,13 @@ type ForgeReceipt = { transactionHash: Hex; blockNumber: string; status?: string
  * yaratildigini soyledigi adrese EsIT OLMAK ZORUNDADIR. Degilse jenerator
  * durur: yeniden turetemedigi bir adresi deftere yazamaz.
  */
-export function readBroadcast(path: string): Receipt {
+/** `readBroadcast`in FACTORY ISTEMEYEN ikizi: `DeployPool` makbuzu bir
+ *  `LaunchFactory` yayinlamaz. Ortak govde `collectDeployments`tir. */
+export function readDeployments(path: string): Map<Hex, Deployed> {
+  return collectDeployments(path)
+}
+
+function collectDeployments(path: string): Map<Hex, Deployed> {
   const raw = JSON.parse(readFileSync(path, 'utf8')) as {
     transactions: ForgeTx[]
     receipts: ForgeReceipt[]
@@ -136,7 +161,10 @@ export function readBroadcast(path: string): Receipt {
 
     const salt = `0x${input.slice(2, 66)}` as Hex
     const initcode = `0x${input.slice(66)}` as Hex
-    if (salt !== ESCROW_SALT && salt !== FACTORY_SALT) continue
+    // TUZ SUZGECI KALKTI. Onceki hal YALNIZCA escrow ve factory'yi
+    // topluyordu; `FeeSchedule` ayni makbuzda duruyordu ve gorulmuyordu,
+    // havuz katmani ise BASKA bir makbuzda. Hepsini toplamak, cagiranin
+    // hangi tuzu istedigine karar vermesini saglar.
 
     const initcodeHash = keccak256(initcode)
     const derived = getCreate2Address({ from: CREATE2_FACTORY, salt, bytecodeHash: initcodeHash })
@@ -170,11 +198,16 @@ export function readBroadcast(path: string): Receipt {
     found.set(salt, { address: derived, block, txHash: tx.hash, initcodeHash })
   }
 
-  const escrow = found.get(ESCROW_SALT)
+  return found
+}
+
+export function readBroadcast(path: string): Receipt {
+  const found = collectDeployments(path)
   const factory = found.get(FACTORY_SALT)
-  if (!escrow) throw new Error(`broadcast: no FeeEscrow deployment (salt ${ESCROW_SALT})`)
+  // FACTORY HALA ZORUNLUDUR: bu makbuz onu yayinlamadiysa okunan makbuz
+  // yanlis makbuzdur. Escrow oyle DEGILDIR -- yeniden kullanilmis olabilir.
   if (!factory) throw new Error(`broadcast: no LaunchFactory deployment (salt ${FACTORY_SALT})`)
-  return { escrow, factory }
+  return { escrow: found.get(ESCROW_SALT) ?? null, factory, bySalt: found }
 }
 
 // ---------------------------------------------------------------
@@ -191,6 +224,128 @@ export function serializeAddressBook(book: Record<string, unknown>): string {
   return `${JSON.stringify(book, null, 2)}\n`
 }
 
+/** Escrow'un deftere yazilan UC gercegi. `Deployed`in aksine `txHash`
+ *  TASIMAZ ve tasiyamaz: yeniden kullanilmis bir escrow'un deploy islemi BU
+ *  yayinin icinde degildir, gecmis bir yayinin icindedir. Var olmayan bir
+ *  alani tasimamak, onu uydurmaktan iyidir. */
+export type EscrowFacts = { address: Address; block: bigint; initcodeHash: Hex }
+
+/** Faz 2'nin havuz katmani + `FeeSchedule`. */
+export type PoolAddresses = {
+  feeSchedule: Address
+  poolManager: Address
+  arcpadHook: Address
+  arcpadLocker: Address
+}
+
+/**
+ * Onceki defter. Yeniden kullanilan escrow'un ve (bu zincirde `DeployPool`
+ * makbuzu yoksa) havuz katmaninin TEK kaynagidir.
+ *
+ * HAM okunur, `loadAddressBook` ile DEGIL, ve sebebi tam olarak bu commit'tir:
+ * yukleyici artik dort yeni alani ZORUNLU tutuyor, yani onlari HENUZ
+ * tasimayan bir defter yuklenemez -- ve jeneratorun onlari yazabilmesi icin
+ * once o defteri okumasi gerekir. Yukleyiciden gecirmek, jeneratoru kendi
+ * ciktisina bagimli hale getirirdi.
+ */
+function readPreviousBook(chainId: number, dir: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(readFileSync(addressBookPath(chainId, dir), 'utf8')) as Record<
+      string,
+      unknown
+    >
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Escrow: bu yayindan, ya da onceki defterden TASINMIS.
+ *
+ * TASIMA YOLU BEDAVA DEGILDIR. Adres, ONCEKI DEFTERIN kaydettigi initcode
+ * hash'inden YENIDEN TURETILIR ve turetme tutmazsa durur -- yani tasinan sey
+ * "bir adres" degil, "kendi initcode'undan turedigi kanitlanmis bir adres".
+ * `buildAddressBook` ayrica canli factory'nin `escrow()`u ile esitler.
+ */
+export function resolveEscrow(
+  receipt: Receipt,
+  previous: Record<string, unknown> | null,
+): EscrowFacts {
+  if (receipt.escrow) {
+    return {
+      address: receipt.escrow.address,
+      block: receipt.escrow.block,
+      initcodeHash: receipt.escrow.initcodeHash,
+    }
+  }
+  if (!previous) {
+    throw new Error(
+      'broadcast has no FeeEscrow deployment and there is no previous book to carry it from. ' +
+        'If this is a first deploy on a new chain, the escrow must be in the broadcast.',
+    )
+  }
+  const recorded = previous.feeEscrow
+  const hash = previous.escrowInitcodeHash
+  const block = previous.feeEscrowBlock
+  if (typeof recorded !== 'string' || typeof hash !== 'string' || typeof block !== 'string') {
+    throw new Error('previous book is missing feeEscrow / escrowInitcodeHash / feeEscrowBlock')
+  }
+  const derived = getCreate2Address({
+    from: CREATE2_FACTORY,
+    salt: ESCROW_SALT,
+    bytecodeHash: hash as Hex,
+  })
+  if (derived !== getAddress(recorded)) {
+    throw new Error(
+      `previous book records escrow ${getAddress(recorded)} but its own ` +
+        `escrowInitcodeHash derives ${derived}`,
+    )
+  }
+  return { address: derived, block: BigInt(block), initcodeHash: hash as Hex }
+}
+
+/**
+ * Havuz katmani: `DeployPool` makbuzundan, ya da onceki defterden.
+ *
+ * Havuz uclusunun defterde bir initcode hash'i YOKTUR, dolayisiyla escrow gibi
+ * yeniden turetilemezler. Makbuz varsa adres ORADAN gelir -- ve `readBroadcast`
+ * onu zaten CREATE2'den yeniden turetmis, makbuzun kaydettigiyle esitlemistir.
+ */
+export function resolvePool(
+  poolReceiptPath: string | null,
+  previous: Record<string, unknown> | null,
+  feeScheduleFromDeploy: Deployed | undefined,
+): PoolAddresses {
+  const fromPrevious = (field: string): Address => {
+    const v = previous?.[field]
+    if (typeof v !== 'string') {
+      throw new Error(
+        `cannot determine ${field}: no DeployPool broadcast and the previous book has no ${field}`,
+      )
+    }
+    return getAddress(v)
+  }
+
+  // `readDeployments`, `readBroadcast`in FACTORY ISTEMEYEN halidir: havuz
+  // makbuzu bir `LaunchFactory` yayinlamaz, dolayisiyla `readBroadcast` orada
+  // her zaman duserdi. Adresler yine CREATE2'den yeniden turetilir.
+  const pool: Map<Hex, Deployed> | null = poolReceiptPath ? readDeployments(poolReceiptPath) : null
+
+  const pick = (salt: Hex, field: string): Address => {
+    const d = pool?.get(salt)
+    return d ? d.address : fromPrevious(field)
+  }
+
+  return {
+    feeSchedule: feeScheduleFromDeploy
+      ? feeScheduleFromDeploy.address
+      : fromPrevious('feeSchedule'),
+    poolManager: pick(POOL_MANAGER_SALT, 'poolManager'),
+    arcpadHook: pick(ARCPAD_HOOK_SALT, 'arcpadHook'),
+    arcpadLocker: pick(LOCKER_SALT, 'arcpadLocker'),
+  }
+}
+
 export function buildAddressBook(args: {
   chainId: number
   receipt: Receipt
@@ -198,8 +353,10 @@ export function buildAddressBook(args: {
   commit: string
   smokeToken: Address | null
   smokeCurve: Address | null
+  escrow: EscrowFacts
+  pool: PoolAddresses
 }): Record<string, unknown> {
-  const { chainId, receipt, reads, commit } = args
+  const { chainId, receipt, reads, commit, escrow, pool } = args
 
   const chainKey = chainKeyFor(chainId)
   const profile = PROFILE_FOR_CHAIN[chainId]
@@ -218,14 +375,14 @@ export function buildAddressBook(args: {
       )
     }
   }
-  if (reads.escrow !== receipt.escrow.address) {
-    throw new Error(
-      `the deployed factory points at escrow ${reads.escrow}, not ${receipt.escrow.address}`,
-    )
+  // ZINCIR SON SOZU SOYLER. Escrow ister bu yayindan gelsin ister onceki
+  // defterden TASINSIN, canli factory'nin `escrow()`u ile ayni olmak
+  // ZORUNDADIR -- tasima yolunu guvenli kilan tek satir budur.
+  if (reads.escrow !== escrow.address) {
+    throw new Error(`the deployed factory points at escrow ${reads.escrow}, not ${escrow.address}`)
   }
 
-  const startBlock =
-    receipt.escrow.block < receipt.factory.block ? receipt.escrow.block : receipt.factory.block
+  const startBlock = escrow.block < receipt.factory.block ? escrow.block : receipt.factory.block
 
   return {
     chainId,
@@ -236,15 +393,22 @@ export function buildAddressBook(args: {
     saleSupply: reads.saleSupply.toString(),
     totalSupply: reads.totalSupply.toString(),
     launchFactory: receipt.factory.address,
-    feeEscrow: receipt.escrow.address,
+    feeEscrow: escrow.address,
     governor: reads.governor,
     protocolTreasury: reads.protocolTreasury,
     graduationTarget: reads.graduationTarget,
-    feeEscrowBlock: receipt.escrow.block.toString(),
+    // SIRA SEMAYLA AYNI. `addresses.schema.json` `additionalProperties: false`
+    // tasir ve artik BIR TEST onu gercek defterlerle karsilastiriyor; buradaki
+    // bir eksik alan orada kirmizi olur.
+    feeSchedule: pool.feeSchedule,
+    poolManager: pool.poolManager,
+    arcpadHook: pool.arcpadHook,
+    arcpadLocker: pool.arcpadLocker,
+    feeEscrowBlock: escrow.block.toString(),
     launchFactoryBlock: receipt.factory.block.toString(),
     startBlock: startBlock.toString(),
     deployTx: receipt.factory.txHash,
-    escrowInitcodeHash: receipt.escrow.initcodeHash,
+    escrowInitcodeHash: escrow.initcodeHash,
     factoryInitcodeHash: receipt.factory.initcodeHash,
     commit,
     smokeToken: args.smokeToken,
@@ -409,6 +573,28 @@ async function main(): Promise<void> {
   const outPath = addressBookPath(chainId, outDir)
 
   const receipt = readBroadcast(receiptPath)
+  const previous = readPreviousBook(chainId, outDir)
+  const escrow = resolveEscrow(receipt, previous)
+
+  // HAVUZ MAKBUZU AYRI BIR SCRIPT'IN CIKTISIDIR. Yoksa (prova zinciri, ya da
+  // havuz katmani henuz inmemis bir zincir) adresler onceki defterden gelir ve
+  // ikisi de yoksa jenerator ADIYLA durur -- sessizce eksik alan YAZMAZ,
+  // cunku yukleyici onu zaten reddederdi ve teshis burada daha ucuzdur.
+  const poolReceiptPath = rehearsal
+    ? null
+    : join(
+        REPO_ROOT,
+        'contracts',
+        'broadcast',
+        'DeployPool.s.sol',
+        String(chainId),
+        'run-latest.json',
+      )
+  const pool = resolvePool(
+    poolReceiptPath && existsSync(poolReceiptPath) ? poolReceiptPath : null,
+    previous,
+    receipt.bySalt.get(FEE_SCHEDULE_SALT),
+  )
 
   let reads: ChainReads
   let commit: string
@@ -452,6 +638,8 @@ async function main(): Promise<void> {
     commit,
     smokeToken: smokeTokenArg && smokeTokenArg !== 'true' ? getAddress(smokeTokenArg) : null,
     smokeCurve: smokeCurveArg && smokeCurveArg !== 'true' ? getAddress(smokeCurveArg) : null,
+    escrow,
+    pool,
   })
 
   writeFileSync(outPath, serializeAddressBook(book), 'utf8')
