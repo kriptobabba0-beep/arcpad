@@ -16,8 +16,10 @@ import {HookMiner} from "@uniswap/v4-periphery/test/shared/HookMiner.sol";
 
 import {PoolDeployLib} from "../../script/PoolDeployLib.sol";
 import {DeployLib} from "../../script/DeployLib.sol";
+import {RouterDeployLib} from "../../script/RouterDeployLib.sol";
 import {ArcpadHook} from "../../src/ArcpadHook.sol";
 import {ArcpadLocker} from "../../src/ArcpadLocker.sol";
+import {ArcpadRouter} from "../../src/ArcpadRouter.sol";
 import {LaunchFactory} from "../../src/LaunchFactory.sol";
 import {BondingCurve} from "../../src/BondingCurve.sol";
 import {FeeSchedule} from "../../src/FeeSchedule.sol";
@@ -70,6 +72,38 @@ contract ArcNativeAssetPrecompileShim {
     ///      birakirdi.
     fallback() external {
         revert("shim: the live USDC reached an unmodelled precompile member");
+    }
+}
+
+/// @notice Arc'in IKINCI native precompile'i: `0x1800...0001`, BLOKLAMA
+///         ORACLE'I.
+///
+/// @dev BU PARCANIN VAR OLMASI GEREKTIGI OLCUMLE OGRENILDI, TAHMINLE DEGIL.
+///      Canli USDC'nin `transfer`i yalnizca `0x1800...0000`a iner; ama
+///      `transferFrom` ONDAN ONCE `0x1800...0001`e `isBlocklisted(address)`
+///      ile iner ve sordugu adres HARCAYANDIR (`msg.sender` -- yani router).
+///      Graduation yolu `transferFrom` HIC kullanmadigi icin bu ikinci
+///      precompile Faz 2 boyunca gorunmedi; router'in ilk swap'i onu
+///      dogrudan buldu (`StackUnderflow`, cunku zincirdeki kodu TEK BAYT:
+///      `0x01`, `0x1800...0000` ile ayni isaret).
+///
+/// @dev CANLI CEVAPLAR OLCULDU (2026-08-09, `eth_call`):
+///        isBlocklisted(0x70997970...C79C8) = true   -- bilinen bloklu adres
+///        isBlocklisted(0xe92c64C4...92fD2) = false  -- deployer, kontrol
+///      Yani precompile GERCEKTEN bloklama oraclei'dir. Sim burada HER
+///      ZAMAN `false` doner ve bu BILINCLI BIR SINIRDIR: fork bloklama
+///      listesini UYGULAMAZ ve uygulamamalidir (ayni gerekce
+///      `ArcNativeAssetPrecompileShim`te yazili). Simin GEREKLI oldugu ve
+///      canli cevaplarin gercek oldugu `test_theSpenderBlocklistOracle...`
+///      icinde AYRI AYRI olculur.
+contract ArcBlocklistOracleShim {
+    function isBlocklisted(address) external pure returns (bool) {
+        return false;
+    }
+
+    /// @dev GURULTULU DUSER -- kardes simin kuralinin aynisi.
+    fallback() external {
+        revert("shim: the live USDC reached an unmodelled blocklist member");
     }
 }
 
@@ -177,6 +211,10 @@ contract GraduationCycleLiveForkTest is Test {
     address internal constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
     address internal constant NATIVE_ASSET_PRECOMPILE = 0x1800000000000000000000000000000000000000;
 
+    /// @notice IKINCI precompile, `transferFrom` yolunda. OLCULDU; brief'te
+    ///         ve bu depoda BASKA HICBIR YERDE gecmiyordu.
+    address internal constant BLOCKLIST_ORACLE_PRECOMPILE = 0x1800000000000000000000000000000000000001;
+
     /// @notice EIP-7708'in SISTEM EMITTER'I. OLCULDU, TAHMIN EDILMEDI.
     /// @dev Brief "sistem emitter, 18 decimal" diyor ama iddia sozlesmesinde
     ///      onu yalnizca `emitter != 0x3600...` ile tarif ediyor -- yani
@@ -234,6 +272,8 @@ contract GraduationCycleLiveForkTest is Test {
 
     address internal constant CREATOR = address(0xC0FFEE);
     address internal constant BUYER = address(0xB0FFEE);
+    address internal constant TRADER = address(0x712ADE2);
+    address internal constant PAYEE = address(0x3D1D);
     address internal constant DISPOSABLE_GOVERNOR = address(0x600D);
     address internal constant DISPOSABLE_TREASURY = address(0x7EA5);
 
@@ -269,9 +309,17 @@ contract GraduationCycleLiveForkTest is Test {
     // Kurulum
     // ---------------------------------------------------------------
 
+    /// @dev IKI PRECOMPILE, VE IKINCISI `transferFrom` YOLU ICIN ZORUNLUDUR.
+    ///      `transfer` yalnizca `0x1800...0000`a iner (graduation'in tamami
+    ///      bu yoldan gecer, bu yuzden ikinci precompile Faz 2 boyunca hic
+    ///      gorunmedi); `transferFrom` ONDAN ONCE `0x1800...0001`e
+    ///      `isBlocklisted(HARCAYAN)` diye sorar. Router `transferFrom`
+    ///      kullanir, dolayisiyla ikinci sim onsuz her router testi
+    ///      `StackUnderflow` ile duser -- olculdu.
     function _installNativeAssetShim() internal {
         vm.etch(NATIVE_ASSET_PRECOMPILE, address(new ArcNativeAssetPrecompileShim()).code);
         vm.allowCheatcodes(NATIVE_ASSET_PRECOMPILE);
+        vm.etch(BLOCKLIST_ORACLE_PRECOMPILE, address(new ArcBlocklistOracleShim()).code);
     }
 
     /// @dev GERCEK FABRIKAYA HIC DOKUNULMAZ. `applyGraduationTarget` IZINSIZDIR
@@ -722,5 +770,256 @@ contract GraduationCycleLiveForkTest is Test {
         );
         // ...VE UCRET LAUNCH TOKENINDA ALINMADI.
         assertEq(IERC20(token).balanceOf(address(hook)), 0, "the hook holds launch tokens");
+    }
+
+    // ---------------------------------------------------------------
+    // 6. MEZUNIYET SONRASI TICARET -- `ArcpadRouter`, CANLI ZINCIRDE
+    // ---------------------------------------------------------------
+    //
+    // NICIN BURADA VE AYRI BIR FORK DOSYASINDA DEGIL: bu paketin `setUp`i
+    // ZATEN canli `PoolManager`a karsi GERCEK bir havuz aciyor. Ikinci bir
+    // fork dosyasi ayni graduation'i yeniden kurmak zorunda kalirdi ve iki
+    // kurulum SESSIZCE ayrisabilirdi -- deponun kendi "ayni ozelligin iki
+    // modeli" tuzagi.
+    //
+    // FORK'UN BURADA OLCTUGU SEY: CANLI `PoolManager` (0x617321...), CANLI
+    // `FeeEscrow`, CANLI `FeeSchedule` ve CANLI USDC proxy'sinin KENDI kodu
+    // -- `approve` + `transferFrom` dahil. Yerel pakette USDC bir mock'tur ve
+    // `transferFrom`u onun modeli yurutur; burada gercek kontrat yurutur.
+
+    function _routerFor() internal returns (ArcpadRouter) {
+        return new ArcpadRouter(pm, IHooks(address(hook)));
+    }
+
+    function _ethCallTo(address to, bytes memory data) internal returns (bytes memory) {
+        string memory params =
+            string.concat('[{"to":"', vm.toString(to), '","input":"', vm.toString(data), '"},"latest"]');
+        return vm.rpc("eth_call", params);
+    }
+
+    /// @notice ROUTER `transferFrom` KULLANIR, VE CANLI USDC O YOLDA
+    ///         HARCAYANI IKINCI BIR PRECOMPILE'A SORAR.
+    ///
+    /// @dev BU FAZ 2 BOYUNCA GORUNMEDI VE SEBEBI YAPISALDIR: graduation'in
+    ///      TAMAMI `transfer` kullanir (`ArcpadLocker` kendi bakiyesinden
+    ///      oder, `ArcpadHook` `take` ile alir), yani `transferFrom` bu
+    ///      depoda ILK KEZ router'in ilk swap'inda calisti -- ve dogrudan
+    ///      `0x1800...0001`e carpti. Zincirdeki kodu `0x1800...0000` ile ayni
+    ///      TEK BAYTTIR (`0x01`), dolayisiyla revm onu `ADD` olarak calistirip
+    ///      `StackUnderflow` ile duser.
+    ///
+    /// @dev URUN SONUCU, ACIKCA: sorulan adres HARCAYANDIR, yani ROUTER'IN
+    ///      KENDISI. Router bloklanirsa o router uzerinden hicbir takas
+    ///      yapilamaz; graduation ise etkilenmez. Caresi router'in
+    ///      degistirilebilir olmasidir ve `ArcpadRouter`in NatSpec'i bunu
+    ///      yaziyor.
+    ///
+    /// @dev UC YARI, UCU DE GEREKLI:
+    ///        (1) CANLI DUGUM -- oracle GERCEKTEN bloklama cevabi veriyor:
+    ///            bilinen bloklu adres `true`, kontrol adresi `false`. Tek
+    ///            bir sorgu, her zaman ayni degeri donduren bir uctan da
+    ///            gecerdi.
+    ///        (2) FORK, SIM YOKKEN -- `transferFrom` DUSER, ama `transfer`
+    ///            AYNI ANDA CALISIR. Ikinci yari, dusen seyin USDC'nin
+    ///            tamami degil O YOL oldugunu soyler.
+    ///        (3) FORK, SIM TAKILIYKEN -- `transferFrom` BASARIR.
+    function test_theSpenderBlocklistOracleIsRealAndTheForkCannotProvideIt() public {
+        // --- YARI 1: CANLI DUGUM ---
+        assertEq(
+            uint256(
+                bytes32(
+                    _ethCallTo(BLOCKLIST_ORACLE_PRECOMPILE, abi.encodeWithSignature("isBlocklisted(address)", BLOCKED))
+                )
+            ),
+            1,
+            "the live oracle does not report the known blocklisted address as blocked"
+        );
+        assertEq(
+            uint256(
+                bytes32(
+                    _ethCallTo(
+                        BLOCKLIST_ORACLE_PRECOMPILE, abi.encodeWithSignature("isBlocklisted(address)", DOUBLE_VIEW_FROM)
+                    )
+                )
+            ),
+            0,
+            "the live oracle answers `true` for everyone -- the probe measures nothing"
+        );
+
+        // --- YARI 3: FORK, SIM TAKILI ---
+        address probe = address(0xA11CE);
+        address sink = address(0xB0B);
+        vm.deal(probe, 5e18);
+        vm.prank(probe);
+        IERC20(GraduationMath.QUOTE).approve(address(this), type(uint256).max);
+        assertTrue(
+            IERC20(GraduationMath.QUOTE).transferFrom(probe, sink, 1_000_000),
+            "live USDC transferFrom failed under both shims"
+        );
+
+        // --- YARI 2: FORK, ORACLE SIMI KALDIRILMIS ---
+        vm.etch(BLOCKLIST_ORACLE_PRECOMPILE, hex"01");
+        (bool pulled,) = GraduationMath.QUOTE
+            .call(abi.encodeWithSelector(IERC20.transferFrom.selector, probe, sink, uint256(1_000_000)));
+        assertFalse(pulled, "transferFrom worked without the blocklist oracle -- the second shim measures nothing");
+
+        // ...VE `transfer` AYNI DURUMDA HALA CALISIR. Bu satir olmadan
+        // yukaridaki `assertFalse` "USDC tamamen bozuldu" ile de saglanirdi.
+        vm.prank(probe);
+        assertTrue(
+            IERC20(GraduationMath.QUOTE).transfer(sink, 1_000_000),
+            "plain transfer also broke -- the oracle is not what distinguishes the two paths"
+        );
+    }
+
+    function _fundTrader(ArcpadRouter router, address token, uint256 nativeWei, uint256 tokenWei) internal {
+        vm.deal(TRADER, nativeWei);
+        if (tokenWei != 0) deal(token, TRADER, tokenWei, true);
+        vm.startPrank(TRADER);
+        IERC20(GraduationMath.QUOTE).approve(address(router), type(uint256).max);
+        IERC20(token).approve(address(router), type(uint256).max);
+        vm.stopPrank();
+    }
+
+    /// @notice MEZUN OLMUS BIR TOKEN, ROUTER OLMADAN TICARET EDILEMEZ -- VE
+    ///         BU CANLI `PoolManager`A KARSI OLCULDU.
+    ///
+    /// @dev IKI YARI. Ilki BOSLUGU olcer: V4'te `swap` `onlyWhenUnlocked`tur
+    ///      ve `unlock` geri cagriyi CAGIRANA yapar, yani kodsuz bir EOA
+    ///      hicbir kosulda takas edemez -- Arc'ta kanonik bir Universal
+    ///      Router da olmadigi icin graduation'dan sonra ticaretin HICBIR
+    ///      yolu yoktu. Ikincisi boslugun KAPANDIGINI olcer: dort swap
+    ///      seklinin dordu de router uzerinden calisir.
+    function test_theRouterIsTheOnlyWayToTradeAGraduatedTokenOnArc() public {
+        (address token, address payable curve) = _launchAndBuyOut(_nameForOrdering(false));
+        locker.graduate(curve);
+        (PoolKey memory key,) = _keyOf(token);
+        ArcpadRouter router = _routerFor();
+
+        // BU BIRIMIN GORDUGU ROUTER BYTECODE'U, DEPLOY'UN YAYINLAYACAGIDIR.
+        // (Yerel paket de ayni pini iddia eder; iki BIRIM ayrisirsa biri
+        // kirmizi olur.)
+        assertEq(
+            keccak256(type(ArcpadRouter).creationCode),
+            RouterDeployLib.ARC_ROUTER_CREATION_CODE_HASH,
+            "this unit's ArcpadRouter creation code is not the pinned one"
+        );
+
+        // --- YARI 1: ROUTER OLMADAN YOL YOK ---
+        vm.prank(TRADER);
+        vm.expectRevert(IPoolManager.ManagerLocked.selector);
+        pm.swap(
+            key, SwapParams({zeroForOne: true, amountSpecified: -1_000_000, sqrtPriceLimitX96: uint160(4295128740)}), ""
+        );
+
+        vm.prank(TRADER);
+        vm.expectRevert();
+        pm.unlock("");
+
+        // --- YARI 2: ROUTER ILE DORT SEKIL DE CALISIR ---
+        _fundTrader(router, token, 1_000e18, 5e26);
+        vm.startPrank(TRADER);
+        assertGt(router.buyExactIn(token, 1_000_000, 0, TRADER, block.timestamp), 0, "exact-input buy produced nothing");
+        assertGt(
+            router.buyExactOut(token, 1e24, type(uint128).max, TRADER, block.timestamp),
+            0,
+            "exact-output buy paid nothing"
+        );
+        assertGt(router.sellExactIn(token, 1e24, 0, TRADER, block.timestamp), 0, "exact-input sell produced nothing");
+        assertGt(
+            router.sellExactOut(token, 1_000_000, type(uint128).max, TRADER, block.timestamp),
+            0,
+            "exact-output sell paid nothing"
+        );
+        vm.stopPrank();
+    }
+
+    /// @notice ROUTER KULLANICININ TEK ARC BAKIYESINI, ERC-20 GORUNUMU
+    ///         UZERINDEN HAREKET ETTIRIR -- SARMALAMA ADIMI YOKTUR.
+    ///
+    /// @dev BU TESTIN OLCTUGU SEY BIR TASARIM KARARININ GECERLILIGIDIR.
+    ///      Router'da `payable` bir giris ve `msg.value`dan birime bir
+    ///      donusum YOKTUR; gerekcesi "kullanicinin native bakiyesi ZATEN
+    ///      ERC-20 gorunumdur" cumlesidir. O cumle yerel EVM'de bir MOCK
+    ///      tarafindan saglanir, dolayisiyla orada test edilemez. Burada
+    ///      CANLI USDC kontrati saglar: `approve` + `transferFrom` cifti
+    ///      trader'in 18-decimal native bakiyesini TAM OLARAK
+    ///      `birim * 10^12` kadar dusurur.
+    ///
+    /// @dev ILISKI `floor(wei / 1e12)`DIR, `birim * 1e12 == wei` DEGIL --
+    ///      ve ikisi burada AYNI sonucu verir yalnizca ODEME miktari icin;
+    ///      bakiyenin KENDISI icin taban iliskisi ayrica iddia edilir.
+    function test_theRouterMovesTheTradersSingleArcBalanceThroughTheErc20View() public {
+        (address token, address payable curve) = _launchAndBuyOut(_nameForOrdering(false));
+        locker.graduate(curve);
+        ArcpadRouter router = _routerFor();
+        _fundTrader(router, token, 1_000e18 + 7, 0);
+
+        uint256 nativeBefore = TRADER.balance;
+        uint256 unitsBefore = IERC20(GraduationMath.QUOTE).balanceOf(TRADER);
+        assertEq(unitsBefore, nativeBefore / 1e12, "balanceOf is not the floored native balance");
+
+        uint256 spend = 1_000_000; // 1 USDC, 6 decimal
+        vm.prank(TRADER);
+        uint256 out = router.buyExactIn(token, spend, 1, TRADER, block.timestamp);
+        assertGt(out, 0, "the buy produced no tokens");
+        assertEq(IERC20(token).balanceOf(TRADER), out, "the trader did not receive the reported output");
+
+        assertEq(
+            unitsBefore - IERC20(GraduationMath.QUOTE).balanceOf(TRADER),
+            spend,
+            "the 6-decimal view did not move exactly the requested spend"
+        );
+        assertEq(
+            nativeBefore - TRADER.balance,
+            spend * 1e12,
+            "the 18-decimal view did not move 10^12 wei per ERC-20 unit -- there is a second conversion somewhere"
+        );
+
+        // ROUTER HICBIR SEY TUTMAZ. Odeme trader'dan DOGRUDAN
+        // `PoolManager`a, cikti `PoolManager`dan DOGRUDAN trader'a gider.
+        assertEq(address(router).balance, 0, "the router held quote after the swap");
+        assertEq(IERC20(token).balanceOf(address(router)), 0, "the router held launch tokens after the swap");
+    }
+
+    /// @notice KULLANICIYA GOSTERILEN SAYI, CANLI `FeeSchedule` KADEME
+    ///         0'INDAN SONRA FIILEN ALINAN SAYIDIR.
+    ///
+    /// @dev Havuz ucreti SIFIRDIR ve ucreti hook alir, yani AMM matematigini
+    ///      disarida yeniden uygulayan bir arayuz sistematik olarak FAZLA
+    ///      sayi gosterirdi. Quoter gercek `PoolManager.swap`i CANLI hook ve
+    ///      CANLI `FeeSchedule` ile calistirir; bu test o sayinin
+    ///      gerceklesenle BIREBIR ayni oldugunu ve ucretin CANLI `FeeEscrow`a
+    ///      kademe 0 oraniyla girdigini iddia eder.
+    function test_theRouterQuoteEqualsTheRealizedAmountAgainstTheLiveFeeSchedule() public {
+        (address token, address payable curve) = _launchAndBuyOut(_nameForOrdering(false));
+        locker.graduate(curve);
+        ArcpadRouter router = _routerFor();
+        _fundTrader(router, token, 1_000e18, 5e26);
+
+        uint256 quoted = router.quoteBuyExactIn(token, 1_000_000);
+        assertGt(quoted, 0, "the live quote is zero -- the test would measure nothing");
+
+        uint256 protocolBefore = IEscrowView(liveEscrow).owed(DISPOSABLE_TREASURY);
+        uint256 creatorBefore = IEscrowView(liveEscrow).owed(CREATOR);
+
+        vm.prank(TRADER);
+        uint256 got = router.buyExactIn(token, 1_000_000, quoted, PAYEE, block.timestamp);
+
+        assertEq(got, quoted, "the live quote is not the realized amount");
+        assertEq(IERC20(token).balanceOf(PAYEE), got, "the recipient did not receive the output");
+
+        // KADEME 0, CANLI TABLODAN: 95 + 30 bps of 1_000_000.
+        assertEq(
+            IEscrowView(liveEscrow).owed(DISPOSABLE_TREASURY) - protocolBefore,
+            uint256(9_500) * 1e12,
+            "the protocol share is not 95 bps on the live schedule"
+        );
+        assertEq(
+            IEscrowView(liveEscrow).owed(CREATOR) - creatorBefore,
+            uint256(3_000) * 1e12,
+            "the creator share is not 30 bps on the live schedule"
+        );
+        assertEq(IERC20(token).balanceOf(address(hook)), 0, "the hook took a fee in the launch token");
     }
 }
