@@ -1,6 +1,8 @@
 import type { Abi, AbiEvent } from 'viem'
+import { MULTICALL3_ADDRESS } from '@arcpad/shared'
 import type { createArcClient } from '@arcpad/shared'
 import type {
+  BatchReadCall,
   ChainReader,
   HeadBlock,
   LogQuery,
@@ -220,6 +222,63 @@ export function viemChainReader(client: ArcClient, retry?: RetryOptions): ChainR
           toBlock: query.toBlock,
         })
         return logs as ReadonlyArray<ObservedLog>
+      }, retry)
+    },
+    readContractBatch(calls: readonly BatchReadCall[], blockNumber: bigint): Promise<unknown[]> {
+      return withRateLimitRetry(async () => {
+        const results = await client.multicall({
+          contracts: calls.map((call) => ({
+            address: call.address,
+            abi: call.abi as Abi,
+            functionName: call.functionName,
+            args: call.args ?? [],
+          })),
+          // ============ `allowFailure: true`, VE HER ARIZA FIRLATILIR ============
+          //
+          // TEHLIKE, VE NEDEN GORUNMEZ OLMAYA COK YATKIN. `aggregate3` alt
+          // cagri basina `allowFailure` alir. `true` ile revert eden bir
+          // `complete()` `success:false, returnData:0x` doner -- ve BOS VERI
+          // "tamamlanmadi" diye cok kolay cozulur. Bir arizanin SIRADAN BIR
+          // DEGER gibi okunmasi, bu deponun tekrar tekrar odedigi sekildir.
+          //
+          // IKI SECENEK VARDI VE SECILMEYENIN NEDEN SECILMEDIGI:
+          //   `allowFailure: false` -- viem parcanin TAMAMINI firlatir. Sessiz
+          //     degildir ama HANGI curve'un bozuk oldugunu SOYLEMEZ; 500 alt
+          //     cagrilik bir parcada teshis "bir yerde bir sey" olurdu.
+          //   `allowFailure: true` + her `failure`i ADIYLA firlat -- SECILEN.
+          //     Gorunurluk korunur VE teshis kazanilir.
+          //
+          // KAPI TIP TARAFINDA DA KAPALI: `readContractBatch` `unknown[]`
+          // doner, `{status, result}[]` DEGIL. Cagiran bir durum bayragi hic
+          // gormez, dolayisiyla onu kontrol etmeyi UNUTAMAZ -- bir deger
+          // goruyorsa parcadaki her alt cagri basarmistir.
+          //
+          // `success:true` AMA BOS VERI de ayni kapidan gecer, ve bu bir
+          // revert DEGILDIR: KODU OLMAYAN bir adrese yapilan CALL bos donusle
+          // BASARIR. Runbook'un `OVER-reporting` dali (reorg olmus bir
+          // `Launched`, baska bir zincirin imleci) tam olarak o hali gercek
+          // sayar. viem orada `AbiDecodingZeroDataError` uretir ve o da
+          // `failure`dir; asagidaki kontrol ikisini de yakalar.
+          allowFailure: true,
+          // viem'in KENDI (bayt tabanli, 1024 B varsayilanli) parcalamasi
+          // KAPATILIR. Parcalama `scanCurveStates`in isidir ve boyu OLCULMUS
+          // bir sabittendir; iki katmanin ayni anda parcalamasi, olculen
+          // genisligin gercekten yayilan genislik OLMAMASI demekti.
+          batchSize: 0,
+          // ZINCIR NESNESINDEN COZULMEZ, ACIKCA VERILIR. `createArcClient`
+          // bugun tasiyor; okuyucunun dogrulugu ona BAGLI OLMAMALI.
+          multicallAddress: MULTICALL3_ADDRESS,
+          blockNumber,
+        })
+        return results.map((entry, index) => {
+          if (entry.status === 'success') return entry.result
+          const call = calls[index]
+          const cause = entry.error
+          throw new Error(
+            `${call?.address}.${call?.functionName}() FAILED inside aggregate3 at block ${blockNumber} (sub-call ${index} of ${calls.length}, Multicall3 ${MULTICALL3_ADDRESS}). It is being raised, NOT decoded: a failed sub-call comes back as empty data, which reads as a perfectly ordinary "false"/"0". If the address carries no code this is what a reorged-out Launched looks like. Cause: ${cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause)}`,
+            { cause },
+          )
+        })
       }, retry)
     },
   }

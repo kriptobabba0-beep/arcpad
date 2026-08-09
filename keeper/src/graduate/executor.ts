@@ -132,6 +132,11 @@ export interface GraduatorDeps {
   dryRun: boolean
   /** Bir gecisde en fazla kac curve denenir. */
   maxPerPass?: number
+  /**
+   * `aggregate3` alt cagri sayisi, parca basina. Bkz.
+   * `DEFAULT_CURVE_BATCH_SUBCALLS` -- sayinin geldigi olcum tablosu oradadir.
+   */
+  curveBatchSize?: number
   chunk?: bigint
   maxChunksPerPoll?: number
   nowMs?: () => number
@@ -245,7 +250,7 @@ export async function runGraduationPass(deps: GraduatorDeps): Promise<PassSummar
 
   let states: CurveSlotState[]
   try {
-    states = await scanCurveStates(deps.client, curves, head)
+    states = await scanCurveStates(deps.client, curves, head, batchOpts(deps))
   } catch (error) {
     const consecutive = deps.chainErrors?.fail() ?? CHAIN_ERRORS_BEFORE_PAGE
     const classification = chainErrorClassification(describe(error), consecutive)
@@ -440,7 +445,7 @@ async function attemptOne(
   // ============ GERI OKUMA. MAKBUZ YETMEZ. ============
   let after: CurveSlotState[]
   try {
-    after = await scanCurveStates(deps.client, [curve], receipt.blockNumber)
+    after = await scanCurveStates(deps.client, [curve], receipt.blockNumber, batchOpts(deps))
   } catch (error) {
     emit(
       'page',
@@ -511,6 +516,11 @@ function applyClassification(
     `graduation-${classification.code}: ${curve} -- ${detail}`,
   )
   return { curve, code: classification.code, level: classification.level, detail }
+}
+
+/** `exactOptionalPropertyTypes` altinda `{batchSubcalls: undefined}` gecmez. */
+function batchOpts(deps: GraduatorDeps): { batchSubcalls?: number } {
+  return deps.curveBatchSize === undefined ? {} : { batchSubcalls: deps.curveBatchSize }
 }
 
 function describe(error: unknown): string {

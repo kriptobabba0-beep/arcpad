@@ -8,6 +8,7 @@
     "graduate": "tsx src/graduate.ts",
     "notify": "tsx src/notify.ts",
     "graduate:localchain-proof": "tsx test/localchain/graduationProof.ts",
+    "scale-bench": "tsx test/localchain/scaleBench.ts",
     "drill": "tsx src/drill.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"

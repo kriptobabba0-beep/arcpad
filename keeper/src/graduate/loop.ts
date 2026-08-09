@@ -40,6 +40,25 @@ export type PollLoopDeps = {
    * bekleyerek olculebilirdi.
    */
   schedule?: (fn: () => void, ms: number) => void
+  /**
+   * ============ OLAY TETIKLEYICISININ TEK BAGLANTI NOKTASI ============
+   *
+   * Verilirse `schedule` YERINE gecer: dongu bunu bekler ve cozuldugu an
+   * siradaki gecisi kosar. `'doorbell'` doner ise gecis ERKEN kosmustur.
+   *
+   * TETIKLEYICI BURAYA -- UYKUNUN YERINE -- BAGLANIR, `pass`in yanina DEGIL,
+   * VE BU KARARIN TAMAMI BUDUR. Olaya ayri bir yurutme yolu asmak, kapilarin
+   * (silahlanma, karantina, kilit, simulasyon, geri okuma) IKINCI bir kez
+   * yazilmasi ya da atlanmasi demekti -- AGENT-CONTEXT'in 1 numarali ariza
+   * sekli. Uykuyu kisaltmak ise HICBIR kapiyi degistirmez: tek yol, tek
+   * predikat, yalnizca daha erken.
+   *
+   * REDDEDERSE DONGU DUSMEZ: bekleme `pollIntervalMs`e geri duser. Emniyet
+   * agi, onu hizlandiran seyin arizasina bagli olamaz.
+   */
+  waitBeforeNextPass?: (ms: number) => Promise<'interval' | 'doorbell'>
+  /** Erken uyanis KAYDA GECER; sessiz bir hizlanma olculemez. */
+  onWake?: (reason: 'interval' | 'doorbell') => void
 }
 
 export function runPollLoop(deps: PollLoopDeps): Promise<void> {
@@ -63,7 +82,22 @@ export function runPollLoop(deps: PollLoopDeps): Promise<void> {
           resolve()
           return
         }
-        schedule(step, deps.pollIntervalMs)
+        const wait = deps.waitBeforeNextPass
+        if (wait === undefined) {
+          schedule(step, deps.pollIntervalMs)
+          return
+        }
+        wait(deps.pollIntervalMs).then(
+          (reason) => {
+            deps.onWake?.(reason)
+            step()
+          },
+          () => {
+            // BEKLEYICI DUSTU. Dongu DUSMEZ; olagan araliga geri duser.
+            deps.onWake?.('interval')
+            schedule(step, deps.pollIntervalMs)
+          },
+        )
       }, reject)
     }
     step()

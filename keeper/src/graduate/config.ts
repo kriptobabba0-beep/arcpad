@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url'
 import { ARC_TESTNET_CHAIN_ID, loadAddressBook } from '@arcpad/shared'
 import { type Address, getAddress, isAddress } from 'viem'
 import { blankToUndefined, REPO_ROOT } from '../config'
+import { DEFAULT_CURVE_BATCH_SUBCALLS } from '../watch/graduationWindow'
+import { DEFAULT_COMPLETED_WATCH_MS } from './completedWatch'
 
 /**
  * ============ YURUTUCUNUN YAPILANDIRMASI ============
@@ -33,6 +35,10 @@ export type GraduatorConfig = {
   maxPerPass: number
   logScanChunk: bigint
   maxChunksPerPass: number
+  /** `aggregate3` alt cagri sayisi, parca basina. Bkz. `KEEPER_CURVE_BATCH_SIZE`. */
+  curveBatchSize: number
+  /** `Completed` yoklama araligi. `0` = kapali; bkz. `completedWatch.ts`. */
+  completedWatchMs: number
   /** Defter yerine acik env ile kuruldu mu. Sayfada ve acilis satirinda gorunur. */
   overridden: boolean
 }
@@ -215,6 +221,41 @@ export function loadGraduatorConfig(
   }
   const logScanChunk = rawChunk === undefined ? DEFAULT_LOG_SCAN_CHUNK : BigInt(rawChunk)
 
+  // ============ PARCA BOYU: OLCULEN VARSAYILAN, INDIRILEBILIR TAVAN ========
+  //
+  // Varsayilanin nereden geldigi `DEFAULT_CURVE_BATCH_SUBCALLS`in NatSpec'inde
+  // olcum tablosuyla birlikte duruyor. Degisken VAR cunku olculen duvar
+  // (`intrinsic gas too low`, 6400 kabul / 12800 red) ARC'IN BUGUNKU PUBLIC
+  // UCUNUN gaz tavanidir -- baska bir saglayicida baska yerdedir. Bir operator
+  // reddedilen bir parcayla karsilasirsa cevabi kod degisikligi olmamalidir.
+  const rawBatch = blankToUndefined(env['KEEPER_CURVE_BATCH_SIZE'])
+  const curveBatchSize = rawBatch === undefined ? DEFAULT_CURVE_BATCH_SUBCALLS : Number(rawBatch)
+  if (!Number.isInteger(curveBatchSize) || curveBatchSize <= 0) {
+    throw new Error(
+      `KEEPER_CURVE_BATCH_SIZE must be a positive integer, got "${rawBatch ?? ''}". It is the number of aggregate3 SUB-CALLS per eth_call; measured on live Arc, 6400 was accepted and 12800 was refused with "intrinsic gas too low", and the shipped default is ${DEFAULT_CURVE_BATCH_SUBCALLS}.`,
+    )
+  }
+
+  // ============ OLAY TETIKLEYICISI: 0 = KAPALI ============
+  //
+  // Gerekcesi ve olculen bedeli `completedWatch.ts`in dosya basi NatSpec'inde.
+  // Kapatmak MESRU bir secimdir (bir operator Arc'in paylasilan butcesini
+  // indexer'a birakmak isteyebilir) ve o zaman gecikme bugunku 15 saniyeye
+  // geri doner -- yani KAPALI HALI de calisan bir yapilandirmadir, bozuk
+  // degil.
+  const rawWatch = blankToUndefined(env['KEEPER_GRADUATE_COMPLETED_WATCH_MS'])
+  const completedWatchMs = rawWatch === undefined ? DEFAULT_COMPLETED_WATCH_MS : Number(rawWatch)
+  if (!Number.isInteger(completedWatchMs) || completedWatchMs < 0) {
+    throw new Error(
+      `KEEPER_GRADUATE_COMPLETED_WATCH_MS must be a non-negative integer (0 disables the low-latency Completed watch), got "${rawWatch ?? ''}"`,
+    )
+  }
+  if (completedWatchMs > 0 && completedWatchMs >= pollIntervalMs) {
+    throw new Error(
+      `KEEPER_GRADUATE_COMPLETED_WATCH_MS is ${completedWatchMs}ms but the poll interval is ${pollIntervalMs}ms. A Completed watch at or above the poll interval costs extra eth_getLogs requests and buys NO latency -- the poll would fire first anyway. Set it below the poll interval, or to 0 to disable it.`,
+    )
+  }
+
   const rawBudget = blankToUndefined(env['KEEPER_GRADUATE_CHUNKS_PER_PASS'])
   const budgetDefault =
     opts?.once === true ? ONCE_MAX_CHUNKS_PER_PASS : DEFAULT_MAX_CHUNKS_PER_PASS
@@ -310,6 +351,8 @@ export function loadGraduatorConfig(
     maxPerPass,
     logScanChunk,
     maxChunksPerPass,
+    curveBatchSize,
+    completedWatchMs,
     overridden,
   }
 }

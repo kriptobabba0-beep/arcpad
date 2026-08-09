@@ -235,20 +235,67 @@ export interface ReadCall {
 
 /** `events` COGULDUR: tek bir taramada dort olay birden cekilir. */
 export interface LogQuery {
-  address: Address
+  /**
+   * `undefined` = ADRES FILTRESI YOK.
+   *
+   * `Launched` ve governance olaylari icin HER ZAMAN doludur (hepsi
+   * factory'den cikar). `Completed` icin doludur DEGIL, ve sebebi olcume
+   * dayanir: o olayi CURVE yayar, factory degil. Yuzlerce curve'lu bir adres
+   * listesi filtreyi taramanin yerine gecirdigi seyden daha buyuk yapardi ve
+   * Arc'in liste boyu tavani OLCULMEMISTIR. Topic0 filtresi tek bir sabittir
+   * ve donen kayitlar bilinen kume ile ICERIDE kesistirilir.
+   */
+  address?: Address
   events: readonly unknown[]
   fromBlock: bigint
   toBlock: bigint
 }
 
-export type ObservedLog = { eventName?: string; args?: Record<string, unknown> }
+export type ObservedLog = {
+  eventName?: string
+  args?: Record<string, unknown>
+  /**
+   * OLAYI YAYAN KONTRAT. Adres filtresi olmayan bir sorguda TEK ayirt edici
+   * alandir -- `Completed`in `token`i indekslidir ama CURVE degildir.
+   *
+   * ISTEGE BAGLI cunku mevcut sentetik okuyucular onu tasimaz; ONU OKUYAN
+   * TARAF EKSIKLIGINDE FIRLATIR, sessizce atlamaz (bkz. `completedWatch.ts`).
+   */
+  address?: Address
+}
 
 export type HeadBlock = { number: bigint; timestamp: bigint }
+
+/** Tek bir `aggregate3` alt cagrisi. Blok, PARCANIN tamaminda ortaktir. */
+export type BatchReadCall = {
+  address: Address
+  abi: readonly unknown[]
+  functionName: string
+  args?: readonly unknown[]
+}
 
 export interface ChainReader {
   getBlock(): Promise<HeadBlock>
   readContract(call: ReadCall): Promise<unknown>
   getLogs(query: LogQuery): Promise<ReadonlyArray<ObservedLog>>
+  /**
+   * ============ TOPLU OKUMA -- VE DONUS TIPI BIR SAVUNMADIR ============
+   *
+   * ISTEGE BAGLIDIR ve oyle olmasi kasitli: bu depodaki her sentetik
+   * `ChainReader` (birim testleri) onu tasimaz ve `scanCurveStates` o zaman
+   * ESKI ardisik yolu kullanir. Bu bir CALISMA ANI YEDEGI DEGILDIR -- toplu
+   * yol bir kez secildiginde HATA GERI DUSMEZ, FIRLATIR. Sessizce ardisiga
+   * donmek, olcumun kapatmak icin var oldugu tam o sekildir.
+   *
+   * DONUS `unknown[]`DIR, `{ok, value}[]` DEGIL. `aggregate3` alt cagri basina
+   * `allowFailure` alir ve `true` ile revert eden bir cagri
+   * `success:false, returnData:0x` olarak doner -- BOS VERI, ki "tamamlanmadi"
+   * diye COK KOLAY cozulur. Cagirana bir durum bayragi VERMEYEREK o yanlis
+   * okuma OLANAKSIZ kilinir: cagiran bir deger goruyorsa parcadaki HER alt
+   * cagri basarmistir, cunku aksi halde bu fonksiyon FIRLAMISTIR. Bugunku
+   * ardisik yolda bir revert firlatir ve GORUNURDUR; o ozellik korunur.
+   */
+  readContractBatch?(calls: readonly BatchReadCall[], blockNumber: bigint): Promise<unknown[]>
 }
 
 // ---------------------------------------------------------------
@@ -1440,25 +1487,139 @@ export async function scanCurveStates(
   client: ChainReader,
   curves: readonly Address[],
   blockNumber: bigint,
+  opts?: { batchSubcalls?: number },
 ): Promise<CurveSlotState[]> {
-  const out: CurveSlotState[] = []
-  for (const curve of curves) {
-    const read = (functionName: string): Promise<unknown> =>
-      client.readContract({ address: curve, abi: CURVE_WATCH_ABI, functionName, blockNumber })
-    const [completeRaw, graduatedRaw, reservesRaw] = await Promise.all([
-      read('complete'),
-      read('graduated'),
-      read('realQuoteReserves'),
-    ])
-    const complete = asBoolean(completeRaw, `${curve}.complete`)
-    const graduated = asBoolean(graduatedRaw, `${curve}.graduated`)
-    out.push({
+  const raw =
+    client.readContractBatch === undefined
+      ? await readCurveSlotsSequentially(client, curves, blockNumber)
+      : await readCurveSlotsBatched(client, curves, blockNumber, opts?.batchSubcalls)
+
+  return curves.map((curve, index) => {
+    const slots = raw[index]
+    /* c8 ignore next 2 -- iki okuyucu da curve basina tam uc deger dondurur */
+    if (slots === undefined) throw new Error(`${curve}: the slot read returned no result`)
+    const complete = asBoolean(slots[0], `${curve}.complete`)
+    const graduated = asBoolean(slots[1], `${curve}.graduated`)
+    return {
       curve,
       complete,
       graduated,
-      realQuoteWei:
-        complete && !graduated ? asBigint(reservesRaw, `${curve}.realQuoteReserves`) : null,
-    })
+      realQuoteWei: complete && !graduated ? asBigint(slots[2], `${curve}.realQuoteReserves`) : null,
+    }
+  })
+}
+
+const CURVE_SLOT_FUNCTIONS = ['complete', 'graduated', 'realQuoteReserves'] as const
+
+/**
+ * PARCA BOYU, OLCUMDEN -- SECILMEDI.
+ *
+ * Canli Arc testnet'e karsi olculdu (2026-08-10, `test/localchain/scaleBench.ts
+ * --arc`, kanonik Multicall3 `0xcA11...CA11`, alt cagri = gercek bir curve'un
+ * `complete()`i):
+ *
+ *   genislik   10    25    50   100   200   400   800  1600  3200  6400  12800
+ *   sonuc      OK    OK    OK    OK    OK    OK    OK    OK    OK    OK   FAIL
+ *   sure(ms)   75    85    77    87    94   132   133   156   635   774      -
+ *
+ * 12800 `intrinsic gas too low` ile REDDEDILIR -- yani duvar bir hiz siniri
+ * degil CALLDATA GAZIDIR (alt cagri basina ~192 B), ve alt cagri SAYISINDAN
+ * cok BAYTA baglidir. Uc slot da argumansizdir, yani bu oran bizim icin sabit.
+ *
+ * 500 secildi ve gerekcesi UC PARCALIDIR:
+ *   - Olculen duvarin (kabul edilen en buyuk 6400) 12.8 KATI ASAGISINDA.
+ *     Duvarin dibinde bir sabit, saglayici gaz tavanini kirptigi gun sessizce
+ *     yarim tarama uretir.
+ *   - Duz bolgede: 500 uc kez kosuldu, [119, 115, 117] ms -- olculen uc aday
+ *     (100/250/500) icinde EN DAR degisim. 3200'de sure 4 kat sicrar.
+ *   - N=500 curve = 1500 alt cagri = UC parca. Bir parcanin dusmesi taramanin
+ *     ucte birini yeniden denetir, tamamini degil.
+ *
+ * BASKA BIR RPC'DE DUVAR BASKA YERDEDIR (`intrinsic gas too low` dugum
+ * yapilandirmasidir), bu yuzden `KEEPER_CURVE_BATCH_SIZE` ile indirilebilir.
+ */
+export const DEFAULT_CURVE_BATCH_SUBCALLS = 500
+
+/**
+ * ============ ESKI YOL, DEGISMEDEN ============
+ *
+ * `readContractBatch` tasimayan bir okuyucu -- her sentetik test okuyucusu --
+ * BUNU kullanir. Curve basina uc `eth_call`, curve'ler ARDISIK: N curve = 3N
+ * cagri. Olculen bedeli `scaleBench.ts`in L4'undedir.
+ */
+async function readCurveSlotsSequentially(
+  client: ChainReader,
+  curves: readonly Address[],
+  blockNumber: bigint,
+): Promise<unknown[][]> {
+  const out: unknown[][] = []
+  for (const curve of curves) {
+    out.push(
+      await Promise.all(
+        CURVE_SLOT_FUNCTIONS.map((functionName) =>
+          client.readContract({ address: curve, abi: CURVE_WATCH_ABI, functionName, blockNumber }),
+        ),
+      ),
+    )
+  }
+  return out
+}
+
+/**
+ * ============ TOPLU YOL ============
+ *
+ * 3N alt cagri, `batchSubcalls` boyunda parcalara bolunur ve her parca TEK bir
+ * `eth_call`dir. Blok sabitlemesi KAYBOLMAZ, GUCLENIR: bir parcanin butun alt
+ * cagrilari ayni `eth_call` icinde, dolayisiyla ayni blokta, ATOMIK olarak
+ * calisir -- ardisik yolda ayni blok numarasi ISTENIR, burada YAPISAL olarak
+ * kacinilmazdir.
+ *
+ * PARCALARIN KENDISI ARDISIK yayilir, `Promise.all` ile DEGIL. Arc es zamanli
+ * `eth_call`lari sinirlar (olculdu: 6 es zamanli -> 2/6); parcalari birlikte
+ * atmak, kazanilan tek-gidis-donusu hiz siniri geri cekilmelerine cevirirdi.
+ */
+async function readCurveSlotsBatched(
+  client: ChainReader,
+  curves: readonly Address[],
+  blockNumber: bigint,
+  batchSubcalls: number | undefined,
+): Promise<unknown[][]> {
+  const width = batchSubcalls ?? DEFAULT_CURVE_BATCH_SUBCALLS
+  if (!Number.isInteger(width) || width < 1) {
+    throw new Error(
+      `the curve batch width must be a positive integer, got ${width}. See DEFAULT_CURVE_BATCH_SUBCALLS for the measurement it comes from.`,
+    )
+  }
+  const readContractBatch = client.readContractBatch
+  /* c8 ignore next -- cagiran taraf zaten kontrol etti */
+  if (readContractBatch === undefined) throw new Error('readContractBatch disappeared mid-scan')
+
+  const calls: BatchReadCall[] = []
+  for (const curve of curves) {
+    for (const functionName of CURVE_SLOT_FUNCTIONS) {
+      calls.push({ address: curve, abi: CURVE_WATCH_ABI, functionName })
+    }
+  }
+
+  const values: unknown[] = []
+  for (let offset = 0; offset < calls.length; offset += width) {
+    const chunk = calls.slice(offset, offset + width)
+    const results = await readContractBatch.call(client, chunk, blockNumber)
+    // UZUNLUK DENETIMI, YORUM DEGIL. Kisa donen bir parca, sonrasindaki HER
+    // curve'un slotlarini bir kaydirir: `complete` bir onceki curve'un
+    // `graduated`ini okur. Sessiz, ve tam olarak "hatanin normal bir deger
+    // gibi okunmasi" sekli.
+    if (results.length !== chunk.length) {
+      throw new Error(
+        `the batched slot read returned ${results.length} results for ${chunk.length} sub-calls at block ${blockNumber}. Refusing to use them: a short batch shifts every following curve's slots by one, which reads as ordinary values.`,
+      )
+    }
+    values.push(...results)
+  }
+
+  const out: unknown[][] = []
+  for (let index = 0; index < curves.length; index += 1) {
+    out.push(values.slice(index * CURVE_SLOT_FUNCTIONS.length, (index + 1) * CURVE_SLOT_FUNCTIONS.length))
   }
   return out
 }

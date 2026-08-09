@@ -19,6 +19,7 @@ import { viemChainReader } from './chainReader'
 import { loadRepoEnv } from './env'
 import { LOCKER_ABI } from './graduate/abi'
 import { viemGraduationWriter } from './graduate/chain'
+import { createCompletedWatch } from './graduate/completedWatch'
 import {
   GRADUATE_ALERT_COMPONENT,
   type GraduatorConfig,
@@ -215,10 +216,14 @@ async function main(): Promise<number> {
   const chainErrors = makeCounter()
 
   console.log(
-    `graduator ready chainId=${config.chainId} factory=${config.factory} locker=${config.locker} startBlock=${config.startBlock} dryRun=${config.dryRun} signer=${account?.address ?? '(none -- dry run only)'} source=${config.overridden ? 'ENV OVERRIDE' : 'address book'} cursor=${config.cursorPath} state=${config.statePath} locks=${config.lockDir} alertLog=${config.alertLogPath ?? 'stdout+stderr only'} mode=${once ? 'once' : `loop@${config.pollIntervalMs}ms`}`,
+    `graduator ready chainId=${config.chainId} factory=${config.factory} locker=${config.locker} startBlock=${config.startBlock} dryRun=${config.dryRun} signer=${account?.address ?? '(none -- dry run only)'} source=${config.overridden ? 'ENV OVERRIDE' : 'address book'} cursor=${config.cursorPath} state=${config.statePath} locks=${config.lockDir} alertLog=${config.alertLogPath ?? 'stdout+stderr only'} mode=${once ? 'once' : `loop@${config.pollIntervalMs}ms`} curveBatch=${config.curveBatchSize} completedWatch=${config.completedWatchMs === 0 || once ? 'off' : `${config.completedWatchMs}ms`}`,
   )
 
   let paged = false
+  // ZILIN SORDUGU KUME. Her gecisten sonra tazelenir; bkz.
+  // `CompletedWatchDeps.knownCurves` -- bir kez yakalanan kume ilk gecisin
+  // kumesinde donup kalirdi.
+  let knownCurves: readonly Address[] = []
   const pass = async (): Promise<PassSummary> => {
     const summary = await runGraduationPass({
       client: reader,
@@ -231,6 +236,7 @@ async function main(): Promise<number> {
       locks,
       dryRun: config.dryRun,
       maxPerPass: config.maxPerPass,
+      curveBatchSize: config.curveBatchSize,
       chunk: config.logScanChunk,
       maxChunksPerPoll: config.maxChunksPerPass,
       throttle,
@@ -240,6 +246,7 @@ async function main(): Promise<number> {
         alert(level, message, sink)
       },
     })
+    knownCurves = summary.pending.map((state) => state.curve).concat(store.read()?.curves ?? [])
     // KALP ATISI, IZLEYICININKIYLE AYNI SOZLESME: "bir gecis BASTAN SONA
     // tamamlandi". Yetismemis bir tarama `catching-up`tir ve o AYRI bir
     // iddiadir -- ikisini tek satirda karistirmak, izleyicide olculmus bir
@@ -288,11 +295,34 @@ async function main(): Promise<number> {
   // sonra cozuluyordu ve `settle`in 10 saniyelik cikis zamanlayicisi sureci
   // OLDURUYORDU -- olculdu: 13 saniye, tek gecis, cikis kodu 0. Gerekce
   // `graduate/loop.ts`in basinda, olcumle birlikte duruyor.
-  await runPollLoop({
+  // ============ OLAY TETIKLEYICISI, UYKUNUN YERINE ============
+  //
+  // Bkz. `completedWatch.ts`in dosya basi: `Completed` bir KAPI ZILIDIR,
+  // kayit degil. Karar hala slottan verilir; degisen tek sey, siradaki
+  // OLAGAN gecisin ne zaman kostugudur. Kapali (0) hali de calisan bir
+  // yapilandirmadir ve gecikmeyi bugunku poll araligina birakir.
+  const loopDeps: Parameters<typeof runPollLoop>[0] = {
     pass,
     stopped: () => stopped,
     pollIntervalMs: config.pollIntervalMs,
-  })
+  }
+  if (config.completedWatchMs > 0) {
+    const watch = createCompletedWatch(
+      {
+        client: reader,
+        knownCurves: () => knownCurves,
+        onRing: (detail) => {
+          alert('ok', `graduation-doorbell: ${detail}`, sink)
+        },
+        onError: (detail) => {
+          alert('ok', detail, sink)
+        },
+      },
+      { intervalMs: config.completedWatchMs },
+    )
+    loopDeps.waitBeforeNextPass = (ms) => watch.waitOrRing(ms)
+  }
+  await runPollLoop(loopDeps)
   return 0
 }
 
