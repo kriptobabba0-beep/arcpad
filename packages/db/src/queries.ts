@@ -1057,6 +1057,30 @@ export interface CreatorEarning {
  * Yalnizca `fee_events.from_addr` sayesinde mumkundur: `Deposited.from`
  * yatiran CURVE'dur ve ucretin hangi launch'tan geldigi baska HICBIR yerde
  * yazili degildir.
+ *
+ * ┌──────────────────────────────────────────────────────────────────────────┐
+ * │ BU FONKSIYONUN TOPLAMI, ALICININ ALACAGI DEGILDIR. Bir cagiran cikmadan  │
+ * │ once okunmasi gereken kisim burasi -- 2026-08-09 itibariyle SIFIR        │
+ * │ cagirani var, ve bu not tam da o yuzden simdi yaziliyor.                 │
+ * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Iki `JOIN` de ICSELDIR: bir `fee_events` satirinin sayilabilmesi icin
+ * `from_addr`in bir `curve_state` satiri, onun token'inin de bir `launches`
+ * satiri olmak ZORUNDADIR. Escrow ise FACTORY'YE gore degil ALICIYA gore
+ * anahtarlidir ve Faz 2 Faz 1'in escrow'unu YENIDEN KULLANDI -- dolayisiyla
+ * escrow'da, indexer'in izleme kumesinde HIC launch'i olmayan (superseded
+ * fabrikanin) curve'lerinden gelmis depozitolar vardir. Olculdu 2026-08-09:
+ * **36496595214216153 wei** bu sekilde disarida kalir.
+ *
+ * BU BIR HATA DEGILDIR VE `JOIN`i GEVSETEREK "DUZELTILMEZ": o depozitolarin
+ * atfedilecek bir launch'i YOKTUR, ve fonksiyonun adi zaten "launch basina"
+ * demektedir. Tehlike, cagiranin bu satirlari TOPLAYIP "kazanciniz" diye
+ * gostermesidir; o toplam, `FeeEscrow.owed(recipient)`den KUCUK olur ve
+ * kullanici hak ettiginden azini gorur.
+ *
+ * Bir cagiran yazan kisi icin kural: satirlari launch KIRILIMI olarak goster,
+ * TOPLAM icin `owed()`u (ya da `fee_balances`i) kaynak al, ve ikisi ayrilirsa
+ * farki ATFEDILMEMIS olarak isimlendir -- sessizce yutma.
  */
 export async function listCreatorEarningsByLaunch(
   db: Queryable,
