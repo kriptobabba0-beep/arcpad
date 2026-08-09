@@ -6,6 +6,7 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "graduate": "tsx src/graduate.ts",
+    "notify": "tsx src/notify.ts",
     "graduate:localchain-proof": "tsx test/localchain/graduationProof.ts",
     "drill": "tsx src/drill.ts",
     "typecheck": "tsc --noEmit",

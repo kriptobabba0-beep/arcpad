@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { isAbsolute, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ARC_TESTNET_CHAIN_ID, loadAddressBook } from '@arcpad/shared'
@@ -37,6 +38,21 @@ export type GraduatorConfig = {
 }
 
 export const GRADUATE_ALERT_COMPONENT = 'keeper.graduate'
+
+/**
+ * DEFTERIN YERINE GECEBILEN UC DEGISKEN. `--book-only` bu listeyi reddeder.
+ *
+ * `KEEPER_GRADUATE_START_BLOCK` de LISTEDEDIR ve bu bir ayrinti degil: tek
+ * basina bir baslangic blogu, defterin fabrikasini tararken taramayi ILK
+ * launch'in ilerisinden baslatabilir ve o curve'ler HIC gorulmez. Olculmus
+ * kardesi `.env.example`te yazilidir -- elle yazilmis bir startBlock, her poll
+ * sayfa cikaran ve hic kalp atisi vermeyen bir keeper uretmisti.
+ */
+export const ADDRESS_OVERRIDE_VARS = [
+  'KEEPER_GRADUATE_FACTORY',
+  'KEEPER_GRADUATE_LOCKER',
+  'KEEPER_GRADUATE_START_BLOCK',
+] as const
 
 export const DEFAULT_GRADUATE_CURSOR_PATH = fileURLToPath(
   new URL('../../.cursor-graduate', import.meta.url),
@@ -96,11 +112,38 @@ export const ONCE_MAX_ROUNDS = 100
  */
 export function loadGraduatorConfig(
   env: NodeJS.ProcessEnv,
-  opts?: { bookDir?: string; once?: boolean },
+  opts?: { bookDir?: string; once?: boolean; bookOnly?: boolean },
 ): GraduatorConfig {
   const bookDir = opts?.bookDir
   const rpcUrl = blankToUndefined(env['ARC_RPC_URL'])
   if (!rpcUrl) throw new Error('ARC_RPC_URL is not set (see .env.example)')
+
+  // ============ `--book-only`: ADRESLER ENV'DEN GELEMEZ ============
+  //
+  // Ve KAPI BILEREK ARGV'DEDIR, ENV'DE DEGIL. Servisin okudugu TEK kaynak
+  // `EnvironmentFile`dir; bir env degiskeni olsaydi ayni dosya hem kapiyi
+  // hem de kapinin engelledigi adresleri tasiyabilirdi -- yani kendi kendini
+  // acan bir kilit. Bayrak `ExecStart` satirindadir: onu degistirmek unit
+  // dosyasini duzenlemek demektir, ve o AYRI, ayricalikli, gozden gecirilir
+  // bir istir.
+  //
+  // Neden bu gerekiyor: indexer `ARC_FACTORY_ADDRESS`i env'den alir ve
+  // `scripts/integration/env-from-book.ts` onu deftere baglamak icin VAR.
+  // Keeper defteri DOGRUDAN okur, yani o zayiflik onda YOK -- ama bir
+  // deployment `KEEPER_GRADUATE_FACTORY` yazarak onu geri getirebilirdi.
+  // Bu satirlar, "elle yazilmis adres" yolunun uzun sureli calisan servise
+  // sizmasini imkansiz kilar; tek seferlik pencere yordami (bkz.
+  // keeper-graduation-report §6) bayragi HIC gecmedigi icin etkilenmez.
+  if (opts?.bookOnly === true) {
+    const handSet = ADDRESS_OVERRIDE_VARS.filter(
+      (name) => blankToUndefined(env[name]) !== undefined,
+    )
+    if (handSet.length > 0) {
+      throw new Error(
+        `--book-only refuses to start: ${handSet.join(', ')} ${handSet.length === 1 ? 'is' : 'are'} set in this process's environment. A long-running service takes its addresses from contracts/deploy/addresses.<chainId>.json and from nowhere else -- a hand-set address is how a deployment silently ends up watching a different stack than the one it reports. Remove ${handSet.length === 1 ? 'it' : 'them'} from the unit's EnvironmentFile, or drop --book-only deliberately for a one-off run against a stack the book cannot carry.`,
+      )
+    }
+  }
 
   const rawChainId = blankToUndefined(env['ARC_CHAIN_ID'])
   const chainId = rawChainId === undefined ? ARC_TESTNET_CHAIN_ID : Number(rawChainId)
@@ -188,17 +231,61 @@ export function loadGraduatorConfig(
   // yazilmaz." `.env.deployer` BU SUREC TARAFINDAN HIC OKUNMAZ; degisken
   // surece disaridan enjekte edilir. Kuru kosu VARSAYILANDIR, yani anahtarin
   // YOKLUGU bir hata degil sadece "yayin yapamam"dir.
-  const privateKeyRaw = blankToUndefined(env['KEEPER_GRADUATE_PRIVATE_KEY'])
+  //
+  // ...VE IKINCI BIR YOL: `KEEPER_GRADUATE_PRIVATE_KEY_FILE`.
+  //
+  // NEDEN VAR. systemd'nin `LoadCredentialEncrypted=`i anahtari DISKTE SIFRELI
+  // tutar ve yalnizca unit'in kendi kimlik bilgisi dizinine cozer; o dizin
+  // baska hicbir servise, baska hicbir kullaniciya gorunmez. Ama oraya bir
+  // DOSYA koyar, bir env degiskeni degil. Dosya yolunu kabul etmek, anahtarin
+  // hicbir surecin ortaminda -- ve dolayisiyla hicbir `EnvironmentFile`da,
+  // hicbir `systemctl show` ciktisinda, hicbir shell gecmisinde -- gorunmemesi
+  // demektir.
+  //
+  // IKISI BIRDEN VERILIRSE REDDEDILIR. "Hangisi kazandi" sorusunun cevabi bir
+  // IMZALAYAN KIMLIGIDIR; sessizce birini secmek, yanlis adresten yayin yapan
+  // ve sebebi gorunmeyen bir yurutucu uretirdi.
+  const keyFile = blankToUndefined(env['KEEPER_GRADUATE_PRIVATE_KEY_FILE'])
+  const keyInline = blankToUndefined(env['KEEPER_GRADUATE_PRIVATE_KEY'])
+  if (keyFile !== undefined && keyInline !== undefined) {
+    throw new Error(
+      'KEEPER_GRADUATE_PRIVATE_KEY and KEEPER_GRADUATE_PRIVATE_KEY_FILE are both set. Picking one silently would decide WHICH ADDRESS signs, and the answer would not appear anywhere in the logs. Set exactly one.',
+    )
+  }
+
+  let privateKeyRaw = keyInline
+  if (keyFile !== undefined) {
+    let contents: string
+    try {
+      contents = readFileSync(keyFile, 'utf8')
+    } catch (cause) {
+      throw new Error(
+        `KEEPER_GRADUATE_PRIVATE_KEY_FILE points at ${keyFile}, which cannot be read: ${cause instanceof Error ? cause.message : String(cause)}. Refusing to start; a broadcasting executor with no signer is the shape this config already refuses elsewhere.`,
+      )
+    }
+    // BOSLUK KIRPILIR. Bir anahtar dosyasi neredeyse her zaman satir sonuyla
+    // biter (`echo`, editor, `systemd-creds`), ve kirpmamak "32-byte hex degil"
+    // hatasini dosyanin GORUNMEZ son baytindan uretirdi.
+    privateKeyRaw = blankToUndefined(contents.trim())
+    if (privateKeyRaw === undefined) {
+      throw new Error(
+        `KEEPER_GRADUATE_PRIVATE_KEY_FILE points at ${keyFile}, which is empty. Refusing to start.`,
+      )
+    }
+  }
+
   if (privateKeyRaw !== undefined && !/^0x[0-9a-fA-F]{64}$/.test(privateKeyRaw)) {
     throw new Error(
-      'KEEPER_GRADUATE_PRIVATE_KEY is set but is not a 0x-prefixed 32-byte hex string. Refusing to start rather than deriving a wrong signer.',
+      // ICERIK ASLA YAZILMAZ, YALNIZCA KAYNAGI. Bir hata satirina basilan
+      // anahtar, journald'a ve oradan her log toplayicisina gider.
+      `${keyFile === undefined ? 'KEEPER_GRADUATE_PRIVATE_KEY' : `the contents of ${keyFile} (KEEPER_GRADUATE_PRIVATE_KEY_FILE)`} is not a 0x-prefixed 32-byte hex string. Refusing to start rather than deriving a wrong signer.`,
     )
   }
 
   const dryRun = env['KEEPER_DRY_RUN'] !== 'false'
   if (!dryRun && privateKeyRaw === undefined) {
     throw new Error(
-      'KEEPER_DRY_RUN=false but KEEPER_GRADUATE_PRIVATE_KEY is not set. An executor told to broadcast with no signer would run forever, simulate green forever, and graduate nothing -- the exact "mechanism exists but its output goes nowhere" shape this project keeps paying for. Refusing to start.',
+      'KEEPER_DRY_RUN=false but neither KEEPER_GRADUATE_PRIVATE_KEY nor KEEPER_GRADUATE_PRIVATE_KEY_FILE is set. An executor told to broadcast with no signer would run forever, simulate green forever, and graduate nothing -- the exact "mechanism exists but its output goes nowhere" shape this project keeps paying for. Refusing to start.',
     )
   }
 

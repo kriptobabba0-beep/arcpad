@@ -1,0 +1,128 @@
+; arcpad -- the graduation executor.
+;
+; The ONE process that routinely calls ArcpadLocker.graduate(curve). See
+; docs/runbooks/keeper-vps.md for what to fill in and why each line is here.
+;
+; Install:  /etc/systemd/system/arcpad-keeper-graduate.service
+;
+; THIS UNIT IS THE SINGLETON GUARD, AND THE KEEPER IS NOT.
+; The keeper takes a per-CURVE advisory lock (keeper/src/graduate/lock.ts) but
+; it has NO cursor lock and NO process-level singleton. Two executors sharing
+; .cursor-graduate each roll back the other's progress -- graduate/config.ts
+; says so in those words. systemd guarantees one instance per unit name; that
+; is where "only one executor" actually comes from. Never run `pnpm graduate`
+; by hand while this unit is active without a separate KEEPER_GRADUATE_CURSOR_FILE.
+
+[Unit]
+Description=arcpad keeper -- graduation executor (calls ArcpadLocker.graduate)
+Documentation=file:///opt/arcpad/docs/runbooks/keeper-vps.md
+After=network-online.target
+Wants=network-online.target
+
+; NEVER GIVE UP. systemd's default start-rate limiter puts a unit into `failed`
+; after 5 restarts in 10s and STOPS TRYING -- a permanently dead keeper that
+; nothing restarts, which is the silent state this whole stack is built to
+; avoid. Disabling the limiter means a crash loop instead; that is the LOUD
+; failure, because a crash loop emits no HEARTBEAT and the dead-man's switch
+; pages within 10 minutes (see arcpad-keeper-notify@.service).
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User=arcpad
+Group=arcpad
+
+; CWD IS THE PACKAGE DIRECTORY, deliberately: it is what `pnpm --filter` uses,
+; so every path in the runbook behaves identically here. The keeper resolves
+; its own paths against the REPO ROOT (keeper/src/config.ts), not against CWD --
+; that was a measured bug once and is fixed; this line does not depend on it.
+WorkingDirectory=/opt/arcpad/keeper
+
+; `node --import tsx` runs the TypeScript entry in ONE process. Going through
+; `pnpm` would add a process between systemd and node; the default
+; KillMode=control-group would still deliver SIGTERM, but the exit code
+; systemd sees would be pnpm's, not the keeper's.
+ExecStart=/usr/bin/env node --import tsx src/graduate.ts --book-only
+
+; ---------------------------------------------------------------
+; THE KEY
+; ---------------------------------------------------------------
+; Encrypted at rest, decrypted only into this unit's private credentials
+; directory, and never present in ANY environment: not in EnvironmentFile, not
+; in `systemctl show`, not in /proc/PID/environ, not in shell history.
+;
+;   TODO(owner) 1 -- create it:
+;     umask 077
+;     printf '0x<the dedicated keeper key>' > /run/keeper.key
+;     systemd-creds encrypt --name=graduate-key /run/keeper.key \
+;       /etc/arcpad/graduate-key.cred
+;     shred -u /run/keeper.key
+;
+; If this host's systemd is older than 250 or has no host key, replace the two
+; lines below with a 0400 file owned by `arcpad`:
+;     Environment=KEEPER_GRADUATE_PRIVATE_KEY_FILE=/etc/arcpad/graduate.key
+LoadCredentialEncrypted=graduate-key:/etc/arcpad/graduate-key.cred
+Environment=KEEPER_GRADUATE_PRIVATE_KEY_FILE=%d/graduate-key
+
+; ADDRESSES ARE NOT IN HERE AND CANNOT BE. `--book-only` refuses to start if
+; KEEPER_GRADUATE_FACTORY / _LOCKER / _START_BLOCK appear in the environment,
+; and the flag lives on THIS line rather than in the env file so that the file
+; cannot switch off the gate that guards it.
+EnvironmentFile=/etc/arcpad/keeper-graduate.env
+
+Restart=always
+RestartSec=15
+; A pass can be mid-broadcast. SIGTERM makes the loop finish the pass in hand
+; and then exit (keeper/src/graduate/loop.ts); killing it mid-pass would leave
+; a broadcast transaction whose receipt nobody read.
+TimeoutStopSec=90
+
+; ---------------------------------------------------------------
+; MEMORY
+; ---------------------------------------------------------------
+; ACCOUNTING ON, LIMIT UNSET, AND THE LIMIT IS UNSET ON PURPOSE. This keeper's
+; memory use has NOT been measured on a VPS. A MemoryMax picked out of the air
+; would either do nothing or OOM-kill a healthy process, and a plausible number
+; from nowhere is exactly the kind of fact this project has been bitten by.
+; Read the real number with `systemctl status arcpad-keeper-graduate` after a
+; week, then set MemoryMax with a margin.
+; TODO(owner) 2 -- set MemoryMax= once `systemctl status` has a week of data.
+MemoryAccounting=yes
+
+; ---------------------------------------------------------------
+; HARDENING
+; ---------------------------------------------------------------
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+; MemoryDenyWriteExecute IS DELIBERATELY ABSENT. V8 maps JIT pages W then X;
+; setting it to `yes` does not harden this service, it stops node from starting
+; at all -- and a hardening line that prevents the process from running reads
+; as "the keeper is broken", not as "the hardening is wrong".
+
+; ProtectSystem=strict makes the whole filesystem read-only. These are the only
+; paths the executor writes: the cursor, the quarantine store, the per-curve
+; locks, and the alert log the forwarder reads.
+ReadWritePaths=/opt/arcpad/keeper
+ReadWritePaths=/var/lib/arcpad
+
+[Install]
+WantedBy=multi-user.target

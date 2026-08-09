@@ -31,6 +31,7 @@ import {
   runGraduationPass,
 } from './graduate/executor'
 import { fileCurveLocks } from './graduate/lock'
+import { runPollLoop } from './graduate/loop'
 import { assertSelectorsAgree } from './graduate/outcome'
 import { fileQuarantineStore } from './graduate/state'
 import { type ChainReader, fileCursorStore } from './watch/graduationWindow'
@@ -100,9 +101,24 @@ function levelOf(summary: PassSummary): AlertLevel {
   return summary.outcomes.some((outcome) => outcome.level === 'page') ? 'page' : 'ok'
 }
 
-export function renderSummary(summary: PassSummary): string {
+/**
+ * `src=` HER SATIRDA, VE SEBEBI SAYFAYI OKUYAN INSANDIR.
+ *
+ * Defterden kurulmus bir yurutucu ile env ile baska bir yigina yonlendirilmis
+ * bir yurutucu, bu alan olmadan ayni saglikli kalp atisini yazardi:
+ * `target=0x0 armed=false pending=1` her ikisi icin de dogru olabilir. Yani
+ * "yanlis yigini izliyoruz" durumu, pager'in gordugu akista GORUNMEZDI --
+ * bu deponun tekrar tekrar odedigi "mekanizma var ama neyi izledigi yazmiyor"
+ * sekli. Alan `at=`den SONRA gelir, dolayisiyla onek eslestiren hicbir okuyucu
+ * bozulmaz.
+ */
+export function renderSummary(
+  summary: PassSummary,
+  opts?: { source?: 'book' | 'env-override' },
+): string {
   const parts = [
     `block=${summary.head}`,
+    `src=${opts?.source ?? 'book'}`,
     `target=${summary.target}`,
     `armed=${summary.armed}`,
     `known=${summary.knownCurves}`,
@@ -125,7 +141,11 @@ async function main(): Promise<number> {
   assertSelectorsAgree()
 
   const once = argv.includes('--once')
-  const config = loadGraduatorConfig(processEnv, { once })
+  // `--book-only` UZUN SURELI SERVISIN BAYRAGIDIR (bkz. `config.ts`). Elle
+  // calistirilan tek seferlik yordamlar onu gecmez ve gecmemeli.
+  const bookOnly = argv.includes('--book-only')
+  const config = loadGraduatorConfig(processEnv, { once, bookOnly })
+  const source = config.overridden ? 'env-override' : 'book'
 
   const sinks: AlertSink[] = [consoleSinkFor(GRADUATE_ALERT_COMPONENT)]
   if (config.alertLogPath !== undefined) {
@@ -224,7 +244,7 @@ async function main(): Promise<number> {
     // tamamlandi". Yetismemis bir tarama `catching-up`tir ve o AYRI bir
     // iddiadir -- ikisini tek satirda karistirmak, izleyicide olculmus bir
     // hataydi.
-    heartbeat(sink, summary.caughtUp ? 'current' : 'catching-up', renderSummary(summary))
+    heartbeat(sink, summary.caughtUp ? 'current' : 'catching-up', renderSummary(summary, { source }))
     return summary
   }
 
@@ -247,7 +267,9 @@ async function main(): Promise<number> {
       summary = await pass()
     }
     const attention = paged || levelOf(summary) === 'page' || !summary.caughtUp
-    console.log(`GRADUATE PASS ${attention ? 'ATTENTION' : 'OK'}: ${renderSummary(summary)}`)
+    console.log(
+      `GRADUATE PASS ${attention ? 'ATTENTION' : 'OK'}: ${renderSummary(summary, { source })}`,
+    )
     return attention ? 1 : 0
   }
 
@@ -261,12 +283,16 @@ async function main(): Promise<number> {
   // KENDINI YENIDEN ZAMANLAYAN DONGU, `setInterval` DEGIL -- `index.ts` ile
   // ayni gerekce, ve burada DAHA agirdir: ust uste binen iki gecis AYNI
   // curve'e iki islem gonderebilirdi.
-  const loop = async (): Promise<void> => {
-    if (stopped) return
-    await pass()
-    if (!stopped) setTimeout(() => void loop(), config.pollIntervalMs)
-  }
-  await loop()
+  //
+  // VE `main` ARTIK DONGU BITENE KADAR COZULMEZ. Onceki hali ilk gecisten
+  // sonra cozuluyordu ve `settle`in 10 saniyelik cikis zamanlayicisi sureci
+  // OLDURUYORDU -- olculdu: 13 saniye, tek gecis, cikis kodu 0. Gerekce
+  // `graduate/loop.ts`in basinda, olcumle birlikte duruyor.
+  await runPollLoop({
+    pass,
+    stopped: () => stopped,
+    pollIntervalMs: config.pollIntervalMs,
+  })
   return 0
 }
 

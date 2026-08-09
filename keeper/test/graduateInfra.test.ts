@@ -5,12 +5,15 @@ import { afterAll, describe, expect, it } from 'vitest'
 import type { Address } from 'viem'
 import { renderEvent } from '../src/alert'
 import {
+  ADDRESS_OVERRIDE_VARS,
   DEFAULT_GRADUATE_CURSOR_PATH,
   GRADUATE_ALERT_COMPONENT,
   loadGraduatorConfig,
   ONCE_MAX_CHUNKS_PER_PASS,
 } from '../src/graduate/config'
+import { renderSummary } from '../src/graduate'
 import { fileCurveLocks, isLockRefusal } from '../src/graduate/lock'
+import { runPollLoop } from '../src/graduate/loop'
 import { fileQuarantineStore } from '../src/graduate/state'
 import { DEFAULT_CURSOR_PATH } from '../src/config'
 import { classifyRevert } from '../src/graduate/outcome'
@@ -105,7 +108,7 @@ describe('loadGraduatorConfig', () => {
         KEEPER_GRADUATE_LOCKER: LOCKER,
         KEEPER_GRADUATE_START_BLOCK: '10',
       }),
-    ).toThrow(/KEEPER_GRADUATE_PRIVATE_KEY is not set/)
+    ).toThrow(/neither KEEPER_GRADUATE_PRIVATE_KEY nor KEEPER_GRADUATE_PRIVATE_KEY_FILE is set/)
   })
 
   it('bozuk bir ozel anahtar SESSIZCE baska bir imzalayana donusmez', () => {
@@ -150,6 +153,51 @@ describe('loadGraduatorConfig', () => {
     expect(config.startBlock).toBe(55_870_261n)
   })
 
+  it('`--book-only` ELLE YAZILMIS ADRESLERI REDDEDER', () => {
+    // Indexer `ARC_FACTORY_ADDRESS`i env'den alir ve `env-from-book.ts` onu
+    // deftere baglamak icin VAR. Keeper defteri dogrudan okur; bu bayrak, bir
+    // deployment'in o zayifligi `KEEPER_GRADUATE_*` uzerinden GERI GETIRMESINI
+    // engeller.
+    for (const name of ADDRESS_OVERRIDE_VARS) {
+      expect(() =>
+        loadGraduatorConfig(
+          {
+            ...BASE_ENV,
+            KEEPER_GRADUATE_FACTORY: FACTORY,
+            KEEPER_GRADUATE_LOCKER: LOCKER,
+            KEEPER_GRADUATE_START_BLOCK: '10',
+          },
+          { bookOnly: true },
+        ),
+      ).toThrow(new RegExp(name))
+    }
+    // START_BLOCK TEK BASINA da reddedilir: defterin fabrikasini tararken
+    // ilk launch'in ilerisinden baslamak, o curve'leri HIC gormemektir.
+    expect(() =>
+      loadGraduatorConfig({ ...BASE_ENV, KEEPER_GRADUATE_START_BLOCK: '99' }, { bookOnly: true }),
+    ).toThrow(/KEEPER_GRADUATE_START_BLOCK/)
+  })
+
+  it('`--book-only` TEMIZ bir env ile defteri kullanir', () => {
+    const config = loadGraduatorConfig(BASE_ENV, { bookOnly: true })
+    expect(config.overridden).toBe(false)
+    expect(config.factory).toBe('0x5CA156f1809aB784655410d0f4B0704d2b306B47')
+  })
+
+  it('BAYRAK ENV DEGIL ARGV OLMALIDIR -- kendi kilidini acan bir kapi olmasin', () => {
+    // Kapi bir env degiskeni olsaydi, servisin `EnvironmentFile`i hem kapiyi
+    // hem de kapinin engelledigi adresleri tasiyabilirdi.
+    expect(ADDRESS_OVERRIDE_VARS).not.toContain('KEEPER_GRADUATE_BOOK_ONLY')
+    const withFakeGate = loadGraduatorConfig({
+      ...BASE_ENV,
+      KEEPER_GRADUATE_BOOK_ONLY: 'true',
+      KEEPER_GRADUATE_FACTORY: FACTORY,
+      KEEPER_GRADUATE_LOCKER: LOCKER,
+      KEEPER_GRADUATE_START_BLOCK: '10',
+    })
+    expect(withFakeGate.overridden).toBe(true)
+  })
+
   it('`--once` TARAMA BUTCESINI BUYUTUR, cunku bir sonraki gecisi yoktur', () => {
     // Rasyonlanmis butce ile tek bir gecis, uretim defterinin 160.000+
     // bloguna karsi `caughtUp: false` dondururdu -- yani hicbir sey OKUMAMIS
@@ -165,6 +213,172 @@ describe('loadGraduatorConfig', () => {
         { once: true },
       ).maxChunksPerPass,
     ).toBe(3)
+  })
+})
+
+// ---------------------------------------------------------------
+// Imzalayan anahtari
+// ---------------------------------------------------------------
+
+const KEY = `0x${'ab'.repeat(32)}`
+
+describe('imzalayan anahtari DOSYADAN da okunabilir', () => {
+  const withKeyFile = (contents: string): NodeJS.ProcessEnv => {
+    const dir = scratch()
+    const path = join(dir, 'graduate.key')
+    writeFileSync(path, contents, 'utf8')
+    return { ...BASE_ENV, KEEPER_GRADUATE_PRIVATE_KEY_FILE: path }
+  }
+
+  it('dosyadan okur ve SATIR SONUNU kirpar', () => {
+    // systemd'nin `LoadCredentialEncrypted=`i, `echo` ve her editor satir sonu
+    // birakir. Kirpmamak, hatayi dosyanin GORUNMEZ son baytindan uretirdi.
+    expect(loadGraduatorConfig(withKeyFile(`${KEY}\n`)).privateKey).toBe(KEY)
+  })
+
+  it('IKISI BIRDEN verilirse REDDEDER', () => {
+    // "Hangisi kazandi" sorusunun cevabi bir IMZALAYAN KIMLIGIDIR.
+    const env = { ...withKeyFile(KEY), KEEPER_GRADUATE_PRIVATE_KEY: KEY }
+    expect(() => loadGraduatorConfig(env)).toThrow(/both set/)
+  })
+
+  it('bos ya da bozuk bir dosya SESSIZCE baska bir imzalayana donusmez', () => {
+    expect(() => loadGraduatorConfig(withKeyFile('   \n'))).toThrow(/is empty/)
+    expect(() => loadGraduatorConfig(withKeyFile('deadbeef\n'))).toThrow(/32-byte hex/)
+  })
+
+  it('okunamayan bir dosya BASLAMAYI engeller', () => {
+    expect(() =>
+      loadGraduatorConfig({
+        ...BASE_ENV,
+        KEEPER_GRADUATE_PRIVATE_KEY_FILE: join(scratch(), 'does-not-exist'),
+      }),
+    ).toThrow(/cannot be read/)
+  })
+
+  it('HATA SATIRI ANAHTARIN ICERIGINI YAZMAZ, yalnizca kaynagini', () => {
+    // journald'a basilan bir anahtar, oradan her log toplayicisina gider.
+    const secret = `0x${'11'.repeat(31)}` // 62 hane: gecersiz, ama gizli
+    let message = ''
+    try {
+      loadGraduatorConfig(withKeyFile(secret))
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error)
+    }
+    expect(message).toMatch(/32-byte hex/)
+    expect(message).not.toContain(secret)
+  })
+
+  it('KEEPER_DRY_RUN=false, DOSYA yolu ile KABUL EDILIR', () => {
+    const config = loadGraduatorConfig({ ...withKeyFile(KEY), KEEPER_DRY_RUN: 'false' })
+    expect(config.dryRun).toBe(false)
+    expect(config.privateKey).toBe(KEY)
+  })
+})
+
+// ---------------------------------------------------------------
+// Dongu
+// ---------------------------------------------------------------
+
+describe('runPollLoop', () => {
+  it('ILK GECISTEN SONRA COZULMEZ -- olculmus 13 saniyelik olumun testi', () => {
+    // OLCULDU 2026-08-09: dongu modu tek bir gecisten sonra cikis kodu 0 ile
+    // oldu, cunku `main` cozuluyordu ve `settle`in `unref`li 10 saniyelik
+    // zamanlayicisi `exit()` cagiriyordu. `unref` bir zamanlayicinin sureci
+    // ayakta TUTMASINI engeller, ATESLEMESINI degil.
+    let passes = 0
+    let settled = false
+    const pending: (() => void)[] = []
+    const done = runPollLoop({
+      pass: () => {
+        passes += 1
+        return Promise.resolve()
+      },
+      stopped: () => false,
+      pollIntervalMs: 15_000,
+      schedule: (fn) => pending.push(fn),
+    })
+    void done.then(() => {
+      settled = true
+    })
+
+    return Promise.resolve().then(() => {
+      expect(passes).toBe(1)
+      expect(settled).toBe(false)
+      // ...ve zamanlayici atesleyince BIR SONRAKI gecis kosar.
+      pending.shift()?.()
+      return Promise.resolve().then(() => {
+        expect(passes).toBe(2)
+        expect(settled).toBe(false)
+      })
+    })
+  })
+
+  it('DURDURULUNCA, ELDEKI gecisi bitirip cozulur', async () => {
+    let stopped = false
+    let passes = 0
+    const pending: (() => void)[] = []
+    const done = runPollLoop({
+      pass: () => {
+        passes += 1
+        // SIGTERM gecisin ORTASINDA gelir.
+        stopped = true
+        return Promise.resolve()
+      },
+      stopped: () => stopped,
+      pollIntervalMs: 15_000,
+      schedule: (fn) => pending.push(fn),
+    })
+    await done
+    expect(passes).toBe(1)
+    // Cozulduyse bir sonraki gecis ZAMANLANMAMIS olmali.
+    expect(pending).toHaveLength(0)
+  })
+
+  it('REDDEDEN bir gecis donguyu REDDETTIRIR -- ariza yutulmaz', async () => {
+    await expect(
+      runPollLoop({
+        pass: () => Promise.reject(new Error('rpc died')),
+        stopped: () => false,
+        pollIntervalMs: 1,
+        schedule: (fn) => fn(),
+      }),
+    ).rejects.toThrow(/rpc died/)
+  })
+})
+
+// ---------------------------------------------------------------
+// Gecis ozeti
+// ---------------------------------------------------------------
+
+describe('renderSummary', () => {
+  const SUMMARY = {
+    head: 1n,
+    target: '0x0000000000000000000000000000000000000000' as Address,
+    armed: false,
+    caughtUp: true,
+    knownCurves: 2,
+    pending: [],
+    pendingQuoteWei: 0n,
+    outcomes: [],
+    broadcast: 0,
+  }
+
+  it('KAYNAK HER SATIRDA GORUNUR', () => {
+    // Bu alan olmadan, defterden kurulmus bir yurutucu ile baska bir yigina
+    // yonlendirilmis bir yurutucu pager'in gordugu akista AYNI gorunurdu.
+    expect(renderSummary(SUMMARY, { source: 'book' })).toContain('src=book')
+    expect(renderSummary(SUMMARY, { source: 'env-override' })).toContain('src=env-override')
+  })
+
+  it('alan `at=`den SONRA gelir, yani onek eslestiren okuyucular BOZULMAZ', () => {
+    const line = renderEvent(
+      { kind: 'heartbeat', at: 0, state: 'current', detail: renderSummary(SUMMARY) },
+      GRADUATE_ALERT_COMPONENT,
+    )
+    // Harici olu-adam anahtari ve ileticinin ayristiricisi bu onegi eslestirir.
+    expect(/^HEARTBEAT keeper\.graduate at=(\S+)/.test(line)).toBe(true)
+    expect(line).toContain('src=book')
   })
 })
 
