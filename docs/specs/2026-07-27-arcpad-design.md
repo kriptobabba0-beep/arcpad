@@ -149,7 +149,20 @@ d:\pumpfunforarc\
 - **contracts/** tek gerçek kaynağıdır. Curve fiyatlaması, graduation, ücret muhasebesi ve likidite kilidi burada yaşar; hiçbir üst katman bu kararları tekrar hesaplamaz.
 - **indexer/** zinciri okuyup Postgres'e okuma modeli yazar. Yazma yetkisi yoktur, yalnızca olaylardan türetir.
 - **web/** hem UI hem yazma API'leridir. Liste ve geçmiş Postgres'ten, işlem anındaki kota doğrudan zincirden okunur.
-- **keeper/** limit emirlerini tetikler ve otomatik graduation başarısız olursa manuel iter.
+- **keeper/** limit emirlerini tetikler ve **tamamlanmış curve'leri graduate eder.**
+
+> **DÜZELTME, 2026-08-09 — bu satırın ilk hâli imkânsız bir mimariyi tarif ediyordu.**
+> Yazdığı şey "otomatik graduation başarısız olursa manuel iter" idi, yani keeper bir **yedek**ti ve
+> ondan önce gelen otomatik bir yol vardı. Öyle bir yol **olamaz**: `BondingCurve.graduate()`
+> `msg.sender == graduationTarget` şart koşar, dolayısıyla otomatik olması için curve'ün kendisinin
+> locker'ı çağırması gerekirdi — ve `BondingCurve`'ün creation code'u **dondurulmuştur**, o çağrı
+> oraya artık eklenemez.
+>
+> Doğru mimari terstir: **keeper BİRİNCİL yoldur**, ve *yedek* olan şey çağrının izinsizliğidir —
+> `ArcpadLocker.graduate(address curve)` `external`dır, yani keeper düşerse tamamlanmış bir curve'ü
+> herkes mezun edebilir (§429'un "izinsizlik bir seviye yukarı taşınır" kararı tam da bunu satın
+> alır). Arayüzün `complete && !graduated && target != 0` durumunda bir **Graduate** düğmesi
+> göstermesi bu yedeğin kullanıcıya açılan yüzüdür.
 
 `packages/shared` ABI'yi tek kaynaktan dağıtır. Üç tüketicinin (indexer, web, keeper) her biri için `forge build` çıktısına karşı bir ABI-parity testi CI'da koşar; kontrat arayüzü değişip tüketici güncellenmezse CI kırılır.
 
