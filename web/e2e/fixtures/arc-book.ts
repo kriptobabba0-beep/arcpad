@@ -39,5 +39,21 @@ process.stdout.write(
     feeEscrow: book.feeEscrow,
     smokeToken: book.smokeToken ?? null,
     smokeCurve: book.smokeCurve ?? null,
+    /*
+     * THE LOCKER AND THE BOOK'S GRADUATION TARGET, for the graduation leg.
+     *
+     * The Arc spec asserts that a completed curve offers NO graduate control,
+     * and "no control" is a weak claim on its own -- a page that failed to
+     * render anything would satisfy it. The strong version calls
+     * `locker.graduate(curve)` read-only and shows the call really would have
+     * reverted `GraduationTargetUnset()`, which needs the locker's address.
+     *
+     * `graduationTarget` is carried too, and it is NOT what the app uses: the
+     * app reads it live off the factory precisely because it is governable. It
+     * is here so the leg can say whether the BOOK and the CHAIN agree, which is
+     * a different question and worth failing on.
+     */
+    arcpadLocker: book.arcpadLocker,
+    bookGraduationTarget: book.graduationTarget,
   })}\n`,
 )

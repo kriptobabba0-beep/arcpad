@@ -129,13 +129,29 @@ export default async function arcGlobalSetup(config: FullConfig): Promise<void> 
         'Set both, or neither and let the address book supply its smoke pair.',
     )
   }
+  /*
+   * THE BOOK IS READ UNCONDITIONALLY NOW, even when env names a pair.
+   *
+   * The graduation leg needs the COMPLETED curve specifically, and the pair a
+   * run is driven with is often the OPEN one (T2/T3/T4 need an open curve to
+   * trade against, and the book's smoke pair is complete). Deriving the smoke
+   * pair only "when env did not override" made the two mutually exclusive: a
+   * run configured for the trading tests silently had no completed curve to
+   * point the graduation test at, and the honest options were to skip it -- a
+   * silent skip reads exactly like a pass -- or to hardcode an address here,
+   * which is what the address book exists to prevent.
+   */
+  const book = await bookSmokePair(repoRoot, webDir, ARC_TESTNET_CHAIN_ID)
+  if (book.smokeToken !== null) process.env.E2E_ARC_SMOKE_TOKEN = book.smokeToken
+  if (book.smokeCurve !== null) process.env.E2E_ARC_SMOKE_CURVE = book.smokeCurve
+  if (book.arcpadLocker !== null) process.env.E2E_ARC_LOCKER = book.arcpadLocker
+
   let token: Address | null = envToken
   let curve: Address | null = envCurve
   let pairSource = 'E2E_ARC_TOKEN / E2E_ARC_CURVE'
   if (token === null) {
-    const pair = await bookSmokePair(repoRoot, webDir, ARC_TESTNET_CHAIN_ID)
-    token = pair.smokeToken
-    curve = pair.smokeCurve
+    token = book.smokeToken
+    curve = book.smokeCurve
     pairSource = 'the address book (smokeToken / smokeCurve)'
   }
 

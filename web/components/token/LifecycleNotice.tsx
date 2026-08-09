@@ -1,4 +1,6 @@
+import type { HexAddress } from '@/components/read/types'
 import { Card } from '@/components/ui/Card'
+import { GraduationPanel } from './GraduationPanel'
 import type { Lifecycle } from './lifecycle'
 
 /**
@@ -37,8 +39,26 @@ import type { Lifecycle } from './lifecycle'
  * it, and asserting it here would be the same class of error as the one being
  * fixed -- a hardcoded claim about chain state. `<GraduationPanel>` reads it and
  * says so; this card says only what is true of every completed curve.
+ *
+ * THE LIVE HALF LIVES INSIDE THIS CARD, NOT BESIDE IT. `<GraduationPanel>` is
+ * rendered as a child rather than as a second card so that the static sentence
+ * and the chain-dependent one are read as one statement. Two cards would let a
+ * user see "graduation is a separate call" and miss "and it cannot be sent
+ * yet", which is the pair that actually answers their question.
+ *
+ * `curve` IS OPTIONAL, AND ONLY FOR THE COMPONENT'S OWN TESTS. Both page
+ * branches pass it (`test/token/graduation.test.ts` asserts they do, by reading
+ * the source): a completed curve rendered WITHOUT the panel is the screen this
+ * whole change exists to remove, so its absence must not be reachable from the
+ * app -- only from a renderer that is deliberately measuring the card alone.
  */
-export function LifecycleNotice({ lifecycle }: { lifecycle: Lifecycle }) {
+export function LifecycleNotice({
+  lifecycle,
+  curve,
+}: {
+  lifecycle: Lifecycle
+  curve?: HexAddress | undefined
+}) {
   if (lifecycle.kind === 'trading') return null
 
   return (
@@ -53,6 +73,9 @@ export function LifecycleNotice({ lifecycle }: { lifecycle: Lifecycle }) {
             'anyone may send it.'
           : lifecycle.poolNote}
       </p>
+      {lifecycle.kind === 'complete' && curve !== undefined ? (
+        <GraduationPanel curve={curve} />
+      ) : null}
     </Card>
   )
 }

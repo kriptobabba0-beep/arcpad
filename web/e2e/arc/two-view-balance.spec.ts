@@ -26,6 +26,10 @@ import { privateKeyToAccount } from 'viem/accounts'
  * file. The dynamic one could never have passed, on any chain, with any curve.
  */
 import { decodeArcpadError } from '../../lib/decodeRevert'
+// Same static-import rule as above: `lib/graduationOutcome.ts` reaches
+// `@arcpad/shared/browser` through `lib/graduationAbi.ts`, so a dynamic
+// `import()` of it would hit the identical CommonJS-in-ESM wall.
+import { decodeGraduationError } from '../../lib/graduationOutcome'
 import { connectWallet, injectedWallet } from '../fixtures/wallet'
 
 /**
@@ -541,6 +545,156 @@ test.describe('Arc testnet', () => {
       'the decoder must resolve a REAL Arc revert, not only a hand-built one',
     ).toBe('NetTooSmall')
     expect(page).toBeTruthy()
+  })
+
+  /**
+   * ========================================================================
+   *  THE COMPLETED CURVE: WHY IT HAS NOT GRADUATED, AND NO BUTTON THAT
+   *  COULD ONLY REVERT.
+   * ========================================================================
+   *
+   * This is the one claim in this file that could not be made anywhere else.
+   * The page's graduation surface reads `curve.graduated()`, `curve.factory()`
+   * and `factory.graduationTarget()` LIVE, and on the production factory that
+   * last one is `0x0` DELIBERATELY. A component test can render any of those
+   * four states by handing them to a prop; only a browser pointed at the real
+   * chain can say which one a real visitor gets, and that a control is absent
+   * because the chain says so rather than because the component happened not to
+   * render one.
+   *
+   * WHAT THIS REPLACED. Measured in a real browser on 2026-08-09, before the
+   * change: the completed token page showed "Sale supply sold out. Trading on
+   * the curve is closed; pool creation lands with Phase 2." -- Phase 2 having
+   * been on chain since 2026-08-06 -- an empty right-hand column, and no
+   * mention anywhere that graduation is a separate call or that anyone may send
+   * it. A user looking at a curve the keeper had not graduated had no way to
+   * learn that a call existed.
+   *
+   * THE ABSENCE IS ASSERTED TOGETHER WITH ITS CAUSE. "No graduate button" is
+   * satisfied by a page that failed to render anything at all, so the test also
+   * (a) reads the three chain facts itself and (b) simulates
+   * `locker.graduate(curve)` read-only and requires the revert the interface is
+   * refusing on behalf of. Without (b) this would only prove the screen and the
+   * screen's own beliefs agree.
+   */
+  test('a completed curve names WHY it cannot graduate, and offers no action that can only revert', async ({
+    page,
+  }) => {
+    const token = process.env.E2E_ARC_SMOKE_TOKEN ?? ''
+    const curve = process.env.E2E_ARC_SMOKE_CURVE ?? ''
+    const locker = process.env.E2E_ARC_LOCKER ?? ''
+    expect(token, 'the address book must carry a smokeToken').toMatch(/^0x[0-9a-fA-F]{40}$/)
+    expect(curve, 'the address book must carry a smokeCurve').toMatch(/^0x[0-9a-fA-F]{40}$/)
+    expect(locker, 'the address book must carry an arcpadLocker').toMatch(/^0x[0-9a-fA-F]{40}$/)
+
+    const client = arcClient()
+    // THE PRECONDITIONS, MEASURED RATHER THAN ASSUMED. If any of them stops
+    // holding this test must fail loudly instead of asserting about a state the
+    // chain is no longer in.
+    const [complete, graduated, curveFactory] = (await Promise.all(
+      (['complete', 'graduated', 'factory'] as const).map((functionName) =>
+        client.readContract({ address: curve as Address, abi: bondingCurveAbi, functionName }),
+      ),
+    )) as [boolean, boolean, Address]
+    expect(complete, `${curve} must be COMPLETE for this test to mean anything`).toBe(true)
+    expect(graduated, `${curve} has graduated; this test measures the ungraduated screen`).toBe(
+      false,
+    )
+
+    const target = (await client.readContract({
+      address: curveFactory,
+      abi: launchFactoryAbi,
+      functionName: 'graduationTarget',
+    })) as Address
+    expect(
+      target,
+      'the production factory keeps graduationTarget at 0x0 deliberately; if this ever ' +
+        'changes, the ARMED branch of the panel becomes reachable and needs its own case here',
+    ).toBe('0x0000000000000000000000000000000000000000')
+
+    /*
+     * AND THE CALL REALLY WOULD REVERT. Read-only: `simulateContract` is an
+     * `eth_call`, nothing is signed and nothing is broadcast. `0xfe30fa5b` is
+     * `GraduationTargetUnset()` -- the same four bytes the keeper measured off
+     * this chain on 2026-08-09 and pinned in its own classifier.
+     */
+    const refusal = await client
+      .simulateContract({
+        address: locker as Address,
+        abi: [
+          {
+            type: 'function',
+            name: 'graduate',
+            stateMutability: 'nonpayable',
+            inputs: [{ name: 'curve', type: 'address' }],
+            outputs: [],
+          },
+        ] as const,
+        functionName: 'graduate',
+        args: [curve as Address],
+        account: (isAddress(WATCH) ? WATCH : privateKeyToAccount(KEY).address) as Address,
+      })
+      .then(
+        () => null,
+        (error: unknown) => error,
+      )
+    expect(refusal, 'graduate() on an unarmed factory must revert').not.toBeNull()
+    const decoded = decodeGraduationError(refusal)
+    expect(
+      decoded.code,
+      'the page refuses to offer this call; the chain must agree about WHY',
+    ).toBe('target-unset')
+    expect(decoded.tone, 'an unarmed launchpad is "not yet", not a fault').not.toBe('error')
+
+    await page.goto(`${BASE}/token/${token}`)
+
+    const card = page.getByTestId('lifecycle-notice')
+    await expect(card).toBeVisible()
+    await expect(card).toContainText(/trading on the curve is closed/i)
+    await expect(card).toContainText(/does not happen automatically/i)
+    await expect(card).toContainText(/anyone may send it/i)
+    // THE SENTENCE THAT WAS LIVE, and the release name it carried.
+    await expect(card).not.toContainText(/phase 2/i)
+    await expect(card).not.toContainText(/lands with/i)
+
+    /*
+     * THE LIVE HALF, AND IT MUST POLL. Those three reads leave the browser
+     * after hydration and cross the public internet; a one-shot expect here
+     * would race them exactly the way K1's balance assertion did on this leg's
+     * first run, and would pass forever on a loopback devchain.
+     */
+    await expect(page.getByTestId('graduation-unarmed')).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByTestId('graduation-unarmed')).toContainText(/waiting on the launchpad/i)
+    await expect(page.getByTestId('graduation-unarmed')).toContainText(/nothing is at risk/i)
+
+    /*
+     * AND NO CONTROL, COUNTED ACROSS THE WHOLE PAGE rather than inside the card.
+     * A `within(card)` query passes just as happily with a stray control
+     * elsewhere on the screen -- that is precisely how two "Switch to Arc
+     * Testnet" buttons survived on this page while both components' own tests
+     * were green.
+     */
+    await expect(page.getByTestId('graduate-submit')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: /^Graduate$/ })).toHaveCount(0)
+    // The trade panel is still absent too: three entrypoints revert
+    // CurveComplete(), so this state offers no trade and no graduation.
+    await expect(page.getByTestId('trade-panel')).toHaveCount(0)
+  })
+
+  /**
+   * THE CONTROL, ON AN OPEN CURVE. Without it, "no graduation surface" could be
+   * satisfied by a build in which the panel never renders anywhere -- and the
+   * assertions above would all still pass.
+   */
+  test('an OPEN curve shows progress and no graduation surface at all', async ({ page }) => {
+    await requireOpenCurve()
+    await page.goto(`${BASE}/token/${process.env.E2E_ARC_TOKEN ?? ''}`)
+    await expect(page.getByTestId('lifecycle-notice')).toHaveCount(0)
+    await expect(page.getByTestId('graduation-unarmed')).toHaveCount(0)
+    await expect(page.getByTestId('graduate-submit')).toHaveCount(0)
+    // ...and the thing it shows INSTEAD, so this is not a test about an empty
+    // page: the progress bar the completed curve replaces.
+    await expect(page.getByText(/to graduation/i).first()).toBeVisible()
   })
 
   /**

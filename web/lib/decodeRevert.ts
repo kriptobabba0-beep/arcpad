@@ -12,6 +12,7 @@ import {
   type ArcpadAction,
   type ArcpadFailureKind,
   failureFor,
+  REACHABLE_THROUGH_GRADUATION,
   UNREACHABLE_BY_CONSTRUCTION,
 } from './failureTable'
 
@@ -171,6 +172,38 @@ function fromErrorName(
     }
   }
 
+  /*
+   * THE GRADUATION GROUP IS CHECKED FIRST, AND IT IS NOT A NICETY.
+   *
+   * These five are on `UNREACHABLE_BY_CONSTRUCTION` because none of the six
+   * ACTIONS can produce them -- but the frontend does now call `graduate()`
+   * through a different surface. Without this branch, `AlreadyGraduated()`
+   * arriving here would read "a path that was believed impossible", and
+   * `AlreadyGraduated` is the BENIGN case: the keeper (or anyone) won a race
+   * that is permissionless on purpose. Saying "impossible" about the mechanism
+   * working is how a healthy system gets reported as broken.
+   *
+   * Reaching this branch still means something is wrong -- a graduation error
+   * surfaced on a trade -- so it stays `operator`. It just names the right
+   * cause, and points at the surface that owns the copy.
+   */
+  if (REACHABLE_THROUGH_GRADUATION.includes(errorName)) {
+    return {
+      kind: 'operator',
+      action,
+      name: errorName,
+      ...(args && args.length > 0 ? { args } : {}),
+      title: 'This is a graduation error, and this was not a graduation',
+      detail:
+        `${errorName}() belongs to graduate(), which has its own surface ` +
+        `(lib/graduationOutcome.ts). Receiving it from a ${action} means this page sent the ` +
+        'wrong call, not that anything on chain is broken.',
+      remedy: 'Nothing you can change will help. Please report this.',
+      retryable: false,
+      raw,
+    }
+  }
+
   const listedUnreachable = UNREACHABLE_BY_CONSTRUCTION.includes(errorName)
   return {
     kind: 'operator',
@@ -192,12 +225,20 @@ function fromErrorName(
 
 // --------------------------------------------------------------------------
 // Shape probing. viem wraps errors in layers; every helper walks the chain.
+//
+// EXPORTED, AND FOR ONE REASON: `lib/graduationOutcome.ts` decodes a SECOND
+// error surface (`ArcpadLocker.graduate`, whose errors are not in
+// `ARCPAD_ERROR_ABI` -- see `lib/graduationAbi.ts`). It needs the same layer
+// walking and must not grow a second copy of it: two implementations of "find
+// the revert data inside viem's wrappers" would drift, and the one that drifts
+// is the one nobody is looking at. The classification stays separate; the
+// probing is shared.
 // --------------------------------------------------------------------------
 
 type ErrorCtor<T> = new (...args: never[]) => T
 
 /** Walks `cause` and viem's `walk()` looking for a specific error class. */
-function findError<T>(error: unknown, ctor: ErrorCtor<T>): T | undefined {
+export function findError<T>(error: unknown, ctor: ErrorCtor<T>): T | undefined {
   if (error instanceof BaseError) {
     const found = error.walk((e) => e instanceof ctor)
     if (found instanceof ctor) return found
@@ -211,7 +252,7 @@ function findError<T>(error: unknown, ctor: ErrorCtor<T>): T | undefined {
 }
 
 /** EIP-1193 code 4001 is a rejection even when it is not a viem error class. */
-function isUserRejection(error: unknown): boolean {
+export function isUserRejection(error: unknown): boolean {
   if (findError(error, UserRejectedRequestError) !== undefined) return true
   let current: unknown = error
   for (let depth = 0; depth < 10 && current != null; depth += 1) {
@@ -239,7 +280,7 @@ function decodeRawRevertData(
   }
 }
 
-function findRevertData(error: unknown): string | undefined {
+export function findRevertData(error: unknown): string | undefined {
   let current: unknown = error
   for (let depth = 0; depth < 10 && current != null; depth += 1) {
     const candidate = current as { data?: unknown }
@@ -273,14 +314,14 @@ function stringRevertReason(error: unknown): string | undefined {
   return undefined
 }
 
-function isEmptyRevert(error: unknown): boolean {
+export function isEmptyRevert(error: unknown): boolean {
   const reverted = findError(error, ContractFunctionRevertedError)
   if (reverted !== undefined && reverted.data === undefined && reverted.reason === undefined)
     return true
   return findRevertData(error) === '0x'
 }
 
-function isTransportFailure(error: unknown): boolean {
+export function isTransportFailure(error: unknown): boolean {
   if (findError(error, HttpRequestError) !== undefined) return true
   if (findError(error, TimeoutError) !== undefined) return true
   let current: unknown = error
@@ -299,7 +340,7 @@ function isTransportFailure(error: unknown): boolean {
   return false
 }
 
-function describe(error: unknown): string {
+export function describe(error: unknown): string {
   if (error instanceof Error) return `${error.name}: ${error.message}`
   if (typeof error === 'string') return error
   try {

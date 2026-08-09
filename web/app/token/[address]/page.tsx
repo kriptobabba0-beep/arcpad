@@ -155,7 +155,13 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
               targetWei={stats.targetWei}
             />
           ) : (
-            <LifecycleNotice lifecycle={lifecycle} />
+            /*
+              `curve` GECILIYOR: bu olmadan tamamlanmis bir curve'de EKRANDA
+              HICBIR EYLEM YOKTU. `graduate()` izinsizdir ve keeper dustugunde
+              kullanicinin curve'u kendisi acabilmesi gerekir; panel hedefi
+              ZINCIRDEN okur ve hedef `0x0` iken bir dugme HIC cizmez.
+            */
+            <LifecycleNotice lifecycle={lifecycle} curve={asHex(overview.curve)} />
           )}
 
           <Card className="px-4 py-4">
@@ -374,7 +380,10 @@ function ChainDrawnLaunch({
               targetWei={chain.graduationRaiseWei}
             />
           ) : (
-            <LifecycleNotice lifecycle={lifecycle} />
+            // Zincir dali da paneli tasir. Indexer dustugunde graduation'i
+            // tetiklemek TAM OLARAK o zaman gerekebilir; iki dalin birinde
+            // eylem olup otekinde olmamasi, bu deponun en sik kusuru olurdu.
+            <LifecycleNotice lifecycle={lifecycle} curve={chain.curve} />
           )}
 
           <Card className="px-4 py-4">

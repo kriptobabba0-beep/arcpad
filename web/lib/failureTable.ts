@@ -191,6 +191,40 @@ export const FAILURE_TABLE: Readonly<Record<FailureKey, FailureEntry>> = {
 }
 
 /**
+ * ============ THE GRADUATION ERRORS ARE NOT UNREACHABLE ANY MORE ============
+ *
+ * These five USED TO sit in `UNREACHABLE_BY_CONSTRUCTION` with the reason
+ * "which this frontend never calls -- the keeper does". THAT REASON EXPIRED the
+ * moment `components/token/GraduationPanel.tsx` shipped, and leaving it would
+ * have been worse than untidy: `decodeArcpadError` prints *"This transaction hit
+ * a path that was believed impossible"* for anything on that list, so
+ * `AlreadyGraduated()` -- the BENIGN outcome when the keeper wins the race,
+ * which is the permissionless design working exactly as intended -- would have
+ * been shown to a user as a deployment fault.
+ *
+ * They stay OUT of `FAILURE_TABLE` because that table is keyed on `ArcpadAction`
+ * and graduation is not one: it crosses `ArcpadLocker`, `GraduationMath` and
+ * `PoolManager`, whose errors are not in `ARCPAD_ERROR_ABI` at all, so a
+ * seventh action would require changing `packages/shared` and its
+ * Foundry-gated parity test. `lib/graduationOutcome.ts` is their dictionary and
+ * `test/token/graduation.test.ts` is its completeness gate -- the same split
+ * `keeper/src/graduate/` already made, for the same reason.
+ *
+ * They remain in `UNREACHABLE_BY_CONSTRUCTION` (via the spread below) because
+ * that list answers a DIFFERENT question -- "can one of the six actions be
+ * handed this?" -- and the answer is still no. What changes is that
+ * `decodeArcpadError` now recognises the group and says which surface the error
+ * belongs to instead of claiming the impossible happened.
+ */
+export const REACHABLE_THROUGH_GRADUATION: readonly string[] = [
+  'NotComplete',
+  'AlreadyGraduated',
+  'GraduationTargetUnset',
+  'NotGraduationTarget',
+  'GraduationPayoutFailed',
+]
+
+/**
  * Errors that EXIST in the ABI and cannot arrive here. A LIST, not a comment,
  * and every member carries its one-line reason -- because "we thought it was
  * unreachable" is exactly the belief that needs a place to be wrong out loud.
@@ -215,13 +249,12 @@ export const UNREACHABLE_BY_CONSTRUCTION: readonly string[] = [
   // `tokensOut > realTokenReserves` returns `NotEnoughTokensToBuy()` first, so
   // `CurveMath` never sees `tokensOut >= tokenReserve`.
   'InsufficientTokenReserve',
-  // The five below live in `graduate()`, which this frontend never calls --
-  // the keeper does.
-  'NotComplete',
-  'AlreadyGraduated',
-  'GraduationTargetUnset',
-  'NotGraduationTarget',
-  'GraduationPayoutFailed',
+  // The five below live in `graduate()`. The frontend DOES call that now
+  // (`components/token/GraduationPanel.tsx`), so they are unreachable only for
+  // the SIX ACTIONS THIS TABLE IS KEYED ON -- graduation is not one of them and
+  // has its own dictionary. See `REACHABLE_THROUGH_GRADUATION` above; that is
+  // the single source, spread here so the two cannot drift apart.
+  ...REACHABLE_THROUGH_GRADUATION,
   // The five below live in the factory's governance entrypoints, which this
   // frontend never calls.
   'NotGovernor',

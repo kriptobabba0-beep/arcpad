@@ -126,7 +126,12 @@ export async function bookSmokePair(
   repoRoot: string,
   webDir: string,
   chainId: number,
-): Promise<{ smokeToken: Address | null; smokeCurve: Address | null }> {
+): Promise<{
+  smokeToken: Address | null
+  smokeCurve: Address | null
+  arcpadLocker: Address | null
+  bookGraduationTarget: Address | null
+}> {
   const stdout = await runNode(
     [tsxCli(repoRoot), join(webDir, 'e2e', 'fixtures', 'arc-book.ts'), String(chainId)],
     webDir,
@@ -134,10 +139,14 @@ export async function bookSmokePair(
   const parsed = JSON.parse(stdout.trim().split(/\r?\n/).at(-1) ?? '{}') as {
     smokeToken?: string | null
     smokeCurve?: string | null
+    arcpadLocker?: string | null
+    bookGraduationTarget?: string | null
   }
   return {
     smokeToken: asAddress(parsed.smokeToken ?? undefined),
     smokeCurve: asAddress(parsed.smokeCurve ?? undefined),
+    arcpadLocker: asAddress(parsed.arcpadLocker ?? undefined),
+    bookGraduationTarget: asAddress(parsed.bookGraduationTarget ?? undefined),
   }
 }
 
