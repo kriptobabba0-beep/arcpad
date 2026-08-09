@@ -44,6 +44,15 @@ postgres-data/
 # durumudur: imlec makineye ozgu bir blok numarasi tasir, lavabo ise commit
 # edilmesi anlamsiz bir olay akisidir.
 keeper/.cursor
+# Graduation yurutucusunun calisma zamani durumu. IMLEC AYRI BIR DOSYADIR ve
+# olmasi zorunludur: izleyici ve yurutucu AYRI SUREÇLERDIR ve tek bir imlec
+# dosyasina iki yazici, birinin ilerlemesini digerinin geri almasi demektir.
+# `.graduate-state.json` karantina KARARLARINI tasir (zincir olgusu degil,
+# bu makinenin karari); `.graduate-locks/` iki yurutucunun ayni curve'e
+# birlikte gaz yakmasini engelleyen tavsiye kilitleridir.
+keeper/.cursor-graduate
+keeper/.graduate-state.json
+keeper/.graduate-locks/
 
 # OS / editor
 .DS_Store

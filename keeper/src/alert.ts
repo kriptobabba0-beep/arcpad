@@ -17,6 +17,12 @@ import { appendFileSync } from 'node:fs'
 export type AlertLevel = 'ok' | 'page'
 
 /**
+ * Pencere izleyicisinin bilesen adi. Tatbikat ve harici olu-adam anahtari bu
+ * DIZEYE gore ayristirir; degistirmek ikisini birden sessizlestirir.
+ */
+export const DEFAULT_ALERT_COMPONENT = 'keeper.graduationWindow'
+
+/**
  * Siniflandirmanin ic derecesi. `level` yalnizca "uyandirir mi" sorusunu
  * yanitlar; `severity` rota'ya HANGI runbook adimina gidecegini soyler.
  * `critical` ile `page` ayni `level`i tasir ama ayni sey DEGILDIR: biri
@@ -79,11 +85,15 @@ export type AlertSink = (event: AlertEvent) => void
  * dizeye gore filtreler, JSON ayristirmaz -- bir alarm yolunun kendisinin
  * ayristirma hatasiyla sessizlesmesi, korunmaya calisilan seyin ta kendisidir.
  */
-export const consoleSink: AlertSink = (event) => {
-  const line = renderEvent(event)
-  if (event.kind === 'alert' && event.level === 'page') console.error(line)
-  else console.log(line)
+export function consoleSinkFor(component: string): AlertSink {
+  return (event) => {
+    const line = renderEvent(event, component)
+    if (event.kind === 'alert' && event.level === 'page') console.error(line)
+    else console.log(line)
+  }
 }
+
+export const consoleSink: AlertSink = consoleSinkFor(DEFAULT_ALERT_COMPONENT)
 
 /**
  * `render`, hem `consoleSink`in hem `fileSink`in TEK bicimlendiricisidir.
@@ -92,13 +102,21 @@ export const consoleSink: AlertSink = (event) => {
  * anahtari ve `drill.ts` satiri `^(PAGE|OK|HEARTBEAT) keeper\.graduationWindow
  * at=(\S+)` ile ayristirir. Alan `at=`den SONRA geldigi icin eski okuyucu da
  * calismaya devam eder -- yalnizca yeni okuyucu hangi durumda oldugunu GORUR.
+ *
+ * BILESEN ADI PARAMETREDIR VE VARSAYILANI DEGISMEDI. Ikinci bir keeper sureci
+ * (graduation yurutucusu, bkz. `src/graduate/`) AYNI lavabo makinesini
+ * kullanir ama AYNI ADI KULLANAMAZ: tatbikatin canlilik kapisi
+ * `^(PAGE|OK|HEARTBEAT) keeper\.graduationWindow at=` ile ayristirir ve
+ * yurutucunun kalp atislari o kapiyi ICI BOS gecirirdi -- izleyici olu olsa
+ * bile "izleyici yasiyordu" derdi. Bu, bu deponun tekrar tekrar odedigi
+ * "mekanizma var ama bosalabilir" seklinin ta kendisi olurdu.
  */
-export function renderEvent(event: AlertEvent): string {
+export function renderEvent(event: AlertEvent, component: string = DEFAULT_ALERT_COMPONENT): string {
   if (event.kind === 'heartbeat') {
     const detail = event.detail === undefined ? '' : ` ${event.detail}`
-    return `HEARTBEAT keeper.graduationWindow at=${new Date(event.at).toISOString()} state=${event.state}${detail}`
+    return `HEARTBEAT ${component} at=${new Date(event.at).toISOString()} state=${event.state}${detail}`
   }
-  return `${event.level === 'page' ? 'PAGE' : 'OK'} keeper.graduationWindow at=${new Date(event.at).toISOString()} ${event.message}`
+  return `${event.level === 'page' ? 'PAGE' : 'OK'} ${component} at=${new Date(event.at).toISOString()} ${event.message}`
 }
 
 /**
@@ -114,12 +132,16 @@ export function renderEvent(event: AlertEvent): string {
  * Bu lavabo tek bir akisa, tek bir dosyaya, `renderEvent`in TEK bicimiyle
  * yazar. Boruyu birlestirme isi operatorden alinir.
  */
-export function fileSink(path: string, opts?: { now?: () => number }): AlertSink {
+export function fileSink(
+  path: string,
+  opts?: { now?: () => number; component?: string },
+): AlertSink {
   const now = opts?.now ?? Date.now
+  const component = opts?.component ?? DEFAULT_ALERT_COMPONENT
   let lastComplaintAt: number | null = null
   return (event) => {
     try {
-      appendFileSync(path, `${renderEvent(event)}\n`, 'utf8')
+      appendFileSync(path, `${renderEvent(event, component)}\n`, 'utf8')
     } catch (cause) {
       // ALARM YOLU IZLEYICIYI OLDUREMEZ. OLCULDU, ve runbook'un KENDI komutuydu:
       //
@@ -150,7 +172,7 @@ export function fileSink(path: string, opts?: { now?: () => number }): AlertSink
       if (lastComplaintAt === null || at - lastComplaintAt >= SINK_COMPLAINT_INTERVAL_MS) {
         lastComplaintAt = at
         console.error(
-          `PAGE keeper.graduationWindow at=${new Date(at).toISOString()} alert-sink-write-failed: the file sink at ${path} cannot be written, so $KEEPER_ALERT_LOG is NOT a record of this run and the drill that reads it will report "there was no watcher". The watcher itself is still running and stdout/stderr still carry every event: ${cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause)}`,
+          `PAGE ${component} at=${new Date(at).toISOString()} alert-sink-write-failed: the file sink at ${path} cannot be written, so the log this process was told to write is NOT a record of this run and the drill that reads it will report "there was no watcher". The process itself is still running and stdout/stderr still carry every event: ${cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause)}`,
         )
       }
     }

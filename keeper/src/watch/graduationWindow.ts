@@ -1399,9 +1399,49 @@ export async function exposure(
   curves: readonly Address[],
   blockNumber: bigint,
 ): Promise<{ count: number; totalQuoteWei: bigint }> {
-  let count = 0
-  let totalQuoteWei = 0n
+  const pending = pendingGraduations(await scanCurveStates(client, curves, blockNumber))
+  return {
+    count: pending.length,
+    totalQuoteWei: pending.reduce((sum, state) => sum + (state.realQuoteWei ?? 0n), 0n),
+  }
+}
 
+/**
+ * Tek bir curve'un uc slotu, TEK BIR OKUMA YOLUNDAN.
+ *
+ * `realQuoteWei` YALNIZCA bekleyen curve'lerde doludur ve bu bilincli: onceki
+ * hal `asBigint`i yalnizca `complete && !graduated` dalinda cagiriyordu, yani
+ * mezun olmus bir curve'un okunamayan bir rezerv degeri hicbir seyi
+ * dusurmuyordu. O davranis KORUNUYOR -- burada `null` olarak GORUNUR hale
+ * getirilerek.
+ */
+export type CurveSlotState = {
+  curve: Address
+  complete: boolean
+  graduated: boolean
+  /** `null` = curve beklemede DEGIL, dolayisiyla rezerv okumasi coz ulmedi. */
+  realQuoteWei: bigint | null
+}
+
+/**
+ * ============ TEK PREDIKAT, IKI TUKETICI ============
+ *
+ * "Tamamlanmis ama mezun edilmemis" tanimi IKI yerde kullanilir: pencere
+ * izleyicisinin `exposure()`si (bu dosya) ve graduation yurutucusu
+ * (`src/graduate/executor.ts`). Iki ayri uygulama yazmak, bu deponun ON BIR
+ * KEZ olculen hata seklidir -- bir ozellik bir giris noktasinda kapatilir ve
+ * digerinde de kapali sanilir. Ikisi de BURADAN gecer; ayrisamazlar.
+ *
+ * Bir okuma hatasi YUTULMAZ. Tek bir curve okunamadiginda "0 say ve devam et"
+ * demek, tam olarak `knownCurves`in reddettigi eksik bildirimi arka kapidan
+ * geri getirirdi.
+ */
+export async function scanCurveStates(
+  client: ChainReader,
+  curves: readonly Address[],
+  blockNumber: bigint,
+): Promise<CurveSlotState[]> {
+  const out: CurveSlotState[] = []
   for (const curve of curves) {
     const read = (functionName: string): Promise<unknown> =>
       client.readContract({ address: curve, abi: CURVE_WATCH_ABI, functionName, blockNumber })
@@ -1412,13 +1452,20 @@ export async function exposure(
     ])
     const complete = asBoolean(completeRaw, `${curve}.complete`)
     const graduated = asBoolean(graduatedRaw, `${curve}.graduated`)
-    if (complete && !graduated) {
-      count += 1
-      totalQuoteWei += asBigint(reservesRaw, `${curve}.realQuoteReserves`)
-    }
+    out.push({
+      curve,
+      complete,
+      graduated,
+      realQuoteWei:
+        complete && !graduated ? asBigint(reservesRaw, `${curve}.realQuoteReserves`) : null,
+    })
   }
+  return out
+}
 
-  return { count, totalQuoteWei }
+/** `complete && !graduated`. Graduation'in TEK on kosulu, TEK yerde. */
+export function pendingGraduations(states: readonly CurveSlotState[]): CurveSlotState[] {
+  return states.filter((state) => state.complete && !state.graduated)
 }
 
 // ---------------------------------------------------------------
