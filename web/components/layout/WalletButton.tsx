@@ -28,7 +28,10 @@ const TWO_VIEWS_NOTE =
   "USDC is Arc's gas asset. Your wallet may show 18 decimals; this is the same balance."
 
 export function WalletButton() {
-  const { status, address, wrongNetwork, switchToArc, isSwitching } = useArcNetwork()
+  // `wrongNetwork` / `switchToArc` are deliberately NOT read here any more --
+  // see the block above the chip. `NetworkBanner` owns the shell's switch
+  // control; the forms own the in-context one.
+  const { status, address } = useArcNetwork()
   /*
    * `native.wei` -- 18 ondalikli okuma. `<Money>` onu 6 ondalikli TEK figure
    * cevirir. Hook'un `display` alani ayni dizeyi zaten uretiyor ama ekrana
@@ -120,14 +123,41 @@ export function WalletButton() {
     )
   }
 
-  if (wrongNetwork) {
-    return (
-      <Button variant="primary" onClick={switchToArc} disabled={isSwitching}>
-        {isSwitching ? 'Switching…' : `Switch to ${chain.name}`}
-      </Button>
-    )
-  }
-
+  /*
+   * ==========================================================================
+   *  THE HEADER NO LONGER CARRIES A "SWITCH TO ARC TESTNET" BUTTON, AND THIS
+   *  IS WHERE THE SECOND ONE USED TO BE.
+   * ==========================================================================
+   *
+   * It rendered `<Button onClick={switchToArc}>Switch to {chain.name}</Button>`
+   * INSTEAD of the chip below, and `NetworkBanner` renders the same control at
+   * the same time -- so a wrong-network wallet saw TWO buttons with the SAME
+   * accessible name on one screen. MEASURED in a real browser, not reasoned
+   * about: `e2e/arc`'s wrong-network test hit a Playwright strict-mode
+   * violation resolving `getByRole('button', { name: /Switch to Arc Testnet/ })`
+   * to both of them. That leg had never run before, which is why nothing said so.
+   *
+   * WHY THIS ONE AND NOT THE BANNER'S -- they are NOT redundant, they differ:
+   *
+   *   - the banner EXPLAINS ("Your wallet is on another network. You can read
+   *     everything here; signing needs Arc Testnet."). This one said nothing.
+   *   - `TradePanel` and `LaunchForm` turn their OWN submit button into the
+   *     switch, which is the strongest placement there is: it is the button the
+   *     user was already reaching for. Those stay.
+   *   - this one REPLACED the address chip, so a wrong-network visitor lost the
+   *     account dialog with it -- no address, no copy, no explorer link, and NO
+   *     DISCONNECT. The duplicate control also trapped the user.
+   *
+   * So the chip is drawn in every connected state now. The balance in it is
+   * read over OUR Arc transport rather than the wallet's (`lib/wagmi.ts`
+   * configures exactly one chain), which is the same reason the site stays
+   * readable on the wrong network at all.
+   *
+   * THE ASSERTION THAT WOULD HAVE CAUGHT IT lives in `test/ui/shell.test.tsx`,
+   * at the COMPOSED shell, and in the Arc leg against the live page. Each
+   * component was unit-tested alone and each was correct alone; nothing had
+   * ever rendered the two together.
+   */
   return (
     <>
       <button

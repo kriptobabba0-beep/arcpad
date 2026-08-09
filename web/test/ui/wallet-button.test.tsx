@@ -27,11 +27,46 @@ describe('<WalletButton>', () => {
   })
 
   describe('yanlis ag', () => {
-    it('gecis dugmesi cizer, bakiye cizmez', async () => {
+    /**
+     * BU TEST TERSINE CEVRILDI, VE SEBEBI BIR OLCUMDUR.
+     *
+     * Onceki hali "gecis dugmesi cizer, bakiye cizmez" diyordu ve DOGRUYDU --
+     * bilesen TEK BASINA dogruydu. Ama `NetworkBanner` ayni anda ayni erisilebilir
+     * ada sahip ikinci bir dugme ciziyor: `e2e/arc`'in yanlis-ag testi gercek
+     * tarayicida Playwright strict-mode ihlaliyle ikisini birden buldu. Iki
+     * bilesen de kendi basina test edilmisti; BIRLESIK ekrani hicbir sey
+     * olcmemisti. Deponun en cok tekrar eden kusuru budur.
+     *
+     * Ustelik eski dal adres cipini KALDIRIYORDU: yanlis agdaki kullanici
+     * adresini, kopyalamayi, explorer baglantisini ve DISCONNECT'i kaybediyordu.
+     * Yani yinelenen kontrol ayni zamanda kullaniciyi kapana kistiriyordu.
+     *
+     * Kabuktaki tek gecis kontrolu artik seritte. Bu testin karsiligi
+     * `test/ui/shell.test.tsx` icindeki BIRLESIK iddiadir.
+     */
+    it('basliktaki gecis dugmesini ARTIK cizmez -- serit onu tek basina tasir', async () => {
       renderWithProviders(<WalletButton />, { connected: true, wrongNetwork: true })
 
-      expect(await screen.findByRole('button', { name: /switch to arc testnet/i })).toBeVisible()
-      expect(screen.queryByTitle(TEST_ACCOUNT)).not.toBeInTheDocument()
+      // Cip once gelmeli, yoksa asagidaki yokluk iddiasi henuz cizilmemis bir
+      // agacta VAKUMDA gecerdi.
+      await waitFor(() => expect(screen.getByTitle(TEST_ACCOUNT)).toBeInTheDocument())
+      expect(
+        screen.queryByRole('button', { name: /switch to arc testnet/i }),
+      ).not.toBeInTheDocument()
+    })
+
+    it('yanlis agda bile hesap paneli -- ve DISCONNECT -- erisilebilir kalir', async () => {
+      const user = userEvent.setup()
+      renderWithProviders(<WalletButton />, { connected: true, wrongNetwork: true })
+
+      const chip = await waitFor(() => {
+        const cell = screen.getByTitle(TEST_ACCOUNT)
+        return cell.closest('button') as HTMLButtonElement
+      })
+      await user.click(chip)
+
+      const dialog = screen.getByRole('dialog')
+      expect(within(dialog).getByRole('button', { name: 'Disconnect' })).toBeInTheDocument()
     })
   })
 

@@ -519,28 +519,39 @@ test.describe('Arc testnet', () => {
     await page.getByRole('button', { name: 'Arcpad E2E Wallet' }).click()
 
     /*
-     * TWO BUTTONS SAY "SWITCH TO ARC TESTNET", AND THE FIRST RUN OF THIS LEG IS
-     * WHAT FOUND THAT OUT. An unscoped locator here was a strict-mode violation:
+     * TWO BUTTONS ONCE SAID "SWITCH TO ARC TESTNET", AND THE FIRST RUN OF THIS
+     * LEG IS WHAT FOUND THAT OUT. An unscoped locator here was a strict-mode
+     * violation resolving to `getByTestId('network-banner')`'s button AND the
+     * header's. `NetworkBanner` and `WalletButton` each rendered one; each was
+     * unit-tested ALONE and each was correct alone. Nothing had ever rendered
+     * the two together -- the repository's most repeated defect class.
      *
-     *   1) getByTestId('network-banner').getByRole('button', …)
-     *   2) getByRole('banner').getByRole('button', …)      <- the header chip slot
+     * The header's is gone (see `components/layout/WalletButton.tsx`), and it
+     * had a second cost: it replaced the address chip, so a wrong-network
+     * visitor lost the account dialog and with it DISCONNECT.
      *
-     * `NetworkBanner` and `WalletButton` each render one, and each is unit-tested
-     * ALONE (`test/ui/shell.test.tsx` for the strip, `test/trade/panel.test.tsx`
-     * and `test/ui/button.test.tsx` for the control). Nothing measured the
-     * COMPOSED screen -- the repository's most repeated defect class, a property
-     * covered on one entry point reading as covered on all of them. Whether one
-     * of the two should go is a product call and is NOT made here; this test's
-     * claim is that pressing the control asks the WALLET, so it presses the one
-     * in the strip and says out loud that the other exists.
+     * THE COUNT IS ASSERTED UNSCOPED, ON PURPOSE. A `within(banner)` query --
+     * which is what the unit test did -- passes just as happily with three of
+     * them on screen. Counting across the whole page is the assertion that
+     * would have caught this, so it is the assertion that stays.
      */
     const banner = page.getByTestId('network-banner')
     await expect(banner).toBeVisible()
     await expect(
       page.getByRole('button', { name: /Switch to Arc Testnet/ }),
-      'both the network strip and the header offer the switch; if this becomes 1, ' +
-        'the duplication was fixed and this expectation should follow it',
-    ).toHaveCount(2)
+      'the shell offers the switch ONCE. Two controls with one accessible name ' +
+        'is the defect this leg found on its first run.',
+    ).toHaveCount(1)
+    await expect(
+      page.getByRole('banner').getByRole('button', { name: /Switch to Arc Testnet/ }),
+      'the header must not carry a second one',
+    ).toHaveCount(0)
+    // And the wrong network must not cost the user their account menu: the chip
+    // is what opens the dialog that holds the full address and Disconnect.
+    await expect(
+      page.getByRole('button', { name: /Your wallet/ }),
+      'a wrong-network wallet keeps its address chip, and therefore Disconnect',
+    ).toHaveCount(1)
     const button = banner.getByRole('button', { name: /Switch to Arc Testnet/ })
     await expect(button).toBeVisible()
     await button.click()

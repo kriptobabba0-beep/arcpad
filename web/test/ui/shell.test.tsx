@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import { AppShell } from '@/components/layout/AppShell'
 import { BRAND } from '@/lib/brand'
-import { renderWithProviders } from './harness'
+import { renderWithProviders, TEST_ACCOUNT } from './harness'
 
 /**
  * KABUGUN ERISILEBILIRLIK IDDIALARI, CALISTIRILARAK.
@@ -184,5 +184,50 @@ describe('kabuk', () => {
     // agda da tamamen okunur, durulan tek yer imzadir.
     expect(banner).toHaveTextContent(/you can read everything here/i)
     expect(within(banner).getByRole('button', { name: /switch to arc testnet/i })).toBeEnabled()
+  })
+
+  /**
+   * ==========================================================================
+   *  BIRLESIK EKRANDA GECIS KONTROLU TEKTIR. BU, KACIRILAN IDDIADIR.
+   * ==========================================================================
+   *
+   * Yukaridaki test `within(banner)` ile KAPSAMLANMISTI ve dogruydu.
+   * `test/ui/wallet-button.test.tsx` de bileseni TEK BASINA render edip kendi
+   * gecis dugmesini dogruluyordu ve o da dogruydu. Ikisi de dogruyken ekranda
+   * AYNI erisilebilir ada sahip IKI dugme vardi -- `NetworkBanner`'inki ve
+   * basliktaki -- ve bunu soyleyen hicbir test yoktu, cunku hicbiri ikisini
+   * BIRLIKTE cizmiyordu.
+   *
+   * Gercek tarayicida olculdu: `e2e/arc`'in yanlis-ag testi
+   * `getByRole('button', { name: /Switch to Arc Testnet/ })` uzerinde
+   * Playwright strict-mode ihlali aldi ve ikisini de listeledi. O bacak o gune
+   * kadar hic kosmamisti.
+   *
+   * Bu yuzden iddia KAPSAMSIZDIR: butun kabukta kac tane oldugunu sayar. Bir
+   * gun ucuncusu eklenirse, ekleyen kisi bunu burada gorur -- kapsamli bir
+   * `within(...)` sorgusu yine gormezdi.
+   */
+  it('yanlis agda BUTUN kabukta gecis kontrolu TEK TANEDIR', async () => {
+    renderWithProviders(
+      <AppShell>
+        <p>content</p>
+      </AppShell>,
+      { connected: true, wrongNetwork: true },
+    )
+
+    // Once serit gelsin: bir yokluk/sayim iddiasi henuz cizilmemis bir agacta
+    // VAKUMDA gecerdi ve bu dosyanin var olma sebebi tam olarak bu degildir.
+    const banner = await screen.findByTestId('network-banner')
+
+    expect(screen.getAllByRole('button', { name: /switch to arc testnet/i })).toHaveLength(1)
+    expect(within(banner).getByRole('button', { name: /switch to arc testnet/i })).toBeVisible()
+    // Ve baslik onu TASIMAZ: eskiden tasiyordu, ve adres cipinin YERINE
+    // koyuyordu -- yani yanlis agdaki kullanici Disconnect'e de ulasamiyordu.
+    expect(
+      within(screen.getByRole('banner')).queryByRole('button', {
+        name: /switch to arc testnet/i,
+      }),
+    ).not.toBeInTheDocument()
+    expect(within(screen.getByRole('banner')).getByTitle(TEST_ACCOUNT)).toBeInTheDocument()
   })
 })
