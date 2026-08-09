@@ -13,21 +13,34 @@
  */
 
 import {
+  type CreatorEarnings,
   encodeHolderCursor,
+  encodePositionCursor,
   type FreshIndexer,
+  getCreatorEarnings,
   getIndexerStatus,
+  getProtocolStats,
   getTokenOverview,
   type HolderRow,
   type IndexerStatus,
   listHolders,
+  listLaunchesByCreator,
+  listPositionsByHolder,
+  listProtocolDaily,
   listTokens,
   listTrades,
+  listTradesByTrader,
   parseHolderCursor,
+  parsePositionCursor,
+  type PositionRow,
+  type ProtocolDay,
+  type ProtocolStats,
   type SearchSortKey,
   searchTokens,
   type SortKey,
   type StaleIndexer,
   type TokenOverview,
+  type TraderTradeRow,
   type TradeRow,
 } from '@arcpad/db'
 import { getPool } from './db'
@@ -376,6 +389,125 @@ export async function readHolders(
     const last = rows.length < params.limit ? undefined : rows[rows.length - 1]
     return {
       value: { rows, nextCursor: last === undefined ? null : encodeHolderCursor(last) },
+      indexer,
+    }
+  })
+}
+
+// ===========================================================================
+//  FAZ 5 -- /analytics VE /profile/[address]
+// ===========================================================================
+
+/**
+ * THE ANALYTICS RANGE IS A WHITELIST, NOT A NUMBER FROM THE URL.
+ *
+ * `?range=` reaches `getProtocolStats` as an HOUR COUNT. A raw number from the
+ * URL would let a link decide the window -- harmless today, but it also makes
+ * the page's own claim ("24h") unverifiable, because two links could both say
+ * 24h and mean different things. Two keys, two windows, nothing else.
+ */
+export const ANALYTICS_RANGES = { '24h': 24, all: null } as const
+export type AnalyticsRange = keyof typeof ANALYTICS_RANGES
+
+export function parseAnalyticsRange(value: string | string[] | undefined): AnalyticsRange {
+  const first = Array.isArray(value) ? value[0] : value
+  return first === '24h' ? '24h' : 'all'
+}
+
+/** The bar charts' span. One place, because the page and its caption share it. */
+export const ANALYTICS_DAYS = 30
+
+export async function readProtocolStats(range: AnalyticsRange): Promise<ReadResult<ProtocolStats>> {
+  return guard(async () => {
+    const { rows, indexer } = await getProtocolStats(getPool(), {
+      windowHours: ANALYTICS_RANGES[range],
+    })
+    return { value: rows, indexer }
+  })
+}
+
+export async function readProtocolDaily(
+  days: number = ANALYTICS_DAYS,
+): Promise<ReadResult<readonly ProtocolDay[]>> {
+  return guard(async () => {
+    const { rows, indexer } = await listProtocolDaily(getPool(), { days })
+    return { value: rows as readonly ProtocolDay[], indexer }
+  })
+}
+
+/**
+ * ============ THE EARNINGS TOTAL DOES NOT COME FROM THE ROWS ============
+ *
+ * `packages/db`'s `getCreatorEarnings` returns ONE object whose shape makes
+ * the wrong total unavailable: there is no field equal to the sum of
+ * `byLaunch`. The ledger totals (`depositedTotalWei`, `claimableWei`) come
+ * from `fee_balances`, which is `FeeEscrow.owed(recipient)` plus what has been
+ * claimed, and the difference from the attributable rows arrives NAMED --
+ * `unattributedWei`.
+ *
+ * This layer forwards that object WHOLE. It does not spread it, does not
+ * re-derive anything from it, and the profile page passes it straight to the
+ * panel. That is deliberate: every place a total could be recomputed is a
+ * place it could be recomputed WRONGLY, and the number that would be wrong is
+ * the one a creator reads as "what I earned".
+ */
+export async function readCreatorEarnings(
+  recipient: string,
+): Promise<ReadResult<CreatorEarnings>> {
+  return guard(async () => {
+    const { rows, indexer } = await getCreatorEarnings(getPool(), recipient as `0x${string}`)
+    return { value: rows, indexer }
+  })
+}
+
+export async function readLaunchesByCreator(
+  creator: string,
+  limit: number,
+): Promise<ReadResult<readonly TokenOverview[]>> {
+  return guard(async () => {
+    const pool = getPool()
+    const rows = await listLaunchesByCreator(pool, creator as `0x${string}`, { limit })
+    const indexer = await getIndexerStatus(pool)
+    return { value: rows as readonly TokenOverview[], indexer }
+  })
+}
+
+/**
+ * Positions, keyset-paged on `(valueWei, token)`.
+ *
+ * THE CURSOR IS TWO-PART FOR THE SAME REASON THE HOLDERS ONE IS: the price is
+ * per token, so every token that has never traded carries the SAME opening
+ * price, and two positions of equal size have EXACTLY equal value. A one-part
+ * keyset repeats and skips rows precisely there.
+ */
+export async function readPositions(
+  holder: string,
+  params: PageParams,
+): Promise<ReadResult<Page<PositionRow>>> {
+  return guard(async () => {
+    const { rows, indexer } = await listPositionsByHolder(getPool(), holder as `0x${string}`, {
+      after: parsePositionCursor(params.cursor),
+      limit: params.limit,
+    })
+    const last = rows.length < params.limit ? undefined : rows[rows.length - 1]
+    return {
+      value: { rows, nextCursor: last === undefined ? null : encodePositionCursor(last) },
+      indexer,
+    }
+  })
+}
+
+export async function readTraderTrades(
+  trader: string,
+  params: PageParams,
+): Promise<ReadResult<Page<TraderTradeRow>>> {
+  return guard(async () => {
+    const { rows, indexer } = await listTradesByTrader(getPool(), trader as `0x${string}`, {
+      cursor: parseCursor(params.cursor),
+      limit: params.limit,
+    })
+    return {
+      value: { rows, nextCursor: nextCursorFrom(rows, params.limit, (r) => r.eventSeq) },
       indexer,
     }
   })

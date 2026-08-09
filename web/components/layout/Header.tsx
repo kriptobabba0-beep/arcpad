@@ -56,12 +56,30 @@ export function Header() {
           </span>
         ) : null}
 
-        <nav aria-label="Primary" className="ml-3 hidden md:block">
+        {/*
+          NAVIGATION IS WHAT MAKES A ROUTE EXIST.
+
+          `/analytics` shipped with no link to it and would have been reachable
+          only by typing the URL -- which is the same class of defect this
+          repository has already paid for twice: a component written, tested and
+          rendered by nothing. A route with no entry point is not a feature.
+
+          `/profile/[address]` is deliberately NOT here: it has no canonical
+          address at the header level. It is reached from the wallet chip, from
+          a launch's creator, and from a holder row.
+        */}
+        <nav aria-label="Primary" className="ml-3 hidden items-center gap-3 md:flex">
           <Link
             href="/"
             className="rounded-sm px-1 text-sm text-muted transition-colors duration-150 hover:text-text"
           >
             Explore
+          </Link>
+          <Link
+            href="/analytics"
+            className="rounded-sm px-1 text-sm text-muted transition-colors duration-150 hover:text-text"
+          >
+            Analytics
           </Link>
         </nav>
 
