@@ -482,6 +482,26 @@ export const WEB_ENV_BINDINGS: readonly EnvBinding[] = Object.freeze([
   { name: 'NEXT_PUBLIC_ARC_CHAIN_ID', kind: 'plain', valueOf: (b) => String(b.chainId) },
   { name: 'NEXT_PUBLIC_ARCPAD_FACTORY', kind: 'address', valueOf: (b) => b.launchFactory },
   { name: 'NEXT_PUBLIC_ARCPAD_ESCROW', kind: 'address', valueOf: (b) => b.feeEscrow },
+  /**
+   * ROUTER -- DEFTERDEN GELMEK ZORUNDA OLAN TEK ADRES, VE SEBEBI DIGERLERINDEN
+   * FARKLI.
+   *
+   * `ArcpadRouter`, bir cuzdanin mezun olmus bir havuza ulasabilecegi TEK
+   * yoldur: v4 bir EOA'ya swap giris noktasi vermez ve Arc'ta Universal Router
+   * yoktur. Ve ZINCIRDE HICBIR SEY ONA REFERANS VERMEZ -- ne havuz, ne hook, ne
+   * factory, ne token. Yani `graduationTarget`in aksine zincirden OKUNAMAZ:
+   * yapilandirilmak zorundadir, ve yanlis bir deger "baskasinin kontrati
+   * uzerinden islem yapan bir site" demektir.
+   *
+   * Defter onu `arcpadRouter` olarak ZORUNLU tasir ve `loadAddressBook` onu
+   * `routerInitcodeHash` + CREATE2 ile CEVRIMDISI YENIDEN TURETIR, yani buradan
+   * cikan deger bir kopya degil bir TURETMEDIR. Bu satir gelene kadar
+   * `pnpm addressbook --env-only` degiskeni HIC basmiyordu, dolayisiyla CI'in
+   * derledigi her `web` paketi routersizdi ve mezun bir token'in islem paneli
+   * her dagitimda karanlik kalirdi -- gerekcesi ekranda gorunmeyen bir
+   * eksiklik.
+   */
+  { name: 'NEXT_PUBLIC_ARCPAD_ROUTER', kind: 'address', valueOf: (b) => b.arcpadRouter },
   { name: 'ARC_FACTORY_ADDRESS', kind: 'address', valueOf: (b) => b.launchFactory },
   { name: 'ARC_ESCROW_ADDRESS', kind: 'address', valueOf: (b) => b.feeEscrow },
   { name: 'ARC_START_BLOCK', kind: 'plain', valueOf: (b) => String(b.startBlock) },

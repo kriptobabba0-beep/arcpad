@@ -281,6 +281,9 @@ describe('adres defteri', () => {
         NEXT_PUBLIC_ARC_CHAIN_ID: String(b.chainId),
         NEXT_PUBLIC_ARCPAD_FACTORY: b.launchFactory,
         NEXT_PUBLIC_ARCPAD_ESCROW: b.feeEscrow,
+        // Havuz router'i. Defterde ZORUNLUDUR ve yukleyici onu CREATE2 ile
+        // yeniden turetir, yani buradaki deger bir kopya degil bir turetmedir.
+        NEXT_PUBLIC_ARCPAD_ROUTER: b.arcpadRouter,
         ARC_FACTORY_ADDRESS: b.launchFactory,
         ARC_ESCROW_ADDRESS: b.feeEscrow,
         ARC_START_BLOCK: String(b.startBlock),
@@ -298,6 +301,7 @@ describe('adres defteri', () => {
         NEXT_PUBLIC_ARC_CHAIN_ID: '5042002',
         NEXT_PUBLIC_ARCPAD_FACTORY: '0x0000000000000000000000000000000000009999',
         NEXT_PUBLIC_ARCPAD_ESCROW: '0x0000000000000000000000000000000000009999',
+        NEXT_PUBLIC_ARCPAD_ROUTER: '0x0000000000000000000000000000000000009999',
         ARC_FACTORY_ADDRESS: '0x0000000000000000000000000000000000009999',
         ARC_ESCROW_ADDRESS: '0x0000000000000000000000000000000000009999',
         ARC_START_BLOCK: '999',
@@ -369,6 +373,11 @@ describe('adres defteri', () => {
       'ARC_START_BLOCK',
       'NEXT_PUBLIC_ARCPAD_ESCROW',
       'NEXT_PUBLIC_ARCPAD_FACTORY',
+      // YEDINCI AD. Bunu eklemeden binding'i eklemek bu testi kirar, ve KIRMASI
+      // gerekir: `webEnvBlock` CI'in derleme ortamini yazar, yani bu liste
+      // "uretimde hangi degiskenler var" sozlesmesidir. Turetilmis olsaydi
+      // sozlesme, denetledigi tablonun bir kopyasi olurdu.
+      'NEXT_PUBLIC_ARCPAD_ROUTER',
       'NEXT_PUBLIC_ARC_CHAIN_ID',
     ]
 
