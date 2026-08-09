@@ -9,6 +9,7 @@ import {
   CURVE,
   DEPLOYMENT,
   GENESIS,
+  GRADUATED,
   hash32,
   hashFor,
   RANGE,
@@ -168,6 +169,124 @@ describe('havuz islemleri ayni tabloya `source = pool` ile girer', () => {
     for (let i = 1; i < rows.length; i += 1) {
       expect(rows[i - 1]!.eventSeq > rows[i]!.eventSeq).toBe(true)
     }
+  })
+
+  /**
+   * TEK LISTE, AMA SATIR ARTIK MEKANINI SOYLUYOR.
+   *
+   * `listTrades` kolonu SECMIYORDU: sema 003'ten beri tasiyordu, yazici
+   * 89acc4f'ten beri `'pool'` yaziyordu, ve okuma modeli ikisini de gormuyordu.
+   * Sonuc, arayuzun mekani `event_seq > graduated_seq` ile TURETMESIYDI.
+   */
+  it('her satir kendi `source`unu TASIR -- turetilmis degil, yazilmis', async () => {
+    await applyPoolSwap(pool, poolSwap())
+    const rows = await listTrades(pool, TOKEN, { limit: 50 })
+    const bySeq = new Map(rows.map((r) => [r.eventSeq, r.source]))
+    expect(bySeq.get(toSeq(POOL_BLOCK, 0))).toBe('pool')
+    // ANTI-VACUITY: liste iki mekani da tasiyor. Hepsi 'pool' olsaydi (ya da
+    // hepsi 'curve') asagidaki mutabakat testi hicbir seyi ayirt etmezdi.
+    expect(rows.filter((r) => r.source === 'pool').length).toBe(1)
+    expect(rows.filter((r) => r.source === 'curve').length).toBeGreaterThan(2)
+    // VE TIP DARALDI: `TradeSource` iki degerlidir, `string` degil.
+    for (const row of rows) expect(['curve', 'pool']).toContain(row.source)
+  })
+})
+
+/**
+ * ==========================================================================
+ *  IKI OLGU, VE ARTIK CELISEBILIRLER -- BU YUZDEN MUTABAKAT KOSULUYOR.
+ * ==========================================================================
+ *
+ * `source` gercek olunca ayni soruya iki cevap dogar:
+ *
+ *   1. `trades.source`      -- satiri UREten cozucu yazar. Satir basina olgu.
+ *   2. `event_seq > graduated_seq` -- token basina bir sinirdan TURETILIR.
+ *
+ * Ikisi ZORUNLU olarak ayni bolumlemeyi vermeli: mezuniyetten sonra hicbir
+ * egri islemi olamaz (`CurveComplete()`), mezuniyetten once hicbir havuz
+ * islemi olamaz (`ArcpadLocker.graduate` havuzu AYNI islemde, `Graduated`
+ * logundan SONRA acar) ve `event_seq = block << 20 | logIndex` o sirayi
+ * korur.
+ *
+ * ARAYUZ ARTIK YALNIZCA (1)'I KULLANIYOR (`web/components/token/venue.ts`).
+ * Yani (2) ile ayni cevabi verdigini ISPATLAYAN tek yer burasi -- ve burasi,
+ * iki olgunun da GERCEK satirlar uzerinde birlikte bulundugu tek katman.
+ * Fixture uzerinde degil, gercek bir Postgres'te kosuluyor.
+ */
+describe('`source` ile `graduated_seq` turetmesi AYNI bolumlemeyi verir', () => {
+  const AFTER_GRADUATION = 54_325_600n
+
+  async function graduatedSeq(): Promise<bigint> {
+    const { rows } = await pool.query<{ s: string | null }>(
+      'SELECT graduated_seq::text AS s FROM curve_state WHERE token = $1',
+      [TOKEN],
+    )
+    const s = rows[0]?.s
+    if (s == null) throw new Error('the fixture did not graduate -- this gate cannot run')
+    return BigInt(s)
+  }
+
+  /** Bir satirin IKI cevabi ayrisiyor mu. Bos liste = mutabakat. */
+  function disagreements(
+    rows: readonly { eventSeq: bigint; source: 'curve' | 'pool' }[],
+    seam: bigint,
+  ): readonly { eventSeq: bigint; declared: string; derived: string }[] {
+    return rows
+      .map((r) => ({
+        eventSeq: r.eventSeq,
+        declared: r.source,
+        derived: r.eventSeq > seam ? 'pool' : 'curve',
+      }))
+      .filter((r) => r.declared !== r.derived)
+  }
+
+  beforeEach(async () => {
+    await resetSchema()
+    await seedRange()
+    // Mezuniyet `RANGE`e DAHIL DEGILDIR (fixtures.ts'in gerekcesi); mekan
+    // sinirinin var olmasi icin burada ayrica uygulanir.
+    await applyEvent(pool, GRADUATED)
+    await applyPoolSwap(pool, poolSwap({ logIndex: 0 }))
+    await applyPoolSwap(pool, poolSwap({ logIndex: 1 }))
+  })
+
+  it('gercek satirlarda ikisi TAM olarak ortusur', async () => {
+    const seam = await graduatedSeq()
+    const rows = await listTrades(pool, TOKEN, { limit: 200 })
+
+    // ANTI-VACUITY, UC PARCA: sinirin IKI yaninda da satir var, iki mekan da
+    // temsil ediliyor, ve sinir gercekten iceride. Bunlar olmadan "ayrisma
+    // yok" iddiasi bos bir kumeden gelebilirdi.
+    expect(rows.filter((r) => r.eventSeq < seam).length).toBeGreaterThan(0)
+    expect(rows.filter((r) => r.eventSeq > seam).length).toBe(2)
+    expect(new Set(rows.map((r) => r.source))).toEqual(new Set(['curve', 'pool']))
+
+    expect(disagreements(rows, seam)).toEqual([])
+  })
+
+  /**
+   * KONTROL: KARSILASTIRMA GERCEKTEN AYRISMA GOREBILIYOR.
+   *
+   * Yukaridaki iddia, `disagreements` her zaman bos donse de gecerdi. Burada
+   * mezuniyetten SONRAKI bir satir kasitli olarak `'curve'` yazilir -- zincirde
+   * IMKANSIZ bir satir -- ve karsilastirma onu GORMEK zorundadir.
+   */
+  it('KONTROL: mezuniyetten sonraki bir `curve` satiri AYRISMA olarak gorunur', async () => {
+    const seam = await graduatedSeq()
+    const impossible = toSeq(AFTER_GRADUATION, 7)
+    await pool.query(
+      `INSERT INTO trades (event_seq, block_number, log_index, tx_hash, block_time, token, curve,
+         trader, is_buy, token_amount_tok, quote_amount_wei, protocol_fee_wei, creator_fee_wei,
+         virtual_token_reserves_tok, virtual_quote_reserves_wei, real_token_reserves_tok,
+         real_quote_reserves_wei, source)
+       VALUES ($1,$2,7,$3,now(),$4,$5,$6,true,1,1,0,0,1,1,1,1,'curve')`,
+      [impossible.toString(), AFTER_GRADUATION.toString(), hash32(0x77), TOKEN, CURVE, ALICE],
+    )
+    const rows = await listTrades(pool, TOKEN, { limit: 200 })
+    const found = disagreements(rows, seam)
+    expect(found).toHaveLength(1)
+    expect(found[0]?.eventSeq).toBe(impossible)
+    expect(found[0]).toMatchObject({ declared: 'curve', derived: 'pool' })
   })
 })
 

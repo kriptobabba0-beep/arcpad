@@ -799,12 +799,39 @@ export async function getTokenOverview(
   }
 }
 
+/**
+ * BIR ISLEMIN MEKANI. `trades.source`un TS karsiligi, ve `CHECK (source IN
+ * ('curve','pool'))` ile AYNI iki degeri tasir.
+ *
+ * Birlik `string` DEGIL: bir tuketici `row.source === 'amm'` yazabilseydi
+ * derleyici sussuz gecer ve dal sonsuza kadar olu kalirdi. Iki degerli birlik,
+ * `switch`in tam olup olmadigini derleme zamaninda soyler.
+ */
+export type TradeSource = 'curve' | 'pool'
+
 export interface TradeRow {
   eventSeq: bigint
   txHash: string
   blockTime: Date
   trader: string
   isBuy: boolean
+  /**
+   * ============ ISLEM HANGI MEKANDA OLDU ============
+   *
+   * `'curve'` `BondingCurve.Trade`'den, `'pool'` `PoolManager.Swap` +
+   * `ArcpadHook.SwapFeeCollected`ten gelir (`applyTrade` / `applyPoolSwap`) --
+   * yani alan, satiri UREten cozucu tarafindan satir basina yazilir.
+   *
+   * NEDEN SECILMESI GEREKTI. Kolon 003'ten beri semada, ama sorgu onu
+   * SECMIYORDU: mezuniyet sonrasi bir liste iki mekani tasiyor, satirin
+   * kendisi hangisi oldugunu soylemiyor ve tuketici mecburen
+   * `event_seq > graduated_seq` turetmesine dusuyordu. O turetme DOGRUdur ama
+   * BAGIMSIZ DEGILDIR: yanlis yazilmis tek bir `graduated_seq` butun gecmisi
+   * yanlis etiketler, oysa bu kolon her satirda ayri bir olgudur. Ikisinin
+   * ayni cevabi verdigi `test/pool-trades.test.ts`te GERCEK satirlar uzerinde
+   * kosulur.
+   */
+  source: TradeSource
   tokenAmountTok: bigint
   quoteAmountWei: bigint
   /**
@@ -866,8 +893,10 @@ export async function listTrades(
     real_token_reserves_tok: string
     real_quote_reserves_wei: string
     is_dev: boolean
+    source: string
   }>(
     `SELECT t.event_seq::text AS event_seq, t.tx_hash, t.block_time, t.trader, t.is_buy,
+            t.source,
             t.token_amount_tok::text AS token_amount_tok,
             t.quote_amount_wei::text AS quote_amount_wei,
             t.protocol_fee_wei::text AS protocol_fee_wei,
@@ -897,7 +926,25 @@ export async function listTrades(
     realTokenReservesTok: BigInt(r.real_token_reserves_tok),
     realQuoteReservesWei: BigInt(r.real_quote_reserves_wei),
     isDev: r.is_dev,
+    source: asTradeSource(r.source),
   }))
+}
+
+/**
+ * `text` -> `TradeSource`, DARALTMA DEGIL DOGRULAMA.
+ *
+ * `r.source as TradeSource` bir IDDIA olurdu ve yanlis oldugunda SESSIZCE
+ * gecerdi -- tam olarak bu deponun `asHex`te reddettigi sekil. Semadaki
+ * `CHECK (source IN ('curve','pool'))` bu dalin ulasilamaz olmasini saglar; o
+ * yuzden BURAYA dusmek "kisit gitti ya da yeni bir mekan eklendi ve okuma
+ * modeli haberdar degil" demektir, ve bu sessiz gecilecek bir gun degildir.
+ */
+function asTradeSource(value: string): TradeSource {
+  if (value === 'curve' || value === 'pool') return value
+  throw new Error(
+    `trades.source is "${value}", which is neither 'curve' nor 'pool'. The schema CHECK that ` +
+      'makes this impossible has changed, or a new venue was added without updating TradeSource.',
+  )
 }
 
 export interface HolderRow {

@@ -68,6 +68,7 @@ export {
   type SyncPoint,
   type TokenOverview,
   type TradeRow,
+  type TradeSource,
 } from './queries'
 export { fromSeq, LOG_INDEX_BITS, MAX_BLOCK_NUMBER, MAX_LOG_INDEX, MAX_SEQ, toSeq } from './seq'
 export { assertContinuous, ReorgDetected } from './reorg'
