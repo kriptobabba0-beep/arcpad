@@ -115,7 +115,25 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
       },
     ),
   ])
-  const lifecycle = resolveLifecycle({ complete: overview.complete })
+  /*
+   * `overview.graduated` GECILIYOR, VE GECILMEDIGI SURECE `graduated` DALI
+   * HICBIR SAYFADA URETILEMIYORDU.
+   *
+   * Satir bu alani zaten tasiyordu (`packages/db/src/queries.ts`, `graduated`
+   * + `graduatedSeq` + `graduationTargetAddr` + iki odeme miktari) ve burasi
+   * yalnizca `complete`i okuyordu. Sonuc: mezun olan ilk token, arkasinda canli
+   * bir havuzla, sonsuza kadar "Curve complete" olarak cizilecekti. Bileşenin
+   * kendi testi elle kurulmus bir nesne ile "Graduated"i goruyordu, yani YESIL
+   * kaliyordu -- eksik `loadMore*` prop'lariyla ve `CurveChart`'in hic cizilmeyen
+   * gerceklesen katmaniyla AYNI kusur, ucuncu kez.
+   *
+   * `resolveLifecycle`in imzasi bu yuzden degisti: `graduated` artik ZORUNLU,
+   * dolayisiyla bu satiri yeniden unutmak derlenmez.
+   */
+  const lifecycle = resolveLifecycle({
+    complete: overview.complete,
+    graduated: overview.graduated,
+  })
   const stats = statsFromOverview(overview)
 
   const saleSupply = profile?.saleSupply ?? 793_100_000n * 10n ** 18n
@@ -317,7 +335,11 @@ function ChainDrawnLaunch({
   profile: CurveProfile
   canonicity: Canonicity
 }) {
-  const lifecycle = resolveLifecycle({ complete: chain.complete })
+  // Zincir dali da AYNI iki bayragi besler: `readChainToken` `graduated()`i
+  // artik ayni multicall icinde okuyor, yani indexer dustugunde de mezuniyet
+  // ekranda GORUNUR. Iki dali ayri beslemek, birini duzeltip otekini unutmanin
+  // klasik yoluydu.
+  const lifecycle = resolveLifecycle({ complete: chain.complete, graduated: chain.graduated })
   const soldTok = profile.saleSupply - chain.realTokenReserves
   const percent = (Math.round(chain.progressPpm / 1_000) / 10).toFixed(1)
 

@@ -82,19 +82,35 @@ describe('ilerleme -- pay TOKEN satisi uzerinden', () => {
 
 describe('yasam dongusu -- uc durum', () => {
   it('complete === false -> trading', () => {
-    expect(resolveLifecycle({ complete: false })).toEqual({ kind: 'trading' })
+    expect(resolveLifecycle({ complete: false, graduated: false })).toEqual({ kind: 'trading' })
   })
 
   it('complete === true -> complete', () => {
-    expect(resolveLifecycle({ complete: true })).toEqual({ kind: 'complete' })
+    expect(resolveLifecycle({ complete: true, graduated: false })).toEqual({ kind: 'complete' })
   })
 
-  it('graduated dali BUGUN ULASILAMAZ ama tip ve ekran hazir', () => {
-    // Faz 2 bir yeniden yazim olmasin diye bugunden test ediliyor.
+  /**
+   * `graduated` ARTIK BESLENIYOR -- ve bu testin ELLE kurdugu nesne, gecen sefer
+   * dalin ulasilabilir OLDUGUNU soylemedigi icin yetmemisti.
+   *
+   * O gun bu test yesildi ve sayfa alani hic gecmiyordu. Iddianin gercek yeri
+   * `test/token/lifecycle-feed.test.ts`: cagri yerlerinin alani GECTIGINI ve
+   * atlamanin DERLENMEDIGINI olcuyor.
+   */
+  it('graduated -> "Graduated", ve zincirde graduated => complete', () => {
     const lifecycle = resolveLifecycle({ complete: true, graduated: true })
     expect(lifecycle.kind).toBe('graduated')
     render(<LifecycleNotice lifecycle={lifecycle} />)
     expect(screen.getByText('Graduated')).toBeInTheDocument()
+    expect(screen.getByText(/trading has moved to the pool/i)).toBeInTheDocument()
+  })
+
+  it('bayat bir satir `graduated && !complete` gosterse bile ILERI durum kazanir', () => {
+    // Zincirde imkansiz (`graduate()` `!complete` ise `NotComplete()` doner) ama
+    // bir indexer satiri iki bayragi bir an icin ayrik tasiyabilir. O anda
+    // gosterilmesi gereken sey daha ileri olandir; tersi, mezun olmus bir
+    // token'i "hala satisda" gibi gosterirdi.
+    expect(resolveLifecycle({ complete: false, graduated: true }).kind).toBe('graduated')
   })
 
   it('trading durumunda uyari HIC cizilmez', () => {

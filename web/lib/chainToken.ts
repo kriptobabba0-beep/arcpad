@@ -37,6 +37,14 @@ export type ChainToken = {
   readonly uri: string
   readonly creator: Address
   readonly complete: boolean
+  /**
+   * TERMINAL, ve `complete` DEGILDIR. `complete` satis arzinin tukendigini
+   * soyler; `graduated`, `R` ve `D`nin hedefe odendigini ve havuzun acildigini.
+   * Ikisi arasinda GERCEK bir zaman araligi vardir -- canli smoke curve su an
+   * tam olarak orada duruyor -- ve bu dal okunmadigi surece zincir tarafinda
+   * uretilemez.
+   */
+  readonly graduated: boolean
   readonly virtualTokenReserves: bigint
   readonly virtualQuoteReserves: bigint
   readonly realTokenReserves: bigint
@@ -92,7 +100,17 @@ export async function readChainToken(
       allowFailure: false,
     })) as [string, string, string, Address, Address]
 
-    const [vT, vQ, rT, rQ, complete] = (await publicClient.multicall({
+    /*
+     * `graduated` ALTINCI OKUMA OLARAK EKLENDI -- AYNI multicall, ayni tur
+     * sayisi, bir kelime maliyet.
+     *
+     * Onceden okunmuyordu ve bu, zincirden cizilen sayfanin `graduated` dalini
+     * URETEMEMESI demekti: `resolveLifecycle` yalnizca `complete` ile
+     * cagriliyordu, dolayisiyla mezun olmus bir curve "Curve complete" olarak
+     * ciziliyordu. Fazladan bir tur DEGIL, ayni toplu cagrida bir alan; bunu
+     * atlamak icin bir maliyet gerekcesi hic olmamisti.
+     */
+    const [vT, vQ, rT, rQ, complete, graduated] = (await publicClient.multicall({
       contracts: (
         [
           'virtualTokenReserves',
@@ -100,10 +118,11 @@ export async function readChainToken(
           'realTokenReserves',
           'realQuoteReserves',
           'complete',
+          'graduated',
         ] as const
       ).map((functionName) => ({ address: curve, abi: bondingCurveAbi, functionName })),
       allowFailure: false,
-    })) as [bigint, bigint, bigint, bigint, boolean]
+    })) as [bigint, bigint, bigint, bigint, boolean, boolean]
 
     return {
       token,
@@ -113,6 +132,7 @@ export async function readChainToken(
       uri,
       creator,
       complete,
+      graduated,
       virtualTokenReserves: vT,
       virtualQuoteReserves: vQ,
       realTokenReserves: rT,
