@@ -1149,3 +1149,570 @@ export async function listCreatorEarningsByLaunch(
     earnedWei: BigInt(r.earned_wei),
   }))
 }
+
+// ===========================================================================
+//  FAZ 5 -- /analytics VE /profile/[address]
+// ===========================================================================
+
+/**
+ * ====================== `protocol_stats_daily` YOKTUR ======================
+ *
+ * Faz 3 o tabloyu KAPSAM DISI birakti, ve asagidaki sorgular onu KURMAZ; ayni
+ * sayilari `trades` ve `launches` uzerinden OKUMA ANINDA turetirler. Karar ve
+ * bedeli:
+ *
+ * 1. BIR ROLLUP TABLOSUNUN YAZARI `indexer/`DIR. Bu paket onu okuyabilir ama
+ *    dolduramaz. Yazari olmayan bir tabloyu semaya koymak, ekranda SONSUZA
+ *    KADAR bos kalan bir grafik demektir -- bu deponun daha once bir kez
+ *    sevkettigi ariza kipi ("olmayan bir seyi varmis gibi gosteren ekran").
+ *
+ * 2. GUN KOVASI OKUMA ANINDA COZULUR, YAZMA ANINDA COZULMEZ. Arc'ta ardisik
+ *    bloklarin %49'u AYNI timestamp'i tasir; bu SIRALAMAYI bozar, KOVALAMAYI
+ *    bozmaz -- esit iki timestamp ayni kovaya duser ve bu DOGRUDUR. Yazma
+ *    tarafinda ise ayni ozellik zor tarafa duser: at-least-once teslimatta
+ *    gec gelen bir olay KAPANMIS bir kovaya dusebilir, yani artimli toplam
+ *    `event_seq` basina idempotent olmak ZORUNDADIR. O ispat indexer'in
+ *    isidir ve burada taklit edilemez.
+ *
+ * 3. BEDEL YAZILIYOR: bu sorgular `trades` ve `launches` uzerinde TAM
+ *    TOPLAMADIR. Bir indeks bunu KURTARMAZ, cunku sayfa her zaman "all time"
+ *    kutucuklarini da cizer ve o toplamaya hicbir pencere indeksi uygulanamaz.
+ *    Bugun tabloda alti islem var; sikinti bu degil. `trades` buyudugunde
+ *    cozum bir indeks degil TAM OLARAK `protocol_stats_daily`dir, ve o zaman
+ *    yazilmasi gereken sey indexer'in artimli guncellemesidir.
+ *
+ * 4. SAYILARIN KAPSAMI: `trades` yalnizca INDEKSLENEN factory'nin
+ *    launch'larini tasir. Superseded (Faz 1) factory'nin curve'lerinden gelen
+ *    ucretler ne `trades`te ne `launches`tedir -- yani buradaki "protokol
+ *    geliri" escrow defterinden (`fee_balances`) KUCUKTUR. Ikisi ayni sayi
+ *    DEGILDIR ve toplanamazlar; bu fonksiyonlarin verdigi sey "indekslenen
+ *    launch'larda islemlerden ALINAN ucret"tir.
+ */
+
+/** Bir pencerenin (ya da tum zamanin) protokol toplamlari. */
+export interface ProtocolStats {
+  /** `null` -> tum zaman. Aksi halde `now() - windowHours`. */
+  windowHours: number | null
+  volumeWei: bigint
+  tradeCount: number
+  protocolFeeWei: bigint
+  creatorFeeWei: bigint
+  launchCount: number
+  /** `count(DISTINCT launch_creator)` -- spec 6.2'nin "tekil dev sayisi". */
+  creatorCount: number
+  /**
+   * MEKAN AYRIMI. Bugun sifirdir (hicbir token mezun olmadi) ve tam da bu
+   * yuzden tasiniyor: sifir olan bir sayaci HIC gostermemek ile sifir
+   * GOSTERMEK ayni sey degildir, ve tuketici hangisini yapacagina ancak
+   * sayiyi gorerek karar verebilir.
+   */
+  poolVolumeWei: bigint
+  poolTradeCount: number
+}
+
+const PROTOCOL_STATS_SQL = `
+  WITH bound AS (
+    SELECT CASE WHEN $1::int IS NULL THEN NULL
+                ELSE now() - make_interval(hours => $1::int) END AS since
+  ),
+  t AS (
+    SELECT quote_amount_wei, protocol_fee_wei, creator_fee_wei, source
+      FROM trades, bound
+     WHERE bound.since IS NULL OR trades.block_time >= bound.since
+  ),
+  l AS (
+    SELECT launch_creator
+      FROM launches, bound
+     WHERE bound.since IS NULL OR launches.created_at >= bound.since
+  )
+  SELECT
+    (SELECT coalesce(sum(quote_amount_wei), 0) FROM t)::text          AS volume_wei,
+    (SELECT count(*) FROM t)::text                                    AS trade_count,
+    (SELECT coalesce(sum(protocol_fee_wei), 0) FROM t)::text          AS protocol_fee_wei,
+    (SELECT coalesce(sum(creator_fee_wei), 0) FROM t)::text           AS creator_fee_wei,
+    (SELECT count(*) FROM l)::text                                    AS launch_count,
+    (SELECT count(DISTINCT launch_creator) FROM l)::text              AS creator_count,
+    (SELECT coalesce(sum(quote_amount_wei) FILTER (WHERE source = 'pool'), 0) FROM t)::text
+                                                                      AS pool_volume_wei,
+    (SELECT count(*) FILTER (WHERE source = 'pool') FROM t)::text     AS pool_trade_count`
+
+/**
+ * 24 saat / tum zaman kutucuklari.
+ *
+ * PENCERE `now()` UZERINDEDIR, YANI VERITABANI SUNUCUSUNUN SAATI -- zincirin
+ * degil. `block_time` zincirden gelir; indexer geride kaldiginda "son 24 saat"
+ * gercekte "gordugumuz son 24 saat"tir. Bu bir hata degil, ADLANDIRILMASI
+ * gereken bir onkosuldur: donen `indexer` alani tam olarak o gecikmeyi tasir
+ * ve tuketici onu ekranda gostermek zorundadir.
+ *
+ * ZAMAN BURADA PENCEREDIR, SIRALAMA DEGIL -- yani esit timestamp'ler zararsiz
+ * (bkz. bu dosyanin basi, kural 1).
+ */
+export async function getProtocolStats(
+  db: Queryable,
+  options: { windowHours?: number | null } = {},
+): Promise<Fresh<ProtocolStats>> {
+  const raw = options.windowHours ?? null
+  // Negatif ya da sifir bir pencere hicbir zaman "tum zaman" DEGILDIR; `null`a
+  // KATLANMAZ, clamp edilir. Aksi halde bir hesaplama hatasi sessizce butun
+  // gecmisi "son 24 saat" diye gosterirdi.
+  const windowHours = raw === null ? null : Math.min(Math.max(Math.trunc(raw), 1), 24 * 365 * 10)
+  const { rows } = await db.query<{
+    volume_wei: string
+    trade_count: string
+    protocol_fee_wei: string
+    creator_fee_wei: string
+    launch_count: string
+    creator_count: string
+    pool_volume_wei: string
+    pool_trade_count: string
+  }>(PROTOCOL_STATS_SQL, [windowHours])
+  const row = rows[0]
+  if (row === undefined) throw new Error('getProtocolStats: the aggregate returned no row')
+  return {
+    rows: {
+      windowHours,
+      volumeWei: BigInt(row.volume_wei),
+      tradeCount: Number(row.trade_count),
+      protocolFeeWei: BigInt(row.protocol_fee_wei),
+      creatorFeeWei: BigInt(row.creator_fee_wei),
+      launchCount: Number(row.launch_count),
+      creatorCount: Number(row.creator_count),
+      poolVolumeWei: BigInt(row.pool_volume_wei),
+      poolTradeCount: Number(row.pool_trade_count),
+    },
+    indexer: await getIndexerStatus(db),
+  }
+}
+
+export interface ProtocolDay {
+  /** `YYYY-MM-DD`, UTC. BIR `Date` DEGIL -- gerekce `listProtocolDaily`de. */
+  day: string
+  volumeWei: bigint
+  tradeCount: number
+  protocolFeeWei: bigint
+  creatorFeeWei: bigint
+  launchCount: number
+}
+
+const PROTOCOL_DAILY_SQL = `
+  WITH span AS (
+    SELECT (date_trunc('day', now() AT TIME ZONE 'UTC')
+            - make_interval(days => $1::int - 1))::timestamp AS first_day,
+           date_trunc('day', now() AT TIME ZONE 'UTC')::timestamp AS last_day
+  ),
+  days AS (
+    SELECT generate_series(span.first_day, span.last_day, interval '1 day')::date AS day
+      FROM span
+  ),
+  t AS (
+    SELECT (trades.block_time AT TIME ZONE 'UTC')::date AS day,
+           sum(quote_amount_wei)  AS volume_wei,
+           count(*)               AS trade_count,
+           sum(protocol_fee_wei)  AS protocol_fee_wei,
+           sum(creator_fee_wei)   AS creator_fee_wei
+      FROM trades, span
+     WHERE trades.block_time >= (span.first_day AT TIME ZONE 'UTC')
+     GROUP BY 1
+  ),
+  l AS (
+    SELECT (launches.created_at AT TIME ZONE 'UTC')::date AS day, count(*) AS launch_count
+      FROM launches, span
+     WHERE launches.created_at >= (span.first_day AT TIME ZONE 'UTC')
+     GROUP BY 1
+  )
+  SELECT to_char(d.day, 'YYYY-MM-DD')              AS day,
+         coalesce(t.volume_wei, 0)::text           AS volume_wei,
+         coalesce(t.trade_count, 0)::text          AS trade_count,
+         coalesce(t.protocol_fee_wei, 0)::text     AS protocol_fee_wei,
+         coalesce(t.creator_fee_wei, 0)::text      AS creator_fee_wei,
+         coalesce(l.launch_count, 0)::text         AS launch_count
+    FROM days d
+    LEFT JOIN t ON t.day = d.day
+    LEFT JOIN l ON l.day = d.day
+   ORDER BY d.day ASC`
+
+/**
+ * GUNLUK SERI -- YOGUN (bos gunler DAHIL) ve SAAT DILIMINDEN BAGIMSIZ.
+ *
+ * ================= IKI TUZAK, IKISI DE OLCULDU, IKISI DE KAPALI =============
+ *
+ * 1. `date_trunc('day', block_time)` OTURUMUN saat dilimini kullanir.
+ *    `block_time` `timestamptz`tir, yani ayni satir `TimeZone='UTC'` ile bir
+ *    kovaya, `TimeZone='Pacific/Kiritimati'` (UTC+14) ile BASKA bir kovaya
+ *    duser -- ve iki taraf da hicbir hata vermez. `pg` havuzu oturum durumunu
+ *    `release()`te SIFIRLAMAZ, dolayisiyla bu, "kimsenin yazmadigi bir
+ *    onkosul yuzunden gecen test" sinifinin ta kendisidir. Burada kovalama
+ *    ACIKCA `AT TIME ZONE 'UTC'` ile yapilir ve `queries.test.ts` sorguyu iki
+ *    ucta (UTC+14 ve UTC-12) kosturup AYNI kovalari IDDIA eder.
+ *
+ * 2. `day` METINDIR, `date` DEGIL. `pg`nin varsayilan `date` cozucusu bir JS
+ *    `Date` uretir ve o `Date` YEREL gece yarisidir; bu makinede (UTC+3)
+ *    `toISOString()` ile bicimlendirildiginde BIR ONCEKI gunu yazar. Sunucuda
+ *    `to_char` ile metne cevirmek o donusumun tamamini ortadan kaldirir.
+ *
+ * BOS GUNLER SIFIRLA DOLDURULUR (`generate_series` + `LEFT JOIN`). Doldurmayan
+ * bir seri, uc gun hicbir sey olmadiginda uc bitisik cubuk cizdirir ve zaman
+ * eksenini SESSIZCE sikistirir -- grafigin okuyucusu bosluktan haberdar olmaz.
+ */
+export async function listProtocolDaily(
+  db: Queryable,
+  options: { days?: number } = {},
+): Promise<Fresh<ProtocolDay[]>> {
+  const days = Math.min(Math.max(Math.trunc(options.days ?? 30), 1), 365)
+  const { rows } = await db.query<{
+    day: string
+    volume_wei: string
+    trade_count: string
+    protocol_fee_wei: string
+    creator_fee_wei: string
+    launch_count: string
+  }>(PROTOCOL_DAILY_SQL, [days])
+  return {
+    rows: rows.map((r) => ({
+      day: r.day,
+      volumeWei: BigInt(r.volume_wei),
+      tradeCount: Number(r.trade_count),
+      protocolFeeWei: BigInt(r.protocol_fee_wei),
+      creatorFeeWei: BigInt(r.creator_fee_wei),
+      launchCount: Number(r.launch_count),
+    })),
+    indexer: await getIndexerStatus(db),
+  }
+}
+
+/**
+ * BIR CUZDANIN POZISYONU.
+ *
+ * `valueWei` MARJINAL fiyattan hesaplanir (`balance * price / 1e18`, TABANA)
+ * ve TAM CIKISTA ELE GECECEK TUTAR DEGILDIR: satis curve'u asagi iter ve
+ * ucretler bu sayinin disindadir. Alan adi bu yuzden `valueWei`dir,
+ * `proceedsWei` degil, ve tuketicinin etiketi de bunu soylemek zorundadir.
+ */
+export interface PositionRow {
+  token: string
+  symbol: string
+  name: string
+  balanceTok: bigint
+  priceWeiPerTok: bigint
+  valueWei: bigint
+  complete: boolean
+  graduated: boolean
+}
+
+/**
+ * POZISYON IMLECI -- `HolderCursor` ile AYNI SEKIL, AYNI GEREKCE.
+ *
+ * Tek anahtar `value_wei` OLAMAZ: fiyat token basina AYNIDIR ve hic islem
+ * gormemis her token acilis fiyatindadir, yani esit degerler kural disi degil
+ * KURALDIR. Ikinci anahtar `token` -- `(token, holder)` birincil anahtarinin
+ * yarisi, sabit bir `holder` icin BIREBIR.
+ */
+export interface PositionCursor {
+  valueWei: bigint
+  token: string
+}
+
+export function encodePositionCursor(row: PositionCursor): string {
+  return `${row.valueWei.toString()}:${lower(row.token as Address)}`
+}
+
+/** Bicimsiz bir imlec ILK SAYFADIR, hata degil (`parseHolderCursor` ile ayni). */
+export function parsePositionCursor(value: string | null | undefined): PositionCursor | null {
+  if (value === null || value === undefined || value === '') return null
+  const match = /^(\d{1,78}):(0x[0-9a-f]{40})$/.exec(value)
+  if (match === null) return null
+  return { valueWei: BigInt(match[1] as string), token: match[2] as string }
+}
+
+/**
+ * Bir adresin TUTTUGU tokenlar. `holders_holder_idx` (kismi, `balance_tok > 0`)
+ * tam olarak bu sorgu icin vardir.
+ *
+ * `token_overview` ile birlestirilir cunku bir bakiyeyi degerlemek fiyat ister
+ * ve fiyat SAKLANMAZ, her okumada rezervlerden yeniden hesaplanir (bkz.
+ * `migrations/007_views.sql`). Bakiye AYRICA sifirdan buyuk olmak zorundadir:
+ * bir zamanlar tutulmus ve tamamen satilmis bir token bir POZISYON DEGILDIR.
+ *
+ * CURVE'UN KENDISI ELENMEZ, cunku bu sorgu bir TOKEN'in holder listesi degil
+ * bir ADRESIN portfoyudur: `holder` parametresi zaten tek bir cuzdandir ve o
+ * cuzdan bir curve ise (imkansiza yakin ama semada yasak degil) dogru cevap
+ * yine "bu adres su kadar tutuyor"dur.
+ */
+export async function listPositionsByHolder(
+  db: Queryable,
+  holder: Address,
+  options: { after?: PositionCursor | null; limit?: number } = {},
+): Promise<Fresh<PositionRow[]>> {
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
+  const after = options.after ?? null
+  const { rows } = await db.query<{
+    token: string
+    symbol: string
+    name: string
+    balance_tok: string
+    price_wei_per_tok: string
+    value_wei: string
+    complete: boolean
+    graduated: boolean
+  }>(
+    // KARISIK YONLU SIRA ACIKCA YAZILIR (`listHolders` ile ayni gerekce):
+    // `value DESC, token ASC` bir satir-degeri karsilastirmasiyla ifade
+    // EDILEMEZ.
+    `WITH p AS (
+       SELECT o.token, o.symbol, o.name, h.balance_tok, o.price_wei_per_tok,
+              div(h.balance_tok * o.price_wei_per_tok, 1000000000000000000::numeric)::numeric(78,0)
+                AS value_wei,
+              o.complete, o.graduated
+         FROM holders h
+         JOIN token_overview o ON o.token = h.token
+        WHERE h.holder = $1 AND h.balance_tok > 0
+     )
+     SELECT token, symbol, name, balance_tok::text AS balance_tok,
+            price_wei_per_tok::text AS price_wei_per_tok, value_wei::text AS value_wei,
+            complete, graduated
+       FROM p
+      WHERE ($2::numeric IS NULL
+             OR value_wei < $2::numeric
+             OR (value_wei = $2::numeric AND token > $3::text))
+      ORDER BY value_wei DESC, token ASC LIMIT $4`,
+    [
+      lower(holder),
+      after === null ? null : after.valueWei.toString(),
+      after === null ? null : after.token,
+      limit,
+    ],
+  )
+  return {
+    rows: rows.map((r) => ({
+      token: r.token,
+      symbol: r.symbol,
+      name: r.name,
+      balanceTok: BigInt(r.balance_tok),
+      priceWeiPerTok: BigInt(r.price_wei_per_tok),
+      valueWei: BigInt(r.value_wei),
+      complete: r.complete,
+      graduated: r.graduated,
+    })),
+    indexer: await getIndexerStatus(db),
+  }
+}
+
+/**
+ * BIR CUZDANIN ISLEMI -- `TradeRow`DAN AYRI BIR TIP, VE BILEREK.
+ *
+ * `TradeRow` TEK bir tokenin sayfasi icindir; token kimligi baglamdan gelir.
+ * Bir cuzdanin gecmisi TOKENLAR ARASINDADIR, yani her satir kendi tokenini ve
+ * sembolunu TASIMAK zorundadir. Ayni tipi genisletmek, token sayfasindaki her
+ * satira asla kullanilmayan iki alan eklerdi.
+ */
+export interface TraderTradeRow {
+  eventSeq: bigint
+  txHash: string
+  blockTime: Date
+  token: string
+  symbol: string
+  isBuy: boolean
+  tokenAmountTok: bigint
+  quoteAmountWei: bigint
+  protocolFeeWei: bigint
+  creatorFeeWei: bigint
+  source: TradeSource
+}
+
+/**
+ * `trades_trader_seq_idx (trader, event_seq DESC)` tam olarak bunun icin var.
+ * SIRALAMA `event_seq` UZERINDE, `block_time` uzerinde DEGIL.
+ *
+ * `trader` HAVUZ TARAFINDA `Swap.sender`DIR, yani genellikle ROUTER'dir --
+ * kullanicinin cuzdani degil. Yani mezuniyet sonrasi bir islem bu listede
+ * kullanicinin adresinde GORUNMEZ; `source` alani her satirin mekanini
+ * tasidigi icin bu ayrim ekranda soylenebilir. Duzeltmesi indexer'in
+ * `Swap.sender` yerine gercek isteyeni cozmesini gerektirir ve bu paketin
+ * disindadir.
+ */
+export async function listTradesByTrader(
+  db: Queryable,
+  trader: Address,
+  options: { cursor?: Cursor; limit?: number } = {},
+): Promise<Fresh<TraderTradeRow[]>> {
+  const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
+  const cursor = options.cursor ?? null
+  const { rows } = await db.query<{
+    event_seq: string
+    tx_hash: string
+    block_time: Date
+    token: string
+    symbol: string
+    is_buy: boolean
+    token_amount_tok: string
+    quote_amount_wei: string
+    protocol_fee_wei: string
+    creator_fee_wei: string
+    source: TradeSource
+  }>(
+    `SELECT t.event_seq::text AS event_seq, t.tx_hash, t.block_time, t.token, l.symbol,
+            t.is_buy, t.token_amount_tok::text AS token_amount_tok,
+            t.quote_amount_wei::text AS quote_amount_wei,
+            t.protocol_fee_wei::text AS protocol_fee_wei,
+            t.creator_fee_wei::text AS creator_fee_wei, t.source
+       FROM trades t
+       JOIN launches l ON l.token = t.token
+      WHERE t.trader = $1 AND ($2::bigint IS NULL OR t.event_seq < $2::bigint)
+      ORDER BY t.event_seq DESC LIMIT $3`,
+    [lower(trader), cursor === null ? null : cursor.toString(), limit],
+  )
+  return {
+    rows: rows.map((r) => ({
+      eventSeq: BigInt(r.event_seq),
+      txHash: r.tx_hash,
+      blockTime: r.block_time,
+      token: r.token,
+      symbol: r.symbol,
+      isBuy: r.is_buy,
+      tokenAmountTok: BigInt(r.token_amount_tok),
+      quoteAmountWei: BigInt(r.quote_amount_wei),
+      protocolFeeWei: BigInt(r.protocol_fee_wei),
+      creatorFeeWei: BigInt(r.creator_fee_wei),
+      source: r.source,
+    })),
+    indexer: await getIndexerStatus(db),
+  }
+}
+
+/**
+ * ==========================================================================
+ *  UCRET KAZANCI -- DOKUM VE TOPLAM AYNI SAYIDAN GELMEZ, VE GELEMEZ.
+ * ==========================================================================
+ *
+ * `listCreatorEarningsByLaunch`in NatSpec'i ilk cagirana bir KURAL birakti:
+ * satirlari LAUNCH KIRILIMI olarak goster, TOPLAM icin escrow defterini
+ * (`fee_balances`, yani `FeeEscrow.owed + cekilenler`) kaynak al, ve ikisi
+ * ayrilirsa farki ATFEDILMEMIS diye isimlendir. Bu fonksiyon o kurali bir
+ * BELGEDEN bir TIPE tasir: donen yapida "kazanciniz" diye okunabilecek,
+ * satirlarin toplamina esit bir alan YOKTUR. Yanlis toplami gostermek icin
+ * cagiranin `byLaunch`i kendisi toplamasi gerekir, ki bu artik goze batan bir
+ * satirdir -- eskiden dogal olan seydi.
+ *
+ * ATFEDILMEYEN PARA IKI KAYNAKTAN GELIR ve ikisi de OLCULDU:
+ *
+ *   a) PAYLASILAN ESCROW'UN ONEKI. Escrow ALICIYA gore anahtarlidir ve Faz 2
+ *      Faz 1'in escrow'unu yeniden kullandi, yani defterde indexer'in izleme
+ *      kumesinde HIC launch'i olmayan curve'lerden gelmis depozitolar var.
+ *      Olculdu 2026-08-09: **36496595214216153 wei**.
+ *   b) HER HAVUZ UCRETI. `ArcpadHook` swap ucretini escrow'a yatirir, yani
+ *      `Deposited.from` HOOK'tur, bir curve DEGIL -- `curve_state` JOIN'i onu
+ *      dusurur. Bugun sifirdir (hicbir token mezun olmadi) ve mezuniyetten
+ *      sonra buyur.
+ *
+ * TEK BIR IFADEDE OKUNUR, VE BU ZORUNLU. Iki ayri `query()` havuzdan IKI AYRI
+ * baglanti alabilir, yani IKI AYRI snapshot: arada inen bir `Deposited`
+ * defteri buyutur, dokumu buyutmez, ve `unattributedWei` sessizce siserdi --
+ * ya da ters sirada NEGATIF olurdu. Bir ifade, bir snapshot.
+ */
+export interface CreatorEarnings {
+  recipient: string
+  /** Launch KIRILIMI. `attributedWei`e esit olmayabilir -- bkz. `byLaunchTruncated`. */
+  byLaunch: CreatorEarning[]
+  /** `true` -> `byLaunch` kirpildi; `attributedWei` yine de TAM toplamdir. */
+  byLaunchTruncated: boolean
+  /** Bir launch'a ATFEDILEBILEN toplam, kirpmadan BAGIMSIZ. */
+  attributedWei: bigint
+  /** `depositedTotalWei - attributedWei`. Yutulmaz, GOSTERILIR. */
+  unattributedWei: bigint
+  /** ESCROW DEFTERI. `FeeEscrow.owed(recipient) + cekilenler` ile ayni sayi. */
+  depositedTotalWei: bigint
+  claimedTotalWei: bigint
+  /** `FeeEscrow.owed(recipient)`. TEK dogru "su an cekilebilir" sayisi. */
+  claimableWei: bigint
+  /**
+   * `fee_balances`te satir YOK. Depozito hic gorulmemis demektir; dokum de bos
+   * OLMALIDIR. Bos degilse defter ile olay tablosu AYRISMISTIR ve bu, bir
+   * sifirla gizlenecek bir sey degildir.
+   */
+  ledgerMissing: boolean
+}
+
+export async function getCreatorEarnings(
+  db: Queryable,
+  recipient: Address,
+  options: { limit?: number } = {},
+): Promise<Fresh<CreatorEarnings>> {
+  const limit = Math.min(Math.max(options.limit ?? 100, 1), 200)
+  const { rows } = await db.query<{
+    token: string | null
+    symbol: string | null
+    earned_wei: string | null
+    attributed_wei: string
+    launch_count: string
+    deposited_total_wei: string | null
+    claimed_total_wei: string | null
+    claimable_wei: string | null
+  }>(
+    `WITH per_launch AS (
+       SELECT l.token, l.symbol, sum(f.amount_wei) AS earned_wei
+         FROM fee_events f
+         JOIN curve_state c ON c.curve = f.from_addr
+         JOIN launches l ON l.token = c.token
+        WHERE f.kind = 'deposit' AND f.recipient = $1
+        GROUP BY l.token, l.symbol
+     ),
+     totals AS (
+       SELECT coalesce(sum(earned_wei), 0) AS attributed_wei, count(*) AS launch_count
+         FROM per_launch
+     ),
+     top AS (
+       SELECT * FROM per_launch ORDER BY earned_wei DESC, token ASC LIMIT $2
+     ),
+     ledger AS (
+       SELECT deposited_total_wei, claimed_total_wei, claimable_wei
+         FROM fee_balances WHERE recipient = $1
+     )
+     SELECT p.token, p.symbol, p.earned_wei::text AS earned_wei,
+            tt.attributed_wei::text AS attributed_wei, tt.launch_count::text AS launch_count,
+            lg.deposited_total_wei::text AS deposited_total_wei,
+            lg.claimed_total_wei::text AS claimed_total_wei,
+            lg.claimable_wei::text AS claimable_wei
+       FROM totals tt
+       LEFT JOIN ledger lg ON true
+       LEFT JOIN top p ON true
+      ORDER BY p.earned_wei DESC NULLS LAST, p.token ASC`,
+    [lower(recipient), limit],
+  )
+
+  const head = rows[0]
+  // `totals` HER ZAMAN bir satir uretir (`count(*)` uzerine kurulu) ve tek
+  // satirlik capa odur, yani bu dal ulasilamazdir. Yine de yaziliyor: sessiz
+  // bir `undefined` burada butun toplamlari sifir gosterirdi.
+  if (head === undefined) throw new Error('getCreatorEarnings: the aggregate returned no row')
+
+  const byLaunch: CreatorEarning[] = rows
+    .filter((r) => r.token !== null)
+    .map((r) => ({
+      token: r.token as string,
+      symbol: r.symbol as string,
+      earnedWei: BigInt(r.earned_wei as string),
+    }))
+
+  const ledgerMissing = head.deposited_total_wei === null
+  const depositedTotalWei = ledgerMissing ? 0n : BigInt(head.deposited_total_wei as string)
+  const attributedWei = BigInt(head.attributed_wei)
+
+  return {
+    rows: {
+      recipient: lower(recipient),
+      byLaunch,
+      byLaunchTruncated: Number(head.launch_count) > byLaunch.length,
+      attributedWei,
+      // FARK, YONU KORUNARAK. Negatif bir deger defterin ATFEDILENDEN kucuk
+      // oldugunu soyler; sifira kirpmak o durumu SILERDI ve ekranda tutarli
+      // gorunurdu.
+      unattributedWei: depositedTotalWei - attributedWei,
+      depositedTotalWei,
+      claimedTotalWei: ledgerMissing ? 0n : BigInt(head.claimed_total_wei as string),
+      claimableWei: ledgerMissing ? 0n : BigInt(head.claimable_wei as string),
+      ledgerMissing,
+    },
+    indexer: await getIndexerStatus(db),
+  }
+}
