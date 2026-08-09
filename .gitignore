@@ -66,3 +66,6 @@ Thumbs.db
 # Python bytecode from scripts/integration/ harnesses
 __pycache__/
 *.pyc
+
+# Browser artefacts from the playwright MCP server
+.playwright-mcp/
