@@ -160,8 +160,10 @@ describe('<CompleteSection>', () => {
     // kullaniciya var olmayan bir likidite havuzu vaat eder.
     expect(screen.getByRole('heading', { name: 'Curve complete' })).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Graduated' })).not.toBeInTheDocument()
+    // NOT "Pool creation lands with Phase 2." -- Faz 2 2026-08-06'dan beri
+    // zincirde ve o cumle token sayfasindaki ikiziyle birlikte duzeltildi.
     expect(
-      screen.getByText('Sale supply sold out. Pool creation lands with Phase 2.'),
+      screen.getByText('Sale supply sold out. Opening the pool is a separate step called graduation.'),
     ).toBeVisible()
   })
 

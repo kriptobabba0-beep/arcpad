@@ -14,13 +14,20 @@ import { TokenGrid } from './TokenGrid'
  * ikiye ayirmak icin var: `complete && !graduated` → "Graduating",
  * `graduated` → "Graduated". Bugun yalnizca `complete` gonderiliyor, ama
  * cagri yeri o gun bir YENIDEN YAZIM degil bir ikinci cagri olacak.
+ *
+ * `complete` NOTU DEGISTI, VE SEBEBI TARAYICIDA OLCULDU. Eskisi "Pool creation
+ * lands with Phase 2." diyordu; Faz 2 2026-08-06'dan beri ZINCIRDE (havuz
+ * yoneticisi, hook ve locker adres defterinde). Token sayfasindaki ikizi ile
+ * ayni yalandi ve ikisi de ayni anda duzeltildi -- biri duzeltilip oteki
+ * birakilsaydi, bu deponun "bir giris noktasinda kapatilan sey hepsinde
+ * kapatilmis gorunur" kusurunun bir ornegi daha olurdu.
  */
 export type CompletePhase = 'complete' | 'graduating' | 'graduated'
 
 const HEADINGS: Record<CompletePhase, { title: string; note: string }> = {
   complete: {
     title: 'Curve complete',
-    note: 'Sale supply sold out. Pool creation lands with Phase 2.',
+    note: 'Sale supply sold out. Opening the pool is a separate step called graduation.',
   },
   graduating: {
     title: 'Graduating',

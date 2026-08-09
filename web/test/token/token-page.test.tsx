@@ -106,9 +106,32 @@ describe('yasam dongusu -- uc durum', () => {
 
   it('complete durumunda kullaniciya kesin basarisiz olacak islem teklif edilmez', () => {
     render(<LifecycleNotice lifecycle={{ kind: 'complete' }} />)
-    expect(
-      screen.getByText(/trading on the curve is closed; pool creation lands with phase 2/i),
-    ).toBeInTheDocument()
+    expect(screen.getByText(/trading on the curve is closed/i)).toBeInTheDocument()
+  })
+
+  /**
+   * KART BIR MEKANIZMA ANLATIR, BIR SURUM TARIHI DEGIL.
+   *
+   * Eski metin "pool creation lands with Phase 2" diyordu ve TARAYICIDA
+   * OLCULDU (2026-08-09, canli `0xDdB9e739…f27b`): Faz 2 2026-08-06'dan beri
+   * zincirde. Metin okuyucuyu YANLIS SEBEBE yonlendiriyordu -- bekleyen sey bir
+   * surum degil, fabrikanin `graduationTarget`i.
+   *
+   * Yerine yazilan uc sey de BIR CURVE'UN TAMAMLANMASINDAN cikar, zincir
+   * durumundan degil: ticaret kapali, graduation AYRI bir islem, ve KENDILIGINDEN
+   * olmuyor. Ucuncusu tasiyici: `BondingCurve.graduate()` `msg.sender ==
+   * graduationTarget` ister ve curve'un creation code'u DONMUS, yani otomatik bir
+   * yol yazilamaz -- "birazdan gelecek" diyen her metin bu yuzden yanlistir.
+   */
+  it('complete karti bir SURUM degil bir MEKANIZMA anlatir', () => {
+    render(<LifecycleNotice lifecycle={{ kind: 'complete' }} />)
+    const card = screen.getByTestId('lifecycle-notice')
+    expect(card).toHaveTextContent(/graduation/i)
+    expect(card).toHaveTextContent(/does not happen automatically/i)
+    expect(card).toHaveTextContent(/anyone may send it/i)
+    // Ve ARTIK bir faz numarasi ya da bir bekleme vaadi YOK.
+    expect(card).not.toHaveTextContent(/phase 2/i)
+    expect(card).not.toHaveTextContent(/lands with/i)
   })
 })
 
