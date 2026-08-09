@@ -13,18 +13,17 @@ import {
   type TokenOverview,
 } from '@/components/read/types'
 import { CanonicalBadge, NotALaunch } from '@/components/token/CanonicalBadge'
-import { CurveChart } from '@/components/token/CurveChart'
+import { TokenPriceChart } from '@/components/token/PriceHistoryChart'
 import { LaunchFacts } from '@/components/token/LaunchFacts'
 import { LifecycleNotice } from '@/components/token/LifecycleNotice'
 import { ProgressToGraduation } from '@/components/token/ProgressToGraduation'
 import { StatRow, statsFromOverview } from '@/components/token/StatRow'
 import { TableTabs } from '@/components/token/TableTabs'
 import { AboutPanel, TokenHeader } from '@/components/token/TokenHeader'
-import { TradePanel } from '@/components/token/TradePanel'
+import { TradeSurface } from '@/components/token/TradeSurface'
 import { resolveLifecycle } from '@/components/token/lifecycle'
 import { type ChainToken, readChainToken } from '@/lib/chainToken'
 import { getCurveProfile } from '@/lib/profile'
-import { Card } from '@/components/ui/Card'
 import { StaleNotice } from '@/components/read/StaleNotice'
 
 /**
@@ -164,30 +163,36 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
             <LifecycleNotice lifecycle={lifecycle} curve={asHex(overview.curve)} />
           )}
 
-          <Card className="px-4 py-4">
-            {/*
-              `trades` GECILIYOR, ve gecilmedigi surece bu grafigin GERCEKLESEN
-              KATMANI HIC CIZILMEDI. `CurveChart`'in `trades` prop'u opsiyonel
-              ve varsayilani `[]`, yani `realisedSeries([])` bos donuyor,
-              `realised.length > 1` yanlis kaliyor ve `curve-realised` yolu
-              hicbir sayfada DOM'a girmiyordu -- bileşenin testleri ise prop'u
-              kendileri veriyordu. Bu, ayni dosyadaki eksik `loadMore*`
-              prop'lariyla AYNI kusur ve yine ancak tarayicida gorundu.
-            */}
-            <CurveChart
-              profile={
-                profile ?? {
-                  virtualTokenReserves: 1_073_000_000n * 10n ** 18n,
-                  virtualQuoteReserves: 4_292n * 10n ** 15n,
-                  saleSupply,
-                }
+          {/*
+            `trades` GECILIYOR, ve gecilmedigi surece bu grafigin GERCEKLESEN
+            KATMANI HIC CIZILMEDI. `CurveChart`'in `trades` prop'u opsiyonel
+            ve varsayilani `[]`, yani `realisedSeries([])` bos donuyor,
+            `realised.length > 1` yanlis kaliyor ve `curve-realised` yolu
+            hicbir sayfada DOM'a girmiyordu -- bileşenin testleri ise prop'u
+            kendileri veriyordu. Bu, ayni dosyadaki eksik `loadMore*`
+            prop'lariyla AYNI kusur ve yine ancak tarayicida gorundu.
+
+            `graduatedSeq` GECILIYOR: mezuniyet sonrasi satirlar bu grafigin
+            EKSENINDE cizilemez -- eksen "curve'de satilan token"dir ve havuz
+            satirinin rezervi havuzun ima edilen rezervidir. `TokenPriceChart`
+            mezun bir token icin ZAMAN eksenli, iki mekanli grafige gecer.
+          */}
+          <TokenPriceChart
+            lifecycle={lifecycle}
+            profile={
+              profile ?? {
+                virtualTokenReserves: 1_073_000_000n * 10n ** 18n,
+                virtualQuoteReserves: 4_292n * 10n ** 15n,
+                saleSupply,
               }
-              soldTok={soldTok}
-              currentPriceWei={stats.priceWeiPerToken}
-              trades={valueOf(trades)?.rows ?? []}
-              progressPercent={percent}
-            />
-          </Card>
+            }
+            soldTok={soldTok}
+            currentPriceWei={stats.priceWeiPerToken}
+            trades={valueOf(trades)?.rows ?? []}
+            graduatedSeq={overview.graduatedSeq}
+            symbol={overview.symbol}
+            progressPercent={percent}
+          />
 
           {/*
             Iki okuma AYRI: bir tabin okumasi dusse otekinin tabi calismaya
@@ -219,6 +224,10 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
               curve: overview.curve,
               launchCreator: overview.launchCreator,
               symbol: overview.symbol,
+              // WITHOUT THIS THE LIST CANNOT TELL THE TWO VENUES APART, and
+              // every pool trade would be captioned "to the curve" -- a
+              // contract it never touched.
+              graduatedSeq: overview.graduatedSeq,
             }}
           />
         </div>
@@ -234,15 +243,31 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
             ONU CIZMIYORDU -- bir bilesenin testi, o bilesenin ULASILABILIR
             oldugunu soylemez. Tarayici acilmadan gorunmedi.
           */}
-          {profile === null ? null : (
-            <TradePanel
-              token={asHex(overview.token)}
-              curve={asHex(overview.curve)}
-              lifecycle={lifecycle}
-              profile={profile}
-              symbol={overview.symbol}
-            />
-          )}
+          <TradeSurface
+            token={asHex(overview.token)}
+            curve={asHex(overview.curve)}
+            lifecycle={lifecycle}
+            profile={profile}
+            symbol={overview.symbol}
+          />
+          {/*
+            `TradeSurface` REPLACED A DIRECT `<TradePanel>` HERE, AND THE
+            REPLACEMENT IS THE POINT.
+
+            A graduated token cannot be traded on its curve -- all three
+            entrypoints revert `CurveComplete()` -- and `TradePanel` correctly
+            renders nothing for it. So before this line existed, the FIRST token
+            to graduate would have had a live Uniswap v4 pool and NO way for any
+            wallet to reach it: v4 gives an EOA no swap entrypoint and Arc has no
+            Universal Router. The choice of venue now lives in one component that
+            BOTH page branches render, so it cannot be made on one and forgotten
+            on the other -- which is the defect this file already records three
+            times.
+
+            `profile === null` no longer hides the panel: the pool panel does not
+            use the curve profile, and losing the only trading surface because an
+            unrelated read failed would be a new instance of the same class.
+          */}
           <AboutPanel
             {...(metadata?.description === undefined ? {} : { description: metadata.description })}
             {...(metadata === null
@@ -386,14 +411,21 @@ function ChainDrawnLaunch({
             <LifecycleNotice lifecycle={lifecycle} curve={chain.curve} />
           )}
 
-          <Card className="px-4 py-4">
-            <CurveChart
-              profile={profile}
-              soldTok={soldTok}
-              currentPriceWei={chain.priceWeiPerTok}
-              progressPercent={percent}
-            />
-          </Card>
+          {/*
+            THE SAME CHART COMPONENT AS THE INDEXED BRANCH. There is no trade
+            history on this branch -- the indexer is what has history -- so a
+            graduated token draws the "no pool trades indexed yet" state rather
+            than a bonding curve whose marker has been frozen at 100% since
+            graduation.
+          */}
+          <TokenPriceChart
+            lifecycle={lifecycle}
+            profile={profile}
+            soldTok={soldTok}
+            currentPriceWei={chain.priceWeiPerTok}
+            symbol={chain.symbol}
+            progressPercent={percent}
+          />
 
           <p className="text-[13px] text-muted" data-testid="no-trade-history">
             No trade history — the indexer has not answered for this token.
@@ -401,7 +433,12 @@ function ChainDrawnLaunch({
         </div>
 
         <div className="order-first flex flex-col gap-6 lg:order-none">
-          <TradePanel
+          {/*
+            THE SAME COMPONENT AS THE INDEXED BRANCH. `readChainToken` reads
+            `graduated()` in its own multicall, so this branch resolves the same
+            lifecycle -- and a user whose indexer is down still reaches the pool.
+          */}
+          <TradeSurface
             token={chain.token}
             curve={chain.curve}
             lifecycle={lifecycle}

@@ -2,6 +2,7 @@ import { formatPriceWeiPerToken, priceWeiPerToken } from '@arcpad/shared/browser
 import type { TradeRow } from '@/components/read/types'
 import { VisuallyHidden } from '@/components/ui/VisuallyHidden'
 import { blockOfSeq } from './lifecycle'
+import { venueOf } from './venue'
 
 /**
  * KUTUPHANE YOK, EL YAZIMI SVG.
@@ -74,10 +75,32 @@ export type RealisedPoint = {
   readonly realTokenReservesTok: bigint
 }
 
-export function realisedSeries(trades: readonly TradeRow[]): RealisedPoint[] {
+/**
+ * HAVUZ SATIRLARI BU EKSENDE CIZILEMEZ, VE CIZILSELERDI GORSEL BIR YALAN
+ * OLURLARDI.
+ *
+ * Bu grafigin X ekseni CURVE'DE SATILAN TOKEN'dir (`S - realTokenReserves`).
+ * Mezuniyetten sonra indexer ayni dort rezerv kolonunu HAVUZUN ima edilen
+ * rezervlerinden yazar (`Swap`'in `sqrtPriceX96` + `liquidity`'sinden). Curve
+ * kapandiginda `realTokenReserves` 0'dir, yani x = S = %100; havuzun ekilen
+ * pozisyonu ise ~2,069e26 token tasir, yani `S - 2,069e26` ~%74'e duser.
+ * Sonuc: gerceklesen cizgi mezuniyette GERIYE SICRAR ve islemin hic dokunmadigi
+ * bir egrinin uzerinde dolasir -- asagidaki yorumun "bu curve'de GERCEKLESMESI
+ * IMKANSIZ bir sekil" diye yasakladigi seyin ta kendisi.
+ *
+ * `graduatedSeq` bu yuzden bir suzgectir, bir etiket degil. `null` -> token
+ * mezun olmamis, yani her satir curve satiridir -- bugun her token boyle.
+ * Mezuniyet sonrasi fiyat gecmisini `PriceHistoryChart` ZAMAN ekseninde cizer,
+ * iki venue'yu de tasiyarak.
+ */
+export function realisedSeries(
+  trades: readonly TradeRow[],
+  graduatedSeq: bigint | null = null,
+): RealisedPoint[] {
   const lastPerBlock = new Map<number, RealisedPoint>()
 
   for (const trade of trades) {
+    if (venueOf(trade, graduatedSeq) === 'pool') continue
     // Rezerv anlik goruntusu YOKSA nokta cizilmez. `listTrades` bu kolonlari
     // henuz secmiyor; olmayan bir rezervden fiyat uydurmak, grafigi gercekmis
     // gibi gosterip yanlis cizmek olurdu.
@@ -126,6 +149,7 @@ export function CurveChart({
   soldTok,
   currentPriceWei,
   trades = [],
+  graduatedSeq = null,
   progressPercent,
 }: {
   profile: CurveProfileLike
@@ -133,10 +157,12 @@ export function CurveChart({
   soldTok: bigint
   currentPriceWei: bigint
   trades?: readonly TradeRow[]
+  /** Bkz. `realisedSeries`: havuz satirlari BU EKSENDE cizilemez. */
+  graduatedSeq?: bigint | null
   progressPercent: string
 }) {
   const curve = referenceCurve(profile)
-  const realised = realisedSeries(trades)
+  const realised = realisedSeries(trades, graduatedSeq)
 
   const maxPrice = curve[curve.length - 1]?.priceWei ?? 1n
   const minPrice = curve[0]?.priceWei ?? 0n

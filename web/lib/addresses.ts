@@ -22,6 +22,7 @@ export type WebEnvKey =
   | 'NEXT_PUBLIC_ARC_RPC_URL'
   | 'NEXT_PUBLIC_ARCPAD_FACTORY'
   | 'NEXT_PUBLIC_ARCPAD_ESCROW'
+  | 'NEXT_PUBLIC_ARCPAD_ROUTER'
 
 // `| undefined` is explicit because the repo compiles with
 // `exactOptionalPropertyTypes`: `process.env.FOO` is `string | undefined`, and
@@ -50,6 +51,31 @@ export class WebConfigError extends Error {
 export type ArcpadAddresses = {
   readonly launchFactory: Address
   readonly feeEscrow: Address
+  /**
+   * ============ THE POOL ROUTER, AND WHY IT IS THE ONE NULLABLE ADDRESS ============
+   *
+   * `ArcpadRouter` is the ONLY way a wallet can trade a graduated pool: v4 gives
+   * an EOA no swap entrypoint and Arc has no Universal Router. It is in the
+   * address book as `arcpadRouter` (REQUIRED there, and re-derived offline from
+   * `routerInitcodeHash`), so the value is not in doubt -- what is in doubt is
+   * whether a given BUILD was handed it.
+   *
+   * IT IS NULLABLE HERE FOR A MEASURED REASON, NOT A STYLISTIC ONE.
+   * `WEB_ENV_BINDINGS` in `packages/shared/src/addresses.ts` is the single table
+   * that both `pnpm addressbook` (the generator) and `assertEnvMatchesBook` (the
+   * auditor) read, and CI writes its build env from `webEnvBlock(book)`. That
+   * table does not yet carry `NEXT_PUBLIC_ARCPAD_ROUTER`, and `packages/` is
+   * another track's. Making this address REQUIRED today would therefore fail
+   * every existing build -- CI's included -- at the `/_not-found` prerender,
+   * which is the exact failure `webEnvBlock`'s own comment exists to describe.
+   *
+   * So the address is optional, every consumer must handle `null` VISIBLY (the
+   * pool panel renders an explanation, never a dead button), and
+   * `test/pool/config.test.ts` holds the exemption open in the AWAITING_FIXTURE
+   * shape: it asserts the binding table is still missing the key, and goes RED
+   * the day it is added -- which is the day this field must become required.
+   */
+  readonly arcpadRouter: Address | null
 }
 
 export type WebConfig = {
@@ -127,8 +153,28 @@ export function readWebConfig(env: WebEnv): WebConfig {
     addresses: {
       launchFactory: requireAddress(env, 'NEXT_PUBLIC_ARCPAD_FACTORY'),
       feeEscrow: requireAddress(env, 'NEXT_PUBLIC_ARCPAD_ESCROW'),
+      arcpadRouter: optionalAddress(env, 'NEXT_PUBLIC_ARCPAD_ROUTER'),
     },
   }
+}
+
+/**
+ * UNSET is `null`; SET-AND-WRONG still throws.
+ *
+ * The distinction is the whole value of the field: "this build was not given a
+ * router" and "this build was given something that is not an address" call for
+ * different actions, and collapsing the second into the first would ship a
+ * silently router-less site whose only symptom is that graduated tokens cannot
+ * be traded.
+ */
+function optionalAddress(env: WebEnv, key: WebEnvKey): Address | null {
+  const raw = env[key]
+  if (raw === undefined || raw.trim() === '') return null
+  const value = raw.trim()
+  if (!isAddress(value, { strict: false })) {
+    throw new WebConfigError(key, 'invalid', `is "${value}", which is not an address`)
+  }
+  return getAddress(value)
 }
 
 /**
@@ -146,6 +192,10 @@ export function webEnvFromProcess(): WebEnv {
     NEXT_PUBLIC_ARC_RPC_URL: process.env.NEXT_PUBLIC_ARC_RPC_URL,
     NEXT_PUBLIC_ARCPAD_FACTORY: process.env.NEXT_PUBLIC_ARCPAD_FACTORY,
     NEXT_PUBLIC_ARCPAD_ESCROW: process.env.NEXT_PUBLIC_ARCPAD_ESCROW,
+    // LITERAL, like the four above. `process.env[key]` is not substituted by
+    // Next's build-time textual replacement, so a dynamic read evaluates to
+    // `undefined` in the browser while the build stays green.
+    NEXT_PUBLIC_ARCPAD_ROUTER: process.env.NEXT_PUBLIC_ARCPAD_ROUTER,
   }
 }
 

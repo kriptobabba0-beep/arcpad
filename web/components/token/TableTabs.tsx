@@ -10,8 +10,18 @@ import { UnavailableNotice, useKeysetRows } from './tableShell'
 import { TradesTable } from './TradesTable'
 import { valueOf } from '@/components/read/result'
 
-/** Token sayfasinin bu bilesene verdigi tek sey; `TokenOverview`'un uc alani. */
-export type TableTabsOverview = Pick<TokenOverview, 'curve' | 'launchCreator' | 'symbol'>
+/**
+ * Token sayfasinin bu bilesene verdigi tek sey; `TokenOverview`'un DORT alani.
+ *
+ * `graduatedSeq` DORDUNCU OLARAK EKLENDI ve bir gosterim tercihi degil: islem
+ * listesi mezuniyetten sonra IKI MEKANI birden tasir ve satirin kendisi hangisi
+ * oldugunu soylemiyor (`listTrades` `source` kolonunu secmiyor -- bkz.
+ * `venue.ts`). Bu alan ayrimin ta kendisini tasir.
+ */
+export type TableTabsOverview = Pick<
+  TokenOverview,
+  'curve' | 'launchCreator' | 'symbol' | 'graduatedSeq'
+>
 
 export type TableTabsProps = {
   readonly trades: ReadResult<Page<TradeRow>>
@@ -134,7 +144,7 @@ export function TableTabs({
             nextCursor={tradePage.nextCursor}
             keyset={tradeKeyset}
             tradePanelHref={tradePanelHref}
-            {...(overview ? { symbol: overview.symbol } : {})}
+            {...(overview ? { symbol: overview.symbol, graduatedSeq: overview.graduatedSeq } : {})}
             {...(now === undefined ? {} : { now })}
           />
         ) : (

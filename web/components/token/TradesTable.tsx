@@ -27,6 +27,7 @@ import {
   type KeysetRows,
   type LoadMore,
 } from './tableShell'
+import { VENUE_LABEL, VENUE_NOUN, venueOf, type Venue } from './venue'
 import { feeBreakdown, walletDeltaWei } from './walletDelta'
 
 export type TradesTableProps = {
@@ -47,6 +48,16 @@ export type TradesTableProps = {
    * kullanimi (ve testleri) degismez.
    */
   readonly keyset?: KeysetRows<TradeRow>
+  /**
+   * MEZUNIYETIN `event_seq`'I -- VE BU LISTENIN VENUE SUZGECI.
+   *
+   * `listTrades` `source` kolonunu SECMIYOR (bkz. `venue.ts`), yani satirin
+   * kendisi hangi mekandan geldigini soylemiyor. `graduatedSeq` ayni ayrimi
+   * TAM olarak hesaplar: mezuniyetten sonra hicbir curve islemi olamaz
+   * (`CurveComplete()`) ve mezuniyetten once hicbir havuz islemi olamaz (havuz
+   * ayni islemde acilir). `null` -> mezun degil, yani her satir curve satiri.
+   */
+  readonly graduatedSeq?: bigint | null
   /** Yas hesabinin referans ani. Testler sabitler; uretimde `Date.now()`. */
   readonly now?: number
   readonly className?: string
@@ -88,9 +99,14 @@ export function relativeAge(blockTime: Date, now: number): string {
  * odeyecekten azini gormesin), satimda ele gecen tutar ASAGI (var olmayan
  * parayi gostermesin) ve ucretler her zaman YUKARI (ucret bir maliyettir).
  */
-export function feeSentence(row: TradeRow): string {
+export function feeSentence(row: TradeRow, venue: Venue = 'curve'): string {
   const breakdown = feeBreakdown(row)
   const delta = walletDeltaWei(row)
+  // "to the curve" / "from the curve" WAS WRITTEN ON EVERY ROW, and after
+  // graduation that names a contract the trade never touched: a pool trade's
+  // quote moves through `PoolManager` and its fee is taken by `ArcpadHook`.
+  // The noun comes from `venue.ts` so the two venues cannot drift apart.
+  const where = VENUE_NOUN[venue]
   // Ucret kolonlari gelmediginde CUMLE DE KURULMAZ. Yarim bir dokum --
   // "curve tutari X" deyip ucretleri atlamak -- kullanicinin odedigi tutari
   // curve tutari sanmasina yol acar ve yanlis sayi eksik sayidan pahalidir.
@@ -104,8 +120,8 @@ export function feeSentence(row: TradeRow): string {
   const creator = formatUsdcAmount(creatorWei, { rounding: 'up' })
 
   return row.isBuy
-    ? `Paid ${total} USDC: ${curve} to the curve, plus ${protocol} protocol fee and ${creator} creator fee.`
-    : `Received ${total} USDC: ${curve} from the curve, less ${protocol} protocol fee and ${creator} creator fee.`
+    ? `Paid ${total} USDC: ${curve} to ${where}, plus ${protocol} protocol fee and ${creator} creator fee.`
+    : `Received ${total} USDC: ${curve} from ${where}, less ${protocol} protocol fee and ${creator} creator fee.`
 }
 
 /**
@@ -158,6 +174,7 @@ export function TradesTable({
   tradePanelHref = '#trade',
   loadMore,
   keyset: provided,
+  graduatedSeq = null,
   now,
   className,
 }: TradesTableProps) {
@@ -204,7 +221,8 @@ export function TradesTable({
 
         <tbody role="rowgroup" className={TBODY_CLASS}>
           {keyset.rows.map((row) => {
-            const sentence = feeSentence(row)
+            const venue = venueOf(row, graduatedSeq)
+            const sentence = feeSentence(row, venue)
             return (
               <tr role="row" key={row.eventSeq} className={BODY_ROW_CLASS}>
                 <Cell label="Type">
@@ -221,6 +239,18 @@ export function TradesTable({
                     <span aria-hidden="true">{row.isBuy ? '▲' : '▼'}</span>{' '}
                     {row.isBuy ? 'Buy' : 'Sell'}
                   </span>
+                  {/*
+                    ROZET YALNIZCA HAVUZ SATIRINDA. Her satira "Curve" yazmak,
+                    tek mekani olan bir token'in listesine hicbir sey eklemeden
+                    bir kolon genisligi eklerdi -- ve bugun HER token tek
+                    mekanlidir. Rozet, ayrimin gercekten var oldugu listede
+                    belirir.
+                  */}
+                  {venue === 'pool' ? (
+                    <Pill tone="accent" className="ml-2">
+                      {VENUE_LABEL.pool}
+                    </Pill>
+                  ) : null}
                 </Cell>
 
                 <Cell label="Amount" numeric>
