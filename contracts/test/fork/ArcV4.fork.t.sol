@@ -84,6 +84,7 @@ contract ArcV4ForkTest is Test {
     address internal hook;
     address internal locker;
     address internal governor;
+    address internal treasury;
 
     function setUp() public {
         string memory json = vm.readFile("deploy/addresses.5042002.json");
@@ -94,6 +95,7 @@ contract ArcV4ForkTest is Test {
         hook = vm.parseJsonAddress(json, ".arcpadHook");
         locker = vm.parseJsonAddress(json, ".arcpadLocker");
         governor = vm.parseJsonAddress(json, ".governor");
+        treasury = vm.parseJsonAddress(json, ".protocolTreasury");
     }
 
     function test_forkIsArcTestnet() public view {
@@ -190,15 +192,45 @@ contract ArcV4ForkTest is Test {
         assertGe(IFactoryView(factory).launchCount(), 0, "launchCount is readable");
     }
 
-    /// YENIDEN KULLANIM KOLU: FAZ 1'IN ALACAKLARI YERINDE.
+    /// YENIDEN KULLANIM KOLU: FAZ 1'IN ALACAKLARI OKSUZ DUSMEDI.
+    ///
+    /// @dev BU TEST 2026-08-09'DA YENIDEN YAZILDI VE ESKI HALI ALTINCI HATA
+    ///      MODUYDU: MEVCUT DURUMUN KAZASINI YASA OLARAK KODLAMAK.
+    ///
+    ///      Eski hal `assertGe(totalOwed, PHASE_ONE_CLAIMS)` idi ve yorumu
+    ///      "monotonluk" diyordu: "Faz 2 ucret yatirdikca YUKSELIR". Bu, o gune
+    ///      kadar HIC KIMSENIN `claim()` cagirmamis olmasindan dogan bir
+    ///      gozlemdi -- bir yasa degil. `FeeEscrow.claim` IZINSIZDIR ve
+    ///      `totalOwed`i DUSURMEK tam olarak onun isidir. Yani test, protokolun
+    ///      normal bir islemi ilk kez kosuldugunda kirilacakti; olculdu:
+    ///      iki alacaklinin ikisi de claim edince toplam 77239696388198597'ye
+    ///      duser, esigin altina. `assertFalse(smokeCurve.graduated())` ile ayni
+    ///      sekil, ayni hafta, ayni sebep.
+    ///
+    ///      OKSUZLUK BIR SAYI SORUSU DEGIL, BIR KIMLIK SORUSUDUR. "Faz 1'in
+    ///      alacaklari yetim dustu" demek, Faz 2'nin IKINCI bir escrow deploy
+    ///      ettigi ve eski paranin terk edilmis olanda kaldigi demektir. Bunun
+    ///      testi bakiye tabani degil, ADRES OZDESLIGIDIR -- ve o iddia
+    ///      claim'ler altinda DEGISMEZ.
     function test_theReusedEscrowStillHoldsPhaseOnesClaims() public view {
-        uint256 owed = IEscrowView(escrow).totalOwed();
-        // MONOTONLUK. Faz 1'in alacaklari ikinci bir escrow'a yetim dusseydi bu
-        // sayi DUSERDI; Faz 2 ucret yatirdikca YUKSELIR.
-        assertGe(owed, PHASE_ONE_CLAIMS, "totalOwed fell below Phase 1's claims -- they were orphaned");
-        // Kontratin degismezi `totalOwed <= balance`tir, esitlik DEGIL: dogrudan
-        // bir transfer bakiyeyi yukseltir ama `totalOwed`i yukseltmez.
-        assertGe(escrow.balance, owed, "escrow is insolvent against its own book");
+        // 1. YENIDEN KULLANIM KOLU TUTTU: canli fabrikanin escrow'u, Faz 1'in
+        //    defterinin kaydettigi escrow'un TA KENDISIDIR. Oksuzlugun gercek
+        //    testi budur.
+        assertEq(
+            IFactoryView(factory).escrow(),
+            escrow,
+            "the live factory points at a DIFFERENT escrow -- Phase 1's claims are orphaned"
+        );
+        assertGt(escrow.code.length, 0, "the escrow has no code");
+
+        // 2. ODEME GUCU. Kontratin degismezi `totalOwed <= balance`tir, esitlik
+        //    DEGIL: dogrudan bir transfer bakiyeyi yukseltir ama `totalOwed`i
+        //    yukseltmez. Bu iddia her deposit ve her claim altinda dogru kalir.
+        assertGe(
+            escrow.balance,
+            IEscrowView(escrow).totalOwed(),
+            "escrow is insolvent against its own book"
+        );
     }
 
     // ---------------------------------------------------------------
@@ -217,8 +249,23 @@ contract ArcV4ForkTest is Test {
         assertEq(IERC20Balance(USDC_ERC20).decimals(), 6, "the ERC-20 view is not 6-decimal");
         assertEq(IERC20Balance(USDC_ERC20).symbol(), "USDC", "the ERC-20 view is not USDC");
 
-        // UC HESAP, VE HICBIRI PINLENMIS BIR SAYI DEGIL. Iddia ILISKIDIR.
-        address[3] memory probes = [escrow, locker, poolManager];
+        // BES HESAP, VE HICBIRI PINLENMIS BIR SAYI DEGIL. Iddia ILISKIDIR.
+        //
+        // SONDA KUMESI 2026-08-09'DA GENISLETILDI, VE SEBEBI OLCULDU. Onceki
+        // hal `[escrow, locker, poolManager]` idi ve tanigi ESCROW'UN BAKIYESI
+        // olmasi umuluyordu. O gun escrow'un iki alacaklisi da `claim()` etti
+        // -- protokolun tamamen normal bir islemi, ve zincirde ilk kez kosuldu
+        // -- ve escrow SIFIRA indi. Locker ile poolManager mezuniyet
+        // olmadigindan zaten hic para gormemisti, yani UCU DE sifir kaldi:
+        // sifirin tozu yoktur, floor ile carpma ayni cevabi verir, ve asagidaki
+        // vakum bekcisi HAKLI OLARAK atesledi.
+        //
+        // Bu bir ariza degil, bekcinin isini yapmasidir -- ama sonda kumesinin
+        // yalnizca GECICI olarak para tutan kontratlardan kurulmasi bir secim
+        // hatasiydi. `protocolTreasury` artik protokol payini TUTAR (claim onu
+        // oraya tasidi) ve `governor` da bir hesaptir; ikisi de defterden gelir,
+        // literal degil.
+        address[5] memory probes = [escrow, locker, poolManager, treasury, governor];
         uint256 withDust;
         for (uint256 i = 0; i < probes.length; ++i) {
             uint256 wei_ = probes[i].balance;
