@@ -412,10 +412,28 @@ test.describe('Arc testnet', () => {
   test('MAX leaves room for gas: the transaction is not rejected for funds', async ({ page }) => {
     await requireOpenCurve()
     const client = arcClient()
-    const account = privateKeyToAccount(KEY)
     const token = process.env.E2E_ARC_TOKEN ?? ''
+
+    /*
+     * THE PAGE SEES THE WATCHED ADDRESS, AND THIS TEST DOES NOT SIGN ANYTHING.
+     *
+     * It used to report the signing key's own address, which made the claim
+     * unmeasurable for a read-only run: the harness generates an UNFUNDED
+     * throwaway when no key is configured, `spendableFrom(0, reserve)` is
+     * `null`, `MaxButton` disables all four shortcuts, and Playwright's
+     * `click()` waits for an enabled element -- so the test burned its full
+     * 120 s timeout waiting for a button that was correctly disabled. MEASURED
+     * on the first run against an open curve.
+     *
+     * The claim here -- "MAX must reserve something for gas" -- is about a
+     * DISPLAYED balance, not about the ability to sign, and `E2E_ARC_WATCH`
+     * exists for exactly this. `sent().length === 0` below is what keeps it
+     * honest: nothing may leave the wallet.
+     */
+    const watched: Address = isAddress(WATCH) ? WATCH : privateKeyToAccount(KEY).address
     const wallet = await injectedWallet(page, {
       privateKey: KEY,
+      reportedAddress: watched,
       rpcUrl: RPC,
       chain: getArcChain(ARC_TESTNET_CHAIN_ID),
     })
@@ -423,11 +441,23 @@ test.describe('Arc testnet', () => {
     await page.goto(`${BASE}/token/${token}`)
     await connectWallet(page)
 
-    const balance = await client.getBalance({ address: account.address })
+    const balance = await client.getBalance({ address: watched })
+    // NON-VACUITY. On a zero balance `asWei < balance` cannot hold at all, so
+    // the test would fail for the wrong reason and read as a product defect.
+    expect(balance, 'MAX reserves a fraction of a balance; there must be one').toBeGreaterThan(0n)
+
     await page.getByRole('button', { name: 'MAX' }).click()
     const typed = await page.getByLabel('Amount to spend').inputValue()
     const asWei = BigInt(Math.round(Number(typed) * 1e6)) * 1_000_000_000_000n
     expect(asWei, 'MAX must reserve something for gas').toBeLessThan(balance)
+
+    /*
+     * AND THE RESERVE IS EXPLAINED, not merely taken. On Arc gas is paid in the
+     * asset being spent, so a MAX below the balance looks like a bug unless the
+     * interface says why. The panel renders that sentence; assert it, because
+     * "MAX is smaller" without a reason is the same screen as a rounding error.
+     */
+    await expect(page.getByTestId('gas-reserve-note')).toContainText(/leaves .* for gas/i)
     expect(wallet.sent().length, 'MAX must not send anything on its own').toBe(0)
   })
 
@@ -441,7 +471,39 @@ test.describe('Arc testnet', () => {
     const curve = process.env.E2E_ARC_CURVE ?? ''
     expect(curve).toMatch(/^0x[0-9a-fA-F]{40}$/)
     const client = arcClient()
-    const account = privateKeyToAccount(KEY)
+
+    /*
+     * ======================================================================
+     *  THE `from` MUST BE FUNDED, AND I PREVIOUSLY MEASURED THE OPPOSITE.
+     * ======================================================================
+     *
+     * This is a read -- `eth_call`, no signing, nothing broadcast -- so it
+     * looked like any address would do. I probed exactly that against the
+     * COMPLETE smoke curve, from a funded address and an unfunded one, and got
+     * the SAME revert from both. I concluded that Arc's `eth_call` does not
+     * enforce the value transfer. THAT CONCLUSION WAS WRONG, and the run that
+     * proved it is the first one against an OPEN curve:
+     *
+     *     Expected: "NetTooSmall"   Received: "InsufficientFunds"
+     *
+     * On a complete curve `CurveComplete()` fires BEFORE the 1-wei transfer is
+     * ever attempted, so both probes short-circuited at the same guard and the
+     * balance check was never reached. The agreement between them measured the
+     * completeness guard, not the transfer. An open curve gets past that guard,
+     * the 1-wei value transfer is then evaluated, and an empty `from` fails
+     * there instead -- several guards earlier than the one under test.
+     *
+     * A test that passes for a reason nobody wrote down is a finding even while
+     * it is green; this was the same shape, one step worse, because the reason
+     * was written down and was FALSE. The `from` is now the funded watched
+     * address, which costs nothing and signs nothing.
+     */
+    const account: Address = isAddress(WATCH) ? WATCH : privateKeyToAccount(KEY).address
+    expect(
+      await client.getBalance({ address: account }),
+      'the simulated buy transfers 1 wei, so its sender must be able to afford it -- ' +
+        'otherwise the call reverts InsufficientFunds several guards before NetTooSmall',
+    ).toBeGreaterThan(0n)
 
     /*
      * THE INTERFACE CANNOT PRODUCE THIS INPUT -- the amount field's own parser
@@ -534,14 +596,34 @@ test.describe('Arc testnet', () => {
      * which is what the unit test did -- passes just as happily with three of
      * them on screen. Counting across the whole page is the assertion that
      * would have caught this, so it is the assertion that stays.
+     *
+     * AND THE EXPECTED TOTAL IS DERIVED, NOT HARDCODED. On a COMPLETE curve the
+     * trade panel is not rendered at all, so the page carries one control; on an
+     * OPEN curve the panel renders and turns its OWN submit into the switch, so
+     * it carries two. The first run of this leg saw only two of the three
+     * because the fixture curve was complete -- the count was MASKED BY CHAIN
+     * STATE, which is exactly the kind that comes back. So the total is computed
+     * from an observed structural fact (is the panel there?) and every control
+     * is then named individually. A bare number would either be wrong on one of
+     * the two curves or would have to be loosened until it measured nothing.
      */
     const banner = page.getByTestId('network-banner')
     await expect(banner).toBeVisible()
+
+    const panels = await page.getByTestId('trade-panel').count()
+    if (panels === 1) {
+      await expect(
+        page.getByTestId('trade-submit'),
+        'on an open curve the panel makes its OWN submit the switch -- that is the ' +
+          'strongest placement there is and it is NOT the duplicate that was removed',
+      ).toHaveAccessibleName(/Switch to Arc Testnet/)
+    }
     await expect(
       page.getByRole('button', { name: /Switch to Arc Testnet/ }),
-      'the shell offers the switch ONCE. Two controls with one accessible name ' +
-        'is the defect this leg found on its first run.',
-    ).toHaveCount(1)
+      `the shell offers the switch ONCE, plus the form's own submit when a trade ` +
+        `panel is on screen (panels=${panels}). Two controls in the SHELL with one ` +
+        'accessible name is the defect this leg found on its first run.',
+    ).toHaveCount(1 + panels)
     await expect(
       page.getByRole('banner').getByRole('button', { name: /Switch to Arc Testnet/ }),
       'the header must not carry a second one',
