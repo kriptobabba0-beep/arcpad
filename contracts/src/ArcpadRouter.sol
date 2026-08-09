@@ -262,7 +262,7 @@ contract ArcpadRouter is IUnlockCallback {
         // kontratin TEK durumsuz olma ozelligini kaybettirirdi.
         (amountIn, amountOut) = abi.decode(poolManager.unlock(abi.encode(c)), (uint256, uint256));
 
-        // SLIPPADE KORUMASI ROUTER'DA, ARAYUZDE DEGIL. Iki kopya vardir ve
+        // SLIPPAGE KORUMASI ROUTER'DA, ARAYUZDE DEGIL. Iki kopya vardir ve
         // ikisi de BURADADIR; sarmalayicilarda tekrar edilmezler.
         if (exactIn) {
             if (amountOut < bound) revert TooLittleReceived(amountOut, bound);
