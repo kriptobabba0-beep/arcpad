@@ -6,6 +6,7 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "sync-launch-token": "tsx scripts/sync-launch-token.ts",
+    "sync-pool-events": "tsx scripts/sync-pool-events.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:live": "vitest run --config vitest.live.config.ts"

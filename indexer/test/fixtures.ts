@@ -4,6 +4,11 @@ import { encodeAbiParameters, encodeEventTopics } from 'viem'
 import { bondingCurveAbi } from '@arcpad/shared/browser'
 import type { DecodedEvent, RawLog, RpcClient } from '../src/logs'
 import { createPacer, decodeAll, fetchRange } from '../src/logs'
+import {
+  ARCPAD_HOOK_SWAP_FEE_COLLECTED_EVENT,
+  POOL_MANAGER_INITIALIZE_EVENT,
+  POOL_MANAGER_SWAP_EVENT,
+} from '../src/pool-events.generated'
 
 /**
  * FIXTURE YUKLEYICI.
@@ -255,7 +260,92 @@ export function donationLog(
 export const AWAITING_FIXTURE: Readonly<Record<string, string>> = Object.freeze({
   graduated:
     'make fixtures forge ister; zincirde graduate() yalnizca hedefin kendisi tarafindan cagrilabilir',
+  // ============ HAVUZ KATMANI: HENUZ HICBIR HAVUZ YOK ============
+  //
+  // Uc olayin da fixture'i AYNI TEK OLGUYA baglidir ve o olgu bir zaman
+  // penceresidir: uretim factory'sinin `graduationTarget`i BILEREK `0x0` ve
+  // ilk gercek mezuniyet 2026-08-11T23:01:51Z'de acilan pencerede olur. Havuz
+  // ancak `ArcpadLocker.graduate()` calistiginda ACILIR (`initialize` +
+  // `modifyLiquidity`, tek islemde), yani `Swap`, `Initialize` ve
+  // `SwapFeeCollected` icin gercek bir yurutme logu BUGUN URETILEMEZ --
+  // zincirde de, `make fixtures` ile de (bu izlek `forge` kosamaz).
+  //
+  // YERINE KONAN KAPI, `graduated`inkiyle AYNI SEKILDE ve AYNI GUCTE:
+  //   - imzalar `src/pool-events.generated.ts`ten dogrulanir -- o dosya
+  //     `contracts/out/**`in COMMIT'LENMIS ozetidir ve `sync-pool-events`
+  //     onu her uretiste `topic0`lara karsi tutar;
+  //   - cozucu, viem'in ABI cozucusune karsi DIFERANSIYEL test edilir;
+  //   - ve `constructedSwapLog` ailesi yuku ABI'den KODLAR, elle yazmaz.
+  //
+  // KAYBEDILEN SEY ADIYLA YAZILI OLSUN: gercek bir yurutmenin uretecegi
+  // MIKTAR VE SIRA. Ozellikle `SwapFeeCollected`in `Swap`e gore ONCE mi SONRA
+  // mi geldigi -- hook'un iki dali -- burada VARSAYIMA gore kuruluyor
+  // (`ArcpadHook._beforeSwap`/`_afterSwap` okunarak), olculerek degil.
+  poolSwap:
+    'zincirde henuz hicbir havuz acilmadi (graduationTarget = 0x0); make fixtures forge ister',
+  poolInitialize:
+    'zincirde henuz hicbir havuz acilmadi (graduationTarget = 0x0); make fixtures forge ister',
+  poolFee:
+    'zincirde henuz hicbir havuz acilmadi (graduationTarget = 0x0); make fixtures forge ister',
 })
+
+/**
+ * `contracts/fixtures/` ALTINDAKI HER JSON'DA gecen her `topics[0]`.
+ *
+ * `fixtureNames()` YALNIZCA UST DIZINI okur ve bu, `AWAITING_FIXTURE`in kendi
+ * kendini silmeye zorlayan kapisinda BIR DELIKTI: `graduated` icin gecerli
+ * degildi (o `make fixtures`la gelir, yani ust dizine), ama HAVUZ olaylari
+ * icin tam tersi -- ilk gercek `Swap` bu depoya CANLI BIR MAKBUZ olarak,
+ * `arc-live/` altina gelir. Ust dizine bakan bir kapi o gun sessizce yesil
+ * kalirdi ve muafiyet, kapandigini kimsenin fark etmedigi bir bosluga
+ * donusurdu.
+ *
+ * Tarama SEKILDEN BAGIMSIZDIR: iki fixture bicimi (`{logs: [...]}` ve
+ * `{receipts: [{logs: [...]}]}`) farkli oldugu icin, uc yeni bicim daha
+ * eklenebilsin diye `topics` alani tasiyan HER nesne aranir.
+ */
+export function allFixtureTopics(): Set<string> {
+  const out = new Set<string>()
+  const visit = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item)
+      return
+    }
+    if (node === null || typeof node !== 'object') return
+    const record = node as Record<string, unknown>
+    const topics = record['topics']
+    if (Array.isArray(topics) && typeof topics[0] === 'string') out.add(topics[0])
+    for (const value of Object.values(record)) visit(value)
+  }
+  for (const file of fixtureJsonFiles()) {
+    visit(JSON.parse(readFileSync(new URL(file, FIXTURE_DIR), 'utf8')) as unknown)
+  }
+  return out
+}
+
+/**
+ * TARAMANIN ERISIMI, AYRICA OLCULEBILSIN DIYE.
+ *
+ * `allFixtureTopics()`in IC ICE DIZINLERE indigini ICERIKTEN ispatlamak BUGUN
+ * MUMKUN DEGIL: olculdu (2026-08-09), `arc-live/`in topic kumesi ust dizinin
+ * ALT KUMESI -- ikisi de tam olarak ayni yedi `topic0`i tasiyor. Yani "derin
+ * tarama daha cok sey buluyor" diye yazilmis bir iddia bugun VAKUMDA gecer ve
+ * yarin, tam da kapanmasi gereken gun, hicbir sey soylemezdi.
+ *
+ * Bu yuzden erisim DOSYA LISTESI olarak olculur -- `rpc-errors.test.ts`in
+ * "taranan kaynak kumesi eski elle yazilmis listeyi KAPSAR" kapisinin aynisi.
+ */
+export function fixtureJsonFiles(): string[] {
+  const out: string[] = []
+  const walk = (prefix: string): void => {
+    for (const entry of readdirSync(new URL(prefix, FIXTURE_DIR), { withFileTypes: true })) {
+      if (entry.isDirectory()) walk(`${prefix}${entry.name}/`)
+      else if (entry.name.endsWith('.json')) out.push(`${prefix}${entry.name}`)
+    }
+  }
+  walk('')
+  return out.sort()
+}
 
 /**
  * KURULMUS (URETILMEMIS) bir `Graduated` logu. ADI BUNU SOYLUYOR.
@@ -315,6 +405,128 @@ export function constructedGraduatedLog(args: {
   }
 }
 
+/**
+ * ============ KURULMUS (URETILMEMIS) HAVUZ LOGLARI ============
+ *
+ * `constructedGraduatedLog` ile AYNI SOZLESME: yuk bu takimin UYDURDUGU bir
+ * sekil DEGILDIR -- topic'ler ve `data`, `src/pool-events.generated.ts`teki
+ * ABI girisinden viem ile kodlanir, ve o dosya `contracts/out/**`tan
+ * `sync-pool-events` ile uretilir. Yani SEKIL derleyiciden gelir, DEGERLER
+ * cagirandan. `contracts/fixtures/` altina KONMAZLAR.
+ */
+function constructedLog(
+  event: AbiEvent,
+  args: Record<string, unknown>,
+  frame: { address: Address; block: bigint; logIndex: number; timestamp?: bigint; txHash?: Hex },
+): RawLog {
+  const encoded = encodeEventTopics({ abi: [event], eventName: event.name, args })
+  const topics = encoded.map((t) => {
+    if (typeof t !== 'string') throw new Error(`beklenmeyen topic sekli: ${JSON.stringify(t)}`)
+    return t
+  })
+  const unindexed = event.inputs.filter((i) => i.indexed !== true)
+  const data = encodeAbiParameters(
+    unindexed,
+    unindexed.map((i) => args[i.name as string]),
+  )
+  return {
+    address: frame.address,
+    topics,
+    data,
+    blockNumber: `0x${frame.block.toString(16)}`,
+    logIndex: `0x${frame.logIndex.toString(16)}`,
+    transactionHash: frame.txHash ?? syntheticTxHash('pool'),
+    blockTimestamp: `0x${(frame.timestamp ?? 1_780_000_000n).toString(16)}`,
+    removed: false,
+  }
+}
+
+export function constructedSwapLog(args: {
+  poolManager: Address
+  poolId: Hex
+  sender: Address
+  amount0: bigint
+  amount1: bigint
+  sqrtPriceX96: bigint
+  liquidity: bigint
+  tick?: number
+  fee?: number
+  block: bigint
+  logIndex: number
+  timestamp?: bigint
+  txHash?: Hex
+}): RawLog {
+  return constructedLog(
+    POOL_MANAGER_SWAP_EVENT,
+    {
+      id: args.poolId,
+      sender: args.sender,
+      amount0: args.amount0,
+      amount1: args.amount1,
+      sqrtPriceX96: args.sqrtPriceX96,
+      liquidity: args.liquidity,
+      tick: args.tick ?? 0,
+      // SIFIR, cunku `GraduationMath.POOL_FEE` sifirdir. Varsayilani sifir
+      // yapmak, testlerin "havuz ucreti sifir" olgusunu her cagrida tekrar
+      // yazmasini gereksiz kilar; sifir OLMAYAN hal ayrica test edilir.
+      fee: args.fee ?? 0,
+    },
+    { ...args, address: args.poolManager },
+  )
+}
+
+export function constructedPoolInitializeLog(args: {
+  poolManager: Address
+  poolId: Hex
+  currency0: Address
+  currency1: Address
+  fee?: number
+  tickSpacing?: number
+  hooks: Address
+  sqrtPriceX96: bigint
+  tick?: number
+  block: bigint
+  logIndex: number
+  timestamp?: bigint
+  txHash?: Hex
+}): RawLog {
+  return constructedLog(
+    POOL_MANAGER_INITIALIZE_EVENT,
+    {
+      id: args.poolId,
+      currency0: args.currency0,
+      currency1: args.currency1,
+      fee: args.fee ?? 0,
+      tickSpacing: args.tickSpacing ?? 60,
+      hooks: args.hooks,
+      sqrtPriceX96: args.sqrtPriceX96,
+      tick: args.tick ?? 0,
+    },
+    { ...args, address: args.poolManager },
+  )
+}
+
+export function constructedSwapFeeCollectedLog(args: {
+  hook: Address
+  poolId: Hex
+  protocolFeeUnits: bigint
+  creatorFeeUnits: bigint
+  block: bigint
+  logIndex: number
+  timestamp?: bigint
+  txHash?: Hex
+}): RawLog {
+  return constructedLog(
+    ARCPAD_HOOK_SWAP_FEE_COLLECTED_EVENT,
+    {
+      id: args.poolId,
+      protocolFee: args.protocolFeeUnits,
+      creatorFee: args.creatorFeeUnits,
+    },
+    { ...args, address: args.hook },
+  )
+}
+
 /** Canli smoke'un OLCULMUS adresleri. Adres kitabindan degil, makbuzdan. */
 export const LIVE = {
   factory: '0x0d75a4ffb8cd6db4237557e9519591b94d6ab439' as Address,
@@ -336,7 +548,13 @@ export async function liveDecodedEvents(): Promise<DecodedEvent[]> {
   const last = BigInt(logs[logs.length - 1]!.blockNumber)
   return fetchRange(
     new FakeNode(logs),
-    { factory: LIVE.factory, escrow: LIVE.escrow, curves: new Set(), tokens: new Set() },
+    {
+      factory: LIVE.factory,
+      escrow: LIVE.escrow,
+      curves: new Set(),
+      tokens: new Set(),
+      pools: new Map(),
+    },
     first,
     last,
   )

@@ -16,7 +16,18 @@ import {
   KIND_BY_TOPIC0,
   TOPIC0,
 } from '../src/arc'
-import { fixtureNames, loadFixtureFile, loadSmoke } from './fixtures'
+import {
+  ARCPAD_HOOK_SWAP_FEE_COLLECTED_EVENT,
+  POOL_MANAGER_INITIALIZE_EVENT,
+  POOL_MANAGER_SWAP_EVENT,
+} from '../src/pool-events.generated'
+import {
+  allFixtureTopics,
+  fixtureJsonFiles,
+  fixtureNames,
+  loadFixtureFile,
+  loadSmoke,
+} from './fixtures'
 
 /**
  * `TOPIC0` iki YONDEN birden tutuluyor. Tek yon yeterli DEGILDIR:
@@ -127,6 +138,17 @@ describe('topic0 kimlikleri', () => {
       'Graduated -- `make fixtures` forge ister; bu izlek forge kosamaz ve zincirde ' +
       'graduate() yalnizca hedefin kendisi tarafindan cagrilabilir (uretimde hedef sifir, ' +
       'provada 0x…dEaD). Imza DERLENMIS ABI ile dogrulaniyor.',
+    // UCU DE AYNI TEK OLGUYA BAGLI: zincirde henuz HICBIR HAVUZ YOK. Havuz
+    // `ArcpadLocker.graduate()` icinde acilir, o da `graduationTarget`
+    // gerektirir, o da uretimde `0x0`. Ilk gercek mezuniyet
+    // 2026-08-11T23:01:51Z'de acilan pencerede olur; o gun bu uc giris de
+    // SILINIR ve asagidaki iki test onu ZORLAR.
+    poolSwap:
+      'PoolManager.Swap -- zincirde henuz hicbir arcpad havuzu acilmadi (graduationTarget = 0x0). ' +
+      'Imza `src/pool-events.generated.ts` uzerinden derlenmis ABI ile dogrulaniyor.',
+    poolInitialize: 'PoolManager.Initialize -- ayni sebep; havuz ancak graduate() ile acilir.',
+    poolFee:
+      'ArcpadHook.SwapFeeCollected -- ayni sebep; hook ucreti ancak bir havuz swap inde tahsil eder.',
   }
 
   // IKINCI YON: her `TOPIC0` degeri en az bir gercek logda GORULUR. Yalnizca
@@ -145,11 +167,31 @@ describe('topic0 kimlikleri', () => {
   // Ve muafiyet OLU OLAMAZ: fixture indigi anda giris SILINMEK ZORUNDA. Aksi
   // halde liste, kapandigini kimsenin fark etmedigi bir bosluga donusur --
   // bu depodaki `OPEN_CELLS` mekanizmasinin ayni kurali.
+  //
+  // TARAMA `contracts/fixtures/` ALTINDAKI HER JSON'A BAKAR, yalnizca ust
+  // dizine DEGIL -- ve bu bir genisletme degil bir DUZELTMEDIR. `fixtureNames()`
+  // ust dizini okur; oraya `make fixtures` yazar. Havuz olaylarinin ilk gercek
+  // ornegi ise bu depoya CANLI BIR MAKBUZ olarak, `arc-live/` altina gelecek
+  // (mezuniyet penceresi acildiginda). Ust dizine bakan bir kapi o gun
+  // SESSIZCE yesil kalirdi -- yani muafiyet, tam da kapanmasi gereken anda
+  // kapanmazdi.
+  // TARAMANIN ERISIMI ICERIKTEN ISPATLANAMAZ, BU YUZDEN AYRICA OLCULUYOR.
+  // OLCULDU (2026-08-09): `arc-live/`in yedi `topic0`i ust dizininkiyle TAM
+  // OLARAK AYNI, yani "derin tarama daha cok sey buluyor" diye yazilmis bir
+  // iddia bugun VAKUMDA gecerdi. Erisim dosya listesiyle olculur.
+  it('tarama ic ice dizinlere de INER (erisim olculur, varsayilmaz)', () => {
+    const files = fixtureJsonFiles()
+    expect(files).toContain('arc-live/smoke-receipts.json')
+    expect(files).toContain('launch.json')
+    expect(files.length).toBeGreaterThan(fixtureNames().length)
+  })
+
   it('fixture bekleyen her olay GERCEKTEN fixture larda yok', () => {
-    const seen = new Set<string>()
-    for (const name of fixtureNames()) {
-      for (const log of loadFixtureFile(name).logs) seen.add(log.topics[0]!)
-    }
+    const seen = allFixtureTopics()
+    // ANTI-VAKUM: tarama gercekten log buluyor mu? Bos bir kume "hicbiri
+    // fixture'larda yok" iddiasini bedavaya dogrularadi.
+    expect(seen.size).toBeGreaterThan(3)
+    expect(seen.has(TOPIC0.trade)).toBe(true)
     for (const kind of Object.keys(AWAITING_FIXTURE)) {
       const topic = TOPIC0[kind as keyof typeof TOPIC0]
       expect(topic, `${kind} bilinen bir olay degil`).toBeDefined()
@@ -178,6 +220,18 @@ describe('topic0 kimlikleri', () => {
       deposited: feeEscrowAbi,
       claimed: feeEscrowAbi,
       transfer: launchTokenAbi,
+      // UC HAVUZ OLAYI BASKA BIR KAYNAKTAN GELIR VE BU BILINCLI. Otekiler
+      // `packages/shared/src/abi/*`tan okunur -- `abi-parity` CI is'inin
+      // artifact ile IKI YONLU karsilastirdigi kopya. Havuz olaylari icin ayni
+      // yol yanlis takas olurdu: `abi-parity` TAM ABI karsilastirir, yani
+      // `PoolManager`in 52 girisi de oraya kopyalanmali; ve `ARCPAD_ERROR_ABI`
+      // o dosyalardan beslendigi icin V4/hook hatalari frontend'in hata
+      // sozlugune sizardi. Bunun yerine `sync-pool-events` ayni artifact'tan
+      // YALNIZCA uc olayi cikarir ve `src/pool-events.generated.ts` olarak
+      // COMMIT'ler -- provenance ayni yerden, kapsam dar.
+      poolSwap: [POOL_MANAGER_SWAP_EVENT],
+      poolInitialize: [POOL_MANAGER_INITIALIZE_EVENT],
+      poolFee: [ARCPAD_HOOK_SWAP_FEE_COLLECTED_EVENT],
     }
     // Bos kume uzerinde "hepsi gecti" dogru olurdu; sayi sabitlenir.
     expect(Object.keys(CONTRACT_OF).length).toBe(Object.keys(EVENT_SIGNATURES).length)

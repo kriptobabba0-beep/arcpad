@@ -116,6 +116,44 @@ export const EVENT_SIGNATURES = {
   deposited: 'Deposited(address,address,uint256)',
   claimed: 'Claimed(address,uint256)',
   transfer: 'Transfer(address,address,uint256)',
+
+  // -------------------------------------------------------------------------
+  // MEZUNIYETTEN SONRAKI VENUE. Bu uc olay `PoolManager` ve `ArcpadHook`tan
+  // gelir, `contracts/src/`ten DEGIL, ve imzalari
+  // `pool-events.generated.ts`ten -- `contracts/out/**`in COMMIT'LENMIS
+  // ozeti -- iki yonlu dogrulanir (`topics.test.ts`). `packages/shared`in
+  // `abi/` kopyasina konmadilar: orada `abi-parity` TAM ABI karsilastirmasi
+  // yapar ve `ARCPAD_ERROR_ABI` uzerinden frontend'in hata sozlugu buyurdu.
+  // -------------------------------------------------------------------------
+
+  /**
+   * V4'un `PoolManager.Swap`i. `PoolId` bir `type ... is bytes32` oldugu icin
+   * TEL UZERINDEKI tip `bytes32`tir -- `PoolId` yazmak baska bir selector
+   * uretirdi ve o selector hicbir gercek logla ortusmezdi.
+   *
+   * `id` ve `sender` INDEKSLIDIR; miktar/fiyat/likidite alanlari DEGILDIR.
+   * Bunun tasiyici sonucu sudur: hangi havuza ait oldugu SUNUCU TARAFINDA
+   * suzulebilir (`topics[1]`), yani zincirdeki her havuzun `Swap`ini cekip
+   * istemcide elemek ZORUNDA DEGILIZ.
+   */
+  poolSwap: 'Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)',
+  /**
+   * `PoolManager.Initialize`. Havuzun DOGUM ANI, ve turetmemizin TEK
+   * bagimsiz tanigi: `currency0`/`currency1` indeksli, `fee`/`tickSpacing`/
+   * `hooks` ise data'da. Turettigimiz `PoolKey`in her alani bu logdan
+   * dogrulanir; turetme yanlis olsaydi tek belirti "cekiliyor ama hic
+   * gelmiyor" olurdu -- bu deponun `Graduated`i escrow filtresine koymanin
+   * bedeli olarak zaten adlandirdigi sessiz ariza.
+   */
+  poolInitialize: 'Initialize(bytes32,address,address,uint24,int24,address,uint160,int24)',
+  /**
+   * `ArcpadHook.SwapFeeCollected`. HAVUZUN UCRETI SIFIRDIR (spec §412,
+   * `GraduationMath.POOL_FEE = 0`), yani `Swap.fee` alani her zaman 0 gelir ve
+   * onu ucret sanan bir okuma her havuz islemini UCRETSIZ kaydeder. Gercek
+   * ucret BURADAN gelir, quote'un 6 decimal biriminde, ve `FeeEscrow`a
+   * `quoteWei(...)` ile 18 decimal olarak yatirilir.
+   */
+  poolFee: 'SwapFeeCollected(bytes32,uint256,uint256)',
 } as const
 
 export type EventKind = keyof typeof EVENT_SIGNATURES

@@ -313,7 +313,13 @@ describe('apply/transfer', () => {
     await expect(
       fetchRange(
         node,
-        { factory: LIVE.factory, escrow: LIVE.escrow, curves: new Set(), tokens: new Set() },
+        {
+          factory: LIVE.factory,
+          escrow: LIVE.escrow,
+          curves: new Set(),
+          tokens: new Set(),
+          pools: new Map(),
+        },
         BigInt(logs[0]!.blockNumber),
         BigInt(logs[logs.length - 1]!.blockNumber),
       ),

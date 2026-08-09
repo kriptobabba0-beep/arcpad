@@ -85,6 +85,11 @@ describe('apply/graduated', () => {
     expect(counts).toEqual({
       launches: 0,
       trades: 0,
+      // MEZUNIYET VAR, HAVUZ ISLEMI YOK -- ve bu bir eksiklik degil bir
+      // AYRIM: `graduate()` havuzu ACAR (`initialize` + likidite, ayni
+      // islemde) ama ilk `Swap` BASKA bir islemdir. Ikisini ayni sayacta
+      // beklemek, mezuniyeti bir islem gibi saymak olurdu.
+      poolSwaps: 0,
       completed: 0,
       graduated: 1,
       transfers: 0,
@@ -175,6 +180,7 @@ describe('apply/graduated', () => {
         escrow: LIVE.escrow,
         curves: new Set([LIVE.curve]),
         tokens: new Set([LIVE.token]),
+        pools: new Map(),
       },
       GRAD_BLOCK,
       GRAD_BLOCK,

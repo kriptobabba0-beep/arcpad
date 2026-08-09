@@ -244,6 +244,8 @@ describe('runOnce', () => {
     expect(result!.counts).toEqual({
       launches: 1,
       trades: 4,
+      // HAVUZ ISLEMI YOK VE OLMAMALI: bu fixture mezuniyet ONCESI bir egridir.
+      poolSwaps: 0,
       completed: 1,
       graduated: 0,
       transfers: 5,

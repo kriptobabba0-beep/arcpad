@@ -5,6 +5,7 @@ import { loadConfig } from './config'
 import { createAddressWidthMemo, createPacer, type RpcClient } from './logs'
 import {
   assertStartBlockCoversEscrow,
+  createHookResolver,
   ensureDeployment,
   isRateLimit,
   readFactoryProfile,
@@ -84,8 +85,18 @@ async function main(): Promise<void> {
   const sleep = (ms: number): Promise<void> =>
     new Promise<void>((resolve) => setTimeout(resolve, ms))
 
+  // MEZUNIYET HEDEFI -> HAVUZ KABLOLAMASI, TEK ONBELLEK, BUTUN DONGU.
+  // `pacer`/`widthMemo` ile ayni omur ve ayni gerekce: dongu basina yeni bir
+  // cozucu, her aralikta ayni iki `eth_call`i tekrar yapardi. Bugun hicbir
+  // token mezun olmadigi icin bir kez bile cagrilmaz.
+  const resolveHook = createHookResolver(rpc, pacer)
+
   for (;;) {
-    const result = await runWithRetry(pool, rpc, deployment, config, { pacer, widthMemo })
+    const result = await runWithRetry(pool, rpc, deployment, config, {
+      pacer,
+      widthMemo,
+      resolveHook,
+    })
     if (result === null) {
       // Head'e yetistik. `nextRange` `null` dondugunde HICBIR SEY yapilmaz --
       // ozellikle imlec ILERLETILMEZ.
@@ -100,6 +111,10 @@ async function main(): Promise<void> {
         // olaydir; onu `events=` toplaminin icinde birakmak, ilk mezuniyeti
         // operatorun logunda GORUNMEZ yapardi.
         `completed=${result.counts.completed} graduated=${result.counts.graduated} ` +
+        // HAVUZ ISLEMLERI AYRI BASILIR. Bugun beklenen deger SIFIRDIR; `trades`
+        // ile birlestirilmis bir sayac, ilk havuz isleminin geldigi ani da hic
+        // gelmedigi gercegini de operatorun logundan silerdi.
+        `poolSwaps=${result.counts.poolSwaps} ` +
         `transfers=${result.counts.transfers} fees=${result.counts.fees}`,
     )
   }

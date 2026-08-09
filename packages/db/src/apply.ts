@@ -90,6 +90,48 @@ export interface TradeEvent extends LogRef {
   realQuoteReservesWei: bigint
 }
 
+/**
+ * MEZUNIYETTEN SONRAKI ISLEM -- AYNI TABLO, `source = 'pool'`.
+ *
+ * `TradeEvent`in IKIZIDIR ve alan adlari BILEREK aynidir: ikisi de `trades`in
+ * AYNI sutunlarina yazar. Ayri bir tip olmasinin sebebi, IKI ALANIN farkli
+ * seyler olmasidir ve o fark yazma yolunu degistirir:
+ *
+ *   `curve`      egri satirinda OLAYIN YAYINCISIDIR; havuz satirinda
+ *                token'in MEZUN OLDUGU egridir. Islem ORADA OLMADI, ve bu
+ *                yuzden bu yol `curve_state`i GUNCELLEMEZ -- egrinin
+ *                rezervleri mezuniyette DONDU ve bir havuz islemi onlari
+ *                degistiremez. `applyTrade`in `cs` CTE'sinin burada
+ *                OLMAMASI, bu tipin var olma sebebidir.
+ *   rezervler    egri satirinda olayin TASIDIGI dort sayidir; havuz satirinda
+ *                `Swap`in `sqrtPriceX96`/`liquidity`sinden TURETILIR
+ *                (`indexer/src/pool.ts`, `impliedReserves`). Turetme orada
+ *                olur, burada degil: bu paket bir yazicidir, bir cozucu
+ *                degil.
+ *
+ * `token_stats` guncellemesi ise AYNIDIR ve olmasi gerekir: hacim, islem
+ * sayisi ve "son islem" bir TOKEN'in olgularidir, bir VENUE'nun degil. Havuz
+ * islemlerini disarida birakan bir toplama, mezun bir token'i "islem
+ * gormuyor" gibi gosterirdi.
+ */
+export interface PoolSwapEvent extends LogRef {
+  kind: 'poolSwap'
+  token: Address
+  /** Token'in MEZUN OLDUGU egri. Islem burada olmadi; `source` bunu soyler. */
+  curve: Address
+  /** `Swap.sender` -- `PoolManager.swap`in cagirani. Genellikle bir router. */
+  trader: Address
+  isBuy: boolean
+  tokenAmountTok: bigint
+  quoteAmountWei: bigint
+  protocolFeeWei: bigint
+  creatorFeeWei: bigint
+  virtualTokenReservesTok: bigint
+  virtualQuoteReservesWei: bigint
+  realTokenReservesTok: bigint
+  realQuoteReservesWei: bigint
+}
+
 export interface CompletedEvent extends LogRef {
   kind: 'completed'
   token: Address
@@ -126,11 +168,25 @@ export interface FeeLedgerEvent extends LogRef {
 }
 
 export type IngestEvent =
-  LaunchEvent | TradeEvent | CompletedEvent | GraduatedEvent | TransferEvent | FeeLedgerEvent
+  | LaunchEvent
+  | TradeEvent
+  | PoolSwapEvent
+  | CompletedEvent
+  | GraduatedEvent
+  | TransferEvent
+  | FeeLedgerEvent
 
 export interface ReplayResult {
   launches: number
   trades: number
+  /**
+   * `trades` tablosuna `source = 'pool'` ile giren satirlar. `trades`TEN AYRI
+   * SAYILIR, ayni tabloya yazsalar bile: sayaclari birlestirmek, "havuz yolu
+   * hic calismadi" halini "egri yolu iki kat calisti" halinden ayirt
+   * edilemez yapardi -- ve bugun havuz yolunun BEKLENEN sayisi sifirdir, yani
+   * karistirma tam da fark edilmeyecek yerde olurdu.
+   */
+  poolSwaps: number
   completed: number
   graduated: number
   transfers: number
@@ -231,6 +287,76 @@ export async function applyTrade(db: Queryable, e: TradeEvent): Promise<number> 
        -- \`event_seq > last_seq\` muhafizina TABI DEGILDIR: gec gelen eski bir
        -- islem hacme ve sayaclara dogru sekilde katilir. Yalnizca "en son"
        -- alanlari sira ile korunur.
+       UPDATE token_stats s SET
+         volume_total_wei = s.volume_total_wei + i.quote_amount_wei,
+         trade_count      = s.trade_count + 1,
+         buy_count        = s.buy_count + (CASE WHEN i.is_buy THEN 1 ELSE 0 END),
+         last_trade_seq   = GREATEST(coalesce(s.last_trade_seq, 0), i.event_seq),
+         last_trade_at    = CASE WHEN i.event_seq > coalesce(s.last_trade_seq, 0)
+                                 THEN i.block_time ELSE s.last_trade_at END,
+         last_buy_seq     = CASE WHEN i.is_buy
+                                 THEN GREATEST(coalesce(s.last_buy_seq, 0), i.event_seq)
+                                 ELSE s.last_buy_seq END,
+         last_buy_at      = CASE WHEN i.is_buy AND i.event_seq > coalesce(s.last_buy_seq, 0)
+                                 THEN i.block_time ELSE s.last_buy_at END
+       FROM ins i WHERE s.token = i.token
+       RETURNING 1
+     )
+     SELECT count(*)::int AS n FROM ins`,
+    [
+      e.eventSeq.toString(),
+      e.blockNumber.toString(),
+      e.logIndex,
+      lowerHash32(e.txHash),
+      e.blockTime,
+      lower(e.token),
+      lower(e.curve),
+      lower(e.trader),
+      e.isBuy,
+      e.tokenAmountTok.toString(),
+      e.quoteAmountWei.toString(),
+      e.protocolFeeWei.toString(),
+      e.creatorFeeWei.toString(),
+      e.virtualTokenReservesTok.toString(),
+      e.virtualQuoteReservesWei.toString(),
+      e.realTokenReservesTok.toString(),
+      e.realQuoteReservesWei.toString(),
+    ],
+  )
+}
+
+/**
+ * MEZUNIYET SONRASI BIR HAVUZ ISLEMI. `applyTrade`IN IKIZI, IKI FARKLA.
+ *
+ *   1. `source = 'pool'` YAZILIR. Sutun 003'ten beri var ve bugune kadar
+ *      HICBIR SEY 'pool' yazmadi -- semanin hazir olup yolun olmamasi,
+ *      spec 6.2'nin ("bir token graduate oldugunda fiyat gecmisi kopmaz")
+ *      yarim kalmis yarisiydi.
+ *   2. `curve_state` GUNCELLENMEZ. Egrinin rezervleri mezuniyette DONDU;
+ *      bir havuz islemi onlari degistirmez. `applyTrade`in `cs` CTE'sini
+ *      buraya kopyalamak, mezun bir egrinin sanal rezervlerini havuzun
+ *      turetilmis rezervleriyle EZERDI ve `curve_state` iki farkli venue'nun
+ *      durumunu tasiyan tek bir satira donusurdu.
+ *
+ * `token_stats` yazimi AYNIDIR ve `applyTrade`inkiyle KELIMESI KELIMESINE
+ * ayni olmak zorundadir: hacim ve sayaclar TOKEN'in olgusudur. Ayrisan bir
+ * kopya, mezuniyetten sonra hacmin sessizce baska bir kurala gore
+ * toplanmasi demekti.
+ */
+export async function applyPoolSwap(db: Queryable, e: PoolSwapEvent): Promise<number> {
+  return affected(
+    db,
+    `WITH ins AS (
+       INSERT INTO trades
+         (event_seq, block_number, log_index, tx_hash, block_time, token, curve, trader, is_buy,
+          token_amount_tok, quote_amount_wei, protocol_fee_wei, creator_fee_wei,
+          virtual_token_reserves_tok, virtual_quote_reserves_wei,
+          real_token_reserves_tok, real_quote_reserves_wei, source)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'pool')
+       ON CONFLICT (event_seq) DO NOTHING
+       RETURNING *
+     ),
+     st AS (
        UPDATE token_stats s SET
          volume_total_wei = s.volume_total_wei + i.quote_amount_wei,
          trade_count      = s.trade_count + 1,
@@ -661,6 +787,8 @@ export async function applyEvent(db: Queryable, e: IngestEvent): Promise<number>
       return applyLaunch(db, e)
     case 'trade':
       return applyTrade(db, e)
+    case 'poolSwap':
+      return applyPoolSwap(db, e)
     case 'completed':
       return applyCompleted(db, e)
     case 'graduated':
@@ -701,6 +829,7 @@ export async function replayRange(
     const r: ReplayResult = {
       launches: 0,
       trades: 0,
+      poolSwaps: 0,
       completed: 0,
       graduated: 0,
       transfers: 0,
@@ -712,6 +841,7 @@ export async function replayRange(
       const n = await applyEvent(tx, e)
       if (e.kind === 'launch') r.launches += n
       else if (e.kind === 'trade') r.trades += n
+      else if (e.kind === 'poolSwap') r.poolSwaps += n
       else if (e.kind === 'completed') r.completed += n
       else if (e.kind === 'graduated') r.graduated += n
       else if (e.kind === 'transfer') r.transfers += n
@@ -725,7 +855,14 @@ export async function replayRange(
     // kadariyla basa yetismis durumdayim".
     r.cursorMoved = await setCursor(tx, to, toHash, to)
     r.total =
-      r.launches + r.trades + r.completed + r.graduated + r.transfers + r.fees + r.cursorMoved
+      r.launches +
+      r.trades +
+      r.poolSwaps +
+      r.completed +
+      r.graduated +
+      r.transfers +
+      r.fees +
+      r.cursorMoved
     return r
   })
 }

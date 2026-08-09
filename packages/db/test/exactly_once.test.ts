@@ -51,6 +51,7 @@ describe('exactly-once ingestion', () => {
     expect(first).toEqual({
       launches: 1,
       trades: 3,
+      poolSwaps: 0,
       completed: 1,
       // `RANGE` MEZUNIYET ICERMEZ ve icermemeli: zincirde `graduate()` ayri
       // bir islemdir ve arasinda sinirsiz zaman olabilir (canli smoke curve'u
@@ -69,6 +70,7 @@ describe('exactly-once ingestion', () => {
     expect(second).toEqual({
       launches: 0,
       trades: 0,
+      poolSwaps: 0,
       completed: 0,
       graduated: 0,
       transfers: 0,

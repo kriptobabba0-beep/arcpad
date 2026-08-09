@@ -131,6 +131,7 @@ const WATCH: WatchSet = {
   escrow: LIVE.escrow,
   curves: new Set(),
   tokens: new Set(),
+  pools: new Map(),
 }
 
 describe('iki launch iceren bir aralik', () => {
@@ -167,6 +168,8 @@ describe('iki launch iceren bir aralik', () => {
     expect(counts).toEqual({
       launches: 2,
       trades: 2,
+      // HAVUZ ISLEMI YOK VE OLMAMALI: bu fixture mezuniyet ONCESI bir egridir.
+      poolSwaps: 0,
       completed: 0,
       graduated: 0,
       transfers: 4,

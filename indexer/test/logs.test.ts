@@ -66,6 +66,7 @@ const EMPTY_WATCH: WatchSet = {
   escrow: FIX.escrow,
   curves: new Set(),
   tokens: new Set(),
+  pools: new Map(),
 }
 
 const LAUNCH_BLOCK = 54_661_437n
@@ -95,6 +96,9 @@ describe('kapsam', () => {
       'deposited',
       'graduated',
       'launched',
+      'poolFee',
+      'poolInitialize',
+      'poolSwap',
       'trade',
       'transfer',
     ])
@@ -115,8 +119,15 @@ describe('kapsam', () => {
       .sort()
     expect([...seen].sort()).toEqual(expected)
     // Muafiyetin BOS OLMADIGI da olculur: liste bosalirsa yukaridaki filtre
-    // hicbir sey yapmaz ve bu satir onu soyler.
-    expect(Object.keys(AWAITING_FIXTURE)).toEqual(['graduated'])
+    // hicbir sey yapmaz ve bu satir onu soyler. LISTE TAM YAZILIR, uzunluk
+    // degil: bir olayin muaf oldugunu FARK ETMEDEN eklemek, tam olarak bu
+    // satirin engelledigi sey.
+    expect(Object.keys(AWAITING_FIXTURE).sort()).toEqual([
+      'graduated',
+      'poolFee',
+      'poolInitialize',
+      'poolSwap',
+    ])
   })
 
   // (c) (a) ve (b) BUNU KAPSAMAZ: tek bir `Trade` fixture'i ikisini de yesil
@@ -176,6 +187,7 @@ describe('iki fazli cekis', () => {
       ...EMPTY_WATCH,
       curves: new Set([FIX.curve]),
       tokens: new Set([FIX.token]),
+      pools: new Map(),
     }
     const events = await fetchRange(node, watch, BUY_BLOCK, BUY_BLOCK)
     expect(kinds(events)).toEqual(['trade', 'transfer', 'deposited', 'deposited'])
@@ -213,6 +225,7 @@ describe('EIP-7708 duvari', () => {
     escrow: LIVE.escrow,
     curves: new Set(),
     tokens: new Set(),
+    pools: new Map(),
   }
 
   it('adres filtresi uygulanan CANLI aralikta hicbir 7708 logu gelmez', async () => {
@@ -461,6 +474,7 @@ describe('RPC hata taksonomisi', () => {
     escrow: LIVE.escrow,
     curves: new Set(),
     tokens: new Set(),
+    pools: new Map(),
   }
 
   // Ucu de ayri ayri: tek bir kodu yakalayan bir retry, obur ikisinde imleci
@@ -571,7 +585,13 @@ describe('yanit uzerindeki sert iddialar', () => {
     const logs = smokeLogs()
     const events = await fetchRange(
       node,
-      { factory: LIVE.factory, escrow: LIVE.escrow, curves: new Set(), tokens: new Set() },
+      {
+        factory: LIVE.factory,
+        escrow: LIVE.escrow,
+        curves: new Set(),
+        tokens: new Set(),
+        pools: new Map(),
+      },
       BigInt(logs[0]!.blockNumber),
       BigInt(logs[logs.length - 1]!.blockNumber),
     )
@@ -731,6 +751,7 @@ describe('kurulmus Graduated', () => {
       escrow: LIVE.escrow,
       curves: new Set([LIVE.curve]),
       tokens: new Set([LIVE.token]),
+      pools: new Map(),
     }
     const events = await fetchRange(node, watch, BLOCK, BLOCK)
     expect(events.map((e) => e.kind)).toEqual(['graduated'])
@@ -754,6 +775,7 @@ describe('kurulmus Graduated', () => {
         escrow: LIVE.escrow,
         curves: new Set([LIVE.curve]),
         tokens: new Set([LIVE.token]),
+        pools: new Map(),
       },
       BLOCK,
       BLOCK,
@@ -785,6 +807,7 @@ describe('kurulmus Graduated', () => {
         escrow: LIVE.escrow,
         curves: new Set([LIVE.curve]),
         tokens: new Set([LIVE.token]),
+        pools: new Map(),
       },
       BLOCK,
       BLOCK,
@@ -805,7 +828,13 @@ describe('cozme (canli Arc degerleri)', () => {
   async function liveEvents(): Promise<DecodedEvent[]> {
     return fetchRange(
       new FakeNode(logs),
-      { factory: LIVE.factory, escrow: LIVE.escrow, curves: new Set(), tokens: new Set() },
+      {
+        factory: LIVE.factory,
+        escrow: LIVE.escrow,
+        curves: new Set(),
+        tokens: new Set(),
+        pools: new Map(),
+      },
       first,
       last,
     )

@@ -77,6 +77,18 @@ const LEDGER_OF: Record<DecodedEvent['kind'], string | null> = {
   // logundan gelir ve ONUN defteri `token_transfers`tir. Buraya bir defter
   // adi yazmak, ayni hareketi iki tabloda aramak olurdu.
   graduated: null,
+  // HAVUZ ISLEMI `trades`E GIRER -- `source = 'pool'` ile, AMA AYNI DEFTERE.
+  // Kapsam kontrolu bu yuzden onu da kapsar ve KAPSAMASI SART: mezuniyetten
+  // sonraki bir islemin sessizce dusmesi, tam olarak bu ingest yolunun var
+  // olma sebebini ortadan kaldirirdi.
+  poolSwap: 'trades',
+  // Ikisi de defter tasimaz; gerekce `apply/pool.ts`,
+  // `POOL_EVENTS_WITHOUT_LEDGER`. `poolFee`nin defteri `fee_events`tir ama
+  // ORAYA `Deposited` uzerinden girer, bu olay uzerinden DEGIL -- buraya
+  // `fee_events` yazmak, ayni parayi iki kaynaktan aramak olurdu ve
+  // `event_seq`leri de tutmazdi.
+  poolInitialize: null,
+  poolFee: null,
 }
 
 /**

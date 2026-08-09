@@ -35,6 +35,8 @@ describe('apply/trade', () => {
     expect(counts).toEqual({
       launches: 1,
       trades: 4,
+      // HAVUZ ISLEMI YOK VE OLMAMALI: bu fixture mezuniyet ONCESI bir egridir.
+      poolSwaps: 0,
       completed: 1,
       graduated: 0,
       transfers: 5,
@@ -127,6 +129,8 @@ describe('apply/trade', () => {
     expect(second).toEqual({
       launches: 0,
       trades: 0,
+      // HAVUZ ISLEMI YOK VE OLMAMALI: bu fixture mezuniyet ONCESI bir egridir.
+      poolSwaps: 0,
       completed: 0,
       graduated: 0,
       transfers: 0,

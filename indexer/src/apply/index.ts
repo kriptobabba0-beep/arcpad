@@ -3,6 +3,7 @@ import { withTransaction } from '@arcpad/db'
 import { admit } from '../admit'
 import type { DecodedEvent } from '../logs'
 import { applyClaimedEvent, applyDepositedEvent } from './fees'
+import { applyPoolSwapEvent } from './pool'
 import { applyCompletedEvent, applyGraduatedEvent, applyTradeEvent } from './trade'
 import { applyTransferEvent } from './transfer'
 
@@ -34,6 +35,18 @@ export async function applyDecodedEvent(
       return applyDepositedEvent(db, event)
     case 'claimed':
       return applyClaimedEvent(db, event)
+    case 'poolSwap':
+      return applyPoolSwapEvent(db, deployment, event)
+    // IKISI DE DEFTERSIZDIR VE SIFIR DONER -- bkz. `apply/pool.ts`,
+    // `POOL_EVENTS_WITHOUT_LEDGER`. `Completed`/`Graduated` gibi bir durum
+    // gecisi de DEGILLER: biri bir dogrulama (cekme katmaninda biter), oteki
+    // bir ucretin `trades` satirina baglanmasi (o da orada biter). Burada
+    // `return 0` yazmak, `switch`in tuketiciligini korurken "bu olayin
+    // yazacagi bir sey yok" kararini GORUNUR kilar; `default`a dusurmek onu
+    // gizlerdi.
+    case 'poolInitialize':
+    case 'poolFee':
+      return 0
     default: {
       const exhaustive: never = event
       throw new Error(`applyDecodedEvent: bilinmeyen olay ${JSON.stringify(exhaustive)}`)
@@ -44,6 +57,16 @@ export async function applyDecodedEvent(
 export interface ApplyCounts {
   launches: number
   trades: number
+  /**
+   * `source = 'pool'` ile giren satirlar. `trades`TEN AYRI SAYILIR.
+   *
+   * Ayni tabloya yazarlar ve okuma tarafinda TEK BIR gecmis olustururlar --
+   * bu tam olarak istenen sey. Ama OPERATORUN gordugu satirda ayrilmalari
+   * gerekir: bugun beklenen deger SIFIRDIR (hicbir token mezun olmadi), yani
+   * birlestirilmis bir sayac ilk havuz isleminin geldigi ani da, hic
+   * gelmedigi gercegini de gizlerdi.
+   */
+  poolSwaps: number
   completed: number
   /** `Graduated`. `completed`TEN AYRI SAYILIR -- ayri bir olgudur. */
   graduated: number
@@ -85,6 +108,7 @@ export async function applyEvents(
   const counts: ApplyCounts = {
     launches: 0,
     trades: 0,
+    poolSwaps: 0,
     completed: 0,
     graduated: 0,
     transfers: 0,
@@ -99,9 +123,14 @@ export async function applyEvents(
     const n = await applyDecodedEvent(db, deployment, event)
     if (event.kind === 'launched') counts.launches += n
     else if (event.kind === 'trade') counts.trades += n
+    else if (event.kind === 'poolSwap') counts.poolSwaps += n
     else if (event.kind === 'completed') counts.completed += n
     else if (event.kind === 'graduated') counts.graduated += n
     else if (event.kind === 'transfer') counts.transfers += n
+    // `poolInitialize` ve `poolFee` HER ZAMAN 0 doner (bkz. yukarisi), yani
+    // hangi sayaca dustukleri gozlemlenemez. `fees`e birakiliyor cunku
+    // `poolFee` gercekten bir ucret olgusudur ve sifir eklemek bir sey
+    // bozmaz; `poolInitialize` icin de aynisi gecerli.
     else counts.fees += n
     counts.total += n
   }
@@ -139,6 +168,12 @@ export async function applyRange(
 }
 
 export { applyClaimedEvent, applyDepositedEvent } from './fees'
+export {
+  applyPoolSwapEvent,
+  DegeneratePoolSwap,
+  POOL_EVENTS_WITHOUT_LEDGER,
+  UnknownPool,
+} from './pool'
 export {
   applyCompletedEvent,
   applyGraduatedEvent,

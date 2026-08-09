@@ -155,6 +155,7 @@ describe('graduation', () => {
     expect(second).toEqual({
       launches: 0,
       trades: 0,
+      poolSwaps: 0,
       completed: 0,
       graduated: 0,
       transfers: 0,

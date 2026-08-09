@@ -15,10 +15,20 @@ import {
 } from '@arcpad/db'
 import { NonCanonicalLaunch, recordRejection, rejectionOf } from './admit'
 import { applyEvents, type ApplyCounts } from './apply'
+import { ZERO_ADDRESS } from './arc'
 import type { IndexerConfig } from './config'
 import { nextRange } from './cursor'
-import type { AddressWidthMemo, DecodedEvent, Pacer, RpcClient, WatchSet } from './logs'
+import type {
+  AddressWidthMemo,
+  DecodedEvent,
+  HookResolver,
+  Pacer,
+  PoolRef,
+  RpcClient,
+  WatchSet,
+} from './logs'
 import { asRpcError, createPacer, fetchRange } from './logs'
+import { baseIsCurrency0, poolIdFor } from './pool'
 import { assertRangeApplied } from './verify'
 
 /**
@@ -64,6 +74,9 @@ const SELECTOR = {
   SALE_SUPPLY: toFunctionSelector('SALE_SUPPLY()'),
   escrow: toFunctionSelector('escrow()'),
   protocolTreasury: toFunctionSelector('protocolTreasury()'),
+  // `ArcpadLocker`in ikisi de `immutable` getter'i. Bkz. `createHookResolver`.
+  hook: toFunctionSelector('hook()'),
+  poolManager: toFunctionSelector('poolManager()'),
 } as const
 
 async function ethCall(
@@ -340,16 +353,107 @@ export async function assertStartBlockCoversEscrow(
   if (escrowBytes > 0) throw new StartBlockAfterEscrow(escrow, startBlock, probe, escrowBytes)
 }
 
-/** Izleme kumesi VERITABANINDAN kurulur, bellekten degil. */
-export async function loadWatchSet(db: Queryable, deployment: Deployment): Promise<WatchSet> {
-  const { rows } = await db.query<{ token: string; curve: string }>(
-    'SELECT token, curve FROM launches',
+/**
+ * ============ BIR GRADUATION HEDEFININ HAVUZ KABLOLAMASI ============
+ *
+ * `hook()` ve `poolManager()` ZINCIRDEN OKUNUR, ENV'DEN DEGIL, ve gerekce
+ * `escrow`unkiyle KELIMESI KELIMESINE aynidir: `config.ts` "env'den okunabilen
+ * tek adres FACTORY'dir" diye yaziyor, cunku o "hangi dagitim" sorusunun
+ * kendisidir. Hook adresi ise `PoolId` turetmesinin GIRDISIDIR -- yanlis bir
+ * hook, hicbir hata uretmeden BASKA bir havuz kimligi verir ve o kimlik
+ * sonsuza kadar bos doner. Env'e yalan soylenerek gecilebilen bir turetme,
+ * sessizce bos bir fiyat gecmisi demekti.
+ *
+ * MALIYET MEZUNIYET BASINA IKI `eth_call`DIR, ARALIK BASINA SIFIR: sonuc
+ * hedef adresine gore onbelleklenir ve hedef degismedigi surece bir daha
+ * sorulmaz. Bugun uretimde `graduationTarget` `0x0` oldugu icin hic mezuniyet
+ * yok, dolayisiyla bu yol HIC kosmuyor ve havuz sorgusu da hic yapilmiyor.
+ *
+ * `null` MESRU BIR CEVAPTIR: hedef bir `ArcpadLocker` olmayabilir (prova
+ * factory'sinin hedefi `0x…dEaD`, yani kodsuz bir adres -- `eth_call` `0x`
+ * doner). O zaman havuz da yoktur.
+ *
+ * GECICI HATA YUTULMAZ. Ilk hali her hatayi `null`a ceviriyordu ve o hal, TEK
+ * BIR hiz siniri yanitinin havuz izlemesini SUREC OMRU BOYUNCA kapatmasi
+ * demekti -- onbellek `null`i kalici olarak saklardi. Bugun yalnizca KALICI
+ * hatalar (`0x` donusu, revert) `null` olarak onbelleklenir; gecici olanlar
+ * yukari firlar ve `runWithRetry` merdivenine girer.
+ */
+export function createHookResolver(client: RpcClient, pacer: Pacer): HookResolver {
+  const cache = new Map<string, { hook: Address; poolManager: Address } | null>()
+  return async (target: Address) => {
+    const key = target.toLowerCase()
+    const hit = cache.get(key)
+    if (hit !== undefined) return hit
+    let wiring: { hook: Address; poolManager: Address } | null = null
+    try {
+      const hook = asAddress(await ethCall(client, key as Address, SELECTOR.hook, pacer))
+      const poolManager = asAddress(
+        await ethCall(client, key as Address, SELECTOR.poolManager, pacer),
+      )
+      const zero = ZERO_ADDRESS.toLowerCase()
+      if (hook !== zero && poolManager !== zero) wiring = { hook, poolManager }
+    } catch (error) {
+      if (isTransient(error)) throw error
+      wiring = null
+    }
+    cache.set(key, wiring)
+    return wiring
+  }
+}
+
+/**
+ * Izleme kumesi VERITABANINDAN kurulur, bellekten degil.
+ *
+ * HAVUZ KUMESI DE OYLE, ve ayni sebeple: indexer yeniden baslatildiginda
+ * bellek ici bir harita BOS olurdu ve gecmisi olan mezun bir token'in havuz
+ * islemleri sessizce dusurulurdu -- `tokenOfCurve`un bir veritabani okumasi
+ * olmasinin gerekcesinin aynisi.
+ *
+ * `LEFT JOIN`: `applyLaunch` `launches` ve `curve_state` satirlarini TEK bir
+ * CTE'de yazar, yani bugun her launch'in bir curve durumu VARDIR. `INNER JOIN`
+ * yazmak o olguya GUVENMEK olurdu ve olgunun bozuldugu gun bedeli, o token'in
+ * izleme kumesinden TAMAMEN dusmesi -- yani `Trade`lerinin de kaybi -- olurdu.
+ * Havuzu olmayan bir token yalnizca havuz sorgusunun disinda kalir.
+ */
+export async function loadWatchSet(
+  db: Queryable,
+  deployment: Deployment,
+  resolveHook?: HookResolver,
+): Promise<WatchSet> {
+  const { rows } = await db.query<{
+    token: string
+    curve: string
+    graduated: boolean | null
+    target: string | null
+  }>(
+    `SELECT l.token, l.curve, cs.graduated, cs.graduation_target_addr AS target
+       FROM launches l LEFT JOIN curve_state cs ON cs.token = l.token`,
   )
+  const pools = new Map<Hex, PoolRef>()
+  if (resolveHook !== undefined) {
+    for (const row of rows) {
+      if (row.graduated !== true || row.target === null) continue
+      const wiring = await resolveHook(row.target as Address)
+      if (wiring === null) continue
+      const token = row.token as Address
+      pools.set(poolIdFor(token, wiring.hook), {
+        poolId: poolIdFor(token, wiring.hook),
+        token,
+        curve: row.curve as Address,
+        target: row.target as Address,
+        hook: wiring.hook,
+        poolManager: wiring.poolManager,
+        tokenIsCurrency0: baseIsCurrency0(token),
+      })
+    }
+  }
   return {
     factory: deployment.factory,
     escrow: deployment.escrow,
     curves: new Set(rows.map((r) => r.curve as Address)),
     tokens: new Set(rows.map((r) => r.token as Address)),
+    pools,
   }
 }
 
@@ -414,6 +518,15 @@ export async function touchedTokens(
     }
     if (event.kind === 'trade') curves.add(event.curve.toLowerCase())
     if (event.kind === 'completed') curves.add(event.curve.toLowerCase())
+    // HAVUZ ISLEMI DE HACIM URETIR. `volume_24h_wei` `trades` uzerinden
+    // PENCERELI toplandigi ve havuz satirlari da o tabloda oldugu icin, bu
+    // satir olmadan mezun bir token'in 24 saatlik hacmi yalnizca "en bayat N"
+    // surgusu ona ugradiginda guncellenirdi -- yani gecikmeli ve rastgele.
+    // `pool` null ise uygulama katmani zaten `UnknownPool` ile durur; burada
+    // atlamak, o karari tekrarlamamak demektir.
+    if (event.kind === 'poolSwap' && event.pool !== null) {
+      tokens.add(event.pool.token.toLowerCase())
+    }
     // `Graduated` token'i topic1'de TASIR, yani curve->token cozumune ihtiyaci
     // yoktur; curve yine de ekleniyor cunku bu kume `curve_state` uzerinden
     // cozulur ve iki yoldan gelen ayni token bir Set'te tek kalir.
@@ -533,6 +646,16 @@ export interface RunOnceOptions {
    * saglayicinin adres limitini BASTAN kesfeder (bkz. `AddressWidthMemo`).
    */
   widthMemo?: AddressWidthMemo
+  /**
+   * Graduation hedefi -> havuz kablolamasi. `pacer`/`widthMemo` ile AYNI omru
+   * tasir ve ayni sebeple disaridan gelir: onbellek dongunun tamami boyunca
+   * yasamali, yoksa her aralik ayni iki `eth_call`i tekrar yapardi.
+   *
+   * VERILMEZSE HAVUZ KATMANI TAMAMEN KAPALIDIR -- ne izleme kumesi kurulur ne
+   * de sorgu yapilir. Testlerin cogu boyle kosar ve bu, uretimin BUGUNKU
+   * halinin ta kendisidir (`graduationTarget = 0x0`).
+   */
+  resolveHook?: HookResolver
 }
 
 async function finalizedHeadVia(client: RpcClient, pacer: Pacer): Promise<bigint> {
@@ -574,10 +697,11 @@ export async function runOnce(
     return null
   }
 
-  const watch = await loadWatchSet(pool, deployment)
+  const watch = await loadWatchSet(pool, deployment, options.resolveHook)
   const events = await fetchRange(client, watch, range.from, range.to, {
     pacer,
     ...(options.widthMemo !== undefined ? { widthMemo: options.widthMemo } : {}),
+    ...(options.resolveHook !== undefined ? { resolveHook: options.resolveHook } : {}),
   })
 
   // ZINCIR BAGI: isledigimiz araligin ILK blogunun `parentHash`'i, kayitli
@@ -681,6 +805,27 @@ const PERMANENT = new Set([
   // (arsiv state'i olmayan RPC). Tekrar denemek ayni cevabi verir.
   'StartBlockAfterEscrow',
   'HistoricalStateUnavailable',
+  // ============ HAVUZ KATMANININ ALTI SINIFI, HEPSI KALICI ============
+  //
+  // Ortak sekil: hepsi bir VARSAYIMIN yanlis oldugunu soyler, bir gecici
+  // arizayi degil. Yeniden denemek ayni cevabi verir cunku zincir degismez.
+  //
+  //   PoolKeyMismatch          turetme yanlis -> her havuz kimligi yanlis.
+  //   PoolNotInitialized       mezuniyet var, havuz yok -- zincirde temsil
+  //                            edilemez bir durum (graduate() atomiktir).
+  //   UnpairedPoolFee          ucret bir swap'e baglanamadi; devam etmek onu
+  //                            `trades` satirindan dusururdu.
+  //   UnknownPool              topic filtresi uygulanmamis; `ForbiddenEmitter`
+  //                            ile ayni sinif.
+  //   DegeneratePoolSwap       iki bacagi da sifir; V4 bunu uretemez.
+  //   PoolPriceUnrepresentable havuzun sanal rezervi tabana sifirlaniyor;
+  //                            yazilabilecek her deger bir yalan olurdu.
+  'PoolKeyMismatch',
+  'PoolNotInitialized',
+  'UnpairedPoolFee',
+  'UnknownPool',
+  'DegeneratePoolSwap',
+  'PoolPriceUnrepresentable',
 ])
 
 /**

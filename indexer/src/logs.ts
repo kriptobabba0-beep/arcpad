@@ -9,6 +9,7 @@ import {
   TOPIC0,
   type EventKind,
 } from './arc'
+import { baseIsCurrency0, poolIdFor, poolKeyFor } from './pool'
 
 /**
  * CEKME KATMANI.
@@ -176,6 +177,120 @@ export interface TransferEvent extends LogRef {
   amountTok: bigint
 }
 
+/**
+ * BIR MEZUN TOKEN'IN HAVUZU. `PoolId` -> kime ait oldugu.
+ *
+ * `Swap` logu TOKEN ADRESINI TASIMAZ -- kimlik `topic1`deki `PoolId`, yani bir
+ * HASH'tir. `Trade`in `curve`u ile ayni sinif bir sorun, bir farkla: bir
+ * curve adresi `curve_state`ten OKUNABILIR, bir `PoolId` ise ancak
+ * TURETILEBILIR (`poolIdFor(token, hook)`). Turetmenin girdisi olan hook
+ * adresi de zincirden gelir (`locker.hook()`), env'den DEGIL -- `escrow`un
+ * `factory.escrow()`ten okunmasiyla ayni gerekce: env'e yalan soylenebilir.
+ */
+export interface PoolRef {
+  poolId: Hex
+  token: Address
+  curve: Address
+  /** Odemeyi alan graduation hedefi (`Graduated.to`) -- locker. */
+  target: Address
+  hook: Address
+  poolManager: Address
+  /** `token < 0x3600...`. Fiyatin YONUNU belirler; tasinmazsa fiyat terse doner. */
+  tokenIsCurrency0: boolean
+}
+
+export interface PoolSwapEvent extends LogRef {
+  kind: 'poolSwap'
+  /** Logu yayan `PoolManager`. */
+  poolManager: Address
+  /** `topic1`. */
+  poolId: Hex
+  /**
+   * `topic2`. `PoolManager.swap`in CAGIRANI, yani `unlock` cercevesini acan
+   * adres -- TIPIK OLARAK BIR ROUTER, son kullanici DEGIL.
+   *
+   * Egri tarafinda `Trade.trader` `msg.sender`dir ve orada da bir router
+   * OLABILIR; fark, havuz tarafinda bunun KURAL olmasidir (V4'te `swap`
+   * yalnizca bir `unlockCallback` icinden cagrilabilir, yani her swap'in
+   * onunde en az bir kontrat vardir). `trades.trader` bu adresi tasir ve
+   * baska bir sey tasiyamaz: son kullanici logda YOKTUR.
+   */
+  sender: Address
+  /** `int128`, ISARETLI. Negatif = cagiran havuza ODER. */
+  amount0: bigint
+  amount1: bigint
+  /** Swap SONRASI havuz fiyati. */
+  sqrtPriceX96: bigint
+  /** Swap SONRASI aralik ici likidite. */
+  liquidity: bigint
+  tick: number
+  /**
+   * `Swap.fee` -- HAVUZUN LP UCRETI, ve HER ZAMAN SIFIRDIR (spec §412).
+   * Bunu "islemin ucreti" sanan bir okuma her havuz islemini ucretsiz
+   * kaydeder; gercek ucret `PoolFeeEvent`ten gelir.
+   */
+  poolFeeBps: number
+  /**
+   * IZLEME KUMESINDEN GELIR, LOGDAN DEGIL. `fetchRange` doldurur.
+   *
+   * Cozucu bunu BILEMEZ ve bilmemesi dogru: bir cozucunun isi logu cozmektir,
+   * kime ait oldugunu KARAR VERMEK degil. `null` gelmesi, sunucunun `topic1`
+   * filtresini uygulamadigi anlamina gelir -- `ForbiddenEmitter` ile ayni
+   * sinifta bir ariza -- ve uygulama katmani onu `UnknownPool` ile durdurur.
+   */
+  pool: PoolRef | null
+  /**
+   * `SwapFeeCollected`ten ESLENEN ucret, quote'un 6 DECIMAL biriminde.
+   * `feePaired` false iken ikisi de sifirdir ve bu MESRUDUR: hook `fee == 0`
+   * oldugunda hic log yaymaz (`ArcpadHook._collect`).
+   */
+  protocolFeeUnits: bigint
+  creatorFeeUnits: bigint
+  feePaired: boolean
+}
+
+/**
+ * `PoolManager.Initialize` -- HAVUZUN DOGUM ANI.
+ *
+ * Bir defter satiri YOKTUR; tek isi TURETMEYI DOGRULAMAKTIR. `PoolId` bir
+ * hash oldugu icin yanlis turetilmis bir kimlik hicbir zaman revert etmez,
+ * yalnizca sonsuza kadar BOS doner -- ve bu depo o sessiz arizayi
+ * (`Graduated`i escrow filtresine koymak) zaten bir kez adlandirdi. Bu olay
+ * `currency0`/`currency1`i INDEKSLI, `fee`/`tickSpacing`/`hooks`u data'da
+ * tasir, yani turettigimiz `PoolKey`in BES ALANI DA zincirin kendi
+ * ifadesiyle karsilastirilabilir.
+ */
+export interface PoolInitializeEvent extends LogRef {
+  kind: 'poolInitialize'
+  poolManager: Address
+  poolId: Hex
+  currency0: Address
+  currency1: Address
+  fee: number
+  tickSpacing: number
+  hooks: Address
+  sqrtPriceX96: bigint
+  tick: number
+}
+
+/**
+ * `ArcpadHook.SwapFeeCollected`. Miktarlar quote'un 6 DECIMAL biriminde.
+ *
+ * DEFTERI `fee_events`TIR AMA BU OLAY UZERINDEN DEGIL: hook ucreti
+ * `FeeEscrow.deposit{value: quoteWei(fee)}` ile yatirir ve o cagri zaten
+ * `Deposited` yayar -- indexer'in coktan izledigi olay. Bu logu ayrica
+ * deftere yazmak AYNI PARAYI IKI KEZ saymak olurdu. Buradaki tek isi, ucreti
+ * DOGRU `trades` SATIRINA baglamaktir; `Deposited` bunu yapamaz cunku
+ * `from` alani hook'tur, hangi swap oldugunu SOYLEMEZ.
+ */
+export interface PoolFeeEvent extends LogRef {
+  kind: 'poolFee'
+  hook: Address
+  poolId: Hex
+  protocolFeeUnits: bigint
+  creatorFeeUnits: bigint
+}
+
 export type DecodedEvent =
   | LaunchedEvent
   | TradeEvent
@@ -184,6 +299,9 @@ export type DecodedEvent =
   | DepositedEvent
   | ClaimedEvent
   | TransferEvent
+  | PoolSwapEvent
+  | PoolInitializeEvent
+  | PoolFeeEvent
 
 /**
  * Izlenen adresler. `curves` ve `tokens` KUME'dir cunku her aralikta buyurler
@@ -194,7 +312,26 @@ export interface WatchSet {
   escrow: Address
   curves: ReadonlySet<Address>
   tokens: ReadonlySet<Address>
+  /**
+   * MEZUN TOKEN'LARIN HAVUZLARI, `PoolId`e gore. BOS OLMASI NORMALDIR ve
+   * bugun oyledir: uretim factory'sinin `graduationTarget`i `0x0`, yani hicbir
+   * token mezun olmadi ve havuz sorgusu HIC YAPILMAZ (bkz. `fetchRange` FAZ 3).
+   */
+  pools: ReadonlyMap<Hex, PoolRef>
 }
+
+/**
+ * Bir graduation hedefinin (locker) havuz kablolamasi. `fetchRange` bunu
+ * YALNIZCA bu aralikta YENI bir `Graduated` gordugunde cagirir, yani maliyeti
+ * "mezuniyet basina iki `eth_call`"dir -- aralik basina degil.
+ *
+ * `null` donmesi MESRUDUR ve bir hata degildir: hedef bir `ArcpadLocker`
+ * olmayabilir (prova factory'sinin hedefi `0x…dEaD`), o zaman havuz da yoktur
+ * ve izlenecek bir sey yoktur.
+ */
+export type HookResolver = (
+  target: Address,
+) => Promise<{ hook: Address; poolManager: Address } | null>
 
 /** Minimal RPC yuzeyi. viem'in `PublicClient`'i bunu KARSILAR. */
 export interface RpcClient {
@@ -321,6 +458,80 @@ export class MalformedLog extends Error {
   ) {
     super(`MalformedLog(${kind}): ${reason}`)
     this.name = 'MalformedLog'
+  }
+}
+
+/**
+ * Turettigimiz `PoolKey` ile zincirin `Initialize` logu AYRISTI. HALT.
+ *
+ * Bu, `poolIdFor`in bir carpisma uretmesi degildir (keccak256'nin carpismasini
+ * beklemiyoruz): `PoolId` filtresi zaten SUNUCU tarafinda uygulandigi icin
+ * gelen log BIZIM turettigimiz kimliktir. Ayrisma ancak `Initialize`in
+ * KENDISININ baska bir anahtardan uretilmis olmasiyla mumkundur -- yani
+ * `abi.encode` sirasi/tipleri hakkindaki varsayimimizin yanlis oldugu bir
+ * dunya. Devam etmek, o yanlis varsayimi butun fiyat gecmisine yaymak olurdu.
+ */
+export class PoolKeyMismatch extends Error {
+  constructor(
+    readonly poolId: string,
+    readonly field: string,
+    readonly derived: string,
+    readonly onChain: string,
+  ) {
+    super(
+      `PoolKeyMismatch: havuz ${poolId} icin \`${field}\` turetmede ${derived}, ` +
+        `zincirin Initialize logunda ${onChain}. PoolKey turetmesi (abi.encode sirasi, ` +
+        `currency siralamasi, fee/tickSpacing sabitleri ya da hook adresi) YANLIS.`,
+    )
+    this.name = 'PoolKeyMismatch'
+  }
+}
+
+/**
+ * Bir curve mezun oldu, hedefi BILDIGIMIZ bir locker'di, ama AYNI ARALIKTA
+ * havuzun `Initialize` logu YOK. HALT.
+ *
+ * `ArcpadLocker.graduate()` ATOMIKTIR: odemeyi ceker, `poolManager.initialize`
+ * cagirir, likidite ekler ve `PoolManager`in KENDI durumundan geri okur --
+ * herhangi biri basarisiz olursa islemin TAMAMI geri alinir. Yani "mezun oldu
+ * ama havuz yok" zincirde TEMSIL EDILEMEZ bir durumdur. Gormek, ya turetmenin
+ * ya da hedef cozumlemesinin bozuldugunu gosterir; ikisi de sessizce bos bir
+ * fiyat gecmisi uretirdi.
+ */
+export class PoolNotInitialized extends Error {
+  constructor(
+    readonly token: string,
+    readonly poolId: string,
+    readonly target: string,
+  ) {
+    super(
+      `PoolNotInitialized: ${token} bu aralikta ${target} hedefine mezun oldu ama ` +
+        `turetilen havuz ${poolId} icin Initialize logu gelmedi. graduate() atomiktir; ` +
+        `mezuniyet ile havuz acilisi AYNI islemdedir.`,
+    )
+    this.name = 'PoolNotInitialized'
+  }
+}
+
+/**
+ * `SwapFeeCollected` geldi ama hicbir `Swap`e eslenemedi. HALT.
+ *
+ * Hook ucreti YALNIZCA `_collect` icinde yayar ve `_collect` yalnizca
+ * `_beforeSwap`/`_afterSwap`tan cagrilir -- yani ucretsiz bir ucret logu
+ * yoktur. Sessizce atmak, o ucreti `trades` satirindan DUSURURDU ve satir
+ * "ucretsiz islem" gibi okunurdu.
+ */
+export class UnpairedPoolFee extends Error {
+  constructor(
+    readonly poolId: string,
+    readonly txHash: string,
+    readonly count: number,
+  ) {
+    super(
+      `UnpairedPoolFee: ${txHash} isleminde havuz ${poolId} icin ${count} adet ` +
+        `SwapFeeCollected hicbir Swap'e eslenemedi.`,
+    )
+    this.name = 'UnpairedPoolFee'
   }
 }
 
@@ -856,6 +1067,73 @@ function decodeTransfer(log: RawLog, ref: LogRef): TransferEvent {
 }
 
 /**
+ * ISARETLI OKUMA. `int128` ve `int24` ABI'de 256 bite ISARET GENISLETILEREK
+ * kodlanir, yani ham kelime iki tumleyendir.
+ *
+ * `uint`i olduğu gibi kullanan bir okuma NEGATIF miktarlari 1.1e77
+ * civarinda DEV POZITIF sayilara cevirir. Sonucu sessizdir ve tam da bu
+ * dosyanin korumaya calistigi seydir: `Swap.amount0` alis/satis YONUNU tasiyan
+ * alandir, yani isaret kaybi her SATISI bir ALIS gibi kaydeder.
+ */
+function int(data: Hex, index: number): bigint {
+  const raw = uint(data, index)
+  return raw >= 1n << 255n ? raw - (1n << 256n) : raw
+}
+
+function decodePoolSwap(log: RawLog, ref: LogRef): PoolSwapEvent {
+  // topic0 + id + sender = UC topic; data ALTI kelime.
+  expect('poolSwap', log, 3, 6)
+  return {
+    kind: 'poolSwap',
+    ...ref,
+    poolManager: addressOf(log),
+    poolId: log.topics[1] as Hex,
+    sender: addressFrom(log.topics[2] as Hex),
+    amount0: int(log.data, 0),
+    amount1: int(log.data, 1),
+    sqrtPriceX96: uint(log.data, 2),
+    liquidity: uint(log.data, 3),
+    tick: Number(int(log.data, 4)),
+    poolFeeBps: Number(uint(log.data, 5)),
+    // IKISI DE CEKME KATMANINDA DOLDURULUR. Bkz. alan yorumlari.
+    pool: null,
+    protocolFeeUnits: 0n,
+    creatorFeeUnits: 0n,
+    feePaired: false,
+  }
+}
+
+function decodePoolInitialize(log: RawLog, ref: LogRef): PoolInitializeEvent {
+  // topic0 + id + currency0 + currency1 = DORT topic; data BES kelime.
+  expect('poolInitialize', log, 4, 5)
+  return {
+    kind: 'poolInitialize',
+    ...ref,
+    poolManager: addressOf(log),
+    poolId: log.topics[1] as Hex,
+    currency0: addressFrom(log.topics[2] as Hex),
+    currency1: addressFrom(log.topics[3] as Hex),
+    fee: Number(uint(log.data, 0)),
+    tickSpacing: Number(int(log.data, 1)),
+    hooks: addressFrom(word(log.data, 2)),
+    sqrtPriceX96: uint(log.data, 3),
+    tick: Number(int(log.data, 4)),
+  }
+}
+
+function decodePoolFee(log: RawLog, ref: LogRef): PoolFeeEvent {
+  expect('poolFee', log, 2, 2)
+  return {
+    kind: 'poolFee',
+    ...ref,
+    hook: addressOf(log),
+    poolId: log.topics[1] as Hex,
+    protocolFeeUnits: uint(log.data, 0),
+    creatorFeeUnits: uint(log.data, 1),
+  }
+}
+
+/**
  * Olay adi -> cozucu. Kapsam testi bu nesnenin ANAHTARLARINI kullanir: bir
  * olay eklenip cozucusu yazilmadiginda, ya da cozucu yazilip hicbir fixture
  * onu egzersiz etmediginde test kirilir.
@@ -869,6 +1147,9 @@ export const DECODERS: Readonly<Record<EventKind, (log: RawLog, ref: LogRef) => 
     deposited: decodeDeposited,
     claimed: decodeClaimed,
     transfer: decodeTransfer,
+    poolSwap: decodePoolSwap,
+    poolInitialize: decodePoolInitialize,
+    poolFee: decodePoolFee,
   })
 
 // ---------------------------------------------------------------------------
@@ -923,6 +1204,15 @@ export interface FetchOptions {
    * daha kotudur -- kimse aramaz.
    */
   onTimestampFallback?: (blocks: readonly bigint[]) => void
+  /**
+   * Bir graduation hedefinin havuz kablolamasini cozer. VERILMEZSE bu aralikta
+   * mezun olan token'lar icin havuz izlenmez -- yalnizca `watch.pools`
+   * kullanilir. Testlerin cogu bunu vermez ve VERMEMELI: havuzu olmayan bir
+   * aralik, indexer'in bugunku uretim durumudur.
+   */
+  resolveHook?: HookResolver
+  /** Hedefin locker OLMADIGI hal. Sessiz dusmek YASAK; bkz. cagri yeri. */
+  onTargetWithoutPool?: (token: Address, target: Address) => void
 }
 
 function defaultTimestampWarning(blocks: readonly bigint[]): void {
@@ -1020,14 +1310,249 @@ export async function fetchRange(
     ),
   ])
 
-  return decodeAll(
+  // FAZ 2.5: BU ARALIKTA MEZUN OLAN TOKEN'LARIN HAVUZLARINI KUMEYE EKLE.
+  //
+  // FAZ 1.5 ILE AYNI ARIZA, BIR KAT YUKARIDA. Tek fazli bir cekiste havuz
+  // sorgusu `watch.pools` ile suzulur; bir token AYNI ARALIKTA mezun olup
+  // islem gorurse `PoolId` henuz kumede degildir, yani o `Swap`ler HIC
+  // CEKILMEZ -- ve imlec ilerledigi icin bir daha da cekilmez. Kayip
+  // KALICIDIR ve tam olarak "fiyat gecmisi kopmaz" iddiasinin ilk saniyesini
+  // siler.
+  const pools = new Map<Hex, PoolRef>(watch.pools)
+  const bornHere: PoolRef[] = []
+  for (const log of curveLogs) {
+    if (log.topics[0] !== TOPIC0.graduated || log.topics.length < 3) continue
+    const token = addressFrom(log.topics[1] as Hex)
+    const target = addressFrom(log.topics[2] as Hex)
+    const wiring = (await options.resolveHook?.(target)) ?? null
+    if (wiring === null) {
+      // HEDEF BIR LOCKER DEGIL -> HAVUZ DA YOK. Prova factory'sinin hedefi
+      // `0x…dEaD`tir, yani bu MESRU bir zincir durumudur ve durmak yanlis
+      // olurdu. Sessiz de degil: bir uyari yazilir, cunku bir arayuz o token
+      // icin "havuzda islem goruyor" demeye baslayamaz.
+      ;(options.onTargetWithoutPool ?? defaultTargetWithoutPoolWarning)(token, target)
+      continue
+    }
+    const ref: PoolRef = {
+      poolId: poolIdFor(token, wiring.hook),
+      token,
+      curve: addressOf(log),
+      target,
+      hook: wiring.hook,
+      poolManager: wiring.poolManager,
+      tokenIsCurrency0: baseIsCurrency0(token),
+    }
+    pools.set(ref.poolId, ref)
+    bornHere.push(ref)
+  }
+
+  // FAZ 3: HAVUZ KATMANI. `pools` bossa TEK BIR ISTEK BILE YAPILMAZ -- ve
+  // bugun oyle: uretim factory'sinin `graduationTarget`i `0x0`.
+  const poolLogs = await getPoolLogs(client, [...pools.values()], from, to, pacer)
+
+  const decoded = await decodeAll(
     client,
-    [...launched, ...curveLogs, ...escrowLogs, ...transferLogs],
+    [...launched, ...curveLogs, ...escrowLogs, ...transferLogs, ...poolLogs],
     from,
     to,
     pacer,
     options,
   )
+
+  return attachPoolContext(decoded, pools, bornHere)
+}
+
+/**
+ * `topics[1]` (yani `PoolId`) filtresinde tek cagrida gecirilecek deger sayisi.
+ *
+ * OLCULMEMISTIR VE BU YAZILI OLMALI: bugun zincirde arcpad havuzu YOKTUR
+ * (uretim `graduationTarget`i `0x0`), yani Arc'in topic filtresi kardinalite
+ * sinirini olcecek bir sorgu kurulamaz. `ADDRESS_FILTER_CHUNK` (500, olculdu)
+ * yerine daha muhafazakar bir sayi seciliyor cunku bilinmeyen bir sinirda
+ * fazladan bir tur, kacirilmis bir logdan ucuzdur. Ilk gercek havuz
+ * acildiginda olculup guncellenmeli.
+ */
+export const POOL_ID_FILTER_CHUNK = 100
+
+/**
+ * Havuz katmaninin BUTUN loglari, TEK BIR SORGU SEKLINDE.
+ *
+ * UC OLAY, IKI ADRES, BIR CAGRI -- ve bu bir tasarruf numarasi degil, uc
+ * olayin ORTAK OZELLIGINDEN cikan bir sey: `Swap`, `Initialize` ve
+ * `SwapFeeCollected`in UCUNDE DE `PoolId` `topic1`dir. Dolayisiyla ayni
+ * `topics` filtresi ucunu birden secer ve `address` listesi
+ * {PoolManager, hook} olur. Ayri ayri sorulsaydi aralik basina UC istek
+ * olurdu; Arc'in siniri JSON-RPC NESNESI sayar (20 red, 15 gecer), yani
+ * uctan bire inmek gercek bir butce farkidir.
+ *
+ * `address` ZORUNLUDUR: `PoolManager` zincirdeki HER havuzun `Swap`ini yayar,
+ * ve filtresiz bir sorgu -- topic1 kelepcesi olsa bile -- adres filtresinin
+ * dustugu bir dugumde her seyi geri getirirdi. Ayni gerekce `Transfer`in
+ * EIP-7708 duvarinin gerekcesiyle aynidir.
+ */
+async function getPoolLogs(
+  client: RpcClient,
+  refs: readonly PoolRef[],
+  from: bigint,
+  to: bigint,
+  pacer: Pacer,
+): Promise<RawLog[]> {
+  if (refs.length === 0) return []
+  const addresses = [...new Set(refs.flatMap((r) => [r.poolManager, r.hook]))]
+  const ids = [...new Set(refs.map((r) => r.poolId))]
+  const topic0s = [TOPIC0.poolSwap, TOPIC0.poolInitialize, TOPIC0.poolFee]
+  const out: RawLog[] = []
+  for (let i = 0; i < ids.length; i += POOL_ID_FILTER_CHUNK) {
+    const slice = ids.slice(i, i + POOL_ID_FILTER_CHUNK)
+    out.push(
+      ...(await getLogs(client, { from, to, address: addresses, topics: [topic0s, slice] }, pacer)),
+    )
+  }
+  return out
+}
+
+function defaultTargetWithoutPoolWarning(token: Address, target: Address): void {
+  console.warn(
+    `[indexer] ${token} ${target} hedefine mezun oldu ama o hedef bir ArcpadLocker gibi ` +
+      `cevap vermiyor (hook()/poolManager() okunamadi). HAVUZ ACILMAMIS demektir; bu ` +
+      `token icin mezuniyet SONRASI islem gecmisi OLMAYACAK.`,
+  )
+}
+
+/**
+ * ================ HAVUZ BAGLAMI: SAHIPLIK VE UCRET ================
+ *
+ * Cozucu logu cozer; KIME AIT oldugunu ve UCRETININ ne oldugunu bilemez.
+ * Ikisi de burada, cekme katmaninin bildigi seylerden kurulur.
+ *
+ * UCRET ESLEMESI EN YAKIN LOGA GORE YAPILIR, "ONCEKI"NE YA DA "SONRAKI"NE
+ * GORE DEGIL -- CUNKU IKISI DE OLUYOR. `ArcpadHook` ucreti quote SPECIFIED
+ * tarafta oldugunda `_beforeSwap`ta tahsil eder (log `Swap`ten ONCE gelir),
+ * UNSPECIFIED tarafta oldugunda `_afterSwap`ta (log `Swap`ten SONRA gelir).
+ * Dort swap seklinin ikisi bir dalda, ikisi otekinde. "Ucret her zaman
+ * swap'ten oncedir" diye yazilmis bir esleme, islemlerin YARISINDA ucreti
+ * kaybederdi.
+ *
+ * ANAHTAR (islem, havuz) CIFTIDIR: cok adimli bir islem birden cok havuza
+ * dokunabilir ve her havuzun ucreti KENDI swap'ine aittir.
+ */
+export function attachPoolContext(
+  events: readonly DecodedEvent[],
+  pools: ReadonlyMap<Hex, PoolRef>,
+  bornHere: readonly PoolRef[] = [],
+): DecodedEvent[] {
+  // SAHIPLIK ONCE COZULUR: ucret eslemesi swap'in QUOTE bacagini bilmek
+  // zorunda, ve hangi bacagin quote oldugu `PoolRef`in siralama bayragindan
+  // gelir. Ilk yazimda `pool` en SONDA dolduruluyordu ve o sirada esleme
+  // her swap'i "quote bacagi bilinmiyor" halinde goruyordu.
+  const swaps: PoolSwapEvent[] = []
+  const fees: PoolFeeEvent[] = []
+  const initialized = new Set<Hex>()
+  for (const raw of events) {
+    const event = raw.kind === 'poolSwap' ? { ...raw, pool: pools.get(raw.poolId) ?? null } : raw
+    if (event.kind === 'poolSwap') swaps.push(event)
+    else if (event.kind === 'poolFee') fees.push(event)
+    else if (event.kind === 'poolInitialize') {
+      assertDerivedPoolKey(event, pools)
+      initialized.add(event.poolId)
+    }
+  }
+
+  // (1) BU ARALIKTA DOGAN HER HAVUZUN `Initialize`I DE BU ARALIKTA OLMALI.
+  for (const ref of bornHere) {
+    if (!initialized.has(ref.poolId)) {
+      throw new PoolNotInitialized(ref.token, ref.poolId, ref.target)
+    }
+  }
+
+  // (2) UCRETLER: (tx, havuz) icinde, SIRAYLA, ve QUOTE BACAGI SIFIR OLAN
+  //     SWAP'LER ATLANARAK.
+  //
+  // ILK HALI "EN YAKIN LOG" IDI VE O MAKINE OLU CIKTI -- OLCULDU, akil
+  // yurutulmedi. Uc mutant kosuldu: "mesafe hep sifir" (yani ilk aday alinir)
+  // 39 testin HICBIRINI kirmadi. Sebep aritmetik degil FIZIKSEL: hook ucreti
+  // ya `_beforeSwap`ta (log swap'ten HEMEN once) ya `_afterSwap`ta (HEMEN
+  // sonra) yayar, yani ulasilabilir her dizide "sirayla ata" ile "en yakini
+  // ata" AYNI cifti verir. Mesafe hesabi, hicbir ulasilabilir girdide karar
+  // vermeyen bir koddu.
+  //
+  // GERCEKTEN KARAR VEREN TEK SEY SU: QUOTE BACAGI SIFIR OLAN BIR SWAP'IN
+  // UCRETI OLAMAZ. `ArcpadHook._collect` ucreti `feeOn(amount, bps)`ten
+  // hesaplar ve `amount == 0` iken iki parca da sifirdir; `fee == 0` dalinda
+  // fonksiyon HIC log yaymadan doner. Bu satir olmadan bir toz swap'i (18/6
+  // decimal farkindan dogan, quote bacagi sifir olan swap) KENDINDEN SONRAKI
+  // swap'in ucretini calardi ve iki satir birden yanlis olurdu.
+  //
+  // KALAN BELIRSIZLIK ADIYLA YAZILI: ayni islemde ayni havuza iki kez
+  // dokunan ve IKISININ DE ucreti olan bir dizide, hangi ucretin hangi swap'e
+  // ait oldugu LOGLARDAN COZULEMEZ -- dal secimi `zeroForOne`/`exactInput`e
+  // baglidir ve `Swap` logu ikisini de TASIMAZ. Sirayla atama o durumda dogru
+  // TOPLAMI verir ve satirlar arasinda yer degistirebilir. `fee_events`in
+  // kaydettigi sey zaten toplamdir (`Deposited`), yani muhasebe etkilenmez.
+  const claimed = new Set<PoolFeeEvent>()
+  const paired = new Map<PoolSwapEvent, PoolFeeEvent>()
+  for (const swap of swaps) {
+    if (quoteLegOf(swap) === 0n) continue
+    const fee = fees.find(
+      (f) => !claimed.has(f) && f.poolId === swap.poolId && f.txHash === swap.txHash,
+    )
+    if (fee !== undefined) {
+      claimed.add(fee)
+      paired.set(swap, fee)
+    }
+  }
+  for (const fee of fees) {
+    if (!claimed.has(fee)) throw new UnpairedPoolFee(fee.poolId, fee.txHash, 1)
+  }
+
+  const bySeq = new Map(swaps.map((s) => [s.seq, s]))
+  return events.map((event) => {
+    if (event.kind !== 'poolSwap') return event
+    const resolved = bySeq.get(event.seq) ?? event
+    const fee = paired.get(resolved)
+    return {
+      ...resolved,
+      protocolFeeUnits: fee?.protocolFeeUnits ?? 0n,
+      creatorFeeUnits: fee?.creatorFeeUnits ?? 0n,
+      feePaired: fee !== undefined,
+    }
+  })
+}
+
+/**
+ * Bir swap'in QUOTE bacagi. `pool` bilinmiyorsa siralama da bilinmiyordur;
+ * o halde ucret eslemesi YAPILMAZ ve karar uygulama katmanina
+ * (`UnknownPool`) birakilir -- burada sessizce bir bacagi secmek, yanlis
+ * bacagi secmenin en kolay yolu olurdu.
+ */
+function quoteLegOf(swap: PoolSwapEvent): bigint | undefined {
+  if (swap.pool === null) return undefined
+  return swap.pool.tokenIsCurrency0 ? swap.amount1 : swap.amount0
+}
+
+/**
+ * `Initialize`in BES ALANI, turetilen `PoolKey`e karsi. Tek tek, ve hepsi.
+ *
+ * Yalnizca `PoolId`nin esitligine bakmak VAKUM olurdu: log zaten `topic1`
+ * uzerinde O KIMLIKLE suzulerek geldi, yani esitlik tanim geregi dogrudur.
+ * Olculen sey ANAHTARIN KENDISIDIR -- siralama, sabitler ve hook adresi.
+ */
+function assertDerivedPoolKey(event: PoolInitializeEvent, pools: ReadonlyMap<Hex, PoolRef>): void {
+  const ref = pools.get(event.poolId)
+  if (ref === undefined) return
+  const key = poolKeyFor(ref.token, ref.hook)
+  const checks: [string, string, string][] = [
+    ['currency0', key.currency0, event.currency0],
+    ['currency1', key.currency1, event.currency1],
+    ['fee', String(key.fee), String(event.fee)],
+    ['tickSpacing', String(key.tickSpacing), String(event.tickSpacing)],
+    ['hooks', key.hooks, event.hooks],
+  ]
+  for (const [field, derived, onChain] of checks) {
+    if (derived.toLowerCase() !== onChain.toLowerCase()) {
+      throw new PoolKeyMismatch(event.poolId, field, derived, onChain)
+    }
+  }
 }
 
 /**
