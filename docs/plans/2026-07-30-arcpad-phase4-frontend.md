@@ -20,7 +20,7 @@
 - **Limit emirler / Orders sekmesi** (Faz 7) — keeper'a bağlı. Al-sat panelinde `Market | Limit | Orders` sekme şeridi ekran görüntülerinde var; bu fazda **yalnızca `Market` sekmesi render edilir**, diğer ikisi hiç çizilmez. Gerekçe: tıklandığında hiçbir şey yapmayan bir sekme, olmayan bir sekmeden kötüdür.
 - **`/analytics` ve `/profile/[address]`** (Faz 5) — `protocol_stats_daily` Faz 3'te kapsam dışı bırakıldı; `getClaimableFees` / `listCreatorEarningsByLaunch` sorguları hazır ama ekranları Faz 5'in.
 - **Grafik heatmap katmanı ve dev buy/sell işaretleri** (Faz 7).
-- **Graduation sonrası havuz üzerinden işlem** — Faz 2 teslim edilmedi. Bu faz `complete == true` ve (geldiğinde) `graduated == true` durumlarını **dürüstçe gösterir**, ama havuza emir göndermez.
+- ~~**Graduation sonrası havuz üzerinden işlem** — Faz 2 teslim edilmedi.~~ **TESLİM EDİLDİ 2026-08-09, bu fazın dışında ama ondan sonra.** Faz 2 zincire indi, `ArcpadRouter` yayınlandı (`0x6D9f42706C7E7bF3D2Ad3123ca7397DA6F0bB7cd`) ve havuz al-sat paneli `web/`e girdi. Gerekçe kaydedilmeye değer: V4 bir EOA'ya swap girişi vermez — cüzdan `PoolManager.swap`'ta `ManagerLocked` yer, `unlock`'u da kullanamaz (geri çağrı adresi kodsuz) — ve Arc'ta Universal Router yoktur. Yani bu madde "arayüz yazılmadı" değil **"gönderilecek bir kapı yoktu"** demekti; kapı artık var. Bu faz yine de `complete`/`graduated` durumlarını dürüstçe göstermeye devam ediyor.
 - **Açık/koyu tema geçişi.** Ekran görüntülerinde bir güneş ikonu var; bu fazda **yalnızca koyu tema** var ve `color-scheme: dark` açıkça bildirilir. Gerekçe: §7.3'ün token paleti koyu-doğumludur, ikinci bir palet ayrı bir görevdir ve yarısı yapılmış bir açık tema "şablondan çıkmış" görünür — bu ürünün kaçınmak zorunda olduğu tek izlenim.
 
 ---
