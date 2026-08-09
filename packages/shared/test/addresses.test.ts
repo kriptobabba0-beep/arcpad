@@ -14,6 +14,7 @@ import {
   HOOK_ADDRESS_MASK,
   loadAddressBook,
   parseAddressBook,
+  ROUTER_SALT,
   toDeployment,
   webEnvBlock,
 } from '../src/addresses'
@@ -568,6 +569,138 @@ describe('adres defteri', () => {
         () => parseAddressBook(withField('poolManager', rawFixture().arcpadLocker), CHAIN),
         'poolManager',
       )
+    })
+  })
+
+  // =====================================================================
+  // ROUTER: MEZUNIYET SONRASI TICARETIN TEK GIRIS NOKTASI
+  // =====================================================================
+  //
+  // `arcpadRouter` ZORUNLUDUR ve nullable DEGILDIR. Gerekce `smokeToken`in
+  // TERSIDIR: smoke cifti bir launch'in ARTIGIDIR ve olmayabilir; router ise
+  // bir dagitimin ULASILABILIRLIGIDIR. V4 bir EOA'ya swap girisi vermez ve
+  // Arc'ta Universal Router yoktur, yani router'i olmayan bir defter "mezun
+  // olan her token'in kilitli oldugu" bir dagitimi tarif eder. "Simdilik
+  // null" tam olarak smoke ciftinin sessiz delik oldugu yoldur.
+  describe('router', () => {
+    const LIVE_ROUTER = '0x6D9f42706C7E7bF3D2Ad3123ca7397DA6F0bB7cd'
+
+    it('loads the router and its initcode hash from the fixture', () => {
+      const b = book()
+      expect(b.arcpadRouter).toBe(LIVE_ROUTER)
+      expect(b.routerInitcodeHash).toBe(
+        '0x7881b11cfa16440a113a1311bc091f041764f4a0d8b240ec03a91bb5d78af8eb',
+      )
+    })
+
+    for (const field of ['arcpadRouter', 'routerInitcodeHash'] as const) {
+      it(`rejects a book with no ${field}`, () => {
+        const raw = rawFixture()
+        delete raw[field]
+        expectFieldError(() => parseAddressBook(raw, CHAIN), field)
+      })
+    }
+
+    /**
+     * THE CARRY PATH'S PROOF, AND WHAT SEPARATES THE ROUTER FROM THE POOL
+     * TRIPLE. `poolManager` / `arcpadHook` / `arcpadLocker` are COPIED into
+     * the book and nothing offline can re-derive them -- 7675f04 accepted
+     * that deliberately, because their initcode hashes are not recorded. The
+     * router's IS recorded, so it joins `feeEscrow` and `launchFactory` in
+     * the class of fields the book proves rather than asserts.
+     */
+    it('re-derives the router from the book alone', () => {
+      const b = book()
+      expect(
+        getCreate2Address({
+          from: CREATE2_FACTORY,
+          salt: ROUTER_SALT,
+          bytecodeHash: b.routerInitcodeHash,
+        }),
+      ).toBe(b.arcpadRouter)
+    })
+
+    it('rejects a book whose arcpadRouter does not match its own routerInitcodeHash', () => {
+      expectFieldError(
+        () =>
+          parseAddressBook(
+            withField('arcpadRouter', '0x000000000000000000000000000000000000bEEF'),
+            CHAIN,
+          ),
+        'arcpadRouter',
+      )
+    })
+
+    /**
+     * THE HASH IS THE OTHER HALF OF THE SAME PAIR. Editing it alone must be
+     * just as red as editing the address alone -- otherwise "re-derived" only
+     * covers one of the two ways a hand edit can land.
+     */
+    it('rejects a book whose routerInitcodeHash does not derive its own arcpadRouter', () => {
+      const b = rawFixture()
+      const hash = b.routerInitcodeHash as string
+      expectFieldError(
+        () =>
+          parseAddressBook(
+            { ...b, routerInitcodeHash: `${hash.slice(0, -1)}${hash.endsWith('b') ? 'c' : 'b'}` },
+            CHAIN,
+          ),
+        'arcpadRouter',
+      )
+    })
+
+    it('the real arc testnet book carries the deployed router', () => {
+      // Pozitif kontrol, `hook bayraklari` testinin ikizi: negatif testler tek
+      // baslarina "her seye kizan bir kontrol" ile de gecerdi.
+      const live = loadAddressBook(5042002, join(REPO_ROOT, 'contracts', 'deploy'))
+      expect(live.arcpadRouter).toBe(LIVE_ROUTER)
+      expect(
+        getCreate2Address({
+          from: CREATE2_FACTORY,
+          salt: ROUTER_SALT,
+          bytecodeHash: live.routerInitcodeHash,
+        }),
+      ).toBe(live.arcpadRouter)
+    })
+
+    /**
+     * DOKUZ ALAN, 36 CIFT -- ve HER CIFT SURULUR, sayilmakla yetinilmez.
+     *
+     * `graduationTarget` BILEREK DISARIDADIR: `applyGraduationTarget` indigi
+     * an `arcpadLocker`a ESIT olur, yani onu listeye eklemek defteri
+     * protokolun dogru calistigi gun kirmizi yapardi. Bu satir o karari
+     * KAYDEDER; aksi halde bir sonraki okuyucu eksiklik sanip ekler.
+     */
+    it('rejects every one of the 36 aliased pairs across the nine distinct roles', () => {
+      const fields = [
+        'launchFactory',
+        'feeEscrow',
+        'governor',
+        'protocolTreasury',
+        'feeSchedule',
+        'poolManager',
+        'arcpadHook',
+        'arcpadLocker',
+        'arcpadRouter',
+      ] as const
+      const pairs: Array<[string, string]> = []
+      for (let i = 0; i < fields.length; i += 1) {
+        for (let j = i + 1; j < fields.length; j += 1) {
+          pairs.push([fields[i] as string, fields[j] as string])
+        }
+      }
+      expect(pairs).toHaveLength(36)
+
+      const base = rawFixture()
+      for (const [a, b] of pairs) {
+        expectFieldError(() => parseAddressBook({ ...base, [b]: base[a] }, CHAIN), a)
+      }
+
+      // ...VE `graduationTarget` LOCKER'A ESIT OLABILIR. Bugun 0x0; yarin
+      // arm edildiginde locker olacak ve defter YINE yuklenmelidir.
+      expect(() =>
+        parseAddressBook({ ...base, graduationTarget: base.arcpadLocker }, CHAIN),
+      ).not.toThrow()
     })
   })
 })

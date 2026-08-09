@@ -40,6 +40,7 @@ import {
   LOCKER_SALT,
   POOL_MANAGER_SALT,
   resolveSmokePair,
+  ROUTER_SALT,
   webEnvBlock,
 } from '../packages/shared/src/addresses'
 import {
@@ -242,6 +243,14 @@ export type PoolAddresses = {
 }
 
 /**
+ * Router'in deftere yazilan IKI gercegi. `EscrowFacts` gibi `block` ya da
+ * `txHash` TASIMAZ ve tasiyamaz: onceki defterden tasindiginda o yayin bu
+ * makbuzun icinde degildir. `initcodeHash` ise TASINIR, cunku ADRESI
+ * YENIDEN TURETEN sey odur -- havuz uclusunun sahip olmadigi sey.
+ */
+export type RouterFacts = { address: Address; initcodeHash: Hex }
+
+/**
  * Onceki defter. Yeniden kullanilan escrow'un ve (bu zincirde `DeployPool`
  * makbuzu yoksa) havuz katmaninin TEK kaynagidir.
  *
@@ -349,6 +358,59 @@ export function resolvePool(
   }
 }
 
+/**
+ * Router: `DeployRouter` makbuzundan, ya da onceki defterden TASINMIS.
+ *
+ * TASIMA YOLU `resolveEscrow`INKI GIBIDIR, `resolvePool`INKI GIBI DEGIL --
+ * ve fark tam olarak defterin `routerInitcodeHash` tasimasidir. Havuz uclusu
+ * icin tasima "adresi kopyala"dir; burada adres onceki defterin KENDI
+ * kaydettigi hash'ten CREATE2 ile YENIDEN TURETILIR ve tutmazsa durur. Yani
+ * tasinan sey "bir adres" degil, "kendi initcode'undan turedigi kanitlanmis
+ * bir adres".
+ *
+ * MAKBUZ YOLU DA TURETMEDIR: `collectDeployments` her adresi calldata'daki
+ * salt ve initcode'dan yeniden turetip makbuzun kaydettigiyle esitler, yani
+ * SIRAYA hicbir yerde guvenilmez.
+ */
+export function resolveRouter(
+  routerReceiptPath: string | null,
+  previous: Record<string, unknown> | null,
+): RouterFacts {
+  if (routerReceiptPath) {
+    const deployed = readDeployments(routerReceiptPath).get(ROUTER_SALT)
+    if (!deployed) {
+      throw new Error(
+        `${routerReceiptPath} has no ArcpadRouter deployment (salt ${ROUTER_SALT}). ` +
+          'The receipt read is the wrong receipt.',
+      )
+    }
+    return { address: deployed.address, initcodeHash: deployed.initcodeHash }
+  }
+
+  const recorded = previous?.arcpadRouter
+  const hash = previous?.routerInitcodeHash
+  if (typeof recorded !== 'string' || typeof hash !== 'string') {
+    throw new Error(
+      'cannot determine arcpadRouter: no DeployRouter broadcast and the previous book has no ' +
+        'arcpadRouter / routerInitcodeHash. The order on a new chain is Deploy -> DeployPool -> ' +
+        'DeployRouter -> addressbook; the router is REQUIRED because a pool nobody can trade ' +
+        'against is not a working deployment.',
+    )
+  }
+  const derived = getCreate2Address({
+    from: CREATE2_FACTORY,
+    salt: ROUTER_SALT,
+    bytecodeHash: hash as Hex,
+  })
+  if (derived !== getAddress(recorded)) {
+    throw new Error(
+      `previous book records arcpadRouter ${getAddress(recorded)} but its own ` +
+        `routerInitcodeHash derives ${derived}`,
+    )
+  }
+  return { address: derived, initcodeHash: hash as Hex }
+}
+
 export function buildAddressBook(args: {
   chainId: number
   receipt: Receipt
@@ -358,8 +420,9 @@ export function buildAddressBook(args: {
   smokeCurve: Address | null
   escrow: EscrowFacts
   pool: PoolAddresses
+  router: RouterFacts
 }): Record<string, unknown> {
-  const { chainId, receipt, reads, commit, escrow, pool } = args
+  const { chainId, receipt, reads, commit, escrow, pool, router } = args
 
   const chainKey = chainKeyFor(chainId)
   const profile = PROFILE_FOR_CHAIN[chainId]
@@ -407,12 +470,14 @@ export function buildAddressBook(args: {
     poolManager: pool.poolManager,
     arcpadHook: pool.arcpadHook,
     arcpadLocker: pool.arcpadLocker,
+    arcpadRouter: router.address,
     feeEscrowBlock: escrow.block.toString(),
     launchFactoryBlock: receipt.factory.block.toString(),
     startBlock: startBlock.toString(),
     deployTx: receipt.factory.txHash,
     escrowInitcodeHash: escrow.initcodeHash,
     factoryInitcodeHash: receipt.factory.initcodeHash,
+    routerInitcodeHash: router.initcodeHash,
     commit,
     smokeToken: args.smokeToken,
     smokeCurve: args.smokeCurve,
@@ -491,6 +556,64 @@ export async function assertSmokePairMatchesChain(
     throw new Error(
       `smokeCurve ${curve} reports token() = ${curveToken}, but the book names ${token}. ` +
         'The pair does not describe one launch.',
+    )
+  }
+}
+
+/**
+ * ROUTER'IN ZINCIRDEKI KIMLIGI, VE HASH'IN GOREMEDIGI SEY.
+ *
+ * `routerInitcodeHash` "bu adres kendi initcode'undan turedi" der ve orada
+ * DURUR: keccak tek yonludur, yani o initcode'un ICINDE hangi `PoolManager`
+ * ve hangi hook'un gomulu oldugunu defterden hicbir sekilde okunamaz. Router'
+ * in kimligi ise TAM OLARAK o iki `immutable`dir.
+ *
+ * Bu iki `eth_call` bosluğu kapatir: zincirdeki router'in `poolManager()` ve
+ * `hook()`u, AYNI DEFTERIN havuz katmanini gostermek zorundadir. Yakaladigi
+ * sey gercek ve ucuzdur: superseded bir yigindan tasinmis ya da baska bir
+ * hook'a baglanmis bir router, defterin geri kalaniyla tutarli gorunur ve
+ * hicbir offline kontrol onu goremez.
+ *
+ * BEDELI: iki `eth_call` ve ~3 saniye, DEPLOYMENT BASINA BIR KEZ. `escrow()`
+ * karsilastirmasinin ("ZINCIR SON SOZU SOYLER") router icin karsiligidir --
+ * ve `buildAddressBook`in icine DEGIL, `assertSmokePairMatchesChain` gibi
+ * CANLI YOLA konur: prova zincirinde canli bir dugum yoktur ve
+ * `chainreads.31337.json`e "defterin kendi degerini soyleyen" sentetik iki
+ * alan eklemek, hicbir sey olcmeyen ama olcuyormus gibi duran bir kontrol
+ * olurdu.
+ */
+export async function assertRouterMatchesBook(
+  rpcUrl: string,
+  router: Address,
+  poolManager: Address,
+  hook: Address,
+): Promise<void> {
+  const client = createPublicClient({ transport: http(rpcUrl) })
+  const abi = parseAbi([
+    'function poolManager() view returns (address)',
+    'function hook() view returns (address)',
+  ])
+  const onChainPoolManager = (await client.readContract({
+    address: router,
+    abi,
+    functionName: 'poolManager',
+  })) as Address
+  if (getAddress(onChainPoolManager) !== poolManager) {
+    throw new Error(
+      `arcpadRouter ${router} reports poolManager() = ${getAddress(onChainPoolManager)}, but the ` +
+        `book names ${poolManager}. The router belongs to a different pool layer.`,
+    )
+  }
+  await new Promise((r) => setTimeout(r, 1500))
+  const onChainHook = (await client.readContract({
+    address: router,
+    abi,
+    functionName: 'hook',
+  })) as Address
+  if (getAddress(onChainHook) !== hook) {
+    throw new Error(
+      `arcpadRouter ${router} reports hook() = ${getAddress(onChainHook)}, but the book names ` +
+        `${hook}. The router would build PoolKeys arcpad's pools do not answer to.`,
     )
   }
 }
@@ -643,6 +766,24 @@ async function main(): Promise<void> {
     receipt.bySalt.get(FEE_SCHEDULE_SALT),
   )
 
+  // ROUTER MAKBUZU UCUNCU BIR SCRIPT'IN CIKTISIDIR (`DeployRouter.s.sol`).
+  // `DeployPool`unkiyle ayni sekil: varsa adres ORADAN, yoksa onceki
+  // defterden -- ama havuzunkinin aksine TURETILEREK.
+  const routerReceiptPath = rehearsal
+    ? null
+    : join(
+        REPO_ROOT,
+        'contracts',
+        'broadcast',
+        'DeployRouter.s.sol',
+        String(chainId),
+        'run-latest.json',
+      )
+  const router = resolveRouter(
+    routerReceiptPath && existsSync(routerReceiptPath) ? routerReceiptPath : null,
+    previous,
+  )
+
   // CIFT, ZINCIR OKUMASINDAN ONCE cozulur: `readFromChain` `TOTAL_SUPPLY()`i
   // ondan okur, dolayisiyla tasinan bir cift ciplak bir yeniden uretimi de
   // MUMKUN KILAR -- eskiden `--smoke-token` gecmek zorunluydu.
@@ -695,6 +836,10 @@ async function main(): Promise<void> {
         smoke.smokeCurve,
       )
     }
+    // ROUTER'IN IKI `immutable`I, ZINCIRDEN. Turetme "adres kendi
+    // initcode'undan geldi" der; bu, "o initcode BU defterin havuz katmanina
+    // baglandi" der -- ve ikincisini hicbir offline kontrol soyleyemez.
+    await assertRouterMatchesBook(rpcUrl, router.address, pool.poolManager, pool.arcpadHook)
     commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO_ROOT, encoding: 'utf8' }).trim()
   }
 
@@ -707,6 +852,7 @@ async function main(): Promise<void> {
     smokeCurve: smoke.smokeCurve,
     escrow,
     pool,
+    router,
   })
 
   writeFileSync(outPath, serializeAddressBook(book), 'utf8')

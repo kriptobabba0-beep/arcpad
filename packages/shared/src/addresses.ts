@@ -32,6 +32,13 @@ export const FACTORY_SALT: Hex = keccak256(toBytes('arcpad.LaunchFactory.v1'))
 export const FEE_SCHEDULE_SALT: Hex = keccak256(toBytes('arcpad.FeeSchedule.v1'))
 export const POOL_MANAGER_SALT: Hex = keccak256(toBytes('arcpad.PoolManager.v1'))
 export const LOCKER_SALT: Hex = keccak256(toBytes('arcpad.ArcpadLocker.v1'))
+/**
+ * `RouterDeployLib.ROUTER_SALT`in ikizi ve DIGERLERIYLE AYNI SEKILDE
+ * TURETILIR -- bir isim dizesinin keccak'i. Yigindaki TEK secilmemis-degil,
+ * yani ARANMIS tuz hook'unkidir (`ARCPAD_HOOK_SALT`, madencilik sonucu 13);
+ * router'inki ondan degil, `POOL_MANAGER_SALT`tan yana duser.
+ */
+export const ROUTER_SALT: Hex = keccak256(toBytes('arcpad.ArcpadRouter.v1'))
 
 /**
  * `ArcpadHook`un tuzu, VE TEK TURETILMEYEN OLANI. Digerleri bir dizeden
@@ -88,12 +95,38 @@ export type AddressBook = {
   poolManager: Address
   arcpadHook: Address
   arcpadLocker: Address
+  /**
+   * MEZUNIYET SONRASI TICARETIN TEK GIRIS NOKTASI, ve `arcpadLocker` gibi
+   * NULLABLE DEGIL.
+   *
+   * "Sonradan yayinlandi" bir TARIH gercegidir, defterin SEKLI hakkinda bir
+   * gercek degil: havuz katmani inmis ama router'i olmayan bir dagitim,
+   * mezun olmus bir havuzda hicbir cuzdanin islem yapamayacagi bir
+   * dagitimdir (V4 bir EOA'ya swap girisi vermez ve Arc'ta Universal Router
+   * yoktur). Boyle bir defterin tarif ettigi sey calisir bir protokol
+   * degildir. `smokeToken`in "simdilik null"u ise SESSIZ BIR DELIK olmustu
+   * -- ayni sekli ikinci kez yazmiyoruz.
+   *
+   * BEDELI ACIKCA SOYLENIR: yeni bir zincirde sira artik `Deploy` ->
+   * `DeployPool` -> `DeployRouter` -> `pnpm addressbook`tir. Jenerator eksik
+   * alanla dosya yazmaz, ADIYLA durur.
+   */
+  arcpadRouter: Address
   feeEscrowBlock: bigint
   launchFactoryBlock: bigint
   startBlock: bigint
   deployTx: Hex
   escrowInitcodeHash: Hex
   factoryInitcodeHash: Hex
+  /**
+   * UCUNCU INITCODE HASH'I, ve varlik sebebi `escrowInitcodeHash`inkiyle
+   * AYNI: onsuz `arcpadRouter` defterde bir IDDIA olurdu, onunla CREATE2
+   * ile yeniden turetilebilen bir ISPAT. Havuz uclusunun boyle bir hash'i
+   * YOKTUR (7675f04 bunu bilerek kabul etti) -- router'in vardir cunku
+   * `DeployRouter` makbuzu onu tasiyor ve jenerator onu bedavaya
+   * hesapliyor.
+   */
+  routerInitcodeHash: Hex
   commit: string
   smokeToken: Address | null
   smokeCurve: Address | null
@@ -149,6 +182,17 @@ const DISTINCT_FIELDS = [
   'poolManager',
   'arcpadHook',
   'arcpadLocker',
+  // DOKUZ ALAN, 36 CIFT -- ve BUYUME EGRISI DURUSTCE SOYLENMELI: yeni her
+  // alan n-1 cift ekler, ama o ciftlerin cogu (`governor` ile `arcpadRouter`
+  // gibi) hicbir zaman carpisamaz. Kapinin gercek isini yapan avuc dolusu
+  // cifttir -- ayni yayindan cikan, ayni sekle sahip adresler. Yine de
+  // kaliyor cunku maliyeti sifir ve tek yazicinin jenerator olmasi bir
+  // ELLE DUZELTMEYI imkansiz kilmaz.
+  //
+  // `graduationTarget` BU LISTEDE DEGILDIR VE OLAMAZ: `applyGraduationTarget`
+  // indigi an tam olarak `arcpadLocker`a ESIT olur. Onu "eksik" sanip
+  // eklemek, defteri protokolun dogru calistigi gun kirmizi yapardi.
+  'arcpadRouter',
 ] as const
 
 export const DEFAULT_BOOK_DIR = join(REPO_ROOT, 'contracts', 'deploy')
@@ -230,12 +274,14 @@ export function parseAddressBook(input: unknown, expectedChainId: number): Addre
     poolManager: requireAddress(o, 'poolManager'),
     arcpadHook: requireAddress(o, 'arcpadHook'),
     arcpadLocker: requireAddress(o, 'arcpadLocker'),
+    arcpadRouter: requireAddress(o, 'arcpadRouter'),
     feeEscrowBlock: requireBigint(o, 'feeEscrowBlock'),
     launchFactoryBlock: requireBigint(o, 'launchFactoryBlock'),
     startBlock: requireBigint(o, 'startBlock'),
     deployTx: requireHash(o, 'deployTx', 32),
     escrowInitcodeHash: requireHash(o, 'escrowInitcodeHash', 32),
     factoryInitcodeHash: requireHash(o, 'factoryInitcodeHash', 32),
+    routerInitcodeHash: requireHash(o, 'routerInitcodeHash', 32),
     commit: requireString(o, 'commit'),
     smokeToken: requireNullableAddress(o, 'smokeToken'),
     smokeCurve: requireNullableAddress(o, 'smokeCurve'),
@@ -301,6 +347,12 @@ export function parseAddressBook(input: unknown, expectedChainId: number): Addre
   // defter -- takma ad kontrollerinin varlik sebebi -- burada da yakalanir.
   assertDerivedAddress(book, 'feeEscrow', ESCROW_SALT, book.escrowInitcodeHash)
   assertDerivedAddress(book, 'launchFactory', FACTORY_SALT, book.factoryInitcodeHash)
+  // UCUNCUSU, VE HAVUZ UCLUSUNUN ALAMADIGI SEY. `poolManager` / `arcpadHook`
+  // / `arcpadLocker` defterde YALNIZCA KOPYALANMIS adreslerdir; router'in
+  // hash'i makbuzda oldugu icin o, escrow ve factory ile ayni sinifa girer.
+  // OFFLINE'DIR ve onemi buradadir: indexer, keeper, web ve CI defteri
+  // zincire hic dokunmadan yukler.
+  assertDerivedAddress(book, 'arcpadRouter', ROUTER_SALT, book.routerInitcodeHash)
 
   // HOOK ADRESI IZIN KUMESINI TASIMAK ZORUNDADIR, ve bu defterin
   // dogrulayabilecegi TEK Faz 2 adresi ozelligidir -- otekiler icin defterde
@@ -330,7 +382,7 @@ export function parseAddressBook(input: unknown, expectedChainId: number): Addre
 
 function assertDerivedAddress(
   book: AddressBook,
-  field: 'feeEscrow' | 'launchFactory',
+  field: 'feeEscrow' | 'launchFactory' | 'arcpadRouter',
   salt: Hex,
   initcodeHash: Hex,
 ): void {
@@ -641,4 +693,3 @@ export function resolveSmokePair(
     source: 'carried from the previous book (same factory)',
   }
 }
-

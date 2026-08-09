@@ -1,7 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { execFileSync } from 'node:child_process'
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, describe, expect, it } from 'vitest'
 import { getAddress } from 'viem'
 
-import { buildAddressBook, resolveEscrow, resolvePool } from '../addressbook'
+import { buildAddressBook, resolveEscrow, resolvePool, resolveRouter } from '../addressbook'
+import { REPO_ROOT } from '../../packages/shared/src/profiles'
 
 /**
  * THE IMPORT ABOVE IS ITSELF THE FIRST TEST.
@@ -17,6 +22,9 @@ import { buildAddressBook, resolveEscrow, resolvePool } from '../addressbook'
 const CHAIN_ESCROW = getAddress('0xeed4431ead3e27f16d97f677a9c4c1a963df8dc6')
 const CHAIN_ESCROW_INITCODE = '0xd99a4f910483ee8e40e4898fee5ef732462b55888427cd00c89697b0bff435e8'
 
+const CHAIN_ROUTER = getAddress('0x6d9f42706c7e7bf3d2ad3123ca7397da6f0bb7cd')
+const CHAIN_ROUTER_INITCODE = '0x7881b11cfa16440a113a1311bc091f041764f4a0d8b240ec03a91bb5d78af8eb'
+
 const previousBook = (over: Record<string, unknown> = {}) => ({
   feeEscrow: CHAIN_ESCROW,
   escrowInitcodeHash: CHAIN_ESCROW_INITCODE,
@@ -25,6 +33,8 @@ const previousBook = (over: Record<string, unknown> = {}) => ({
   poolManager: '0x617321A877e024C870516CD599A581dCDCa6c09b',
   arcpadHook: '0xd95198Cd806B736C8EcEcfFC23976b59F565e0cC',
   arcpadLocker: '0x0e7771091a3471Dc12CbfE38836BaDC7bf5a98E8',
+  arcpadRouter: CHAIN_ROUTER,
+  routerInitcodeHash: CHAIN_ROUTER_INITCODE,
   ...over,
 })
 
@@ -100,6 +110,85 @@ describe('resolvePool', () => {
 })
 
 /**
+ * `resolveRouter` — AND THE RECEIPT IT READS IS THE REAL ONE.
+ *
+ * These cases run against `contracts/broadcast/DeployRouter.s.sol/5042002/
+ * run-latest.json`, the receipt of tx
+ * `0x130b321d...` in block 56127501, not a synthetic fixture. That choice is
+ * the whole point: `readDeployments` keys deployments BY SALT taken from the
+ * first 32 bytes of the calldata the script actually sent, so a `ROUTER_SALT`
+ * in TypeScript that disagreed with `RouterDeployLib.ROUTER_SALT` in Solidity
+ * would make the lookup MISS and these tests fail. Nothing else in the
+ * TypeScript tree pins that cross-language pair, and a synthetic receipt would
+ * have pinned it against itself.
+ *
+ * The repo has already been burned by the generous-fixture failure: the
+ * synthetic broadcast assumed `transactionType: "CALL"` with
+ * `additionalContracts`, and the first REAL receipt (`"CREATE2"` +
+ * `contractAddress`) stopped the generator dead.
+ */
+describe('resolveRouter', () => {
+  const ROUTER_RECEIPT = join(
+    REPO_ROOT,
+    'contracts',
+    'broadcast',
+    'DeployRouter.s.sol',
+    '5042002',
+    'run-latest.json',
+  )
+  const POOL_RECEIPT = join(
+    REPO_ROOT,
+    'contracts',
+    'broadcast',
+    'DeployPool.s.sol',
+    '5042002',
+    'run-latest.json',
+  )
+
+  it('takes the router from the real DeployRouter receipt, keyed by the derived salt', () => {
+    const out = resolveRouter(ROUTER_RECEIPT, null)
+    expect(out.address).toBe(CHAIN_ROUTER)
+    expect(out.initcodeHash).toBe(CHAIN_ROUTER_INITCODE)
+  })
+
+  /**
+   * THE WRONG RECEIPT IS A REAL WAY TO BE WRONG, so it is driven with a real
+   * receipt that really does not carry a router: `DeployPool`'s. Reading it
+   * must STOP rather than fall through to the carry path, because falling
+   * through would let a book quietly keep a stale router across a redeploy.
+   */
+  it('stops when the receipt it was pointed at deployed no router', () => {
+    expect(() => resolveRouter(POOL_RECEIPT, previousBook())).toThrow(/no ArcpadRouter deployment/)
+  })
+
+  /**
+   * THE CARRY PATH IS `resolveEscrow`'S, NOT `resolvePool`'S. The address is
+   * RE-DERIVED from the previous book's own `routerInitcodeHash` via CREATE2;
+   * the pool triple cannot do this because the book records no hash for it.
+   */
+  it('re-derives the carried router from the recorded initcode hash', () => {
+    const out = resolveRouter(null, previousBook())
+    expect(out.address).toBe(CHAIN_ROUTER)
+    expect(out.initcodeHash).toBe(CHAIN_ROUTER_INITCODE)
+  })
+
+  it('refuses a previous book whose recorded router disagrees with its own hash', () => {
+    const tampered = previousBook({ arcpadRouter: '0x0000000000000000000000000000000000001234' })
+    expect(() => resolveRouter(null, tampered)).toThrow(/derives/)
+  })
+
+  it('stops by name, and names the deploy ORDER, when neither source has it', () => {
+    expect(() => resolveRouter(null, null)).toThrow(/cannot determine arcpadRouter/)
+    expect(() => resolveRouter(null, null)).toThrow(/Deploy -> DeployPool -> DeployRouter/)
+    for (const field of ['arcpadRouter', 'routerInitcodeHash']) {
+      const book = previousBook()
+      delete (book as Record<string, unknown>)[field]
+      expect(() => resolveRouter(null, book), field).toThrow(/cannot determine arcpadRouter/)
+    }
+  })
+})
+
+/**
  * `buildAddressBook` is the largest of the three exported-for-testing functions
  * and the one that ASSEMBLES the file. It had no test at all.
  */
@@ -147,6 +236,7 @@ const liveArgs = (over: Record<string, unknown> = {}) => ({
     arcpadHook: getAddress('0xd95198cd806b736c8ececffc23976b59f565e0cc'),
     arcpadLocker: getAddress('0x0e7771091a3471dc12cbfe38836badc7bf5a98e8'),
   },
+  router: { address: CHAIN_ROUTER, initcodeHash: CHAIN_ROUTER_INITCODE },
   ...over,
 })
 
@@ -220,4 +310,79 @@ describe('buildAddressBook', () => {
       /unregistered chain 12345/,
     )
   })
+
+  /**
+   * THE ASSEMBLED FILE CARRIES THE ROUTER, AND IN THE SCHEMA'S ORDER.
+   *
+   * Key ORDER is asserted, not just presence: `serializeAddressBook` writes
+   * `JSON.stringify` output, so this object's insertion order IS the file's
+   * byte layout, and `addresses.schema.json` plus both checked-in books are
+   * compared against it by `@arcpad/shared`. A field appended in the wrong
+   * place would still load and would still make every future regeneration a
+   * whole-file diff.
+   */
+  it('writes arcpadRouter and routerInitcodeHash, in the schema positions', () => {
+    const book = buildAddressBook(liveArgs() as never)
+    expect(book.arcpadRouter).toBe(CHAIN_ROUTER)
+    expect(book.routerInitcodeHash).toBe(CHAIN_ROUTER_INITCODE)
+    const keys = Object.keys(book)
+    expect(keys[keys.indexOf('arcpadLocker') + 1]).toBe('arcpadRouter')
+    expect(keys[keys.indexOf('factoryInitcodeHash') + 1]).toBe('routerInitcodeHash')
+  })
+})
+
+// =====================================================================
+// THE RULE THIS WHOLE FILE EXISTS FOR, MADE MECHANICAL.
+//
+// Twice a field was added to the book while the generator did not learn it,
+// and a later bare regeneration would have silently DROPPED it -- once for
+// the pool layer (7675f04), once for the smoke pair. Both times the property
+// "the generator reproduces the checked-in book byte for byte" was verified
+// BY HAND and then had to be re-verified by hand by the next agent.
+//
+// This runs the real CLI, end to end, in a child process: no `main()` was
+// refactored into something importable, because an importable twin of the
+// entrypoint is exactly the "test that passes through a path bypassing the
+// code under test" this repo keeps finding. The rehearsal chain is offline by
+// construction (its chain reads and its `commit` are checked in), so the run
+// touches no network and the output is deterministic.
+//
+// A NEW FIELD THE GENERATOR CANNOT REPRODUCE NOW FAILS HERE, not in a later
+// session's memory.
+// =====================================================================
+describe('the generator reproduces the rehearsal book byte for byte', () => {
+  const scratch: string[] = []
+  afterAll(() => {
+    for (const dir of scratch) rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('regenerates contracts/deploy/testdata/addresses.31337.json unchanged', () => {
+    const fixture = join(REPO_ROOT, 'contracts', 'deploy', 'testdata', 'addresses.31337.json')
+    const dir = mkdtempSync(join(tmpdir(), 'arcpad-rehearsal-'))
+    scratch.push(dir)
+    // The generator READS the previous book from `--out-dir` (that is the
+    // carry path), so the fixture has to be there before it runs.
+    copyFileSync(fixture, join(dir, 'addresses.31337.json'))
+
+    execFileSync(
+      process.execPath,
+      [
+        '--import',
+        'tsx',
+        join(REPO_ROOT, 'scripts', 'addressbook.ts'),
+        '--chain',
+        '31337',
+        '--out-dir',
+        dir,
+      ],
+      { cwd: REPO_ROOT, encoding: 'utf8', stdio: 'pipe' },
+    )
+
+    // BYTES, not parsed objects: key order and trailing newline are part of
+    // the claim, and a `JSON.parse` comparison would pass while every future
+    // regeneration produced a whole-file diff.
+    expect(readFileSync(join(dir, 'addresses.31337.json'), 'utf8')).toBe(
+      readFileSync(fixture, 'utf8'),
+    )
+  }, 120_000)
 })

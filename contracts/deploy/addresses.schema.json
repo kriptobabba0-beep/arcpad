@@ -22,12 +22,14 @@
     "poolManager",
     "arcpadHook",
     "arcpadLocker",
+    "arcpadRouter",
     "feeEscrowBlock",
     "launchFactoryBlock",
     "startBlock",
     "deployTx",
     "escrowInitcodeHash",
     "factoryInitcodeHash",
+    "routerInitcodeHash",
     "commit",
     "smokeToken",
     "smokeCurve"
@@ -104,6 +106,10 @@
     "arcpadLocker": {
       "$ref": "#/$defs/address"
     },
+    "arcpadRouter": {
+      "$ref": "#/$defs/address",
+      "description": "Mezun olmus bir havuzda islem yapmanin TEK yolu. ZORUNLUDUR, nullable DEGIL: V4 bir EOA'ya swap girisi vermez ve Arc'ta Universal Router yoktur, dolayisiyla router'i olmayan bir dagitim mezuniyet sonrasi ticareti OLMAYAN bir dagitimdir. `routerInitcodeHash` ile birlikte CREATE2(0x4e59b448..., keccak(\"arcpad.ArcpadRouter.v1\"), hash) olarak yeniden turetilir."
+    },
     "feeEscrowBlock": {
       "$ref": "#/$defs/uint"
     },
@@ -124,6 +130,10 @@
     },
     "factoryInitcodeHash": {
       "$ref": "#/$defs/bytes32"
+    },
+    "routerInitcodeHash": {
+      "$ref": "#/$defs/bytes32",
+      "description": "UCUNCU turetme. Router'in initcode'u constructor argumanlarini (PoolManager, hook) da icerir, yani bu hash BYTECODE ya da BAGLANTI degistiginde kayar -- ikisi de router'in kimligidir. Havuz uclusunun boyle bir hash'i yoktur ve o adresler bu yuzden yalnizca KOPYALANIR."
     },
     "commit": {
       "type": "string",
