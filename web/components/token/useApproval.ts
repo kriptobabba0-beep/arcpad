@@ -32,6 +32,18 @@ export type ApprovalHandle = {
   readonly approve: () => void
   readonly phase: TradePhase
   readonly failure: ArcpadFailure | null
+  /**
+   * HAM HATA, DECODE EDILMEMIS -- ve varligi bir tercih degil bir ZORUNLULUK.
+   *
+   * `failure` CURVE sozlugu (`decodeArcpadError`) ile cozulur. Havuz paneli ayni
+   * kancayi kullanir ama KENDI sozlugu (`lib/poolOutcome.ts`) vardir ve
+   * `poolOutcome.ts`'in kendi gerekcesi sudur: "bir kullanici bir curve islemi
+   * icin bir kelime dagarcigi, bir havuz islemi icin baskasini ogrenmek zorunda
+   * kalmamali". Ham hatayi vermek, iki panelin ayni onay arizasini kendi
+   * dilinde anlatmasini saglar; `failure.raw`a uzanmak da ayni seyi yapardi ama
+   * cagri yerinde bir hack gibi okunurdu.
+   */
+  readonly error: unknown
   readonly hash: `0x${string}` | undefined
   readonly refetch: () => void
   readonly reset: () => void
@@ -112,6 +124,7 @@ export function useApproval(
     approve,
     phase,
     failure: rawError === null ? null : decodeArcpadError(rawError, { action: 'approve' }),
+    error: rawError,
     hash: write.data,
     refetch: useCallback(() => {
       void allowanceRead.refetch()

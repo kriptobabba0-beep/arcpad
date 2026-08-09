@@ -75,6 +75,11 @@ export function realisedFromReceipt(
     blockTime: now,
     trader: args.trader,
     isBuy: args.isBuy,
+    // BU SATIR BIR `BondingCurve.Trade` LOGUNDAN OKUNDU, yani mekani
+    // TARTISMASIZDIR -- turetilmiyor, BILINIYOR. `TradeRow.source` zorunlu
+    // oldugu icin bu satiri yazmayi unutmak derlenmez; iyimser satirin mekani
+    // artik indexer'in satiriyla ayni alanda ve ayni sekilde tasinir.
+    source: 'curve',
     tokenAmountTok: args.tokenAmount,
     quoteAmountWei: args.quoteAmount,
     protocolFeeWei: args.protocolFee,

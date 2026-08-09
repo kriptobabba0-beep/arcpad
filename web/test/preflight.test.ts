@@ -43,6 +43,13 @@ function goodEnv(): Record<string, string | undefined> {
     NEXT_PUBLIC_ARC_CHAIN_ID: String(BOOK.chainId),
     NEXT_PUBLIC_ARCPAD_FACTORY: BOOK.launchFactory,
     NEXT_PUBLIC_ARCPAD_ESCROW: BOOK.feeEscrow,
+    // THE POOL ROUTER. `WEB_ENV_BINDINGS` gained it, so `assertEnvMatchesBook`
+    // -- which preflight calls -- now demands it, and an env without it exits 2
+    // naming the variable. That is the intended behaviour on a real
+    // deployment: the router is the ONLY way a wallet reaches a graduated pool
+    // and nothing on chain points at it, so a build that was not handed it
+    // cannot discover it.
+    NEXT_PUBLIC_ARCPAD_ROUTER: BOOK.arcpadRouter,
     ARC_FACTORY_ADDRESS: BOOK.launchFactory,
     ARC_ESCROW_ADDRESS: BOOK.feeEscrow,
     ARC_START_BLOCK: String(BOOK.startBlock),
@@ -168,6 +175,40 @@ describe('preflight fails closed: NOT CONFIGURED is exit 2', () => {
     const result = await runPreflight({ env, reader: goodReader() })
     expect(result.code).toBe(PREFLIGHT_NOT_CONFIGURED)
     expect(result.lines.join('\n')).toContain('ARC_START_BLOCK')
+  })
+
+  /**
+   * THE ROUTER, AT THE COMPOSED LEVEL -- not just in the binding table.
+   *
+   * `WEB_ENV_BINDINGS` gained `NEXT_PUBLIC_ARCPAD_ROUTER`, and `webEnvBlock`'s
+   * own tests prove the GENERATOR emits it. This proves the CHECKER refuses a
+   * deployment without it, through the real `runPreflight` -- the two are one
+   * table precisely so they cannot diverge, and this is the assertion that
+   * would notice if they did.
+   *
+   * It matters more than the other five names: a stale factory address makes
+   * the whole site wrong and someone notices in a minute. A missing router
+   * leaves everything working except the trading surface of tokens that have
+   * graduated -- and until 2026-08-11 there are none, so nobody would notice at
+   * all.
+   */
+  it('an env with no ROUTER exits 2, naming it -- a build with no way into a pool', async () => {
+    const env = goodEnv()
+    delete env['NEXT_PUBLIC_ARCPAD_ROUTER']
+    const result = await runPreflight({ env, reader: goodReader() })
+    expect(result.code).toBe(PREFLIGHT_NOT_CONFIGURED)
+    expect(result.lines.join('\n')).toContain('NEXT_PUBLIC_ARCPAD_ROUTER')
+  })
+
+  it('and a router that is not the book’s exits 1 -- wrong, not merely absent', async () => {
+    // "Not configured" and "configured to somebody else's contract" are
+    // different failures: the second is a site that would route a user's funds
+    // through a contract this deployment does not control.
+    const env = goodEnv()
+    env['NEXT_PUBLIC_ARCPAD_ROUTER'] = '0x0000000000000000000000000000000000009999'
+    const result = await runPreflight({ env, reader: goodReader() })
+    expect(result.code).toBe(PREFLIGHT_DISAGREES)
+    expect(result.lines.join('\n')).toContain('NEXT_PUBLIC_ARCPAD_ROUTER')
   })
 })
 

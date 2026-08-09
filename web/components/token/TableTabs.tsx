@@ -11,17 +11,14 @@ import { TradesTable } from './TradesTable'
 import { valueOf } from '@/components/read/result'
 
 /**
- * Token sayfasinin bu bilesene verdigi tek sey; `TokenOverview`'un DORT alani.
+ * Token sayfasinin bu bilesene verdigi tek sey; `TokenOverview`'un UC alani.
  *
- * `graduatedSeq` DORDUNCU OLARAK EKLENDI ve bir gosterim tercihi degil: islem
- * listesi mezuniyetten sonra IKI MEKANI birden tasir ve satirin kendisi hangisi
- * oldugunu soylemiyor (`listTrades` `source` kolonunu secmiyor -- bkz.
- * `venue.ts`). Bu alan ayrimin ta kendisini tasir.
+ * BIR SURE DORDUNCU BIR ALAN VARDI (`graduatedSeq`) ve islem listesinin mekan
+ * ayrimini o tasiyordu, cunku `listTrades` `source` kolonunu SECMIYORDU.
+ * Artik seciyor: mekan satirin uzerinde geliyor (`venue.ts`), yani bu bilesenin
+ * iletmesi gereken bir sey kalmadi -- ve iletilmeyen bir sey unutulamaz.
  */
-export type TableTabsOverview = Pick<
-  TokenOverview,
-  'curve' | 'launchCreator' | 'symbol' | 'graduatedSeq'
->
+export type TableTabsOverview = Pick<TokenOverview, 'curve' | 'launchCreator' | 'symbol'>
 
 export type TableTabsProps = {
   readonly trades: ReadResult<Page<TradeRow>>
@@ -144,7 +141,7 @@ export function TableTabs({
             nextCursor={tradePage.nextCursor}
             keyset={tradeKeyset}
             tradePanelHref={tradePanelHref}
-            {...(overview ? { symbol: overview.symbol, graduatedSeq: overview.graduatedSeq } : {})}
+            {...(overview ? { symbol: overview.symbol } : {})}
             {...(now === undefined ? {} : { now })}
           />
         ) : (

@@ -65,10 +65,7 @@ export type PricePoint = {
  * swap); such a row still carries reserves, so it still prices. What does not
  * price is a reserve of zero, which `priceWeiPerToken` refuses.
  */
-export function priceSeries(
-  trades: readonly TradeRow[],
-  graduatedSeq: bigint | null,
-): PricePoint[] {
+export function priceSeries(trades: readonly TradeRow[]): PricePoint[] {
   const lastPerBlock = new Map<number, PricePoint>()
   for (const trade of trades) {
     let priceWei: bigint
@@ -83,7 +80,7 @@ export function priceSeries(
       block,
       priceWei,
       seq: trade.eventSeq,
-      venue: venueOf(trade, graduatedSeq),
+      venue: venueOf(trade),
     }
     const existing = lastPerBlock.get(block)
     if (existing === undefined || point.seq > existing.seq) lastPerBlock.set(block, point)
@@ -97,12 +94,11 @@ const PAD = { left: 8, right: 8, top: 12, bottom: 8 }
 
 export type PriceHistoryChartProps = {
   readonly trades: readonly TradeRow[]
-  readonly graduatedSeq: bigint | null
   readonly symbol?: string
 }
 
-export function PriceHistoryChart({ trades, graduatedSeq, symbol }: PriceHistoryChartProps) {
-  const points = priceSeries(trades, graduatedSeq)
+export function PriceHistoryChart({ trades, symbol }: PriceHistoryChartProps) {
+  const points = priceSeries(trades)
   const poolCount = points.filter((p) => p.venue === 'pool').length
 
   if (points.length === 0) {
@@ -248,7 +244,6 @@ export type TokenPriceChartProps = {
   readonly currentPriceWei: bigint
   readonly progressPercent: string
   readonly trades?: readonly TradeRow[]
-  readonly graduatedSeq?: bigint | null
   readonly symbol?: string
 }
 
@@ -266,24 +261,18 @@ export function TokenPriceChart({
   currentPriceWei,
   progressPercent,
   trades = [],
-  graduatedSeq = null,
   symbol,
 }: TokenPriceChartProps) {
   return (
     <Card className="px-4 py-4">
       {lifecycle.kind === 'graduated' ? (
-        <PriceHistoryChart
-          trades={trades}
-          graduatedSeq={graduatedSeq}
-          {...(symbol === undefined ? {} : { symbol })}
-        />
+        <PriceHistoryChart trades={trades} {...(symbol === undefined ? {} : { symbol })} />
       ) : (
         <CurveChart
           profile={profile}
           soldTok={soldTok}
           currentPriceWei={currentPriceWei}
           trades={trades}
-          graduatedSeq={graduatedSeq}
           progressPercent={progressPercent}
         />
       )}

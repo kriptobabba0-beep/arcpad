@@ -52,7 +52,7 @@ export type ArcpadAddresses = {
   readonly launchFactory: Address
   readonly feeEscrow: Address
   /**
-   * ============ THE POOL ROUTER, AND WHY IT IS THE ONE NULLABLE ADDRESS ============
+   * ============ THE POOL ROUTER, AND WHY IT IS STILL THE ONE NULLABLE ADDRESS ============
    *
    * `ArcpadRouter` is the ONLY way a wallet can trade a graduated pool: v4 gives
    * an EOA no swap entrypoint and Arc has no Universal Router. It is in the
@@ -60,20 +60,32 @@ export type ArcpadAddresses = {
    * `routerInitcodeHash`), so the value is not in doubt -- what is in doubt is
    * whether a given BUILD was handed it.
    *
-   * IT IS NULLABLE HERE FOR A MEASURED REASON, NOT A STYLISTIC ONE.
-   * `WEB_ENV_BINDINGS` in `packages/shared/src/addresses.ts` is the single table
-   * that both `pnpm addressbook` (the generator) and `assertEnvMatchesBook` (the
-   * auditor) read, and CI writes its build env from `webEnvBlock(book)`. That
-   * table does not yet carry `NEXT_PUBLIC_ARCPAD_ROUTER`, and `packages/` is
-   * another track's. Making this address REQUIRED today would therefore fail
-   * every existing build -- CI's included -- at the `/_not-found` prerender,
-   * which is the exact failure `webEnvBlock`'s own comment exists to describe.
+   * ============ THE ORIGINAL REASON IS GONE ============
    *
-   * So the address is optional, every consumer must handle `null` VISIBLY (the
-   * pool panel renders an explanation, never a dead button), and
-   * `test/pool/config.test.ts` holds the exemption open in the AWAITING_FIXTURE
-   * shape: it asserts the binding table is still missing the key, and goes RED
-   * the day it is added -- which is the day this field must become required.
+   * It used to be nullable because `WEB_ENV_BINDINGS` did not carry
+   * `NEXT_PUBLIC_ARCPAD_ROUTER`, so `pnpm addressbook --env-only` never printed
+   * it and no CI build could have it. It carries it now: every environment
+   * DERIVED FROM THE ADDRESS BOOK has the router, `assertEnvMatchesBook`
+   * refuses a deployment without it, and `web/scripts/preflight.ts` exits 2
+   * naming the variable. On any real deployment the `null` branch is dead.
+   *
+   * ============ THE REASON THAT REPLACED IT, AND IT IS A DIFFERENT ONE ============
+   *
+   * Not every build's env comes from the book. `web/e2e/fixtures/chain.ts`
+   * builds the app against an ANVIL DEVCHAIN whose env it constructs by hand
+   * from `ArcpadDeployment` -- and that deployment has no router because it has
+   * no POOL STACK AT ALL: `deployArcpad` puts up a `FeeEscrow`, a `FeeSchedule`
+   * and a `LaunchFactory`, and no `PoolManager`, hook, locker or router. There
+   * is no address to pass because there is no contract, and inventing one would
+   * point a browser at code that does not exist.
+   *
+   * So making this REQUIRED today would fail the devchain e2e leg at the
+   * `/_not-found` prerender -- the same failure as before, from a different
+   * cause. The field stays `Address | null`, every consumer handles `null`
+   * VISIBLY (the pool panel renders an explanation, never a dead button), and
+   * `test/pool/config.test.ts` carries `AWAITING_DEVCHAIN_POOL_STACK`: it runs
+   * the devchain's own env producer through this reader and goes RED the day
+   * that env gains a router -- which is the day this field must become required.
    */
   readonly arcpadRouter: Address | null
 }

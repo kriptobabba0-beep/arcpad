@@ -88,19 +88,17 @@ export type RealisedPoint = {
  * bir egrinin uzerinde dolasir -- asagidaki yorumun "bu curve'de GERCEKLESMESI
  * IMKANSIZ bir sekil" diye yasakladigi seyin ta kendisi.
  *
- * `graduatedSeq` bu yuzden bir suzgectir, bir etiket degil. `null` -> token
- * mezun olmamis, yani her satir curve satiridir -- bugun her token boyle.
- * Mezuniyet sonrasi fiyat gecmisini `PriceHistoryChart` ZAMAN ekseninde cizer,
- * iki venue'yu de tasiyarak.
+ * MEKAN SATIRIN KENDISINDEN OKUNUR (`trades.source`), bir prop'tan DEGIL.
+ * Onceki hal `graduatedSeq`i buraya prop olarak tasiyordu ve o prop'u dort
+ * cagri yerinden BIRINDE unutmak, havuz satirlarini sessizce bu eksene geri
+ * koyardi. Mezuniyet sonrasi fiyat gecmisini `PriceHistoryChart` ZAMAN
+ * ekseninde cizer, iki venue'yu de tasiyarak.
  */
-export function realisedSeries(
-  trades: readonly TradeRow[],
-  graduatedSeq: bigint | null = null,
-): RealisedPoint[] {
+export function realisedSeries(trades: readonly TradeRow[]): RealisedPoint[] {
   const lastPerBlock = new Map<number, RealisedPoint>()
 
   for (const trade of trades) {
-    if (venueOf(trade, graduatedSeq) === 'pool') continue
+    if (venueOf(trade) === 'pool') continue
     // Rezerv anlik goruntusu YOKSA nokta cizilmez. `listTrades` bu kolonlari
     // henuz secmiyor; olmayan bir rezervden fiyat uydurmak, grafigi gercekmis
     // gibi gosterip yanlis cizmek olurdu.
@@ -149,20 +147,18 @@ export function CurveChart({
   soldTok,
   currentPriceWei,
   trades = [],
-  graduatedSeq = null,
   progressPercent,
 }: {
   profile: CurveProfileLike
   /** Su ana kadar satilan token (`S - realTokenReserves`). */
   soldTok: bigint
   currentPriceWei: bigint
+  /** Bkz. `realisedSeries`: havuz satirlari BU EKSENDE cizilemez ve ELENIR. */
   trades?: readonly TradeRow[]
-  /** Bkz. `realisedSeries`: havuz satirlari BU EKSENDE cizilemez. */
-  graduatedSeq?: bigint | null
   progressPercent: string
 }) {
   const curve = referenceCurve(profile)
-  const realised = realisedSeries(trades, graduatedSeq)
+  const realised = realisedSeries(trades)
 
   const maxPrice = curve[curve.length - 1]?.priceWei ?? 1n
   const minPrice = curve[0]?.priceWei ?? 0n

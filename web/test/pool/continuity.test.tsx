@@ -10,15 +10,15 @@ import {
 import { TableTabs } from '@/components/token/TableTabs'
 import { TradesTable, feeSentence } from '@/components/token/TradesTable'
 import { resolveLifecycle } from '@/components/token/lifecycle'
-import {
-  CURVE_CLOSE,
-  CURVE_EARLY,
-  GRADUATED_SEQ,
-  MIXED_HISTORY,
-  POOL_FIRST,
-  POOL_SECOND,
-} from './fixtures'
+import { CURVE_CLOSE, CURVE_EARLY, MIXED_HISTORY, POOL_FIRST, POOL_SECOND } from './fixtures'
 import { ok } from '../fixtures/readModel'
+
+/**
+ * THE SAME FOUR ROWS, ALL DECLARED CURVE. The controls below need a history
+ * that is single-venue while everything else about it is identical, so that
+ * what they measure is `source` and nothing else.
+ */
+const CURVE_ONLY = MIXED_HISTORY.map((row) => ({ ...row, source: 'curve' as const }))
 
 const PROFILE = {
   virtualTokenReserves: 1_073_000_000n * 10n ** 18n,
@@ -37,17 +37,18 @@ const PROFILE = {
  */
 
 describe('the realised series and the curve chart', () => {
-  it('realisedSeries drops pool rows once graduatedSeq is known', () => {
-    expect(realisedSeries(MIXED_HISTORY, GRADUATED_SEQ).map((p) => p.seq)).toEqual([
+  it('realisedSeries drops the rows whose `source` is the pool', () => {
+    expect(realisedSeries(MIXED_HISTORY).map((p) => p.seq)).toEqual([
       CURVE_EARLY.eventSeq,
       CURVE_CLOSE.eventSeq,
     ])
   })
 
-  it('CONTROL: without graduatedSeq every row is drawn -- the old behaviour', () => {
+  it('CONTROL: a curve-only history keeps EVERY row -- the filter is not "drop all"', () => {
     // Without this the filter could be "drop everything" and the assertion
-    // above would still pass.
-    expect(realisedSeries(MIXED_HISTORY).map((p) => p.seq)).toEqual([
+    // above would still pass. Relabelling the two pool rows is the whole
+    // difference, which is what makes this a control on `source` itself.
+    expect(realisedSeries(CURVE_ONLY).map((p) => p.seq)).toEqual([
       CURVE_EARLY.eventSeq,
       CURVE_CLOSE.eventSeq,
       POOL_FIRST.eventSeq,
@@ -64,7 +65,6 @@ describe('the realised series and the curve chart', () => {
         soldTok={PROFILE.saleSupply}
         currentPriceWei={58_783_256_052n}
         trades={MIXED_HISTORY}
-        graduatedSeq={GRADUATED_SEQ}
         progressPercent="100.0"
       />,
     )
@@ -75,7 +75,7 @@ describe('the realised series and the curve chart', () => {
 
 describe('the price history is ONE series across both venues', () => {
   it('oldest first, one point per block, venue attached', () => {
-    const points = priceSeries(MIXED_HISTORY, GRADUATED_SEQ)
+    const points = priceSeries(MIXED_HISTORY)
     expect(points.map((p) => p.block)).toEqual([40, 60, 61, 62])
     expect(points.map((p) => p.venue)).toEqual(['curve', 'curve', 'pool', 'pool'])
   })
@@ -87,7 +87,7 @@ describe('the price history is ONE series across both venues', () => {
    * this asserts the measurement rather than restating it.
    */
   it('the curve’s last price and the pool’s first differ by 13 wei', () => {
-    const points = priceSeries(MIXED_HISTORY, GRADUATED_SEQ)
+    const points = priceSeries(MIXED_HISTORY)
     const lastCurve = points.filter((p) => p.venue === 'curve').at(-1)
     const firstPool = points.find((p) => p.venue === 'pool')
     expect(lastCurve?.priceWei).toBe(58_783_256_052n)
@@ -102,7 +102,7 @@ describe('the price history is ONE series across both venues', () => {
 
   it('two trades in one block collapse to the LAST, never an average', () => {
     const later = { ...POOL_FIRST, eventSeq: POOL_FIRST.eventSeq + 5n, virtualQuoteReservesWei: 1n }
-    const points = priceSeries([later, POOL_FIRST], GRADUATED_SEQ)
+    const points = priceSeries([later, POOL_FIRST])
     expect(points.filter((p) => p.block === 61)).toHaveLength(1)
     expect(points.find((p) => p.block === 61)?.priceWei).toBe(
       priceWeiPerToken(1n, later.virtualTokenReservesTok),
@@ -114,13 +114,11 @@ describe('the price history is ONE series across both venues', () => {
     // is what `priceWeiPerToken` refuses, and a chart that drew it at zero
     // would put a spike on the floor of every graduated token.
     const broken = { ...POOL_FIRST, eventSeq: (70n << 20n) | 0n, virtualTokenReservesTok: 0n }
-    expect(priceSeries([broken, ...MIXED_HISTORY], GRADUATED_SEQ)).toHaveLength(4)
+    expect(priceSeries([broken, ...MIXED_HISTORY])).toHaveLength(4)
   })
 
   it('the chart draws ONE line through the seam, with the seam marked', () => {
-    const { container } = render(
-      <PriceHistoryChart trades={MIXED_HISTORY} graduatedSeq={GRADUATED_SEQ} symbol="DIFF" />,
-    )
+    const { container } = render(<PriceHistoryChart trades={MIXED_HISTORY} symbol="DIFF" />)
     const q = within(container)
     // ONE path, not two: two polylines would leave a visible gap and say the
     // history restarted, which is the thing this component exists to prevent.
@@ -134,9 +132,7 @@ describe('the price history is ONE series across both venues', () => {
   })
 
   it('with no pool trades yet there is no seam and the caption says so', () => {
-    const { container } = render(
-      <PriceHistoryChart trades={[CURVE_EARLY, CURVE_CLOSE]} graduatedSeq={GRADUATED_SEQ} />,
-    )
+    const { container } = render(<PriceHistoryChart trades={[CURVE_EARLY, CURVE_CLOSE]} />)
     const q = within(container)
     expect(q.queryByTestId('graduation-seam')).toBeNull()
     expect(q.getByTestId('price-history-caption').textContent).toMatch(
@@ -145,7 +141,7 @@ describe('the price history is ONE series across both venues', () => {
   })
 
   it('a graduated token with no indexed trades says so instead of drawing nothing', () => {
-    render(<PriceHistoryChart trades={[]} graduatedSeq={GRADUATED_SEQ} />)
+    render(<PriceHistoryChart trades={[]} />)
     expect(screen.getByTestId('price-history-empty').textContent).toMatch(/no pool trades/i)
   })
 })
@@ -160,7 +156,6 @@ describe('the chart choice is made in ONE place', () => {
         currentPriceWei={4_000_000_000n}
         progressPercent="0.0"
         trades={MIXED_HISTORY}
-        graduatedSeq={null}
       />,
     )
     expect(within(trading.container).getByTestId('curve-chart')).toBeInTheDocument()
@@ -175,7 +170,6 @@ describe('the chart choice is made in ONE place', () => {
         currentPriceWei={58_783_256_052n}
         progressPercent="100.0"
         trades={MIXED_HISTORY}
-        graduatedSeq={GRADUATED_SEQ}
       />,
     )
     expect(within(graduated.container).getByTestId('price-history-chart')).toBeInTheDocument()
@@ -193,7 +187,6 @@ describe('the chart choice is made in ONE place', () => {
         currentPriceWei={58_783_256_052n}
         progressPercent="100.0"
         trades={[CURVE_EARLY, CURVE_CLOSE]}
-        graduatedSeq={null}
       />,
     )
     expect(within(container).getByTestId('curve-chart')).toBeInTheDocument()
@@ -207,7 +200,6 @@ describe('the trade list stays continuous and labels the venue', () => {
         rows={MIXED_HISTORY}
         nextCursor={null}
         symbol="DIFF"
-        graduatedSeq={GRADUATED_SEQ}
         now={Date.parse('2026-08-09T12:00:10.000Z')}
       />,
     )
@@ -221,14 +213,17 @@ describe('the trade list stays continuous and labels the venue', () => {
   })
 
   it('an ungraduated token shows no venue badge at all', () => {
+    // Every row of an ungraduated token is a curve row, which is the state of
+    // every token on every chain today. The badge must be absent, not empty.
     const { container } = render(
       <TradesTable
-        rows={MIXED_HISTORY}
+        rows={CURVE_ONLY}
         nextCursor={null}
         symbol="DIFF"
         now={Date.parse('2026-08-09T12:00:10.000Z')}
       />,
     )
+    expect(within(container).getAllByRole('row').slice(1)).toHaveLength(4)
     expect(within(container).queryByText('Pool')).toBeNull()
   })
 
@@ -252,16 +247,17 @@ describe('the trade list stays continuous and labels the venue', () => {
   })
 
   /**
-   * THE WIRING, NOT THE COMPONENT.
+   * THE WIRING, NOT THE COMPONENT -- AND THE HOP IT MEASURES CHANGED SHAPE.
    *
-   * `TradesTable` being right and `TableTabs` not forwarding the seam is the
-   * shape this package keeps shipping: a mutant that dropped `graduatedSeq`
-   * from `TableTabs`'s forwarding SURVIVED the whole pool suite until this
-   * test existed, because every other assertion rendered `TradesTable`
-   * directly. The page hands `TableTabs` the overview; `TableTabs` hands the
-   * table the seam; both hops need an assertion.
+   * A mutant that dropped `graduatedSeq` from `TableTabs`'s forwarding SURVIVED
+   * the whole pool suite until this test existed, because every other assertion
+   * rendered `TradesTable` directly. That prop is gone: the venue now travels
+   * on the row, so there is no seam left to forget. What still has to be
+   * measured through the composition is that `TableTabs` hands the ROWS to the
+   * table unchanged -- a component that rebuilt them, sliced them or dropped a
+   * field would show up here and nowhere else.
    */
-  it('TableTabs FORWARDS the seam from the overview to the list', () => {
+  it('TableTabs hands the rows to the list, venues intact', () => {
     const { container } = render(
       <TableTabs
         trades={ok({ rows: MIXED_HISTORY, nextCursor: null })}
@@ -270,32 +266,33 @@ describe('the trade list stays continuous and labels the venue', () => {
           curve: '0x00000000000000000000000000000000000000bb',
           launchCreator: '0x00000000000000000000000000000000000000dd',
           symbol: 'DIFF',
-          graduatedSeq: GRADUATED_SEQ,
         }}
         now={Date.parse('2026-08-09T12:00:10.000Z')}
       />,
     )
+    expect(within(container).getAllByRole('row').slice(1)).toHaveLength(4)
     expect(within(container).getAllByText('Pool')).toHaveLength(2)
     expect(container.textContent).toContain('to the pool')
   })
 
-  it('CONTROL: the same tabs with an UNGRADUATED overview badge nothing', () => {
-    // Without this the forwarding could be hardcoded to `GRADUATED_SEQ` and the
-    // assertion above would still pass.
+  it('CONTROL: the same tabs over a curve-only history badge nothing', () => {
+    // Without this the composition could badge every row (or a constant two)
+    // and the assertion above would still pass.
     const { container } = render(
       <TableTabs
-        trades={ok({ rows: MIXED_HISTORY, nextCursor: null })}
+        trades={ok({ rows: CURVE_ONLY, nextCursor: null })}
         holders={ok({ rows: [], nextCursor: null })}
         overview={{
           curve: '0x00000000000000000000000000000000000000bb',
           launchCreator: '0x00000000000000000000000000000000000000dd',
           symbol: 'DIFF',
-          graduatedSeq: null,
         }}
         now={Date.parse('2026-08-09T12:00:10.000Z')}
       />,
     )
+    expect(within(container).getAllByRole('row').slice(1)).toHaveLength(4)
     expect(within(container).queryByText('Pool')).toBeNull()
+    expect(container.textContent).toContain('to the curve')
   })
 
   it('the rendered row carries the venue sentence, not just the helper', () => {
@@ -306,7 +303,6 @@ describe('the trade list stays continuous and labels the venue', () => {
         rows={[POOL_FIRST]}
         nextCursor={null}
         symbol="DIFF"
-        graduatedSeq={GRADUATED_SEQ}
         now={Date.parse('2026-08-09T12:00:10.000Z')}
       />,
     )

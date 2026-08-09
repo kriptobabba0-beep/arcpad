@@ -172,10 +172,13 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
             kendileri veriyordu. Bu, ayni dosyadaki eksik `loadMore*`
             prop'lariyla AYNI kusur ve yine ancak tarayicida gorundu.
 
-            `graduatedSeq` GECILIYOR: mezuniyet sonrasi satirlar bu grafigin
-            EKSENINDE cizilemez -- eksen "curve'de satilan token"dir ve havuz
-            satirinin rezervi havuzun ima edilen rezervidir. `TokenPriceChart`
-            mezun bir token icin ZAMAN eksenli, iki mekanli grafige gecer.
+            MEKAN ICIN AYRI BIR PROP GECILMIYOR: mezuniyet sonrasi satirlar bu
+            grafigin EKSENINDE cizilemez (eksen "curve'de satilan token"dir,
+            havuz satirinin rezervi ise havuzun ima edilen rezervidir) ve
+            elenmeleri artik satirin kendi `source` alanindan geliyor. Bir sure
+            bu ayrim `graduatedSeq` prop'uyla tasindi -- ve iki hop'tan birinde
+            unutulabiliyordu. `TokenPriceChart` mezun bir token icin ZAMAN
+            eksenli, iki mekanli grafige gecer.
           */}
           <TokenPriceChart
             lifecycle={lifecycle}
@@ -189,7 +192,6 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
             soldTok={soldTok}
             currentPriceWei={stats.priceWeiPerToken}
             trades={valueOf(trades)?.rows ?? []}
-            graduatedSeq={overview.graduatedSeq}
             symbol={overview.symbol}
             progressPercent={percent}
           />
@@ -224,10 +226,10 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
               curve: overview.curve,
               launchCreator: overview.launchCreator,
               symbol: overview.symbol,
-              // WITHOUT THIS THE LIST CANNOT TELL THE TWO VENUES APART, and
-              // every pool trade would be captioned "to the curve" -- a
-              // contract it never touched.
-              graduatedSeq: overview.graduatedSeq,
+              // THE VENUE IS NOT IN HERE, AND THAT IS THE POINT. It used to be
+              // (`graduatedSeq`), because `listTrades` did not select `source`;
+              // it does now, so every row states its own venue and no call site
+              // can forget to pass it.
             }}
           />
         </div>

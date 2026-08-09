@@ -377,6 +377,9 @@ function realisedRow(overrides: Partial<TradeRow> = {}): TradeRow {
     realTokenReservesTok: 0n,
     realQuoteReservesWei: 987_654_320_987_654_320n,
     isDev: false,
+    // Bir `BondingCurve.Trade` makbuzundan kurulan IYIMSER satir; mekani
+    // tartismasiz egridir (`useTrade.realisedFromReceipt` de boyle yazar).
+    source: 'curve',
     ...overrides,
   }
 }

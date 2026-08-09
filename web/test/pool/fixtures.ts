@@ -17,10 +17,14 @@ import { SMOKE } from '../fixtures/readModel'
  * the seam in these fixtures is the seam that was measured -- not an arbitrary
  * pair of numbers that happen to be close.
  *
- * NO `source` FIELD. `listTrades` does not select it, so `TradeRow` cannot
- * carry it and a literal that declared it would fail `test/typecheck.test.ts`.
- * See `components/token/venue.ts` for the derivation used instead and for the
- * exemption that expires when the column lands.
+ * EVERY ROW CARRIES `source`. `listTrades` selects it now, so `TradeRow`
+ * requires it and a fixture that omitted it would not compile -- which is the
+ * point: the venue is a fact on the row, not something a call site passes.
+ *
+ * `GRADUATED_SEQ` IS STILL HERE, and it is no longer what decides the venue.
+ * It is the input to `venueFromGraduationSeq`, the differential reference in
+ * `components/token/venue.ts`, so that `venue.test.ts` can assert the row's own
+ * answer and the derived one never disagree over exactly these rows.
  */
 
 /** `event_seq = block << 20 | logIndex`. Graduation lands in block 60. */
@@ -43,6 +47,7 @@ const BASE: TradeRow = {
   realTokenReservesTok: 0n,
   realQuoteReservesWei: SMOKE.realQuoteReservesWei,
   isDev: false,
+  source: 'curve',
 }
 
 /** An ordinary curve trade, well before graduation. Block 40. */
@@ -82,6 +87,7 @@ export const CURVE_CLOSE: TradeRow = {
 export const POOL_FIRST: TradeRow = {
   ...BASE,
   eventSeq: (61n << 20n) | 0n,
+  source: 'pool',
   isBuy: true,
   virtualQuoteReservesWei: 16_453_433_365_316_100_000n,
   virtualTokenReservesTok: CLOSING_VT,

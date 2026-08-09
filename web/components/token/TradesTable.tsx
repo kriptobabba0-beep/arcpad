@@ -48,16 +48,17 @@ export type TradesTableProps = {
    * kullanimi (ve testleri) degismez.
    */
   readonly keyset?: KeysetRows<TradeRow>
-  /**
-   * MEZUNIYETIN `event_seq`'I -- VE BU LISTENIN VENUE SUZGECI.
+  /*
+   * MEKAN ICIN BIR PROP YOKTUR VE BU KASITLIDIR.
    *
-   * `listTrades` `source` kolonunu SECMIYOR (bkz. `venue.ts`), yani satirin
-   * kendisi hangi mekandan geldigini soylemiyor. `graduatedSeq` ayni ayrimi
-   * TAM olarak hesaplar: mezuniyetten sonra hicbir curve islemi olamaz
-   * (`CurveComplete()`) ve mezuniyetten once hicbir havuz islemi olamaz (havuz
-   * ayni islemde acilir). `null` -> mezun degil, yani her satir curve satiri.
+   * Burada bir `graduatedSeq` prop'u vardi cunku `listTrades` `source`u
+   * SECMIYORDU. Artik seciyor, yani mekan satirin kendisinde (`venue.ts`).
+   * Prop'u silmek bir sadelestirme degil bir ARIZA SINIFI kapatmasidir: onu
+   * ileten iki hop vardi (sayfa -> `TableTabs` -> tablo) ve birini dusuren bir
+   * mutant butun havuz suite'inden SAG CIKMISTI, cunku her iddia tabloyu
+   * dogrudan ciziyordu. Satirla birlikte gezen bir alan bir cagri yerinde
+   * unutulamaz.
    */
-  readonly graduatedSeq?: bigint | null
   /** Yas hesabinin referans ani. Testler sabitler; uretimde `Date.now()`. */
   readonly now?: number
   readonly className?: string
@@ -174,7 +175,6 @@ export function TradesTable({
   tradePanelHref = '#trade',
   loadMore,
   keyset: provided,
-  graduatedSeq = null,
   now,
   className,
 }: TradesTableProps) {
@@ -221,7 +221,7 @@ export function TradesTable({
 
         <tbody role="rowgroup" className={TBODY_CLASS}>
           {keyset.rows.map((row) => {
-            const venue = venueOf(row, graduatedSeq)
+            const venue = venueOf(row)
             const sentence = feeSentence(row, venue)
             return (
               <tr role="row" key={row.eventSeq} className={BODY_ROW_CLASS}>

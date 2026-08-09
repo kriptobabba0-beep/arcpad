@@ -25,6 +25,12 @@ export type {
   StaleReason,
   SyncPoint,
   TokenOverview,
+  /**
+   * `'curve' | 'pool'` -- `trades.source`un tipi. Burada YENIDEN TANIMLANMAZ:
+   * bir kopya, semadaki `CHECK (source IN ('curve','pool'))` degistiginde
+   * SESSIZCE ayrisir ve arayuz var olmayan bir mekan icin dal cizerdi.
+   */
+  TradeSource,
 } from '@arcpad/db'
 export type { Page, ReadFailure, ReadResult } from '@/lib/read'
 // DEGER ihraci `./result`'tan: `@/lib/read` `server-only` ve `pg` tasiyor,

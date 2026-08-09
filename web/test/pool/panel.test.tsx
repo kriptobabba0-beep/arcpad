@@ -1,8 +1,15 @@
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { USDC_ERC20_ADDRESS } from '@arcpad/shared/browser'
 import { render, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import { PoolTradeForm, type PoolTradeFormProps } from '@/components/token/PoolTradePanel'
+import {
+  poolPanelFailure,
+  PoolTradeForm,
+  type PoolTradeFormProps,
+} from '@/components/token/PoolTradePanel'
 import { SHORTCUT_PERCENTS, shortcutAmount } from '@/components/token/gas'
 import type { PoolPlan } from '@/components/token/poolPlan'
 import { decodePoolSwapError } from '@/lib/poolOutcome'
@@ -426,15 +433,127 @@ describe('balances, gas and the shortcuts', () => {
 // --------------------------------------------------------------------------
 
 describe('failures and the receipt', () => {
-  it('the live USDC allowance STRING is reported as an approval problem', async () => {
-    // The buy leg's most likely failure, in the wire shape Arc's USDC actually
-    // produces -- measured, not imagined.
-    const failure = decodePoolSwapError({
-      cause: { message: `execution reverted: ${MEASURED_USDC_ALLOWANCE_REVERT}` },
-    })
+  /**
+   * ============ TWO LEGS, TWO WIRE SHAPES, ONE SCREEN ============
+   *
+   * The same cause -- "the router may not move that much" -- arrives in two
+   * completely different envelopes, one per leg, and BOTH are asserted here on
+   * the RENDERED panel rather than only on the decoder:
+   *
+   *   BUY  USDC `0x3600…0000` is a Circle FiatToken. Measured 2026-08-09 by
+   *        `eth_call`ing `transferFrom` with no allowance:
+   *        `0x08c379a0…` -> `Error(string) "ERC20: transfer amount exceeds
+   *        allowance"`. NO SELECTOR AT ALL.
+   *   SELL `LaunchToken` is an OpenZeppelin ERC-20 and refuses with the custom
+   *        error `ERC20InsufficientAllowance(address,uint256,uint256)`.
+   *
+   * The decoder half of this is in `abi.test.ts`. This is the composed half,
+   * and it is the one that matters: a decoder that is right while the panel
+   * draws something else is exactly the shape this package keeps shipping.
+   */
+  it.each([
+    [
+      'the live USDC string (BUY leg)',
+      { cause: { message: `execution reverted: ${MEASURED_USDC_ALLOWANCE_REVERT}` } },
+    ],
+    [
+      'the OZ custom error (SELL leg)',
+      { cause: { data: { errorName: 'ERC20InsufficientAllowance' } } },
+    ],
+  ])('an allowance shortfall arriving as %s tells the user to Approve', async (_name, wire) => {
+    const failure = decodePoolSwapError(wire)
     const t = setup({ failure })
     expect(t.q.getByTestId('pool-failure').textContent).toMatch(/not approved to move/i)
     expect(t.q.getByTestId('pool-failure').textContent).toMatch(/Press Approve/i)
+  })
+
+  it('CONTROL: an unrelated string revert is NOT read as an allowance problem', async () => {
+    // Without this, the buy-leg branch could match every string revert and the
+    // assertion above would pass while telling a user to press Approve for a
+    // failure Approve cannot fix.
+    const failure = decodePoolSwapError({
+      cause: { message: 'execution reverted: Blacklistable: account is blacklisted' },
+    })
+    const t = setup({ failure })
+    expect(t.q.getByTestId('pool-failure').textContent).not.toMatch(/Press Approve/i)
+    expect(t.q.getByTestId('pool-failure').textContent).toContain('blacklisted')
+  })
+
+  /**
+   * ============ THE DEFECT: A FAILED APPROVAL WAS SILENT ON THIS PANEL ============
+   *
+   * `TradePanel` (the curve) renders `trade.failure ?? approval.failure`.
+   * `PoolTradePanel` rendered `trade.failure` alone, so an approval that failed
+   * -- rejected in the wallet, out of gas, refused by USDC's blocklist -- put
+   * NOTHING on screen: the button went back to "Approve" and the user was left
+   * to guess. Covered on one panel, read as covered on both.
+   *
+   * The form half is asserted by rendering; the WIRING half cannot be, because
+   * `PoolTradePanel` needs wagmi. So it is asserted in source, with anti-vacuity
+   * -- the same shape `test/pool/page.test.ts` uses for the page's call sites.
+   */
+  it('a rejected APPROVAL is drawn, not swallowed', async () => {
+    const failure = decodePoolSwapError({ code: 4001, message: 'User rejected' })
+    const t = setup({ failure, approval: 'required', approvalPhase: 'failed' })
+    expect(t.q.getByTestId('pool-failure').textContent).toMatch(/cancelled/i)
+    expect(t.q.getByTestId('pool-failure').textContent).toMatch(/nothing was spent/i)
+  })
+
+  describe('poolPanelFailure — the merge itself, RUN rather than read', () => {
+    const swapFailure = decodePoolSwapError({ cause: { data: { errorName: 'TooLittleReceived' } } })
+    const approveRejected = { code: 4001, message: 'User rejected' }
+
+    it('an approval error is surfaced when the swap has not failed', () => {
+      const merged = poolPanelFailure(null, approveRejected)
+      expect(merged).not.toBeNull()
+      expect(merged?.code).toBe('rejected')
+      // AND IT IS THE POOL'S DICTIONARY, not the curve's: `PoolFailure` carries
+      // `tone`/`body`, `ArcpadFailure` carries `kind`/`detail`.
+      expect(merged?.tone).toBe('neutral')
+      expect(merged?.body.length).toBeGreaterThan(0)
+    })
+
+    it('the SWAP’s failure wins when both exist', () => {
+      // The later, more specific event, and the one the user was waiting on.
+      expect(poolPanelFailure(swapFailure, approveRejected)?.code).toBe('slippage')
+    })
+
+    it('no failure at all stays null -- an idle panel draws no notice', () => {
+      expect(poolPanelFailure(null, null)).toBeNull()
+      expect(poolPanelFailure(null, undefined)).toBeNull()
+    })
+
+    it('an approval refused by a STRING revert still says what the chain said', () => {
+      // USDC on Arc is a FiatToken: `approve` can be refused by the blocklist or
+      // by `whenNotPaused`, neither of which has a selector.
+      const merged = poolPanelFailure(null, {
+        cause: { message: 'execution reverted: Blacklistable: account is blacklisted' },
+      })
+      expect(merged?.body).toContain('blacklisted')
+    })
+  })
+
+  it('the container FORWARDS the approval error into that merge', () => {
+    // The merge is executed above; this is the hop that cannot be, because
+    // `PoolTradePanel` needs wagmi to mount. Same shape as `page.test.ts`.
+    const source = readFileSync(
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        '..',
+        '..',
+        'components',
+        'token',
+        'PoolTradePanel.tsx',
+      ),
+      'utf8',
+    )
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '')
+
+    expect(source).toMatch(/failure=\{poolPanelFailure\(trade\.failure, approval\.error\)\}/)
+    // ANTI-VACUITY: the scan really reads this component.
+    expect(source).toContain('usePoolTrade(router)')
+    expect(source).toContain('<PoolTradeForm')
   })
 
   it('a user rejection is NEUTRAL, not an alert', () => {

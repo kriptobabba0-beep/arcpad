@@ -83,26 +83,41 @@ describe('the chart choice is made in ONE component, rendered by BOTH branches',
     }
   })
 
-  it('the indexed branch passes the trades AND the seam', () => {
-    // `trades` without `graduatedSeq` draws pool rows on the bonding curve's
-    // own axis, which is a visual lie; `graduatedSeq` without `trades` draws
-    // nothing. Both call sites need what they need, and they differ: the
-    // chain-drawn branch has no trade history to pass.
+  it('the indexed branch passes the trades, and the venue is NOT a prop', () => {
+    /*
+     * THIS ASSERTION USED TO DEMAND A SECOND PROP, and the change is the point.
+     *
+     * It read: "`trades` without `graduatedSeq` draws pool rows on the bonding
+     * curve's own axis, which is a visual lie". True at the time -- the venue
+     * was a prop, and a prop is a thing a call site can forget. `listTrades`
+     * now selects `source`, so the venue travels ON the row and the only thing
+     * this branch still has to pass is the rows themselves. The two call sites
+     * still differ: the chain-drawn branch has no trade history at all.
+     */
     const indexed = uses('TokenPriceChart').filter((use) => /trades=\{/.test(use))
     expect(indexed).toHaveLength(1)
-    expect(indexed[0]).toMatch(/graduatedSeq=\{/)
+    expect(
+      PAGE,
+      'the venue is back to being a prop -- see components/token/venue.ts for why it is not',
+    ).not.toMatch(/graduatedSeq=\{/)
   })
 })
 
 describe('the trade list can tell the two venues apart', () => {
-  it('TableTabs is handed graduatedSeq', () => {
-    // Without it every pool trade is captioned "to the curve" -- a contract it
-    // never touched -- and no row is badged.
+  it('TableTabs is handed the TRADES -- the venue rides on the rows', () => {
+    /*
+     * The old shape of this test demanded `graduatedSeq: overview.graduatedSeq`
+     * in the overview literal, because the seam was a value the page had to
+     * remember to pass down two hops. It is not passed any more and must not
+     * be: `trades.source` is on every row. What remains load-bearing is that
+     * the page hands over the trade page at all.
+     */
     const use = PAGE.slice(
       PAGE.indexOf('<TableTabs'),
       PAGE.indexOf('</div>', PAGE.indexOf('<TableTabs')),
     )
-    expect(use).toMatch(/graduatedSeq: overview\.graduatedSeq/)
+    expect(use).toMatch(/trades=\{trades\}/)
+    expect(use).not.toMatch(/graduatedSeq/)
   })
 
   it('and it still gets the three fields it already had', () => {

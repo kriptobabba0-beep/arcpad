@@ -156,6 +156,9 @@ export const BUY_ONE_USDC: TradeRow = {
   realTokenReservesTok: CLIMBING.realTokenReservesTok,
   realQuoteReservesWei: CLIMBING.realQuoteReservesWei,
   isDev: false,
+  // `listTrades` artik `source`u da seciyor, yani `TradeRow` onu ZORUNLU
+  // kiliyor. Bu satir bir `BondingCurve.Trade`tir: mekani egridir.
+  source: 'curve',
 }
 
 /**

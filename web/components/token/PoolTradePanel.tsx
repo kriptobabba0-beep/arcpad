@@ -12,7 +12,7 @@ import { useArcNetwork } from '@/hooks/useArcNetwork'
 import { useChainNow } from '@/hooks/useChainNow'
 import { useUsdcBalance } from '@/hooks/useUsdcBalance'
 import { getWebConfig } from '@/lib/addresses'
-import type { PoolFailure } from '@/lib/poolOutcome'
+import { decodePoolSwapError, type PoolFailure } from '@/lib/poolOutcome'
 import { quoteWeiFromUnits } from '@/lib/quoteUnits'
 import { ARCPAD_ROUTER_ABI } from '@/lib/routerAbi'
 import { AmountInput } from './AmountInput'
@@ -91,6 +91,46 @@ import { useTokenBalance } from './useTokenBalance'
 
 /** `useApproval` needs the launch token's ABI shape; USDC answers the same two selectors. */
 const QUOTE_ASSET = USDC_ERC20_ADDRESS as HexAddress
+
+/**
+ * ============ WHICH FAILURE THE PANEL SHOWS. A FAILED APPROVAL WAS SILENT. ============
+ *
+ * `TradePanel` (the curve) renders `trade.failure ?? approval.failure`. This
+ * panel rendered `trade.failure` ALONE, so an approval that failed -- rejected
+ * in the wallet, out of gas, refused by USDC's blocklist -- put nothing on
+ * screen at all: the button simply went back to "Approve" and the user was left
+ * to guess what had happened. That is this repository's number-one failure mode
+ * with a PANEL standing in for an entrypoint -- the property was covered on the
+ * curve and read as covered on the pool.
+ *
+ * It matters most on the leg that is new here. The curve only ever approves on
+ * a SELL; a pool BUY approves USDC, and USDC on Arc is a Circle FiatToken with
+ * refusals of its own (`0x1800…0001.isBlocklisted`, `whenNotPaused`) that the
+ * curve's approve leg cannot produce at all.
+ *
+ * DECODED WITH THE POOL'S OWN DICTIONARY, not carried over from the curve's.
+ * `useApproval` decodes with `decodeArcpadError` because the curve owns that
+ * hook; `lib/poolOutcome.ts` exists precisely so a user does not learn one
+ * vocabulary for a curve trade and another for a pool trade, and the branch
+ * order of the two decoders is identical on purpose. So the RAW error is
+ * re-decoded here. A name this surface has no text for still lands on the LOUD
+ * "no text for this" branch, which is this repository's rule and strictly better
+ * than the silence it replaces.
+ *
+ * THE SWAP'S FAILURE WINS when both exist: it is the later and more specific
+ * event, and it is the one the user was waiting on.
+ *
+ * EXPORTED AND PURE so the precedence and the decoding are RUN by a test rather
+ * than read out of a component that needs wagmi to mount.
+ */
+export function poolPanelFailure(
+  tradeFailure: PoolFailure | null,
+  approvalError: unknown,
+): PoolFailure | null {
+  if (tradeFailure !== null) return tradeFailure
+  if (approvalError === null || approvalError === undefined) return null
+  return decodePoolSwapError(approvalError)
+}
 
 export const POOL_GAS_NEEDS_APPROVAL =
   'Gas cannot be estimated until the router is approved: the estimate runs the real swap, and ' +
@@ -630,6 +670,34 @@ export function PoolTradePanel({ token, symbol }: PoolTradePanelProps) {
 
   const trade = usePoolTrade(router)
 
+  /**
+   * ============ A FAILED APPROVAL WAS SILENT ON THIS PANEL. ============
+   *
+   * `TradePanel` (the curve) renders `trade.failure ?? approval.failure`. This
+   * panel rendered `trade.failure` alone, so an approval that FAILED -- rejected
+   * in the wallet, out of gas, refused by USDC's blocklist -- put nothing on
+   * screen at all: the button simply went back to "Approve" and the user was
+   * left to guess. That is this repository's number-one failure mode with a
+   * PANEL standing in for an entrypoint: the property was covered on the curve
+   * and read as covered on the pool.
+   *
+   * It matters most on the leg that is new here. The curve only ever approves on
+   * a SELL; a pool BUY approves USDC, and USDC on Arc is a Circle FiatToken with
+   * refusals of its own (`0x1800…0001.isBlocklisted`, `whenNotPaused`) that the
+   * curve's approve leg cannot produce.
+   *
+   * DECODED WITH THE POOL'S OWN DICTIONARY, not carried over from the curve's.
+   * `useApproval` decodes with `decodeArcpadError` because the curve owns that
+   * hook; `lib/poolOutcome.ts` exists precisely so a user does not learn one
+   * vocabulary for a curve trade and another for a pool trade, and the branch
+   * order of the two decoders is identical on purpose. So the RAW error is
+   * re-decoded here. A name this surface has no text for still lands on the
+   * LOUD "no text for this" branch, which is the repository's rule and strictly
+   * better than the silence it replaces.
+   *
+   * THE SWAP'S FAILURE WINS when both exist: it is the later, more specific
+   * event, and it is the one the user was waiting on.
+   */
   const connection = network.wrongNetwork
     ? ('wrongNetwork' as const)
     : network.status === 'connected'
@@ -651,7 +719,7 @@ export function PoolTradePanel({ token, symbol }: PoolTradePanelProps) {
       approvalPhase={approval.phase}
       phase={trade.phase}
       hash={trade.hash}
-      failure={trade.failure}
+      failure={poolPanelFailure(trade.failure, approval.error)}
       realised={trade.realised}
       explorerUrl={config.chain.blockExplorers.default.url}
       routerMissing={router === null}
