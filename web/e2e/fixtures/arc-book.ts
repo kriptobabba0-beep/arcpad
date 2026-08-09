@@ -24,9 +24,19 @@
  * needs a token page for -- and `scripts/` belongs to another track, so it
  * cannot grow a flag for this. This reads the same book through the same loader.
  */
-import { loadAddressBook } from '@arcpad/shared'
+import { ARC_TESTNET_CHAIN_ID, loadAddressBook } from '@arcpad/shared'
 
-const chainId = Number(process.argv[2] ?? '5042002')
+// FROM THE REGISTRY, NEVER A LITERAL. `chain-registry.test.ts` asserts that no
+// tracked source outside `chain.ts` carries the chain id, and it scans the WHOLE
+// repo -- so a hardcoded 5042002 here turned `@arcpad/shared` red (264/265)
+// while `@arcpad/web`'s own suite stayed green at 736/736.
+//
+// SECOND INSTANCE IN TWO DAYS, in a different package, by a different track:
+// `scripts/integration/env-from-book.ts` did exactly this on 2026-08-08. Both
+// times the file was added OUTSIDE the adding track's own gate, and both times
+// only the workspace-wide run saw it. A track's suite passing is not the
+// workspace's suite passing.
+const chainId = Number(process.argv[2] ?? ARC_TESTNET_CHAIN_ID)
 if (!Number.isInteger(chainId)) {
   throw new Error(`arc-book: "${process.argv[2]}" is not a chain id`)
 }
