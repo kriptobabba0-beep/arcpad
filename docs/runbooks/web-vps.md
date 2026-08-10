@@ -183,7 +183,47 @@ pnpm --filter @arcpad/web preflight
 ## 7. What is not here
 
 - **TLS and a domain** — §5, `TODO(owner) 8`.
-- **Backups** — `TODO(owner) 9`. The database can be rebuilt from the chain by resetting the cursor, so nothing is _lost_ without one, but a rebuild is hours (see `keeper-vps.md` §1, the cold-start note). `chat_messages` is the exception: it exists **only** in Postgres and is not reconstructible from any chain. It is the one table that genuinely needs `pg_dump`.
 - **A second box.** One VPS runs the site, the indexer, the keepers and the database. Every one of them stops when it stops. This is a stated limitation rather than a numbered hole: it is an architecture decision with a price tag, not a blank waiting for a value.
+- **Off-box copies of the backup.** §8 dumps to this disk, which survives a dropped table and a bad migration but not a lost droplet. Shipping the file somewhere else is the next thing worth buying after the domain.
+
+---
+
+## 8. The backup, and the restore it is for
+
+Everything in this database except one table is derived from logs the chain still holds: reset the cursor and the indexer rebuilds it. That costs hours — an availability problem, not a data-loss one.
+
+**`chat_messages` is the exception and the only one.** It exists nowhere but this disk. The signature in each row proves its author wrote it, but no signature can prove a deleted message ever existed. So that table, and nothing else, is dumped nightly.
+
+```bash
+install -m 0644 packages/db/deploy/arcpad-backup.service /etc/systemd/system/
+install -m 0644 packages/db/deploy/arcpad-backup.timer   /etc/systemd/system/
+install -d -o arcpad -g arcpad -m 0700 /var/lib/arcpad/backups
+systemctl daemon-reload && systemctl enable --now arcpad-backup.timer
+systemctl start arcpad-backup.service      # take one now, do not wait for 03:17
+```
+
+`arcpad_backup` is its own role, strictly narrower than the site's: `SELECT` on `chat_messages` **and on its identity sequence**, and nothing else — not the other fourteen tables, not `INSERT` anywhere. The credential lives in `/etc/arcpad/backup.env`.
+
+**The sequence grant is not tidiness, and this unit first shipped without it.** `pg_dump` emits `setval(...)` so a restore does not hand out a key that already exists, which means it must read `last_value` — and `INSERT` on the table does not confer that. The first run failed loudly with `permission denied for sequence chat_messages_message_seq_seq`. Had it instead skipped the sequence quietly, the restored table would have restarted its keys at 1 and collided with a surviving row at the first message after recovery — a corruption discovered by users, days later.
+
+Two properties of the job itself, each because the alternative fails silently:
+
+- **It writes `.part` and renames.** A job killed mid-dump otherwise leaves a truncated file with a perfectly ordinary name, indistinguishable from a good one until the day it is restored. `rename(2)` is atomic within a directory, so a name that exists is a dump that finished.
+- **Retention never empties the directory.** The newest file is kept however old it is. "Delete everything past the window" is correct only while backups keep arriving; stall the timer and that rule spends a fortnight deleting the evidence, emptying the directory at exactly the moment those files became the only copy. Stale must degrade to stale, never to nothing.
+
+### Restoring
+
+`chat_messages` has a foreign key to `launches`, so the order is fixed: **schema first, then let the indexer rebuild the chain-derived tables, and only then restore the chat.** Restoring into an empty database fails on the foreign key — correctly.
+
+```bash
+pnpm --filter @arcpad/db migrate                      # schema
+systemctl start arcpad-indexer                        # let `launches` fill
+gunzip -c /var/lib/arcpad/backups/arcpad-chat-<stamp>.sql.gz \
+  | psql "$DATABASE_URL" -v ON_ERROR_STOP=1           # then the chat
+```
+
+Use a credential that can write — `arcpad_backup` deliberately cannot, and `arcpad_web` cannot either. This is the schema owner's job.
+
+**Rehearsed end to end on 2026-08-10** against `arcpad_test`: two messages inserted, dumped by the real CLI, `DROP TABLE chat_messages`, restored from the gzip alone. Both rows came back with their original keys, the restore printed `setval 2`, and the next insert was assigned `3` rather than colliding. That last line is the whole point of the drill — everything before it would have looked identical with a broken sequence.
 
 The numbers above are `keeper-vps.md` §0's, which is the registry for this whole box — one list, mechanically counted by `keeper/test/graduateInfra.test.ts`. Do not start a second list here.

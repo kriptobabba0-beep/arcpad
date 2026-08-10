@@ -519,6 +519,7 @@ describe('runbook §0 sayaci GERCEKLE ayni kalir', () => {
     fileURLToPath(new URL('../../docs/runbooks/web-vps.md', import.meta.url)),
     fileURLToPath(new URL('../deploy', import.meta.url)),
     fileURLToPath(new URL('../../web/deploy', import.meta.url)),
+    fileURLToPath(new URL('../../packages/db/deploy', import.meta.url)),
   ]
 
   /** `grep -rho 'TODO(owner) [0-9]' <the four paths above>` */

@@ -15,7 +15,7 @@ Artifacts are in [`keeper/deploy/`](../../keeper/deploy). Every one of them carr
 
 ---
 
-## 0. The `TODO(owner)` holes — there are **nine**
+## 0. The `TODO(owner)` holes — there are **eight**
 
 They are left as visible blanks rather than plausible defaults, for the reason `graduation-window.md` §7 already gives: a blank gets filled and a wrong value gets trusted at 3 am.
 
@@ -31,15 +31,16 @@ They are left as visible blanks rather than plausible defaults, for the reason `
 | `TODO(owner) 6` | `KEEPER_ALERT_LOG_URL` — publish the sink for CI                                      | §7 of this file                                            | the weekly drill                                                                       |
 | `TODO(owner) 7` | A **second RPC endpoint** so the keepers stop sharing the indexer's rate-limit bucket | §1 of this file                                            | nothing today; a 4.2× measured backfill penalty, and both falling behind on a busy day |
 | `TODO(owner) 8` | A **domain and a TLS certificate** for the site                                       | `web-vps.md` §5                                            | WalletConnect entirely, and any honest invitation to the public                        |
-| `TODO(owner) 9` | `pg_dump` for `chat_messages`                                                         | `web-vps.md` §7                                            | nothing today; it is the one table no chain can rebuild                                |
 
-**Nine values, twenty-five sites** — several holes are marked in more than one place because one value is needed in more than one file (marker `2` in all three units, marker `3` in both forwarder env files), and each is named again in the table above. **Count the values, not the markers**, and check both numbers mechanically:
+**Eight values, twenty-three sites** — several holes are marked in more than one place because one value is needed in more than one file (marker `2` in all three units, marker `3` in both forwarder env files), and each is named again in the table above. **Count the values, not the markers**, and check both numbers mechanically:
 
 ```bash
-SCAN='keeper/deploy web/deploy docs/runbooks/keeper-vps.md docs/runbooks/web-vps.md'
-grep -rho 'TODO(owner) [0-9]' $SCAN | sort -u | wc -l   # -> 9
-grep -rho 'TODO(owner) [0-9]' $SCAN | wc -l             # -> 25
+SCAN='keeper/deploy web/deploy packages/db/deploy docs/runbooks/keeper-vps.md docs/runbooks/web-vps.md'
+grep -rho 'TODO(owner) [0-9]' $SCAN | sort -u | wc -l   # -> 8
+grep -rho 'TODO(owner) [0-9]' $SCAN | wc -l             # -> 23
 ```
+
+**A hole that gets filled leaves this table entirely — it is not struck through and not marked done.** There were nine; `9` was the nightly `chat_messages` dump, and it is now built, tested and running (`web-vps.md` §8), so its row is gone and the count fell to eight. A registry that accumulates completed rows stops being a list of what is missing, which is the only job it has.
 
 The site count drifted once already, and the way it drifted is the lesson: `arcpad-indexer.service` was added carrying its own copy of marker `2`, which moved the total without anyone touching this line. **A number in prose does not fail a build** — so this one now does: `graduateInfra.test.ts` recomputes both counts from the files and asserts the heading, this sentence, and the two `# -> N` expectations all agree with them.
 
