@@ -1,0 +1,78 @@
+; arcpad -- the chain indexer.
+;
+; WHY A SUPERVISOR IS NOT OPTIONAL HERE, and the reason is written down in
+; scripts/integration/supervise-indexer.sh's own header: the shipped indexer
+; EXITS 1 on Arc's `-32005 rate limit exceeded` once INDEXER_MAX_ATTEMPTS (5)
+; worth of backoff is exhausted -- and the identical request succeeds when
+; re-issued about 3 seconds later. That harness exists to COUNT those restarts,
+; not to change the retry policy. In production the restart is systemd's job.
+;
+; A RESTART IS SAFE, and that is a property of the writer rather than a hope:
+; the cursor advances INSIDE the writing transaction, so a killed run re-scans
+; at most the range that was in flight. Nothing is written twice and nothing is
+; skipped.
+;
+; THE ADDRESSES ARE NOT TYPED HERE. The indexer is the one layer that takes
+; ARC_FACTORY_ADDRESS and ARC_START_BLOCK from the environment rather than
+; reading the address book itself -- so /etc/arcpad/indexer.env is GENERATED
+; from the book by scripts/integration/env-from-book.ts. Hand-setting them is
+; the documented way to point the indexer at a superseded deployment.
+;
+; Install:  /etc/systemd/system/arcpad-indexer.service
+
+[Unit]
+Description=arcpad chain indexer
+Documentation=file:///opt/arcpad/docs/runbooks/keeper-vps.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+; Same reasoning as the keeper units: rate-limit exits are EXPECTED and
+; frequent, so a start limit would stop the indexer for the one failure mode it
+; was built to survive.
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User=arcpad
+Group=arcpad
+WorkingDirectory=/opt/arcpad/indexer
+ExecStart=/usr/bin/env node --import tsx src/index.ts
+EnvironmentFile=/etc/arcpad/indexer.env
+EnvironmentFile=/etc/arcpad/db.env
+Restart=always
+; Shorter than the keeper's 15s: the failure this restarts from is a rate limit
+; that clears in about 3 seconds (measured), so waiting longer only lengthens
+; the gap between the chain and the product.
+RestartSec=5
+TimeoutStopSec=60
+; TODO(owner) 2 -- MemoryMax is unset for the same reason as the keeper units:
+; it has NOT been measured on a VPS. The indexer's cold start walks 1.21M
+; blocks, which is the shape most likely to need it; measure a full backfill
+; before choosing a number rather than inventing one.
+MemoryAccounting=yes
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+ReadWritePaths=/opt/arcpad/indexer
+ReadWritePaths=/var/lib/arcpad
+
+[Install]
+WantedBy=multi-user.target
