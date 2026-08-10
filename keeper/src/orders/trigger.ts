@@ -45,10 +45,22 @@ import {
  * depoda ikilenen bir olgunun HANGI kopyasinin kaydigi sorusu defalarca
  * odendi.
  *
- * `slipBps = 0` VERILIR ve bu tasiyicidir: planlayicinin kendi slipaj payi
- * emrin sinirinin UZERINE binerdi ve emir, kullanicinin istediginden DAHA IYI
- * bir fiyat beklemeye baslardi -- yani hic dolmayabilirdi. Sinir emrin
- * kendisindedir; planlayici yalnizca "su anda ne alirim" sorusunu cevaplar.
+ * ==========================================================================
+ *  `slipBps = 0`, VE ILK YAZDIGIM GEREKCE YANLISTI
+ * ==========================================================================
+ *
+ * Burada "bu argüman tasiyicidir; bir pay emrin sinirinin uzerine binerdi"
+ * yaziyordu. **YANLIS**, ve bir mutasyon turu bunu gosterdi: `slipBps`i 0'dan
+ * 100'e ceviren mutant HAYATTA KALDI (T3). Sebep de tam olarak dogru sebep --
+ * `slipBps` YALNIZCA `plan.args`i (zincire gidecek slipaj sinirini) sekillendirir;
+ * `plan.tokens` ve `netProceedsOf(plan)` ondan BAGIMSIZDIR, ve bu predikatin
+ * okudugu sey o ikisidir.
+ *
+ * Yani T3 bir EŞDEĞER MUTANTTIR ve oyle kalmalidir: bu fonksiyon planin
+ * SINIRINI degil SONUCUNU okur. `0` yine de yaziliyor cunku niyeti belirtir
+ * (bu bir kota degil, bir olcum) ve `orders.test.ts` esdegerligi ADIYLA
+ * sabitliyor -- boylece ileride biri `plan.args[0]`i okumaya kalkarsa, o
+ * degisiklik sessiz kalmaz.
  */
 
 /** Keeper'in bir emir hakkinda verebilecegi butun cevaplar. */

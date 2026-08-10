@@ -174,50 +174,92 @@ beforeEach(() => {
 
 // ---------------------------------------------------------------
 describe('imza dogrulanmadan HICBIR arka uca dokunulmaz', () => {
-  const hostile: [string, () => Promise<unknown> | unknown][] = [
-    ['bozuk JSON', () => 'not json'],
-    ['eksik alan', () => ({ token: TOKEN })],
-    ['yanlis zincir', async () => signedPlace(payload({ chainId: CHAIN_ID + 1 }))],
-    ['ondalik olmayan miktar', async () => signedPlace(payload({ amount: '0x10' }))],
-    ['sifir miktar', async () => signedPlace(payload({ amount: '0' }))],
-    ['bosluklu miktar', async () => signedPlace(payload({ amount: ' 5 ' }))],
+  /**
+   * ==========================================================================
+   *  HER SATIR KENDI DURUM KODUNU TASIR -- VE BU BIR MUTASYON BULGUSUDUR
+   * ==========================================================================
+   *
+   * ILK HALI yalnizca `status >= 400` ve "arka uc cagrilmadi" diyordu, ve o
+   * hali VAKUMDU. Sebep: `forbidBackends()` `getPool()`i ATTIRIYOR, rota o
+   * hatayi yakalayip **503** donuyor, ve `orderPreflight` mock'u `getPool()`
+   * ONDAN ONCE atildigi icin HIC CAGRILMIYOR. Yani imzayi GECEN bir istek de,
+   * imzada REDDEDILEN bir istek de tipatip ayni gorunuyordu (503 >= 400,
+   * `preflight` cagrilmadi).
+   *
+   * OLCULDU: `checkAmount(payload.amount)` satirini silen mutant (W4) HAYATTA
+   * KALDI, cunku `'0x10'` miktarli istek imzayi geciyor, `getPool()`e
+   * carpiyor ve 503 doner -- test bunu "reddedildi" sayiyordu. HTTP e2e'de
+   * ayni durum 400 `badAmount` donuyordu, yani DAVRANIS DOGRUYDU; kirilan sey
+   * TESTIN AYIRT ETME GUCUYDU.
+   *
+   * Artik her satir BEKLENEN KODU ve BEKLENEN HATA ADINI tasiyor: 503 gormek
+   * testi kirar.
+   */
+  const hostile: [string, number, string, () => Promise<unknown> | unknown][] = [
+    ['bozuk JSON', 400, 'badRequest', () => 'not json'],
+    ['eksik alan', 400, 'badRequest', () => ({ token: TOKEN })],
+    ['yanlis zincir', 400, 'wrongChain', async () => signedPlace(payload({ chainId: CHAIN_ID + 1 }))],
+    ['ondalik olmayan miktar', 400, 'badAmount', async () => signedPlace(payload({ amount: '0x10' }))],
+    ['sifir miktar', 400, 'badAmount', async () => signedPlace(payload({ amount: '0' }))],
+    ['bosluklu miktar', 400, 'badAmount', async () => signedPlace(payload({ amount: ' 5 ' }))],
+    ['ondalik olmayan minOut', 400, 'badMinOut', async () => signedPlace(payload({ minOut: '0x20' }))],
     [
       'bir saat once imzalanmis',
+      400,
+      'expired',
       async () => signedPlace(payload({ issuedAt: new Date(Date.now() - 3_600_000).toISOString() })),
     ],
     [
       'bir yil sonra bitiyor',
+      400,
+      'tooFar',
       async () =>
         signedPlace(payload({ expiresAt: new Date(Date.now() + 365 * 86_400_000).toISOString() })),
     ],
     [
       'bir dakika sonra bitiyor',
+      400,
+      'tooSoon',
       async () => signedPlace(payload({ expiresAt: new Date(Date.now() + 60_000).toISOString() })),
     ],
-    ['baskasinin adina imzalanmis', async () => signedPlace(payload(), MALLORY)],
+    ['baskasinin adina imzalanmis', 401, 'badSignature', async () => signedPlace(payload(), MALLORY)],
     [
       'imzadan SONRA degistirilmis miktar',
+      401,
+      'badSignature',
       async () => ({ ...(await signedPlace(payload())), amount: '999999999999999999999' }),
     ],
   ]
 
-  for (const [label, build] of hostile) {
-    it(`${label} -> arka uca DOKUNULMAZ`, async () => {
+  for (const [label, status, error, build] of hostile) {
+    it(`${label} -> ${status} ${error}, ve arka uca DOKUNULMAZ`, async () => {
       forbidBackends()
       const response = await route.POST(request('/api/orders', await build()))
-      expect(response.status).toBeGreaterThanOrEqual(400)
+      // KODU ONCE IDDIA ET. 503 gormek "reddedildi" DEGIL, "arka uca
+      // dokunuldu" demektir -- ve bu satir olmadan ikisi ayirt edilemez.
+      expect(response.status, `${label} answered ${response.status}`).toBe(status)
+      expect((await response.json()).error).toBe(error)
       expect(preflight).not.toHaveBeenCalled()
       expect(place).not.toHaveBeenCalled()
     })
   }
 
   it('POZITIF KONTROL: gecerli bir istek arka uclara GERCEKTEN dokunur', async () => {
-    // Bu satir olmadan yukaridaki on bir iddia, `POST`un hicbir sey yapmadigi
+    // Bu satir olmadan yukaridaki on iki iddia, `POST`un hicbir sey yapmadigi
     // bir dunyada da yesil kalirdi.
     const response = await route.POST(request('/api/orders', await signedPlace(payload())))
     expect(response.status).toBe(201)
     expect(preflight).toHaveBeenCalledTimes(1)
     expect(place).toHaveBeenCalledTimes(1)
+  })
+
+  it('NEGATIF KONTROL: imzayi GECEN bir istek, arka uc atarken 503 verir', async () => {
+    // Yukaridaki satirlarin ayirt etmek zorunda oldugu sey TAM OLARAK budur.
+    // Bu test 503'un ULASILABILIR oldugunu gosterir, yani `toBe(status)`
+    // iddialari bos degil GERCEK bir alternatifi disliyor.
+    forbidBackends()
+    const response = await route.POST(request('/api/orders', await signedPlace(payload())))
+    expect(response.status).toBe(503)
   })
 
   it('cok buyuk govde `JSON.parse` CAGRILMADAN reddedilir', async () => {
@@ -444,6 +486,33 @@ describe('imzalanan metin', () => {
     expect(await placeSignatureMatches({ ...buy, isBuy: false }, signature)).toBe(false)
     // KONTROL: dogru yonle tutar.
     expect(await placeSignatureMatches(buy, signature)).toBe(true)
+  })
+
+  /**
+   * ============ IKI SATIR, IKI MUTASYON BULGUSU ============
+   *
+   * `side:` satirini SABITLEYEN mutant (S1) ve iki basligi BIRLESTIREN mutant
+   * (S3) ilk turda HAYATTA KALDI, ve ikisi de "kismen esdeger"di: metinde
+   * BASKA bir sey de yone/niyete gore degistigi icin (alim/satim'da birim
+   * etiketleri, iptal/doldurma'da `tx:` satiri) sonuc yine ayrisiyordu.
+   *
+   * Yani savunma derinligi vardi ama iki satirin KENDISI olculmuyordu. Bu iki
+   * test onlari dogrudan sabitler: bir gun birim etiketleri tek bicime
+   * dusurulurse, `side:` satirinin korumasi sessizce kaybolmasin.
+   */
+  it('`side:` SATIRI yone gore degisir, ve tek basina yeterlidir', () => {
+    expect(orderPlaceText(payload({ isBuy: true }))).toContain('side: buy')
+    expect(orderPlaceText(payload({ isBuy: false }))).toContain('side: sell')
+  })
+
+  it('IPTAL ve DOLDURMA basliklari FARKLIDIR, tek basina', () => {
+    const base = resolvePayload()
+    const cancelText = orderResolveText({ ...base, intent: 'cancel' })
+    const fillText = orderResolveText({ ...base, intent: 'filled', txHash: TX })
+    const firstLine = (text: string): string => text.slice(0, text.indexOf('\n'))
+    expect(firstLine(cancelText)).not.toBe(firstLine(fillText))
+    expect(firstLine(cancelText)).toBe('arcpad cancel order')
+    expect(firstLine(fillText)).toBe('arcpad order filled')
   })
 
   it('BIRIM METNIN ICINDEDIR -- alim `spend_wei`, satim `sell_tok` der', () => {

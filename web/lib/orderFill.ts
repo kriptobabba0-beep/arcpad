@@ -80,8 +80,50 @@ export interface FillReader {
 }
 
 /** 32 baytlik bir adresi (log topic) 20 baytlik adrese indirir. */
-function addressFromTopic(topic: string): string {
+export function addressFromTopic(topic: string): string {
   return `0x${topic.slice(-40)}`.toLowerCase()
+}
+
+/** `getTransactionReceipt`in dondurdugu seyin, BURADA kullanilan kismi. */
+export type ReceiptShape = {
+  readonly status: string
+  readonly from: string
+  readonly logs: readonly {
+    readonly address: string
+    readonly topics: readonly string[]
+  }[]
+}
+
+/**
+ * ============ KARAR, AG'DAN AYRILMIS HALDE ============
+ *
+ * BU AYIRMA BIR MUTASYON TESTININ SONUCUDUR, bir uslup tercihi degil.
+ * `test/orders/route.test.ts` makbuz okuyucusunu ENJEKTE EDIYOR, yani asagidaki
+ * UC kontrolun -- basari, gonderen, ve `Trade` logu -- hicbirine HICBIR TEST
+ * ULASMIYORDU. Ucunu de silen bir mutant butun paketi yesil birakirdi, ve bu
+ * "olduremedik" degil "hic dokunmadik" demekti.
+ *
+ * Karar artik saf: bir makbuz sekli girer, bir hukum cikar. Ag hatalari
+ * `readFillReceipt`in isi olarak kalir, cunku onlar gercekten ag hakkindadir.
+ */
+export function verifyFillReceipt(
+  receipt: ReceiptShape,
+  owner: string,
+  curve: string,
+): FillReading {
+  if (receipt.status !== 'success') return { ok: false, reason: 'reverted' }
+  if (receipt.from.toLowerCase() !== owner.toLowerCase()) {
+    return { ok: false, reason: 'notTheOwner' }
+  }
+  const traded = receipt.logs.some(
+    (log) =>
+      log.address.toLowerCase() === curve.toLowerCase() &&
+      log.topics[0] === TRADE_TOPIC0 &&
+      log.topics[1] !== undefined &&
+      addressFromTopic(log.topics[1]) === owner.toLowerCase(),
+  )
+  if (!traded) return { ok: false, reason: 'noTrade' }
+  return { ok: true }
 }
 
 export const readFillReceipt: FillReader = async ({ txHash, owner, curve }) => {
@@ -102,18 +144,7 @@ export const readFillReceipt: FillReader = async ({ txHash, owner, curve }) => {
     return { ok: false, reason: 'unavailable' }
   }
 
-  if (receipt.status !== 'success') return { ok: false, reason: 'reverted' }
-  if (receipt.from.toLowerCase() !== owner.toLowerCase()) return { ok: false, reason: 'notTheOwner' }
-
-  const traded = receipt.logs.some(
-    (log) =>
-      log.address.toLowerCase() === curve.toLowerCase() &&
-      log.topics[0] === TRADE_TOPIC0 &&
-      log.topics[1] !== undefined &&
-      addressFromTopic(log.topics[1]) === owner.toLowerCase(),
-  )
-  if (!traded) return { ok: false, reason: 'noTrade' }
-  return { ok: true }
+  return verifyFillReceipt(receipt as unknown as ReceiptShape, owner, curve)
 }
 
 /** Test dikisi -- `chatBalance.ts`in `setHolderReaderForTesting`i ile ayni sinifta. */

@@ -321,6 +321,58 @@ describe('iki sinir, ve ikisi AYNI DEGIL', () => {
     expect(rows[0]?.n).toBe('3')
   })
 
+  /**
+   * ==========================================================================
+   *  KILIT GERCEKTEN ALINIYOR MU -- VE BU TEST BIR MUTASYON TURUNUN SONUCU
+   * ==========================================================================
+   *
+   * Ustteki es zamanlilik testi kilidi OLCMEK ICIN YETMIYOR, ve bu OLCULDU:
+   * `pg_advisory_xact_lock` satiri silinip paket kosturuldu ve test bir turda
+   * **5** satir gordu (3 bekliyordu -> kirmizi), ama mutasyon turunun kendi
+   * kosusunda 3 gorup YESIL kaldi. Yani sekiz es zamanli istek bazen kendi
+   * kendine serilesiyor: test bir YARISA dayaniyor ve yaris bazen "dogru"
+   * sonucu tesadufen veriyor. Bir kilidin varligini kanitlamak icin
+   * kullanilamaz.
+   *
+   * BU TEST YARISA DAYANMAZ. Ayni anahtari BASKA bir oturumdan tutar ve
+   * `placeOrder`in BLOKLANDIGINI olcer:
+   *
+   *   1. B oturumu `BEGIN` + ayni `(token, sahip)` anahtarini kilitler.
+   *   2. `placeOrder` cagrilir ve 750 ms icinde BITMEMELIDIR.
+   *   3. B `COMMIT` eder; `placeOrder` bundan SONRA biter.
+   *
+   * Kilit satiri silinirse 2. adim aninda biter ve test kirilir -- her
+   * seferinde, zamanlamaya bakmadan.
+   */
+  it('KILIT GERCEKTEN ALINIR: ayni anahtar tutulurken yerlestirme BLOKLANIR', async () => {
+    const blocker = await pool.connect()
+    let settled = false
+    try {
+      await blocker.query('BEGIN')
+      await blocker.query('SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))', [
+        TOKEN,
+        ALICE,
+      ])
+
+      const pending = placeOrder(pool, buy()).then((outcome) => {
+        settled = true
+        return outcome
+      })
+
+      await new Promise((done) => setTimeout(done, 750))
+      // BEKLEMEDEN GECEN 750 ms, KILIDIN OLMADIGI ANLAMINA GELIR.
+      expect(settled, 'placeOrder finished while the advisory lock was held').toBe(false)
+
+      await blocker.query('COMMIT')
+      const outcome = await pending
+      expect(outcome.ok).toBe(true)
+      expect(settled).toBe(true)
+    } finally {
+      // Kilit transaction kapsamli: COMMIT/ROLLBACK onu kendiliginden birakir.
+      blocker.release()
+    }
+  })
+
   it('NEGATIF KONTROL: kilitsiz iki istemci kotayi ASAR', async () => {
     // Yaris beklemeye dayanmaz: iki client ACIKCA once ikisi de sayar, sonra
     // ikisi de yazar. Kota 1 iken IKI satir duser.

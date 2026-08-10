@@ -107,15 +107,28 @@ describe('tetik predikati ZINCIRIN KORUMASININ AYNISIDIR', () => {
   })
 
   /**
-   * MUTANT: `slipBps = 0` yerine bir pay vermek.
+   * ============ OLCULMUS ESDEGERLIK: `slipBps` KARARI DEGISTIRMEZ ============
    *
-   * Bir slipaj payi emrin KENDI sinirinin uzerine binerdi ve emir
-   * kullanicinin istediginden DAHA IYI bir fiyat beklemeye baslardi -- yani
-   * tam esitlikte HIC dolmazdi. Bu test, tam esitligin tetiklendigini
-   * olcerek o mutanti oldurur; ustteki dongudeki `delta = 0` durumu da ayni
-   * seyi soyler ve burada ADIYLA duruyor.
+   * Bir mutasyon turu `slipBps`i 0'dan 100'e cevirdi ve mutant HAYATTA KALDI.
+   * Ilk tepkim testi guclendirmekti; dogru tepki OLCMEKTI, ve olcum sudur:
+   * `slipBps` YALNIZCA `plan.args`i (zincire gidecek slipaj sinirini)
+   * sekillendirir, `plan.tokens`i DEGIL. Bu predikat `plan.tokens` okur, yani
+   * mutant GERCEKTEN ESDEGERDIR.
+   *
+   * Bu test o esdegerligi SABITLER. Degeri ileriye donuktur: biri bir gun
+   * `plan.args[0]`i okumaya baslarsa -- ki o zaman `slipBps` KARARI DEGISTIRIR
+   * -- bu satir kirilir ve degisiklik sessiz kalmaz.
    */
-  it('tam esitlik TETIKLER -- bir slipaj payi eklenmis olsaydi etmezdi', () => {
+  it('ESDEGERLIK: `slipBps` planin SONUCUNU degistirmez, yalnizca SINIRINI', () => {
+    const state = freshCurve()
+    const zero = planBuyExactQuoteIn(state, PROFILE, FEES, ONE_USDC, 0)
+    const wide = planBuyExactQuoteIn(state, PROFILE, FEES, ONE_USDC, 100)
+    expect(wide.tokens).toBe(zero.tokens)
+    // ...ve ZINCIRE GIDEN sinir GERCEKTEN degisir, yani karsilastirma vakum degil.
+    expect(wide.args[0]).not.toBe(zero.args[0])
+  })
+
+  it('tam esitlik TETIKLER', () => {
     const state = freshCurve()
     const exact = planBuyExactQuoteIn(state, PROFILE, FEES, ONE_USDC, 0).tokens
     expect(
