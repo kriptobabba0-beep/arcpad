@@ -22,6 +22,7 @@ import {
  * `toHaveLength(14)` idi ve bir tabloyu silip baskasini eklemeye GORUNMEZDI.
  */
 const ALL_TABLES = [
+  'chat_messages',
   'creator_history',
   'curve_state',
   'deployment',
@@ -72,6 +73,21 @@ describe('kisitlar gercekten bagli mi', () => {
         hash32(0x70b1),
       ],
     )
+    /*
+     * CHAT'IN TOHUM SATIRI. Bu tarama "her tablo BOS OLMAMALI" diye bir
+     * muhafiz tasiyor (I-5) ve satirlarini var olan bir satiri KOPYALAYARAK
+     * bozuyor -- yani tohumu olmayan bir tablo taramadan SESSIZCE duserdi.
+     *
+     * `chat_messages`in yazicisi indexer DEGIL, `web`in POST rotasidir, yani
+     * `replayRange` onu asla doldurmaz ve tohum elle konmak ZORUNDA.
+     */
+    await pool.query(
+      `INSERT INTO chat_messages
+         (token, author_addr, body, balance_tok, balance_block_number,
+          nonce_hex, signature_hex, issued_at)
+       VALUES ($1, $2, 'gm', 1, 55000000, $3, $4, now())`,
+      [TOKEN, ALICE, hash32(0xc4a7), `0x${'ab'.repeat(65)}`],
+    )
   })
 
   // ---------------------------------------------------------------
@@ -99,6 +115,7 @@ describe('kisitlar gercekten bagli mi', () => {
       ORDER BY 1, 2`)
 
     expect(guarded.map((g) => `${g.rel}.${g.col}`)).toEqual([
+      'chat_messages.author_addr',
       'creator_history.creator',
       'curve_state.curve',
       'curve_state.graduation_target_addr',
@@ -163,8 +180,24 @@ describe('kisitlar gercekten bagli mi', () => {
         //
         // `$3::jsonb` YOLDAS ALANLAR icin ve varsayilani `{}`tir, yani bu
         // taramanin on yedi sutunundan on altisi icin hicbir sey degistirmez.
+        /*
+         * `OVERRIDING SYSTEM VALUE` OLMADAN BU TARAMA `chat_messages`TE
+         * PATLIYORDU, ve verdigi hata 23514 DEGIL 428C9 idi
+         * ("cannot insert a non-DEFAULT value into column message_seq").
+         *
+         * Sebep: `chat_messages.message_seq` `GENERATED ALWAYS AS IDENTITY`.
+         * Bu tarama satiri OLDUGU GIBI kopyalar, yani kimlik sutununu da
+         * yazmaya calisir. `OVERRIDING SYSTEM VALUE` o yasagi bu ifade icin
+         * kaldirir ve kimlik sutunu OLMAYAN tablolarda hicbir sey degistirmez
+         * (olculdu: bir identity sutunu bulunmayan tabloda da kabul edilir).
+         *
+         * Kopyalanan satirin birincil anahtari CAKISIR, ama bu taramayi
+         * bozmaz: CHECK kisitlari satir duzeyinde, benzersizlik ise indekse
+         * yazarken denetlenir -- yani BOZUK adres yine 23514 verir, ve
+         * pozitif kontrol zaten yalnizca "23514 DEGIL" iddiasindadir.
+         */
         const mutate = `
-          INSERT INTO ${rel}
+          INSERT INTO ${rel} OVERRIDING SYSTEM VALUE
           SELECT (jsonb_populate_record(
                     NULL::${rel},
                     to_jsonb(x) || jsonb_build_object($1::text, $2::text) || $3::jsonb)).*
@@ -196,7 +229,7 @@ describe('kisitlar gercekten bagli mi', () => {
       client.release()
     }
     // Tarama gercekten butun aileyi gezdi.
-    expect(checked).toHaveLength(18)
+    expect(checked).toHaveLength(19)
   })
 
   it('adres tasiyan HER sutun ya desenle ya yabanci anahtarla korunur', async () => {
@@ -285,6 +318,8 @@ describe('kisitlar gercekten bagli mi', () => {
     // Aday kumesinin kendisi de sabitlenir: sessizce KUCULMESI, "hepsi
     // korunuyor" ifadesini bosaltmanin en kolay yolu olurdu.
     expect(kinds.map((k) => k.name)).toEqual([
+      'chat_messages.author_addr',
+      'chat_messages.token',
       'creator_history.creator',
       'creator_history.token',
       'curve_state.curve',

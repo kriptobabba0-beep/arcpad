@@ -375,6 +375,11 @@ async function stableSnapshot(): Promise<Record<string, unknown[]>> {
     WHERE table_schema = 'public' AND column_default LIKE '%now()%'
     ORDER BY 1, 2`)
   expect(rows.map((r) => `${r.table_name}.${r.column_name}`)).toEqual([
+    // `chat_messages.created_at` -- indexer'in YAZMADIGI tek tablo. Tekrar
+    // oynatma bu tabloya hic dokunmaz, ama liste KATALOGDAN turedigi icin
+    // yeni sutun burada da beyan edilmek zorunda; sessizce kacmasi tam olarak
+    // bu iddianin onlemek icin var oldugu sey.
+    'chat_messages.created_at',
     'rejected_launches.seen_at',
     'schema_migrations.applied_at',
     'schema_state.updated_at',

@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { beforeEach, describe, expect, it } from 'vitest'
 import {
   listTokens,
@@ -16,6 +17,35 @@ import { pool, resetSchema } from './setup'
 import { addr, BUY, DEPLOYMENT, hash32, hashFor, PROFILE, RANGE, RANGE_TO, TOKEN } from './fixtures'
 
 const SOURCE = readFileSync(new URL('../src/queries.ts', import.meta.url), 'utf8')
+
+/**
+ * ==========================================================================
+ *  KAPI ARTIK `src/` IN TAMAMINI TARAR, TEK BIR DOSYAYI DEGIL.
+ * ==========================================================================
+ *
+ * Onceki hali YALNIZCA `queries.ts`i okuyordu, ve o dosyanin adi kapinin
+ * icine yaziliydi. Yani kural "hicbir sorgu zamana gore siralamaz" DEGIL,
+ * "`queries.ts` icindeki hicbir sorgu zamana gore siralamaz" idi -- ve ikisi
+ * arasindaki fark tam olarak bu deponun en sik kusurudur: BIR GIRIS
+ * NOKTASINDA KANITLANMIS bir ozellik HEPSINDE kanitlanmis gibi okunur.
+ *
+ * Faz 6 o farki somut yapti: `chat_messages`in sorgulari yeni bir dosyaya
+ * (`src/chat.ts`) indi ve eski kapi onlara HIC BAKMAZDI. Chat satirlarinin
+ * `event_seq`i olmadigi icin de tam olarak `created_at`e gore siralanmaya en
+ * acik sorgular onlar.
+ *
+ * Dosya listesi DISKTEN gelir, elle yazilan bir listeden degil: yeni bir
+ * `src/*.ts` eklemek onu kendiliginden kapsama sokar ve kapiyi guncellemeyi
+ * unutmak MUMKUN DEGILDIR.
+ */
+const SRC_DIR = fileURLToPath(new URL('../src/', import.meta.url))
+const SRC_FILES = readdirSync(SRC_DIR)
+  .filter((f) => f.endsWith('.ts'))
+  .sort()
+const SRC = SRC_FILES.map((f) => ({
+  file: f,
+  text: readFileSync(new URL(`../src/${f}`, import.meta.url), 'utf8'),
+}))
 
 /**
  * KAPI KODA BAKAR, YORUMA DEGIL.
@@ -50,12 +80,54 @@ const CODE = codeOf(SOURCE)
  * garanti etmez ve plan degistiginde sira da degisir.
  */
 describe('siralama kapisi', () => {
-  it('hicbir sorgu bir zaman kolonuna gore siralamaz', () => {
-    const clauses = [...CODE.matchAll(/order\s+by\s+([^;`)]+)/gi)].map((m) => m[1] ?? '')
+  it('hicbir sorgu bir zaman kolonuna gore siralamaz -- src/ IN TAMAMINDA', () => {
+    let total = 0
+    for (const { file, text } of SRC) {
+      const clauses = [...codeOf(text).matchAll(/order\s+by\s+([^;`)]+)/gi)].map((m) => m[1] ?? '')
+      total += clauses.length
+      for (const clause of clauses) expect(clause, `${file}: ${clause}`).not.toMatch(/_at\b/)
+    }
     // Bos kumeyi gecmesini onler: "hepsi temiz" sifir ifade uzerinde de
     // dogrudur ve o hali bir sey OLCMEZDI.
-    expect(clauses.length).toBeGreaterThan(0)
-    for (const clause of clauses) expect(clause).not.toMatch(/_at\b/)
+    expect(total).toBeGreaterThan(0)
+  })
+
+  /**
+   * KAPININ ERISIMI OLCULUR, VARSAYILMAZ.
+   *
+   * "src/ in tamamini tariyorum" cumlesi, taramanin `queries.ts` disinda bir
+   * dosyada GERCEKTEN bir `ORDER BY` gordugu gosterilmedikce bir iddiadir.
+   * Faz 6'nin `chat.ts`i o ikinci dosyadir ve chat satirlarinin `event_seq`i
+   * OLMADIGI icin en riskli olan da odur.
+   */
+  it('tarama `queries.ts` DISINDA da ORDER BY goruyor', () => {
+    const withOrderBy = SRC.filter(({ text }) => /order\s+by/i.test(codeOf(text))).map((s) => s.file)
+    expect(withOrderBy).toContain('queries.ts')
+    expect(withOrderBy).toContain('chat.ts')
+    expect(withOrderBy.length).toBeGreaterThan(1)
+  })
+
+  it('NEGATIF KONTROL: chat.ts `created_at`e gore siralarsa kapi kirilir', () => {
+    const chat = SRC.find((s) => s.file === 'chat.ts')
+    expect(chat).toBeDefined()
+    const mutated = codeOf(
+      /*
+       * `LIMIT $3` DAHIL, VE BU BIR DUZELTME: `ORDER BY m.message_seq DESC`
+       * dizesi `chat.ts`te ILK once bir YORUM icinde geciyor (kurali aciklayan
+       * paragrafta). `String.replace` bir dizeyle YALNIZCA ILK esleseni
+       * degistirir, yani mutasyon yorumu bozuyor, `codeOf` onu zaten soyuyor
+       * ve negatif kontrol "hicbir sey degismedi" diyerek DUSUYORDU -- kapinin
+       * kendisini olcen bir testin, kendi mutasyonunu ulasilmayan bir yere
+       * uygulamasi.
+       */
+      (chat as { text: string }).text.replace(
+        'ORDER BY m.message_seq DESC LIMIT $3',
+        'ORDER BY m.created_at DESC LIMIT $3',
+      ),
+    )
+    expect(mutated).not.toBe(codeOf((chat as { text: string }).text))
+    const clauses = [...mutated.matchAll(/order\s+by\s+([^;`)]+)/gi)].map((m) => m[1] ?? '')
+    expect(clauses.some((c) => /_at\b/.test(c))).toBe(true)
   })
 
   it('SORTS in her ifadesi bir _seq ya da paketlenmis miktar anahtaridir', () => {

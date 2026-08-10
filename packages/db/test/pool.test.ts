@@ -84,6 +84,7 @@ describe('snapshot', () => {
   it('katalogdan turer -- her tabloyu kapsar, elle yazilmis liste yok', async () => {
     const snap = await snapshot(pool)
     expect(Object.keys(snap).sort()).toEqual([
+      'chat_messages',
       'creator_history',
       'curve_state',
       'deployment',

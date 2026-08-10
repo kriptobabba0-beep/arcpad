@@ -23,6 +23,19 @@ export {
   type TradeEvent,
   type TransferEvent,
 } from './apply'
+export {
+  type ChatInsert,
+  type ChatMessageRow,
+  type ChatPostOutcome,
+  type ChatRateLimit,
+  chatPreflight,
+  countRecentChatMessages,
+  DEFAULT_CHAT_RATE_LIMIT,
+  encodeChatCursor,
+  listChatMessages,
+  parseChatCursor,
+  postChatMessage,
+} from './chat'
 export { type Deployment, getDeployment, putDeployment } from './deployment'
 export { type Address, fromHexBytes, lower, lowerHash32, pgSafeText, toHexBytes } from './hex'
 export { MIGRATIONS_DIR, migrationFiles, runMigrations } from './migrate'

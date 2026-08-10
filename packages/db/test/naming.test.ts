@@ -137,6 +137,12 @@ const EXEMPT_NON_AMOUNT = new Set([
   'graduated',
   'is_buy',
   'filename',
+  // `chat_messages.body` -- kullanicinin yazdigi metin. `name`/`symbol`/`uri`
+  // ile AYNI sinifta: bir gorunum tasimaz cunku bir MIKTAR degildir. Bir sonek
+  // uydurmak (`body_text`) kapiya hicbir sey KAZANDIRMAZDI -- muafiyet TIP
+  // KAPSAMLIDIR, yani `body bigint` yine yakalanir ve tam olarak yakalanmasi
+  // gereken sey odur.
+  'body',
   // `token_overview.fee_creator` -- ucreti O ANDA alan adres
   // (`creator_at(...)`). Bir ADRESTIR, miktar degil, ve `creator` gibi muaf
   // adlarla ayni sinifta. Ayri yazilmasinin sebebi `launch_creator`dan FARKLI
@@ -367,6 +373,16 @@ async function withColumn(ddl: string, check: (r: Report) => void): Promise<void
  * envanteri olarak da okunur.
  */
 const EXPECTED_INVENTORY = [
+  'public:r:chat_messages.author_addr',
+  'public:r:chat_messages.balance_block_number',
+  'public:r:chat_messages.balance_tok',
+  'public:r:chat_messages.body',
+  'public:r:chat_messages.created_at',
+  'public:r:chat_messages.issued_at',
+  'public:r:chat_messages.message_seq',
+  'public:r:chat_messages.nonce_hex',
+  'public:r:chat_messages.signature_hex',
+  'public:r:chat_messages.token',
   'public:r:creator_history.creator',
   'public:r:creator_history.from_seq',
   'public:r:creator_history.token',
@@ -657,7 +673,8 @@ describe('adlandirma kapisi', () => {
     const g = await gate(pool)
     // Bos kumeyi gecmesini onler -- "hepsi gecti" sifir sutun uzerinde de
     // dogrudur.
-    expect(g.numerics).toBe(42)
+    // 42 -> 43: `chat_messages.balance_tok` (gonderi anindaki bakiye).
+    expect(g.numerics).toBe(43)
     expect(g.badNumeric).toEqual([])
   })
 
