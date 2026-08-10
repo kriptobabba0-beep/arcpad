@@ -7,13 +7,16 @@
     "start": "tsx src/index.ts",
     "graduate": "tsx src/graduate.ts",
     "notify": "tsx src/notify.ts",
+    "orders": "tsx src/orders.ts",
     "graduate:localchain-proof": "tsx test/localchain/graduationProof.ts",
+    "custody-proof": "tsx test/localchain/custodyProof.ts",
     "scale-bench": "tsx test/localchain/scaleBench.ts",
     "drill": "tsx src/drill.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
+    "@arcpad/db": "workspace:*",
     "@arcpad/shared": "workspace:*",
     "dotenv": "17.4.2",
     "viem": "2.55.8"
