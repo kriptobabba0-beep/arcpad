@@ -1,0 +1,58 @@
+-- ==========================================================================
+--  LIMIT ORDERS ARE REMOVED FROM THE PRODUCT, SO THE TABLE GOES TOO
+-- ==========================================================================
+--
+-- Migration 014 created `limit_orders`. This one drops it. Nothing about 014
+-- was wrong -- the shape it chose was measured, not guessed -- and 014 stays in
+-- history unedited because migrations are APPEND-ONLY: a database that already
+-- applied 014 must be able to reach today's schema by moving FORWARD, and
+-- rewriting 014 would leave those databases carrying a table no file mentions.
+--
+-- ============ WHY THE FEATURE WENT, NOT JUST THE PANEL ============
+--
+-- The requirement traced to a reference SCREENSHOT (the `Market | Limit |
+-- Orders` strip), not to anything the protocol needs. With one venue there is
+-- one thing to draw -- `Buy | Sell` -- and a strip of one tab promises a choice
+-- that does not exist.
+--
+-- Hiding the UI and keeping the table was considered and refused. A dormant
+-- table is not a paused feature, it is a LEFTOVER: it still has to be migrated,
+-- still shows up in every schema gate, still has to be reasoned about by the
+-- next person who reads the catalog -- and `limit_orders` is one of only two
+-- USER-WRITTEN tables in this schema, so it is exactly the kind of row a
+-- reviewer must not have to ask about.
+--
+-- ============ WHAT IS ACTUALLY LOST, STATED PLAINLY ============
+--
+-- The custody measurement that shaped 014 is NOT lost, and it was never really
+-- about limit orders: `keeper/test/localchain/custodyProof.ts` establishes
+-- against the LIVE contracts that a third party cannot trade out of the owner's
+-- wallet -- tokens go to `msg.sender`, an unlimited approval buys nothing
+-- because the curve pulls `transferFrom(msg.sender, ...)`, and not one
+-- delegated entrypoint exists on `BondingCurve` or `ArcpadRouter`. That file
+-- stays, and it stays because it is the answer to EVERY future "let the keeper
+-- do it for the user" proposal, of which limit orders were only the first.
+--
+-- ============ ROWS ============
+--
+-- This drop DESTROYS DATA, and that is the honest description. It is acceptable
+-- here for a reason that is specific rather than general: no arcpad deployment
+-- has ever placed a production order. The keeper's order pass never filled
+-- anything -- it could not, by the measurement above -- so no row of this table
+-- was ever the record of a completed trade. A trade that really happened lives
+-- in `trades`, written by the indexer from a chain log, and this migration does
+-- not touch it.
+--
+-- No `IF EXISTS`: this file's precondition is that 014 ran, which the ledger
+-- enforces. A silent no-op here would let a database that never had the table
+-- pass through unnoticed, and this schema's guard exists to make exactly that
+-- kind of divergence loud.
+--
+-- The four indexes (`limit_orders_open_by_token_idx`, `..._owner_idx`,
+-- `..._owner_recent_idx`, `..._expiry_idx`) and every CHECK go with the table;
+-- they have no dependents of their own. No CASCADE is needed and none is given
+-- -- nothing references `limit_orders`, and if something DID, the failure of
+-- this statement is the message we want rather than a silent widening of the
+-- drop.
+
+DROP TABLE limit_orders;

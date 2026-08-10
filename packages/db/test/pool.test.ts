@@ -92,7 +92,6 @@ describe('snapshot', () => {
       'fee_events',
       'holders',
       'launches',
-      'limit_orders',
       'rejected_launches',
       'schema_migrations',
       'schema_state',
