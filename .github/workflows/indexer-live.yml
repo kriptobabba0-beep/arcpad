@@ -6,11 +6,24 @@ name: indexer-live
 # duzenleniyor ve paylasilan bir checkout'ta ayni dosyaya iki taraftan yazmak
 # gereksiz bir catisma yaratirdi. Islev ayni: ayri, ENGELLEMEYEN bir job.
 #
-# `continue-on-error` ADIM SEVIYESINDE, job seviyesinde DEGIL. Fark olculmus
-# bir arizadan geliyor (Faz 0 devir listesi, satir 41): job seviyesinde
-# konuldugunda basarisizlik YESIL gorunur ve kapinin degeri sifira duser.
-# Adim seviyesinde konuldugunda adim KIRMIZI kalir, yalnizca job'un sonucu
-# etkilenmez.
+# `continue-on-error` KALDIRILDI 2026-08-10. Onceki hal ADIM seviyesindeydi ve
+# gerekcesi olculmus bir arizadan geliyordu (Faz 0 devir listesi, satir 41):
+# JOB seviyesine konuldugunda basarisizlik YESIL gorunur ve kapinin degeri
+# sifira duser. O gerekce dogruydu ve hala dogru -- ama yetmedi.
+#
+# OLCULEN SONUC: bu is Faz 2 yeniden deploy'undan beri KIRMIZIYDI (eski factory,
+# eski smoke cifti, eski totalOwed) ve KIMSE FARK ETMEDI. Adim kirmizi kaliyordu
+# ama job'un sonucu etkilenmedigi icin GitHub hicbir bildirim gondermiyordu.
+# Runbook'un heartbeat'ler icin yazdigi cumle burada da gecerliydi: kimsenin
+# saymadigi bir gozlem dekorasyondur.
+#
+# NEDEN SIMDI KALDIRMAK UCUZ: bu is bir GUNLUK CRON, her push'ta kosmuyor.
+# "Canli zincir testini her push'ta kosturmak RPC'yi yorar ve kendi kendini
+# flake yapar" gerekcesi SIKLIGA aitti, ve siklik zaten gunde bir. Job kirmizi
+# olunca GitHub'in kendi bildirimi devreye girer -- ek dakika maliyeti YOK.
+#
+# VE ENGELLEYICI DEGIL: bu bir cron, bir PR kapisi degil. Kirmizi olmasi hicbir
+# merge'i durdurmuyor; yalnizca gorunur kiliyor.
 
 on:
   schedule:
@@ -66,10 +79,9 @@ jobs:
       - name: Chain env, from the address book
         run: pnpm addressbook --env-only >> "$GITHUB_ENV"
 
-      # ADIM SEVIYESINDE continue-on-error. Test ATLAMAZ: ARC_RPC_URL yoksa
-      # dosya cokerek "kosmadi"yi gorunur kilar.
+      # continue-on-error YOK. Test ATLAMAZ: ARC_RPC_URL yoksa dosya cokerek
+      # "kosmadi"yi gorunur kilar -- yani bir sessiz atlama da kirmizi verir.
       - name: Live integration test
-        continue-on-error: true
         run: pnpm --filter @arcpad/indexer test:live
         env:
           DATABASE_URL: postgres://arcpad:arcpad@localhost:5432/arcpad
