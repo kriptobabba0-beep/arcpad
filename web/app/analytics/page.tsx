@@ -102,9 +102,9 @@ export default async function AnalyticsPage({
               conclude that one of them is broken.
             */}
             <p className="max-w-[70ch] text-[12px] text-muted" data-testid="analytics-scope">
-              Fees here are what was charged on trades of indexed launches. The fee escrow is
-              shared with a superseded factory and is keyed by recipient, so its balance is
-              larger than these totals and the two are not the same quantity.
+              Fees here are what was charged on trades of indexed launches. The fee escrow is shared
+              with a superseded factory and is keyed by recipient, so its balance is larger than
+              these totals and the two are not the same quantity.
             </p>
           </>
         )}

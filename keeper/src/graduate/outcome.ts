@@ -187,7 +187,7 @@ const RULES: Record<string, Rule> = {
     disposition: 'quarantine',
     pageable: true,
     reason:
-      'ZeroLiquidity(): the locker computed zero seed liquidity from the curve\'s closing reserves. Nothing the keeper can retry into success.',
+      "ZeroLiquidity(): the locker computed zero seed liquidity from the curve's closing reserves. Nothing the keeper can retry into success.",
   },
   SeedShortfall: {
     code: 'pool-step-failed',
@@ -203,7 +203,7 @@ const RULES: Record<string, Rule> = {
     disposition: 'quarantine',
     pageable: true,
     reason:
-      "PoolPriceMismatch(): the pool did not open at the price the locker computed. The pool for this token already existed at another price, or PoolManager state diverged.",
+      'PoolPriceMismatch(): the pool did not open at the price the locker computed. The pool for this token already existed at another price, or PoolManager state diverged.',
   },
   PositionNotSeeded: {
     code: 'pool-step-failed',

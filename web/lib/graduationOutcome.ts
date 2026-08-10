@@ -5,7 +5,13 @@ import {
   InsufficientFundsError,
 } from 'viem'
 import type { FailureTone } from '@/components/errors/failureCopy'
-import { describe, findError, findRevertData, isTransportFailure, isUserRejection } from './decodeRevert'
+import {
+  describe,
+  findError,
+  findRevertData,
+  isTransportFailure,
+  isUserRejection,
+} from './decodeRevert'
 import { GRADUATION_ERROR_ABI } from './graduationAbi'
 
 /**
@@ -139,7 +145,7 @@ export const GRADUATION_COPY: Readonly<Record<string, Entry>> = {
     code: 'payout-rejected',
     tone: 'error',
     title: 'The curve could not pay the graduation target.',
-    body: "The native USDC leg from the curve to the target returned false. On Arc the cause of this is the node-level blocklist behind the 0x1800 precompile refusing the recipient. Retrying does not change it — the target has to stop being refused.",
+    body: 'The native USDC leg from the curve to the target returned false. On Arc the cause of this is the node-level blocklist behind the 0x1800 precompile refusing the recipient. Retrying does not change it — the target has to stop being refused.',
     remedy: 'Nothing you can change will help. Please report this.',
     retryable: false,
   },

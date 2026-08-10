@@ -101,7 +101,9 @@ describe('siralama kapisi', () => {
    * OLMADIGI icin en riskli olan da odur.
    */
   it('tarama `queries.ts` DISINDA da ORDER BY goruyor', () => {
-    const withOrderBy = SRC.filter(({ text }) => /order\s+by/i.test(codeOf(text))).map((s) => s.file)
+    const withOrderBy = SRC.filter(({ text }) => /order\s+by/i.test(codeOf(text))).map(
+      (s) => s.file,
+    )
     expect(withOrderBy).toContain('queries.ts')
     expect(withOrderBy).toContain('chat.ts')
     expect(withOrderBy.length).toBeGreaterThan(1)

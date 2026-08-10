@@ -60,11 +60,7 @@ import { loadMorePositions, loadMoreTraderTrades } from './actions'
  * property covered on a component is not covered on the page that renders it,
  * which is this repository's most frequent defect.
  */
-export default async function ProfilePage({
-  params,
-}: {
-  params: Promise<{ address: string }>
-}) {
+export default async function ProfilePage({ params }: { params: Promise<{ address: string }> }) {
   const { address } = await params
 
   // Non-strict: an address pasted from Postgres is lower-case, i.e. NOT EIP-55,

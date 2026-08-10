@@ -50,9 +50,7 @@ function valueOfDay(day: ProtocolDay, metric: DailyBarChartProps['metric']): big
 }
 
 function formatValue(value: bigint, metric: DailyBarChartProps['metric']): string {
-  return metric === 'volume'
-    ? formatUsdcCompact(value)
-    : Number(value).toLocaleString('en-US')
+  return metric === 'volume' ? formatUsdcCompact(value) : Number(value).toLocaleString('en-US')
 }
 
 export function DailyBarChart({ days, metric, title }: DailyBarChartProps) {
@@ -115,8 +113,7 @@ export function DailyBarChart({ days, metric, title }: DailyBarChartProps) {
            * heights are exact and a whale day cannot round two others to the
            * same pixel by accident.
            */
-          const height =
-            value === 0n ? 0 : Number((value * BigInt(VIEW_H * 1000)) / max) / 1000
+          const height = value === 0n ? 0 : Number((value * BigInt(VIEW_H * 1000)) / max) / 1000
           const x = i * (barWidth + GAP)
           return (
             <rect
@@ -159,9 +156,7 @@ export function DailyBarChart({ days, metric, title }: DailyBarChartProps) {
         </table>
       </VisuallyHidden>
 
-      <p className="text-[11px] text-muted">
-        {span} · UTC days of block time
-      </p>
+      <p className="text-[11px] text-muted">{span} · UTC days of block time</p>
     </figure>
   )
 }

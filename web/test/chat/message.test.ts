@@ -139,7 +139,9 @@ describe('imza -> yazar', () => {
   it('BASKA BIR TOKEN altina tasinmis imza tutmaz', async () => {
     const p = payload()
     const signature = await sign(p)
-    expect(await chatSignatureMatches({ ...p, token: `0x${'77'.repeat(20)}` }, signature)).toBe(false)
+    expect(await chatSignatureMatches({ ...p, token: `0x${'77'.repeat(20)}` }, signature)).toBe(
+      false,
+    )
   })
 
   it('BASKA BIR ZINCIRDE uretilmis imza tutmaz', async () => {

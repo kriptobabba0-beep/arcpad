@@ -130,7 +130,11 @@ export function GraduationView({
             ? 'Graduating…'
             : 'Graduate'
   const press =
-    connection === 'disconnected' ? onConnect : connection === 'wrongNetwork' ? onSwitch : onGraduate
+    connection === 'disconnected'
+      ? onConnect
+      : connection === 'wrongNetwork'
+        ? onSwitch
+        : onGraduate
 
   return (
     <div className="flex flex-col gap-2" data-testid="graduation-ready">

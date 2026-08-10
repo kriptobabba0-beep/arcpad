@@ -37,9 +37,7 @@ export function RangeToggle({ active }: { active: AnalyticsRange }) {
             {...(current ? { 'aria-current': 'page' as const } : {})}
             className={cx(
               'rounded-pill px-3 py-1.5 text-[13px] transition-colors duration-150',
-              current
-                ? 'bg-surface-2 text-text'
-                : 'text-muted hover:bg-surface hover:text-text',
+              current ? 'bg-surface-2 text-text' : 'text-muted hover:bg-surface hover:text-text',
             )}
           >
             {RANGE_LABEL[option]}

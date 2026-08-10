@@ -75,7 +75,10 @@ export function PositionsTable({ rows, nextCursor, loadMore }: PositionsTablePro
           <tr role="row" className={HEAD_ROW_CLASS}>
             <HeadCell>Token</HeadCell>
             <HeadCell numeric>Balance</HeadCell>
-            <HeadCell numeric title="Balance times the current curve price. Selling the position moves the price down, so the realised amount is lower.">
+            <HeadCell
+              numeric
+              title="Balance times the current curve price. Selling the position moves the price down, so the realised amount is lower."
+            >
               Value at last price
             </HeadCell>
             <HeadCell>Curve</HeadCell>

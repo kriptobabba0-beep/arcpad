@@ -175,7 +175,7 @@ export function loadGraduatorConfig(
   const lockerOverride = blankToUndefined(env['KEEPER_GRADUATE_LOCKER'])
   if ((factoryOverride === undefined) !== (lockerOverride === undefined)) {
     throw new Error(
-      'KEEPER_GRADUATE_FACTORY and KEEPER_GRADUATE_LOCKER must be set together or not at all. A factory without its locker would silently pair with the address book\'s locker -- which belongs to a DIFFERENT deployment -- and the executor would send graduate() through the wrong contract.',
+      "KEEPER_GRADUATE_FACTORY and KEEPER_GRADUATE_LOCKER must be set together or not at all. A factory without its locker would silently pair with the address book's locker -- which belongs to a DIFFERENT deployment -- and the executor would send graduate() through the wrong contract.",
     )
   }
 
@@ -190,12 +190,13 @@ export function loadGraduatorConfig(
     const rawStart = blankToUndefined(env['KEEPER_GRADUATE_START_BLOCK'])
     if (rawStart === undefined || !/^\d+$/.test(rawStart)) {
       throw new Error(
-        'KEEPER_GRADUATE_START_BLOCK must be set to the block the overridden factory was deployed in. Without it the Launched scan would start from the address book\'s startBlock, which for the production book is 1.2M blocks of a DIFFERENT factory\'s history -- every one of them scanned and none of them relevant.',
+        "KEEPER_GRADUATE_START_BLOCK must be set to the block the overridden factory was deployed in. Without it the Launched scan would start from the address book's startBlock, which for the production book is 1.2M blocks of a DIFFERENT factory's history -- every one of them scanned and none of them relevant.",
       )
     }
     startBlock = BigInt(rawStart)
   } else {
-    const book = bookDir === undefined ? loadAddressBook(chainId) : loadAddressBook(chainId, bookDir)
+    const book =
+      bookDir === undefined ? loadAddressBook(chainId) : loadAddressBook(chainId, bookDir)
     factory = book.launchFactory
     locker = book.arcpadLocker
     startBlock = book.launchFactoryBlock
@@ -212,7 +213,9 @@ export function loadGraduatorConfig(
   const rawMax = blankToUndefined(env['KEEPER_GRADUATE_MAX_PER_PASS'])
   const maxPerPass = rawMax === undefined ? DEFAULT_MAX_PER_PASS : Number(rawMax)
   if (!Number.isInteger(maxPerPass) || maxPerPass <= 0) {
-    throw new Error(`KEEPER_GRADUATE_MAX_PER_PASS must be a positive integer, got "${rawMax ?? ''}"`)
+    throw new Error(
+      `KEEPER_GRADUATE_MAX_PER_PASS must be a positive integer, got "${rawMax ?? ''}"`,
+    )
   }
 
   const rawChunk = blankToUndefined(env['KEEPER_LOG_SCAN_CHUNK'])
@@ -257,8 +260,7 @@ export function loadGraduatorConfig(
   }
 
   const rawBudget = blankToUndefined(env['KEEPER_GRADUATE_CHUNKS_PER_PASS'])
-  const budgetDefault =
-    opts?.once === true ? ONCE_MAX_CHUNKS_PER_PASS : DEFAULT_MAX_CHUNKS_PER_PASS
+  const budgetDefault = opts?.once === true ? ONCE_MAX_CHUNKS_PER_PASS : DEFAULT_MAX_CHUNKS_PER_PASS
   const maxChunksPerPass = rawBudget === undefined ? budgetDefault : Number(rawBudget)
   if (!Number.isInteger(maxChunksPerPass) || maxChunksPerPass <= 0) {
     throw new Error(

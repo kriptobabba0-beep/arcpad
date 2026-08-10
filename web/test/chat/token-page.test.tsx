@@ -138,7 +138,9 @@ async function renderTokenPage(chat: ReadResult<Page<ChatMessageRow>>) {
   vi.mocked(read.readHolders).mockResolvedValue(emptyPage())
   vi.mocked(read.readChat).mockResolvedValue(chat)
 
-  const tree = await resolveServerTree(await TokenPage({ params: Promise.resolve({ address: TOKEN }) }))
+  const tree = await resolveServerTree(
+    await TokenPage({ params: Promise.resolve({ address: TOKEN }) }),
+  )
   return renderWithProviders(tree as ReactElement)
 }
 
@@ -157,9 +159,7 @@ describe('/token/[address] CHAT PANELINI CIZER', () => {
     // (1) PANEL ULASILABILIR.
     expect(screen.getByTestId('chat-panel')).toBeInTheDocument()
     // (2) SATIRLAR SAYFADAN GELDI -- elle kurulmus bir prop'tan degil.
-    expect(screen.getByTestId('chat-messages')).toHaveTextContent(
-      'this curve is going to graduate',
-    )
+    expect(screen.getByTestId('chat-messages')).toHaveTextContent('this curve is going to graduate')
     // (3) SAKLANAN BAKIYE EKRANDA, ve GUNCEL olandan AYRI.
     expect(screen.getByTestId('chat-stake-then')).toHaveTextContent('held 2.50% when posted')
     expect(screen.getByTestId('chat-stake-now')).toHaveTextContent('holds none now')

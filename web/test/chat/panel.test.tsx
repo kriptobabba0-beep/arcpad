@@ -46,7 +46,10 @@ function message(overrides: Partial<ChatMessageRow> = {}): ChatMessageRow {
 
 const FRESH = { stale: false, lastBlock: 55_900_000n, updatedAt: new Date(), blocksBehind: 0n }
 
-function ok(rows: readonly ChatMessageRow[], nextCursor: string | null = null): ReadResult<Page<ChatMessageRow>> {
+function ok(
+  rows: readonly ChatMessageRow[],
+  nextCursor: string | null = null,
+): ReadResult<Page<ChatMessageRow>> {
   return { ok: true, stale: false, data: { rows, nextCursor }, indexer: FRESH as never }
 }
 

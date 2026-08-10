@@ -61,11 +61,7 @@ type LockFile = { owner: string; token: string; acquiredAt: number; expiresAt: n
  *                yerde durur; ayri bir knob bir daha unutulacak bir knobtur.
  * @param owner   Insan okuyabilir sahip kimligi. Sayfada gorunur.
  */
-export function fileCurveLocks(
-  dir: string,
-  owner: string,
-  opts?: { ttlMs?: number },
-): CurveLocks {
+export function fileCurveLocks(dir: string, owner: string, opts?: { ttlMs?: number }): CurveLocks {
   const ttlMs = opts?.ttlMs ?? DEFAULT_LOCK_TTL_MS
   mkdirSync(dir, { recursive: true })
 

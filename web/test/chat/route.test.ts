@@ -84,10 +84,7 @@ function basePayload(overrides: Partial<ChatPayload> = {}): ChatPayload {
   }
 }
 
-async function signed(
-  payload: ChatPayload,
-  key = ALICE,
-): Promise<Record<string, unknown>> {
+async function signed(payload: ChatPayload, key = ALICE): Promise<Record<string, unknown>> {
   return { ...payload, signature: await key.signMessage({ message: chatMessageText(payload) }) }
 }
 
@@ -208,7 +205,9 @@ describe('imza dogrulanmadan HICBIR I/O yapilmaz', () => {
   it('LINK iceren govde -> 400, ve ZINCIRE HIC GIDILMEZ', async () => {
     // Link kontrolu imzadan da ONCE: gecerli imzali bir link mesaji da
     // zincire ulasmadan duser, yani spam bize RPC objesi harcatamaz.
-    const response = await route.POST(request(await signed(basePayload({ body: 'go to evil.com' }))))
+    const response = await route.POST(
+      request(await signed(basePayload({ body: 'go to evil.com' }))),
+    )
     expect(response.status).toBe(400)
     expect(await response.json()).toMatchObject({ error: 'link', detail: 'evil.com' })
     expect(getPool).not.toHaveBeenCalled()
@@ -336,7 +335,9 @@ describe('holder kapisi', () => {
   it('ZINCIR OKUNAMAZSA -> 503, ve satir YAZILMAZ', async () => {
     getPool.mockImplementation(() => poolStub)
     preflight.mockResolvedValue({ launchExists: true, recentCount: 0 })
-    setHolderReaderForTesting(vi.fn(async () => ({ ok: false as const, reason: 'unavailable' as const })) as never)
+    setHolderReaderForTesting(
+      vi.fn(async () => ({ ok: false as const, reason: 'unavailable' as const })) as never,
+    )
     const response = await route.POST(request(await signed(basePayload())))
     expect(response.status).toBe(503)
     expect(await response.json()).toEqual({ error: 'chainUnavailable' })
@@ -429,7 +430,11 @@ describe('yazma', () => {
 
   it('bir CHECK reddederse -> 400 ve KISIT ADI cevapta', async () => {
     allowEverything()
-    post.mockResolvedValue({ ok: false, reason: 'rejected', constraint: 'chat_messages_body_check' })
+    post.mockResolvedValue({
+      ok: false,
+      reason: 'rejected',
+      constraint: 'chat_messages_body_check',
+    })
     const response = await route.POST(request(await signed(basePayload())))
     expect(response.status).toBe(400)
     expect(await response.json()).toMatchObject({ detail: 'chat_messages_body_check' })

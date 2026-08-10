@@ -63,9 +63,7 @@ import type { QuarantineStore } from './state'
  * gerekirdi.
  */
 
-export type SimulateResult =
-  | { ok: true }
-  | { ok: false; revertData: string | null; detail: string }
+export type SimulateResult = { ok: true } | { ok: false; revertData: string | null; detail: string }
 
 export type ReceiptSummary = {
   status: 'success' | 'reverted'
@@ -285,7 +283,9 @@ export async function runGraduationPass(deps: GraduatorDeps): Promise<PassSummar
     if (pending.length > 0) {
       emit(
         'ok',
-        target === ZERO_ADDRESS ? 'graduation-waiting-for-target' : 'graduation-blocked-wrong-target',
+        target === ZERO_ADDRESS
+          ? 'graduation-waiting-for-target'
+          : 'graduation-blocked-wrong-target',
         target === ZERO_ADDRESS
           ? `graduation-waiting-for-target: ${backlog} are waiting, and the factory's graduationTarget is still 0x0. BondingCurve.graduate() reverts GraduationTargetUnset() for all of them. This is the production factory's DELIBERATE state today -- it is not an incident, nothing is lost, and the moment a target is applied this executor graduates the backlog. Recorded at OK so a platform that has not armed its target cannot wear the pager out.`
           : `graduation-blocked-wrong-target: ${backlog} cannot be graduated by this executor; see the page above.`,
@@ -378,13 +378,29 @@ async function attemptOne(
   } catch (error) {
     const consecutive = deps.chainErrors?.fail() ?? CHAIN_ERRORS_BEFORE_PAGE
     const classification = chainErrorClassification(describe(error), consecutive)
-    emit(classification.level, `graduation-simulate-error|${curve}`, `${curve}: ${classification.reason}`)
-    return { curve, code: 'chain-error', level: classification.level, detail: classification.reason }
+    emit(
+      classification.level,
+      `graduation-simulate-error|${curve}`,
+      `${curve}: ${classification.reason}`,
+    )
+    return {
+      curve,
+      code: 'chain-error',
+      level: classification.level,
+      detail: classification.reason,
+    }
   }
 
   if (!simulation.ok) {
     const classification = classifyRevert(simulation.revertData)
-    return applyClassification(deps, curve, classification, at, emit, `${classification.reason} [${simulation.detail}]`)
+    return applyClassification(
+      deps,
+      curve,
+      classification,
+      at,
+      emit,
+      `${classification.reason} [${simulation.detail}]`,
+    )
   }
 
   if (deps.dryRun) {
@@ -407,8 +423,17 @@ async function attemptOne(
   } catch (error) {
     const consecutive = deps.chainErrors?.fail() ?? CHAIN_ERRORS_BEFORE_PAGE
     const classification = chainErrorClassification(describe(error), consecutive)
-    emit(classification.level, `graduation-send-failed|${curve}`, `${curve}: the transaction could not be broadcast even though it simulated green. ${classification.reason}`)
-    return { curve, code: 'chain-error', level: classification.level, detail: classification.reason }
+    emit(
+      classification.level,
+      `graduation-send-failed|${curve}`,
+      `${curve}: the transaction could not be broadcast even though it simulated green. ${classification.reason}`,
+    )
+    return {
+      curve,
+      code: 'chain-error',
+      level: classification.level,
+      detail: classification.reason,
+    }
   }
 
   let receipt: ReceiptSummary
@@ -423,7 +448,13 @@ async function attemptOne(
       `graduation-receipt-unknown|${curve}`,
       `graduation-receipt-unknown: locker.graduate(${curve}) was BROADCAST as ${hash} but its receipt could not be read. The transaction may or may not have landed; the next pass reads graduated() and will resolve it. Do not re-send by hand before checking that: ${describe(error)}`,
     )
-    return { curve, code: 'chain-error', level: 'page', transactionHash: hash, detail: describe(error) }
+    return {
+      curve,
+      code: 'chain-error',
+      level: 'page',
+      transactionHash: hash,
+      detail: describe(error),
+    }
   }
 
   if (receipt.status === 'reverted') {
@@ -452,7 +483,14 @@ async function attemptOne(
       `graduation-readback-failed|${curve}`,
       `graduation-readback-failed: ${hash} succeeded but graduated() could not be re-read at block ${receipt.blockNumber}, so this executor cannot claim the curve graduated: ${describe(error)}`,
     )
-    return { curve, code: 'chain-error', level: 'page', transactionHash: hash, gasUsed: receipt.gasUsed, detail: describe(error) }
+    return {
+      curve,
+      code: 'chain-error',
+      level: 'page',
+      transactionHash: hash,
+      gasUsed: receipt.gasUsed,
+      detail: describe(error),
+    }
   }
 
   const graduated = after[0]?.graduated === true
@@ -462,7 +500,14 @@ async function attemptOne(
       `graduation-did-not-latch|${curve}`,
       `graduation-did-not-latch: ${hash} succeeded at block ${receipt.blockNumber} but ${curve}.graduated() still reads false. A successful receipt is not a graduation; something answered the call without latching the curve. Do not retry blindly.`,
     )
-    return { curve, code: 'unknown-revert', level: 'page', transactionHash: hash, gasUsed: receipt.gasUsed, detail: 'receipt succeeded but graduated() is still false' }
+    return {
+      curve,
+      code: 'unknown-revert',
+      level: 'page',
+      transactionHash: hash,
+      gasUsed: receipt.gasUsed,
+      detail: 'receipt succeeded but graduated() is still false',
+    }
   }
 
   deps.quarantine.clear(curve)

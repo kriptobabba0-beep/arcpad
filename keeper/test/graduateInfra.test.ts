@@ -79,12 +79,12 @@ describe('loadGraduatorConfig', () => {
   it('FABRIKA VE LOCKER BIRLIKTE verilir; yarim cift REDDEDILIR', () => {
     // `resolveSmokePair`in dersi: yarim bir cift, kalan yariyi BASKA bir
     // deployment'tan alir ve sessizce yanlis kontrata yazar.
-    expect(() =>
-      loadGraduatorConfig({ ...BASE_ENV, KEEPER_GRADUATE_FACTORY: FACTORY }),
-    ).toThrow(/must be set together/)
-    expect(() =>
-      loadGraduatorConfig({ ...BASE_ENV, KEEPER_GRADUATE_LOCKER: LOCKER }),
-    ).toThrow(/must be set together/)
+    expect(() => loadGraduatorConfig({ ...BASE_ENV, KEEPER_GRADUATE_FACTORY: FACTORY })).toThrow(
+      /must be set together/,
+    )
+    expect(() => loadGraduatorConfig({ ...BASE_ENV, KEEPER_GRADUATE_LOCKER: LOCKER })).toThrow(
+      /must be set together/,
+    )
   })
 
   it('acik yigin START BLOCK olmadan kabul edilmez', () => {
@@ -208,10 +208,8 @@ describe('loadGraduatorConfig', () => {
     )
     // ACIK AYAR HER IKI MODU DA EZER.
     expect(
-      loadGraduatorConfig(
-        { ...BASE_ENV, KEEPER_GRADUATE_CHUNKS_PER_PASS: '3' },
-        { once: true },
-      ).maxChunksPerPass,
+      loadGraduatorConfig({ ...BASE_ENV, KEEPER_GRADUATE_CHUNKS_PER_PASS: '3' }, { once: true })
+        .maxChunksPerPass,
     ).toBe(3)
   })
 })

@@ -183,9 +183,7 @@ describe('the earnings total on the composed page', () => {
    * tidy version is indistinguishable from a healthy one.
    */
   it('a ledger smaller than the breakdown is reported, not clamped', async () => {
-    mocks().earnings.mockResolvedValue(
-      fresh({ ...EARNINGS, unattributedWei: -1_000_000_000_000n }),
-    )
+    mocks().earnings.mockResolvedValue(fresh({ ...EARNINGS, unattributedWei: -1_000_000_000_000n }))
     await renderProfile()
     const box = screen.getByTestId('earnings-unattributed')
     expect(within(box).getByText('Ledger disagrees')).toBeInTheDocument()

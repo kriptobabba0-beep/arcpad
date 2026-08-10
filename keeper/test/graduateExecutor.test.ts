@@ -15,7 +15,6 @@ import type {
   Cursor,
   CursorStore,
   HeadBlock,
-
   ObservedLog,
   ReadCall,
 } from '../src/watch/graduationWindow'
@@ -49,9 +48,7 @@ function fakeReader(opts: ReaderOpts): ChainReader & { reads: string[] } {
   // fixture haritasi ISKA GECER -- ve iska gecen fixture, testin olcmek
   // istedigi seyi degil bir okuma hatasini olcerdi.
   const lookup = (address: Address): CurveFixture | undefined =>
-    Object.entries(opts.curves).find(
-      ([key]) => key.toLowerCase() === address.toLowerCase(),
-    )?.[1]
+    Object.entries(opts.curves).find(([key]) => key.toLowerCase() === address.toLowerCase())?.[1]
   return {
     reads,
     getBlock(): Promise<HeadBlock> {
@@ -174,7 +171,9 @@ describe('runGraduationPass -- hedef silahlanmamisken', () => {
     const reader = fakeReader({
       target: ZERO,
       launched: [CURVE_A],
-      curves: { [CURVE_A]: { complete: true, graduated: false, quote: 12_161_433_369_060_378_707n } },
+      curves: {
+        [CURVE_A]: { complete: true, graduated: false, quote: 12_161_433_369_060_378_707n },
+      },
     })
     const writer = fakeWriter({})
     const { summary, emitted } = await pass({ reader, writer })
@@ -192,7 +191,7 @@ describe('runGraduationPass -- hedef silahlanmamisken', () => {
     expect(emitted.some((e) => e.key === 'graduation-waiting-for-target')).toBe(true)
   })
 
-  it('hedef BASKA bir adresse SAYFA cikarir ve hicbir curve\'e dokunmaz', async () => {
+  it("hedef BASKA bir adresse SAYFA cikarir ve hicbir curve'e dokunmaz", async () => {
     const reader = fakeReader({
       target: OTHER_LOCKER,
       launched: [CURVE_A],
@@ -283,7 +282,7 @@ describe('runGraduationPass -- silahliyken', () => {
 })
 
 describe('runGraduationPass -- yaris ve idempotenslik', () => {
-  it('AlreadyGraduated bir NO-OP\'tir: sayfa yok, yayin yok, gaz yok', async () => {
+  it("AlreadyGraduated bir NO-OP'tir: sayfa yok, yayin yok, gaz yok", async () => {
     const reader = fakeReader({
       target: LOCKER,
       launched: [CURVE_A],
@@ -441,7 +440,7 @@ describe('runGraduationPass -- kesif', () => {
     expect(writer.simulated).toEqual([CURVE_A])
   })
 
-  it('mezun olmus ve acik curve\'ler bekleyen kumeye GIRMEZ', async () => {
+  it("mezun olmus ve acik curve'ler bekleyen kumeye GIRMEZ", async () => {
     const reader = fakeReader({
       target: LOCKER,
       launched: [CURVE_A, CURVE_B],

@@ -30,7 +30,7 @@ const OBSERVED_GRADUATION_TARGET_UNSET = '0xfe30fa5b'
 const OBSERVED_NOT_COMPLETE = '0x0701727f'
 
 describe('classifyRevert -- canli olculmus veriler', () => {
-  it('ABI turetmesi ile canli olcum AYNI selector\'u verir', () => {
+  it("ABI turetmesi ile canli olcum AYNI selector'u verir", () => {
     expect(MEASURED_SELECTORS.GraduationTargetUnset).toBe(OBSERVED_GRADUATION_TARGET_UNSET)
     expect(MEASURED_SELECTORS.NotComplete).toBe(OBSERVED_NOT_COMPLETE)
     expect(() => {

@@ -1504,7 +1504,8 @@ export async function scanCurveStates(
       curve,
       complete,
       graduated,
-      realQuoteWei: complete && !graduated ? asBigint(slots[2], `${curve}.realQuoteReserves`) : null,
+      realQuoteWei:
+        complete && !graduated ? asBigint(slots[2], `${curve}.realQuoteReserves`) : null,
     }
   })
 }
@@ -1619,7 +1620,9 @@ async function readCurveSlotsBatched(
 
   const out: unknown[][] = []
   for (let index = 0; index < curves.length; index += 1) {
-    out.push(values.slice(index * CURVE_SLOT_FUNCTIONS.length, (index + 1) * CURVE_SLOT_FUNCTIONS.length))
+    out.push(
+      values.slice(index * CURVE_SLOT_FUNCTIONS.length, (index + 1) * CURVE_SLOT_FUNCTIONS.length),
+    )
   }
   return out
 }

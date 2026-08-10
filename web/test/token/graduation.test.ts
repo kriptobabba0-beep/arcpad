@@ -2,7 +2,12 @@ import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ARCPAD_ERROR_ABI } from '@arcpad/shared/browser'
-import { BaseError, ContractFunctionRevertedError, encodeErrorResult, toFunctionSelector } from 'viem'
+import {
+  BaseError,
+  ContractFunctionRevertedError,
+  encodeErrorResult,
+  toFunctionSelector,
+} from 'viem'
 import { describe, expect, it } from 'vitest'
 import { graduationStateFrom } from '@/components/token/useGraduation'
 import { decodeArcpadError } from '@/lib/decodeRevert'
@@ -257,9 +262,9 @@ describe('the four-way decision, and the one state that may not offer an action'
     expect(graduationStateFrom({ graduated: false, target: undefined, failed: true }).kind).toBe(
       'unavailable',
     )
-    expect(graduationStateFrom({ graduated: undefined, target: undefined, failed: false }).kind).toBe(
-      'loading',
-    )
+    expect(
+      graduationStateFrom({ graduated: undefined, target: undefined, failed: false }).kind,
+    ).toBe('loading')
   })
 })
 

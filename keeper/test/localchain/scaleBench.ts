@@ -186,14 +186,13 @@ async function measureArc(): Promise<void> {
   for (let i = 0; i < SAMPLES; i += 1) {
     const started = performance.now()
     try {
-      await rpc(ARC_RPC, 'eth_call', [
-        { to: PROD_CURVE_COMPLETE, data: completeData },
-        'latest',
-      ])
+      await rpc(ARC_RPC, 'eth_call', [{ to: PROD_CURVE_COMPLETE, data: completeData }, 'latest'])
       samples.push(performance.now() - started)
     } catch (error) {
       limited += 1
-      console.log(`  sample ${i}: REFUSED ${error instanceof Error ? error.message : String(error)}`)
+      console.log(
+        `  sample ${i}: REFUSED ${error instanceof Error ? error.message : String(error)}`,
+      )
     }
     // ARC'IN HIZ SINIRI PAYLASILIR. Bu betik onu tuketmek icin degil OLCMEK
     // icin var; 600 ms ara AGENT-CONTEXT'in olctugu 100 ms tabanindan bol
@@ -289,7 +288,9 @@ async function measureArc(): Promise<void> {
   // `eth_call`i `Promise.all` ile ES ZAMANLI yayar. AGENT-CONTEXT alti es
   // zamanli cagrida 2/6 olctu, yani uc es zamanli cagri ZATEN cekismeli
   // bolgededir -- "77 ms x 3'u paralel say" bir VARSAYIM olurdu.
-  console.log('\n=== L4: ONE curve, exactly as scanCurveStates reads it (3 concurrent eth_call) ===')
+  console.log(
+    '\n=== L4: ONE curve, exactly as scanCurveStates reads it (3 concurrent eth_call) ===',
+  )
   const slotData = (['complete', 'graduated', 'realQuoteReserves'] as const).map((functionName) =>
     encodeFunctionData({ abi: CURVE_WATCH_ABI, functionName }),
   )
@@ -309,7 +310,11 @@ async function measureArc(): Promise<void> {
   console.log(
     `  n=10 rounds  min=${Math.min(...rounds).toFixed(1)}ms  median=${median(rounds).toFixed(1)}ms  max=${Math.max(...rounds).toFixed(1)}ms  refused=${roundRefusals}/30 sub-calls`,
   )
-  check('L4 measured the per-curve cost', rounds.length === 10, `median ${median(rounds).toFixed(1)}ms`)
+  check(
+    'L4 measured the per-curve cost',
+    rounds.length === 10,
+    `median ${median(rounds).toFixed(1)}ms`,
+  )
 
   // ============ L5: BATCH'IN GERCEK SEKLI ============
   //
@@ -336,7 +341,11 @@ async function measureArc(): Promise<void> {
   console.log(
     `  500 sub-calls (=167 curves)  runs=[${mixedRuns.map((r) => r.toFixed(0)).join(', ')}]ms  median=${median(mixedRuns).toFixed(1)}ms  request=${mixedData.length / 2}B`,
   )
-  check('L5 measured the real chunk shape', mixedRuns.length === 3, `median ${median(mixedRuns).toFixed(1)}ms`)
+  check(
+    'L5 measured the real chunk shape',
+    mixedRuns.length === 3,
+    `median ${median(mixedRuns).toFixed(1)}ms`,
+  )
 
   // ============ L6: TOPLU YOL, GERCEK ZINCIRDE, GERCEK CURVE'LERE KARSI ====
   //
@@ -382,7 +391,11 @@ async function measureArc(): Promise<void> {
       const at = performance.now()
       try {
         await rpc(ARC_RPC, 'eth_getLogs', [
-          { fromBlock: `0x${(head - 2n).toString(16)}`, toBlock: `0x${head.toString(16)}`, topics: [completedTopic] },
+          {
+            fromBlock: `0x${(head - 2n).toString(16)}`,
+            toBlock: `0x${head.toString(16)}`,
+            topics: [completedTopic],
+          },
         ])
         latencies.push(performance.now() - at)
       } catch (error) {
@@ -415,7 +428,9 @@ async function measureArc(): Promise<void> {
   const perCurveMs = median(rounds)
   const perChunkMs = median(mixedRuns)
   console.log('\n=== Arc-projected pass duration (FLOOR: assumes zero rate-limit backoff) ===')
-  console.log(`    unit costs measured above: L4 per curve = ${perCurveMs.toFixed(1)}ms, L5 per 500-sub-call chunk = ${perChunkMs.toFixed(1)}ms`)
+  console.log(
+    `    unit costs measured above: L4 per curve = ${perCurveMs.toFixed(1)}ms, L5 per 500-sub-call chunk = ${perChunkMs.toFixed(1)}ms`,
+  )
   for (const n of BENCH_SIZES) {
     const chunks = Math.ceil((3 * n) / 500)
     const sequential = n * perCurveMs
@@ -500,10 +515,15 @@ async function measureLocal(): Promise<void> {
       // HER ONUNCUSU TAMAMLANMIS. Duz bir "hicbiri hazir degil" kumesi,
       // `realQuoteReserves` cozumunu HIC calistirmaz ve olcum bekleyen
       // curve'leri olmayan bir taramanin bedelini olcerdi.
-      await rpc(url, 'anvil_setCode', [syntheticCurve(i), i % 10 === 0 ? completedStandIn : standIn])
+      await rpc(url, 'anvil_setCode', [
+        syntheticCurve(i),
+        i % 10 === 0 ? completedStandIn : standIn,
+      ])
     }
     const head = BigInt((await rpc(url, 'eth_blockNumber', [])) as string)
-    console.log(`\n  etched ${largest} synthetic curves (${(standIn.length - 2) / 2} bytes each), head=${head}`)
+    console.log(
+      `\n  etched ${largest} synthetic curves (${(standIn.length - 2) / 2} bytes each), head=${head}`,
+    )
 
     const client = createPublicClient({ transport: http(url, { retryCount: 0 }) })
     const reader = viemChainReader(client as never)

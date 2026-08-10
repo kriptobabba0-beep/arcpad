@@ -97,10 +97,18 @@ export function ChatPanel({ token, symbol, chat, loadMore }: ChatPanelProps) {
         <p className="text-[12px] text-muted">Holders only</p>
       </header>
 
-      <ChatComposer token={token} symbol={symbol} onPosted={(row) => setPosted((p) => [row, ...p])} />
+      <ChatComposer
+        token={token}
+        symbol={symbol}
+        onPosted={(row) => setPosted((p) => [row, ...p])}
+      />
 
       {page === null ? (
-        <p role="status" data-testid="chat-unavailable" className="px-4 py-6 text-[13px] text-muted">
+        <p
+          role="status"
+          data-testid="chat-unavailable"
+          className="px-4 py-6 text-[13px] text-muted"
+        >
           Chat is unavailable right now. The database that stores messages is not answering —
           prices, reserves and trading on this page read the chain directly and are unaffected.
         </p>
@@ -288,7 +296,11 @@ function ChatComposer({
           disabled={busy || draft.trim() === ''}
           onClick={() => void onSubmit()}
         >
-          {state.kind === 'signing' ? 'Sign in wallet…' : state.kind === 'sending' ? 'Posting…' : 'Post'}
+          {state.kind === 'signing'
+            ? 'Sign in wallet…'
+            : state.kind === 'sending'
+              ? 'Posting…'
+              : 'Post'}
         </Button>
       </div>
       {/*

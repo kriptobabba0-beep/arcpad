@@ -162,9 +162,7 @@ export function ClaimView({
             {failure.title}
           </p>
           <p className="text-muted">{failure.detail}</p>
-          {failure.remedy === undefined ? null : (
-            <p className="text-muted">{failure.remedy}</p>
-          )}
+          {failure.remedy === undefined ? null : <p className="text-muted">{failure.remedy}</p>}
         </div>
       )}
     </div>

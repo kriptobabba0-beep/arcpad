@@ -103,8 +103,7 @@ export const DEFAULT_COMPLETED_WATCH_MS = 2_000
 export const COMPLETED_WATCH_MAX_LOOKBACK = 200n
 
 export type Ring =
-  | { rang: false }
-  | { rang: true; curves: Address[]; strangers: Address[]; throughBlock: bigint }
+  { rang: false } | { rang: true; curves: Address[]; strangers: Address[]; throughBlock: bigint }
 
 export type CompletedWatchDeps = {
   client: ChainReader

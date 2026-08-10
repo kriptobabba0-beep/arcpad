@@ -97,18 +97,18 @@ const NOTIFY_ENV = {
 
 describe('loadNotifyConfig', () => {
   it('IKI URL DE ZORUNLUDUR -- yarisiyla calisan bir kontrol BASLAMAZ', () => {
-    expect(() =>
-      loadNotifyConfig({ ...NOTIFY_ENV, KEEPER_NOTIFY_HEARTBEAT_URL: '' }),
-    ).toThrow(/KEEPER_NOTIFY_HEARTBEAT_URL/)
+    expect(() => loadNotifyConfig({ ...NOTIFY_ENV, KEEPER_NOTIFY_HEARTBEAT_URL: '' })).toThrow(
+      /KEEPER_NOTIFY_HEARTBEAT_URL/,
+    )
     expect(() => loadNotifyConfig({ ...NOTIFY_ENV, KEEPER_NOTIFY_PAGE_URL: '' })).toThrow(
       /KEEPER_NOTIFY_PAGE_URL/,
     )
     // Ve hata metni, EKSIK OLANIN NE ISE YARADIGINI soyler: runbook'un iki
     // kuralindan hangisinin kuruldugunu bilmeyen bir operator, yarim kurulmus
     // bir kontrolu "kuruldu" diye kaydeder.
-    expect(() =>
-      loadNotifyConfig({ ...NOTIFY_ENV, KEEPER_NOTIFY_HEARTBEAT_URL: '' }),
-    ).toThrow(/killed process/)
+    expect(() => loadNotifyConfig({ ...NOTIFY_ENV, KEEPER_NOTIFY_HEARTBEAT_URL: '' })).toThrow(
+      /killed process/,
+    )
   })
 
   it('log yolu YOKSA baslamaz', () => {

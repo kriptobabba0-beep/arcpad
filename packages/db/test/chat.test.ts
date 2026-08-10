@@ -305,7 +305,7 @@ describe('chat: sira `message_seq`, ve zaman damgasi OLAMAZ', () => {
     expect(parseChatCursor('abc')).toBeNull()
     expect(parseChatCursor('-3')).toBeNull()
     expect(parseChatCursor('0')).toBeNull()
-    expect(parseChatCursor("1; DROP TABLE chat_messages")).toBeNull()
+    expect(parseChatCursor('1; DROP TABLE chat_messages')).toBeNull()
     expect(parseChatCursor('12345678901234567890123')).toBeNull()
     expect(parseChatCursor('42')).toBe(42n)
     expect(encodeChatCursor({ messageSeq: 42n })).toBe('42')

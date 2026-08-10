@@ -105,7 +105,11 @@ describe('scanCurveStates -- toplu okuma', () => {
   it('toplu yol ile ardisik yol AYNI durumu uretir', async () => {
     const reader = dualReader(curves)
     const batched = await scanCurveStates(reader, [CURVE_A, CURVE_B], HEAD.number)
-    const sequential = await scanCurveStates(sequentialOnly(reader), [CURVE_A, CURVE_B], HEAD.number)
+    const sequential = await scanCurveStates(
+      sequentialOnly(reader),
+      [CURVE_A, CURVE_B],
+      HEAD.number,
+    )
     expect(batched).toEqual(sequential)
     expect(batched[0]?.realQuoteWei).toBe(12_161_433_369_060_378_713n)
     // Bekleyen OLMAYAN curve'un rezervi hala okunmaz: davranis korunur.
@@ -514,9 +518,9 @@ describe('olcek yapilandirmasi', () => {
   })
 
   it('KEEPER_CURVE_BATCH_SIZE indirilebilir', () => {
-    expect(loadGraduatorConfig({ ...BASE_ENV, KEEPER_CURVE_BATCH_SIZE: '120' }).curveBatchSize).toBe(
-      120,
-    )
+    expect(
+      loadGraduatorConfig({ ...BASE_ENV, KEEPER_CURVE_BATCH_SIZE: '120' }).curveBatchSize,
+    ).toBe(120)
   })
 
   for (const bad of ['0', '-1', '1.5', 'lots']) {

@@ -63,7 +63,8 @@ export function chatErrorCopy(code: unknown): string {
     : FALLBACK
 }
 
-export type ChatPostResult = { readonly ok: true; readonly row: ChatMessageRow } | { readonly ok: false }
+export type ChatPostResult =
+  { readonly ok: true; readonly row: ChatMessageRow } | { readonly ok: false }
 
 /**
  * `ChatMessageRow`u TELDEN geri kurar.
@@ -181,7 +182,8 @@ export function useChatPost(token: HexAddress, author: HexAddress | undefined) {
       }
 
       const wire = (doc as { message?: unknown } | null)?.message
-      const row = wire !== null && typeof wire === 'object' ? fromWire(wire as Record<string, unknown>) : null
+      const row =
+        wire !== null && typeof wire === 'object' ? fromWire(wire as Record<string, unknown>) : null
       if (row === null) {
         // Sunucu 201 dedi ama govde okunamadi: mesaj YAZILDI, ekran onu
         // yenilemeyle gorecek. "Hata" demek yanlis olurdu.

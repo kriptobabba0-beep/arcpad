@@ -191,7 +191,9 @@ async function main(): Promise<number> {
     // launch edilmeden onceye dusme riskini tasiyacakti; onun yerine blok
     // RAPORLANIR, yani kosu tekrar edilebilir kalir.
     const forkBlock = head - 8n
-    console.log(`[1] forking Arc at block ${forkBlock} (live head ${head}) on 127.0.0.1:${REQUESTED_PORT}`)
+    console.log(
+      `[1] forking Arc at block ${forkBlock} (live head ${head}) on 127.0.0.1:${REQUESTED_PORT}`,
+    )
     anvil = await startAnvil(REQUESTED_PORT, forkBlock)
 
     const rpcUrl = `http://127.0.0.1:${REQUESTED_PORT}`
@@ -199,7 +201,11 @@ async function main(): Promise<number> {
 
     // ISTEDIGIM PORT, ALDIGIM PORT MU -- AGENT-CONTEXT'in Postgres dersi.
     const chainId = await client.getChainId()
-    check('the fork answers on the port that was asked for', chainId === 5_042_002, `chainId=${chainId}`)
+    check(
+      'the fork answers on the port that was asked for',
+      chainId === 5_042_002,
+      `chainId=${chainId}`,
+    )
 
     const keeper = privateKeyToAccount(KEEPER_KEY)
     const owner = privateKeyToAccount(OWNER_KEY)
@@ -210,10 +216,22 @@ async function main(): Promise<number> {
       client.readContract({ address: OPEN_CURVE, abi: CURVE_ABI, functionName: 'complete' }),
       client.readContract({ address: OPEN_CURVE, abi: CURVE_ABI, functionName: 'graduated' }),
       client.readContract({ address: OPEN_CURVE, abi: CURVE_ABI, functionName: 'token' }),
-      client.readContract({ address: OPEN_CURVE, abi: CURVE_ABI, functionName: 'realTokenReserves' }),
+      client.readContract({
+        address: OPEN_CURVE,
+        abi: CURVE_ABI,
+        functionName: 'realTokenReserves',
+      }),
     ])
-    check('the fixture curve is OPEN on the fork', !isComplete && !isGraduated, `complete=${isComplete} graduated=${isGraduated}`)
-    check('the fixture curve is bound to the fixture token', boundToken.toLowerCase() === OPEN_TOKEN.toLowerCase(), boundToken)
+    check(
+      'the fixture curve is OPEN on the fork',
+      !isComplete && !isGraduated,
+      `complete=${isComplete} graduated=${isGraduated}`,
+    )
+    check(
+      'the fixture curve is bound to the fixture token',
+      boundToken.toLowerCase() === OPEN_TOKEN.toLowerCase(),
+      boundToken,
+    )
     check('the curve still has sale supply to sell', reserves > 0n, `realTokenReserves=${reserves}`)
 
     // ---------------------------------------------------------------
@@ -222,7 +240,11 @@ async function main(): Promise<number> {
     console.log('[2] a third party buys: who ends up holding the tokens?')
     const beforeKeeper = await tokenBalance(client, keeper.address)
     const beforeOwner = await tokenBalance(client, owner.address)
-    check('both accounts start with zero of the token', beforeKeeper === 0n && beforeOwner === 0n, `keeper=${beforeKeeper} owner=${beforeOwner}`)
+    check(
+      'both accounts start with zero of the token',
+      beforeKeeper === 0n && beforeOwner === 0n,
+      `keeper=${beforeKeeper} owner=${beforeOwner}`,
+    )
 
     const keeperBuy = await keeperWallet.writeContract({
       address: OPEN_CURVE,
@@ -233,7 +255,11 @@ async function main(): Promise<number> {
       chain: null,
     })
     const keeperBuyReceipt = await client.waitForTransactionReceipt({ hash: keeperBuy })
-    check('the buy actually executed on the fork', keeperBuyReceipt.status === 'success', `status=${keeperBuyReceipt.status}`)
+    check(
+      'the buy actually executed on the fork',
+      keeperBuyReceipt.status === 'success',
+      `status=${keeperBuyReceipt.status}`,
+    )
 
     const afterKeeper = await tokenBalance(client, keeper.address)
     const afterOwner = await tokenBalance(client, owner.address)
@@ -280,14 +306,26 @@ async function main(): Promise<number> {
     // "onay eksikti" mazereti tamamen kapanir -- ve geriye kalan tek engel
     // BAKIYENIN KIMDE OLDUGUDUR.
     console.log('[3] the owner grants an unlimited allowance to the keeper. Does it buy anything?')
-    await waitFor(client, ownerWallet.writeContract({
-      address: OPEN_TOKEN, abi: TOKEN_ABI, functionName: 'approve',
-      args: [keeper.address, MAX_UINT256], chain: null,
-    }))
-    await waitFor(client, keeperWallet.writeContract({
-      address: OPEN_TOKEN, abi: TOKEN_ABI, functionName: 'approve',
-      args: [OPEN_CURVE, MAX_UINT256], chain: null,
-    }))
+    await waitFor(
+      client,
+      ownerWallet.writeContract({
+        address: OPEN_TOKEN,
+        abi: TOKEN_ABI,
+        functionName: 'approve',
+        args: [keeper.address, MAX_UINT256],
+        chain: null,
+      }),
+    )
+    await waitFor(
+      client,
+      keeperWallet.writeContract({
+        address: OPEN_TOKEN,
+        abi: TOKEN_ABI,
+        functionName: 'approve',
+        args: [OPEN_CURVE, MAX_UINT256],
+        chain: null,
+      }),
+    )
     const toKeeper = await allowanceOf(client, owner.address, keeper.address)
     const toCurve = await allowanceOf(client, keeper.address, OPEN_CURVE)
     check('the owner -> keeper allowance is in place', toKeeper === MAX_UINT256, `${toKeeper}`)
@@ -320,13 +358,13 @@ async function main(): Promise<number> {
     )
     const ownerNativeAfter = await client.getBalance({ address: owner.address })
     check(
-      'THE PROCEEDS WENT TO THE CALLER: the owner\'s native balance did not move',
+      "THE PROCEEDS WENT TO THE CALLER: the owner's native balance did not move",
       ownerNativeAfter === ownerNativeBefore,
       `owner ${ownerNativeBefore} -> ${ownerNativeAfter}`,
     )
     const keeperNativeAfter = await client.getBalance({ address: keeper.address })
     check(
-      'CONTROL: the seller\'s own native balance DID move (so the leg is measurable)',
+      "CONTROL: the seller's own native balance DID move (so the leg is measurable)",
       keeperNativeAfter !== keeperNativeBefore,
       `keeper ${keeperNativeBefore} -> ${keeperNativeAfter}`,
     )
@@ -367,15 +405,18 @@ async function main(): Promise<number> {
     // POZITIF KONTROL. Bir probe'un HER ZAMAN "yok" demesi, hicbir sey
     // olcmemekle ayni gorunur; bu satirlar probe'un VAR olani gordugunu
     // gosterir.
-    const curveControl = await probeSignatures(client, OPEN_CURVE, ['complete()', 'realTokenReserves()'])
+    const curveControl = await probeSignatures(client, OPEN_CURVE, [
+      'complete()',
+      'realTokenReserves()',
+    ])
     check(
-      'CONTROL: the same probe DOES see the curve\'s real entrypoints',
+      "CONTROL: the same probe DOES see the curve's real entrypoints",
       curveControl.present.length === 2,
       curveControl.present.join(','),
     )
     const routerControl = await probeSignatures(client, ROUTER, ['poolManager()', 'hook()'])
     check(
-      'CONTROL: the same probe DOES see the router\'s real entrypoints',
+      "CONTROL: the same probe DOES see the router's real entrypoints",
       routerControl.present.length === 2,
       routerControl.present.join(','),
     )
@@ -391,9 +432,11 @@ async function main(): Promise<number> {
       for (const f of failures) console.error(`  FAILED: ${f}`)
       return 1
     }
-    console.log('CUSTODY VERDICT: no address other than the fund owner can trade the owner\'s funds')
-    console.log('                 into the owner\'s hands on either venue. The keeper cannot trade')
-    console.log('                 on a user\'s behalf, and no delegated entrypoint exists to let it.')
+    console.log("CUSTODY VERDICT: no address other than the fund owner can trade the owner's funds")
+    console.log("                 into the owner's hands on either venue. The keeper cannot trade")
+    console.log(
+      "                 on a user's behalf, and no delegated entrypoint exists to let it.",
+    )
     return 0
   } finally {
     if (anvil !== undefined) await stopAnvil(anvil)
@@ -408,7 +451,12 @@ type PublicClient = ReturnType<typeof createPublicClient>
 type Wallet = ReturnType<typeof createWalletClient>
 
 async function tokenBalance(client: PublicClient, who: Address): Promise<bigint> {
-  return client.readContract({ address: OPEN_TOKEN, abi: TOKEN_ABI, functionName: 'balanceOf', args: [who] })
+  return client.readContract({
+    address: OPEN_TOKEN,
+    abi: TOKEN_ABI,
+    functionName: 'balanceOf',
+    args: [who],
+  })
 }
 
 /** Bir satisi DENER. Revert bir ARIZA DEGIL, olculen sonucun kendisidir. */
@@ -496,7 +544,11 @@ function revertDataOf(error: unknown): string | null {
   return null
 }
 
-async function allowanceOf(client: PublicClient, owner: Address, spender: Address): Promise<bigint> {
+async function allowanceOf(
+  client: PublicClient,
+  owner: Address,
+  spender: Address,
+): Promise<bigint> {
   return client.readContract({
     address: OPEN_TOKEN,
     abi: TOKEN_ABI,

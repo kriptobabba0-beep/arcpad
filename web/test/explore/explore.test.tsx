@@ -163,7 +163,9 @@ describe('<CompleteSection>', () => {
     // NOT "Pool creation lands with Phase 2." -- Faz 2 2026-08-06'dan beri
     // zincirde ve o cumle token sayfasindaki ikiziyle birlikte duzeltildi.
     expect(
-      screen.getByText('Sale supply sold out. Opening the pool is a separate step called graduation.'),
+      screen.getByText(
+        'Sale supply sold out. Opening the pool is a separate step called graduation.',
+      ),
     ).toBeVisible()
   })
 

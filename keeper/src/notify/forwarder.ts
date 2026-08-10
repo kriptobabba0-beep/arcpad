@@ -166,7 +166,11 @@ export function createForwarder(config: ForwarderConfig, deps: ForwarderDeps) {
       try {
         await deps.post(
           config.heartbeatUrl,
-          JSON.stringify({ label: config.label, kind: 'heartbeat', at: new Date(now).toISOString() }),
+          JSON.stringify({
+            label: config.label,
+            kind: 'heartbeat',
+            at: new Date(now).toISOString(),
+          }),
         )
         heartbeatPending = false
         lastPingAt = now

@@ -75,7 +75,10 @@ export function TraderTradesTable({ rows, nextCursor, loadMore }: TraderTradesTa
             <HeadCell numeric title="The venue's side of the trade, fees excluded.">
               Curve amount
             </HeadCell>
-            <HeadCell numeric title="Protocol and creator parts, summed for display only — the chain charges them as two independent ceilings.">
+            <HeadCell
+              numeric
+              title="Protocol and creator parts, summed for display only — the chain charges them as two independent ceilings."
+            >
               Fees
             </HeadCell>
             <HeadCell>Venue</HeadCell>

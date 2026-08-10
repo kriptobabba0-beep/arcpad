@@ -455,9 +455,7 @@ export async function readProtocolDaily(
  * place it could be recomputed WRONGLY, and the number that would be wrong is
  * the one a creator reads as "what I earned".
  */
-export async function readCreatorEarnings(
-  recipient: string,
-): Promise<ReadResult<CreatorEarnings>> {
+export async function readCreatorEarnings(recipient: string): Promise<ReadResult<CreatorEarnings>> {
   return guard(async () => {
     const { rows, indexer } = await getCreatorEarnings(getPool(), recipient as `0x${string}`)
     return { value: rows, indexer }

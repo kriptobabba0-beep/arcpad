@@ -160,7 +160,11 @@ async function main(): Promise<number> {
     // AGENT-CONTEXT'in Postgres dersi: bir baska surece baglanip onun
     // durumunu degistirmek, bu depoda BIR KEZ gerceklesti.
     const chainId = await client.getChainId()
-    check('the fork answers on the port that was asked for', chainId === 5_042_002, `chainId=${chainId}`)
+    check(
+      'the fork answers on the port that was asked for',
+      chainId === 5_042_002,
+      `chainId=${chainId}`,
+    )
     const forkHead = await client.getBlockNumber()
     check('the fork is pinned to the requested block', forkHead === FORK_BLOCK, `head=${forkHead}`)
 
@@ -199,8 +203,15 @@ async function main(): Promise<number> {
         alert: (level, _key, message) => emitted.push({ level, message }),
       })
 
-      check('the production factory reads graduationTarget 0x0', summary.target === '0x0000000000000000000000000000000000000000')
-      check('the completed smoke curve IS in the pending set', summary.pending.length >= 1, `pending=${summary.pending.length} raise=${summary.pendingQuoteWei}`)
+      check(
+        'the production factory reads graduationTarget 0x0',
+        summary.target === '0x0000000000000000000000000000000000000000',
+      )
+      check(
+        'the completed smoke curve IS in the pending set',
+        summary.pending.length >= 1,
+        `pending=${summary.pending.length} raise=${summary.pendingQuoteWei}`,
+      )
       check(
         'NOTHING pages while the platform has not armed its target',
         emitted.every((e) => e.level !== 'page'),
@@ -252,13 +263,18 @@ async function main(): Promise<number> {
       abi: parseAbi(['function graduationTarget() view returns (address)']),
       functionName: 'graduationTarget',
     })
-    check('applyGraduationTarget is permissionless and landed', armedTarget === DISPOSABLE_LOCKER, armedTarget)
+    check(
+      'applyGraduationTarget is permissionless and landed',
+      armedTarget === DISPOSABLE_LOCKER,
+      armedTarget,
+    )
 
     const startBlock = await client.getBlockNumber()
     const curve = await launchAndBuyOut(wallet, client, 'KPRPROOF1')
     check(
       'the fixture curve is complete and NOT graduated',
-      (await curveFlag(client, curve, 'complete')) && !(await curveFlag(client, curve, 'graduated')),
+      (await curveFlag(client, curve, 'complete')) &&
+        !(await curveFlag(client, curve, 'graduated')),
       curve,
     )
 
@@ -396,14 +412,21 @@ async function main(): Promise<number> {
       const sharedLocks = join(scratch, 'shared-locks')
       const holder = fileCurveLocks(sharedLocks, 'executor-A')
       holder.acquire(third, Date.now())
-      const result = await makePass({ dryRun: false, lockDir: sharedLocks, lockOwner: 'executor-B' })
+      const result = await makePass({
+        dryRun: false,
+        lockDir: sharedLocks,
+        lockOwner: 'executor-B',
+      })
       const outcome = result.outcomes.find((o) => o.curve.toLowerCase() === third.toLowerCase())
       check(
         'the second executor does not touch a curve the first holds',
         outcome?.code === 'locked-elsewhere',
         outcome?.code,
       )
-      check('...and the curve is still not graduated', !(await curveFlag(client, third, 'graduated')))
+      check(
+        '...and the curve is still not graduated',
+        !(await curveFlag(client, third, 'graduated')),
+      )
     }
   } finally {
     if (anvil !== undefined) await stopAnvil(anvil)
@@ -435,7 +458,8 @@ async function launchAndBuyOut(
   })
   // `Launched(token, curve, creator, ...)` -- ikinci indexed alan curve'dur.
   const launched = receipt.logs.find(
-    (log) => log.address.toLowerCase() === DISPOSABLE_FACTORY.toLowerCase() && log.topics.length >= 4,
+    (log) =>
+      log.address.toLowerCase() === DISPOSABLE_FACTORY.toLowerCase() && log.topics.length >= 4,
   )
   if (launched === undefined) throw new Error('no Launched log in the launch receipt')
   const curve = `0x${(launched.topics[2] as string).slice(26)}` as Address

@@ -2,7 +2,12 @@
 
 import { bondingCurveAbi, launchFactoryAbi } from '@arcpad/shared/browser'
 import { useCallback } from 'react'
-import { useReadContract, useReadContracts, useWaitForTransactionReceipt, useWriteContract } from 'wagmi'
+import {
+  useReadContract,
+  useReadContracts,
+  useWaitForTransactionReceipt,
+  useWriteContract,
+} from 'wagmi'
 import type { HexAddress } from '@/components/read/types'
 import { ARCPAD_LOCKER_ABI } from '@/lib/graduationAbi'
 import { decodeGraduationError, type GraduationOutcome } from '@/lib/graduationOutcome'

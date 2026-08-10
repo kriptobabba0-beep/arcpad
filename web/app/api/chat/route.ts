@@ -97,7 +97,9 @@ function fail(error: string, status: number, extra?: Record<string, string>): Re
   const body: ErrorBody = { error, ...(extra ?? {}) }
   return Response.json(body, {
     status,
-    ...(status === 429 ? { headers: { 'Retry-After': String(DEFAULT_CHAT_RATE_LIMIT.windowSeconds) } } : {}),
+    ...(status === 429
+      ? { headers: { 'Retry-After': String(DEFAULT_CHAT_RATE_LIMIT.windowSeconds) } }
+      : {}),
   })
 }
 
@@ -219,7 +221,11 @@ export async function POST(request: Request): Promise<Response> {
   // ---- 5. GOVDE POLITIKASI (link yasagi dahil) ------------------------
   const verdict = checkChatBody(payload.body)
   if (!verdict.ok) {
-    return fail(verdict.reason, 400, verdict.detail === undefined ? undefined : { detail: verdict.detail })
+    return fail(
+      verdict.reason,
+      400,
+      verdict.detail === undefined ? undefined : { detail: verdict.detail },
+    )
   }
 
   // ---- 6. `issued` PENCERESI ------------------------------------------
@@ -291,7 +297,11 @@ export async function POST(request: Request): Promise<Response> {
         return fail('rateLimited', 429)
       case 'rejected':
         console.error('[chat] a schema CHECK refused a row the route accepted', outcome.constraint)
-        return fail('rejected', 400, outcome.constraint === null ? undefined : { detail: outcome.constraint })
+        return fail(
+          'rejected',
+          400,
+          outcome.constraint === null ? undefined : { detail: outcome.constraint },
+        )
     }
   }
 

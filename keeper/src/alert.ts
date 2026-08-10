@@ -111,7 +111,10 @@ export const consoleSink: AlertSink = consoleSinkFor(DEFAULT_ALERT_COMPONENT)
  * bile "izleyici yasiyordu" derdi. Bu, bu deponun tekrar tekrar odedigi
  * "mekanizma var ama bosalabilir" seklinin ta kendisi olurdu.
  */
-export function renderEvent(event: AlertEvent, component: string = DEFAULT_ALERT_COMPONENT): string {
+export function renderEvent(
+  event: AlertEvent,
+  component: string = DEFAULT_ALERT_COMPONENT,
+): string {
   if (event.kind === 'heartbeat') {
     const detail = event.detail === undefined ? '' : ` ${event.detail}`
     return `HEARTBEAT ${component} at=${new Date(event.at).toISOString()} state=${event.state}${detail}`

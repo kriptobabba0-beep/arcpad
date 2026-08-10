@@ -83,14 +83,107 @@ export const CHAT_BODY_MAX_BYTES = 1000
  * bu listede olsaydi link sayilirdi. O kelimeler `TLD_NEEDS_PATH`te.
  */
 const TLD_ALWAYS = new Set([
-  'com', 'net', 'org', 'io', 'co', 'xyz', 'gg', 'app', 'dev', 'ai', 'link', 'click', 'top',
-  'site', 'online', 'live', 'info', 'biz', 'vip', 'wtf', 'lol', 'art', 'bio', 'one', 'page',
-  'wiki', 'zip', 'mov', 'fun', 'cash', 'finance', 'exchange', 'capital', 'money', 'pro',
-  'tech', 'space', 'store', 'shop', 'club', 'cc', 'tv', 'ly', 'sh', 'gd', 'tk', 'ml', 'ga',
-  'cf', 'pw', 'ru', 'cn', 'uk', 'eu', 'au', 'ca', 'fr', 'jp', 'kr', 'br', 'nl', 'ch', 'se',
-  'pl', 'cz', 'tr', 'ir', 'de', 'es', 'pt', 'fi', 'dk', 'gr', 'hu', 'ro', 'ua', 'kz', 'la',
-  'li', 'lu', 'mx', 'ar', 'cl', 'il', 'sa', 'ae', 'hk', 'sg', 'tw', 'th', 'vn', 'ph', 'nz',
-  'za', 'ng', 'ke', 'network', 'markets', 'trade', 'fyi', 'lat',
+  'com',
+  'net',
+  'org',
+  'io',
+  'co',
+  'xyz',
+  'gg',
+  'app',
+  'dev',
+  'ai',
+  'link',
+  'click',
+  'top',
+  'site',
+  'online',
+  'live',
+  'info',
+  'biz',
+  'vip',
+  'wtf',
+  'lol',
+  'art',
+  'bio',
+  'one',
+  'page',
+  'wiki',
+  'zip',
+  'mov',
+  'fun',
+  'cash',
+  'finance',
+  'exchange',
+  'capital',
+  'money',
+  'pro',
+  'tech',
+  'space',
+  'store',
+  'shop',
+  'club',
+  'cc',
+  'tv',
+  'ly',
+  'sh',
+  'gd',
+  'tk',
+  'ml',
+  'ga',
+  'cf',
+  'pw',
+  'ru',
+  'cn',
+  'uk',
+  'eu',
+  'au',
+  'ca',
+  'fr',
+  'jp',
+  'kr',
+  'br',
+  'nl',
+  'ch',
+  'se',
+  'pl',
+  'cz',
+  'tr',
+  'ir',
+  'de',
+  'es',
+  'pt',
+  'fi',
+  'dk',
+  'gr',
+  'hu',
+  'ro',
+  'ua',
+  'kz',
+  'la',
+  'li',
+  'lu',
+  'mx',
+  'ar',
+  'cl',
+  'il',
+  'sa',
+  'ae',
+  'hk',
+  'sg',
+  'tw',
+  'th',
+  'vn',
+  'ph',
+  'nz',
+  'za',
+  'ng',
+  'ke',
+  'network',
+  'markets',
+  'trade',
+  'fyi',
+  'lat',
 ])
 
 /**
@@ -101,8 +194,23 @@ const TLD_ALWAYS = new Set([
  * ise yol tasidigi icin yakalanir.
  */
 const TLD_NEEDS_PATH = new Set([
-  'it', 'is', 'in', 'at', 'to', 'be', 'me', 'so', 'us', 'no', 'do', 'my', 'am', 'by', 'as',
-  'id', 'im',
+  'it',
+  'is',
+  'in',
+  'at',
+  'to',
+  'be',
+  'me',
+  'so',
+  'us',
+  'no',
+  'do',
+  'my',
+  'am',
+  'by',
+  'as',
+  'id',
+  'im',
 ])
 
 /**
@@ -159,7 +267,8 @@ const WWW_PREFIX = /(?:^|[^a-z0-9])www\./
  * listedeki bir onekle karistirmak MUMKUN DEGILDIR. Bu lookahead olmadan
  * "hello.computer" bir link sayilirdi.
  */
-const HOSTLIKE = /(?:^|[^a-z0-9@._-])([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)\.([a-z]{2,24})(?![a-z])/g
+const HOSTLIKE =
+  /(?:^|[^a-z0-9@._-])([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)\.([a-z]{2,24})(?![a-z])/g
 
 /** Tespit ICIN normalize edilmis metin. SAKLANAN GOVDE ASLA BU DEGILDIR. */
 export function normaliseForLinkScan(body: string): string {
@@ -241,12 +350,7 @@ const HOSTILE_CODE_UNITS = new RegExp(
   ].join('|'),
 )
 
-export type ChatBodyRejection =
-  | 'empty'
-  | 'tooLong'
-  | 'tooManyBytes'
-  | 'hostileCharacters'
-  | 'link'
+export type ChatBodyRejection = 'empty' | 'tooLong' | 'tooManyBytes' | 'hostileCharacters' | 'link'
 
 export type ChatBodyVerdict =
   | { readonly ok: true }

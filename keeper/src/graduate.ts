@@ -26,11 +26,7 @@ import {
   loadGraduatorConfig,
   ONCE_MAX_ROUNDS,
 } from './graduate/config'
-import {
-  type GraduationWriter,
-  type PassSummary,
-  runGraduationPass,
-} from './graduate/executor'
+import { type GraduationWriter, type PassSummary, runGraduationPass } from './graduate/executor'
 import { fileCurveLocks } from './graduate/lock'
 import { runPollLoop } from './graduate/loop'
 import { assertSelectorsAgree } from './graduate/outcome'
@@ -251,7 +247,11 @@ async function main(): Promise<number> {
     // tamamlandi". Yetismemis bir tarama `catching-up`tir ve o AYRI bir
     // iddiadir -- ikisini tek satirda karistirmak, izleyicide olculmus bir
     // hataydi.
-    heartbeat(sink, summary.caughtUp ? 'current' : 'catching-up', renderSummary(summary, { source }))
+    heartbeat(
+      sink,
+      summary.caughtUp ? 'current' : 'catching-up',
+      renderSummary(summary, { source }),
+    )
     return summary
   }
 

@@ -84,11 +84,7 @@ export function StatGrid({ stats, showVenueSplit = false }: StatGridProps) {
         value={formatUsdcAmount(stats.creatorFeeWei, { rounding: 'down' })}
         hint="paid to launch creators"
       />
-      <Stat
-        label="Creators"
-        value={count(stats.creatorCount)}
-        hint="distinct launch addresses"
-      />
+      <Stat label="Creators" value={count(stats.creatorCount)} hint="distinct launch addresses" />
 
       {/*
         THE VENUE SPLIT IS DRAWN ONLY WHEN THE POOL HAS TRADED, AND THAT IS NOT
@@ -106,11 +102,7 @@ export function StatGrid({ stats, showVenueSplit = false }: StatGridProps) {
             value={formatUsdcCompact(stats.poolVolumeWei)}
             hint="post-graduation, included above"
           />
-          <Stat
-            label="Pool trades"
-            value={count(stats.poolTradeCount)}
-            hint="included in Trades"
-          />
+          <Stat label="Pool trades" value={count(stats.poolTradeCount)} hint="included in Trades" />
         </>
       ) : null}
     </dl>
