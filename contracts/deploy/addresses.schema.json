@@ -138,7 +138,7 @@
     "commit": {
       "type": "string",
       "pattern": "^[0-9a-f]{7,40}$",
-      "description": "Bytecode'un uretildigi agac. Bu olmadan \"deploy edilen bytecode derlenenle ayni\" cumlesinin bir mercii yoktur."
+      "description": "Jeneratorun KOSTUGU agac (git rev-parse HEAD). BYTECODE'UN URETILDIGI AGAC DEGILDIR ve oyle okunmamalidir: bu defter UC AYRI agactan kontrat kaydediyor (factory 8dec4e92, router fe11fff), yani tek bir alan o soruyu en fazla bir kontrat icin cevaplayabilir, ve ciplak bir yeniden uretim canli HEAD'i damgalar -- ki o hicbiri icin dogrudur. \"Deploy edilen bytecode derlenenle ayni\" cumlesinin mercii BURASI DEGIL: kontrat basina initcodeHash alanlari (escrow/factory/router) ve `make frozen-hash-chain`tir. Havuz uclusunun initcode hash'i YOKTUR, dolayisiyla onlar icin merci yalnizca frozen-hash-chain'dir."
     },
     "smokeToken": {
       "oneOf": [
