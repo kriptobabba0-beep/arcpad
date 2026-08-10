@@ -27,6 +27,7 @@
     "wagmi": "3.7.4"
   },
   "devDependencies": {
+    "tsx": "4.23.1",
     "@axe-core/playwright": "4.12.1",
     "@playwright/test": "1.62.1",
     "@tailwindcss/postcss": "4.3.3",
