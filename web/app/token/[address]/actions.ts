@@ -1,14 +1,16 @@
 'use server'
 
-import type { ChatMessageRow } from '@arcpad/db'
+import type { ChatMessageRow, LimitOrderRow } from '@arcpad/db'
 import { isAddress } from 'viem'
 import type { HolderRow, TradeRow } from '@/components/read/types'
 import {
   CHAT_PAGE_SIZE,
   type Page,
   type ReadResult,
+  ORDERS_PAGE_SIZE,
   readChat,
   readHolders,
+  readOrders,
   readTrades,
   TABLE_PAGE_SIZE,
 } from '@/lib/read'
@@ -112,4 +114,34 @@ export async function loadMoreHolders(
   const address = normalise(token)
   if (address === null) return rejected<HolderRow>()
   return readHolders(address, { cursor, limit: TABLE_PAGE_SIZE })
+}
+
+/**
+ * ============ BIR SAHIBIN EMIRLERI ============
+ *
+ * NEDEN BIR SERVER COMPONENT'TE DEGIL DE BURADA: chat butun token'in
+ * mesajlarini gosterir ve sunucu onlari sayfayi cizerken okuyabilir. Bir emir
+ * BIR SAHIBE aittir ve sunucu, sayfayi cizdigi anda hangi cuzdanin BAGLI
+ * OLDUGUNU BILMEZ -- baglanti tarayicida yasar. Yani okuma ancak cuzdan
+ * baglandiktan SONRA, istemciden tetiklenebilir.
+ *
+ * BUTUN TOKEN'IN EMIRLERINI CIZIP ISTEMCIDE SUZMEK SECILMEDI ve gerekcesi
+ * gizlilik: o secim her ziyaretciye HERKESIN acik emirlerini gonderirdi.
+ * Burada yalnizca sorulan adresin satirlari doner.
+ *
+ * ARGUMANLAR BURADA YENIDEN DOGRULANIR -- bir server action HERKESE ACIK bir
+ * uctur. `owner` bagli DEGILDIR (istemci onu her cagriya kendi koyar), yani
+ * onun kontrolu bir formalite degil.
+ *
+ * LIMIT BIR PARAMETRE DEGILDIR.
+ */
+export async function loadOrders(
+  token: string,
+  owner: string,
+  cursor: string | null,
+): Promise<ReadResult<Page<LimitOrderRow>>> {
+  const address = normalise(token)
+  const ownerAddress = normalise(owner)
+  if (address === null || ownerAddress === null) return rejected<LimitOrderRow>()
+  return readOrders(address, ownerAddress, { cursor, limit: ORDERS_PAGE_SIZE })
 }

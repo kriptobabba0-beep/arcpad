@@ -1,8 +1,9 @@
-import { render, within } from '@testing-library/react'
+import { within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { resolveLifecycle } from '@/components/token/lifecycle'
 import { TradeSurface } from '@/components/token/TradeSurface'
 import { CURVE, TESTNET_PROFILE, TOKEN } from '../trade/fixtures'
+import { renderWithProviders } from '../ui/harness'
 
 /**
  * ============ WHICH VENUE A TOKEN TRADES ON, RENDERED ============
@@ -13,6 +14,17 @@ import { CURVE, TESTNET_PROFILE, TOKEN } from '../trade/fixtures'
  *
  * This is the half a source scan cannot give. `test/pool/page.test.ts` counts
  * the call sites; this runs the component they call.
+ *
+ * ============ FAZ 7: `renderWithProviders`, VE NEDEN GEREKTI ============
+ *
+ * `TradeSurface` artik `'use client'`tir ve `Market | Limit | Orders` seridini
+ * KENDISI tasiyor (spec §7.1). Serit bir tarayici durumu oldugu icin bilesen
+ * `useArcNetwork`e -- dolayisiyla wagmi'ye -- dokunuyor, ve ciplak bir
+ * `render` `WagmiProviderNotFoundError` ile duser.
+ *
+ * DEGISEN SEY TESTIN OLCTUGU SEY DEGIL: asagidaki iddialarin tamami hala
+ * MEKAN KARARIDIR, ve panellerin sahte olmasi hala o karari panellerin
+ * kendisinden ayirmaktadir.
  */
 vi.mock('@/components/token/TradePanel', () => ({
   TradePanel: (props: { symbol: string }) => (
@@ -29,7 +41,7 @@ function surface(
   lifecycleInput: { complete: boolean; graduated: boolean },
   profile = TESTNET_PROFILE,
 ) {
-  return render(
+  return renderWithProviders(
     <TradeSurface
       token={TOKEN}
       curve={CURVE}
