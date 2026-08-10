@@ -63,7 +63,9 @@ describe('<SearchBar>', () => {
     await user.click(trigger)
 
     expect(screen.getByRole('dialog')).toBeInTheDocument()
-    expect(screen.getByText(/type to search/i)).toBeVisible()
+    // Bos kutu artik oneri listesini getiriyor; modalin ACILDIGINI kanitlayan
+    // sey o listenin basligi.
+    expect(await screen.findByText(/by 24h volume/i)).toBeVisible()
 
     await user.keyboard('{Escape}')
 

@@ -1,5 +1,5 @@
 import { verifyCanonical } from '@/lib/canonical'
-import { readSearch, readTokenOverview, valueOf } from '@/lib/read'
+import { readSearch, readTokenList, readTokenOverview, valueOf } from '@/lib/read'
 import type { HexAddress } from '@/components/read/types'
 import { toWire } from '@/components/read/wire'
 import {
@@ -7,6 +7,7 @@ import {
   parseSearchParams,
   SEARCH_LIMIT,
   type SearchPayload,
+  TRENDING_LIMIT,
 } from '@/components/search/params'
 
 /**
@@ -98,7 +99,45 @@ async function resolvePastedAddress(address: HexAddress): Promise<SearchPayload>
 }
 
 export async function GET(request: Request): Promise<Response> {
-  const query = parseSearchParams(new URL(request.url).searchParams)
+  const url = new URL(request.url)
+
+  /*
+   * BOS KUTUNUN ONERISI: 24 SAATLIK HACME GORE ILK 10.
+   *
+   * AYRI BIR DAL, ve `q=''` ile metin aramasi yapmak DEGIL. `searchTokens`
+   * her zaman `ILIKE $2 OR name % $1` uygular; bos bir sorguyla onu "her seyi
+   * dondur" haline getirmek `%%` ile bir desen kurmak olurdu -- yani bu
+   * dosyanin en ustunde yazan kurali (deseni SORGUYU YAZAN katman kurar)
+   * cagiran taraftan delmek. Ayri dal, ayri niyet: burada aranan bir sey yok,
+   * ONERILEN bir sey var.
+   *
+   * Adres yapistirma kontrolunden ONCE gelir ve gelmesi gerekir: `q` yoktur,
+   * dolayisiyla `asAddressQuery` zaten `null` donerdi -- ama sirayi acik
+   * yazmak, ileride adres dalina bir yan etki eklendiginde bos kutunun ondan
+   * etkilenmemesini garanti eder.
+   */
+  if (url.searchParams.get('trending') === '1') {
+    const trending = await readTokenList({
+      sort: 'volume',
+      ageDays: null,
+      cursor: null,
+      limit: TRENDING_LIMIT,
+    })
+    if (!trending.ok) return Response.json({ error: 'unavailable' }, { status: 503 })
+    const page = valueOf(trending)
+    if (page === undefined) return Response.json({ error: 'unavailable' }, { status: 503 })
+    return Response.json({
+      rows: page.rows.map(toWire),
+      // Oneri listesinin SAYFASI YOKTUR: kullanici bir sonraki 10'u istemiyor,
+      // yazmaya basliyor. `null` donmek, istemcinin "daha yukle" cizmemesini
+      // saglar.
+      nextCursor: null,
+      shown: page.rows.length,
+      pasted: null,
+    })
+  }
+
+  const query = parseSearchParams(url.searchParams)
 
   const address = asAddressQuery(query.q)
   if (address !== null) {

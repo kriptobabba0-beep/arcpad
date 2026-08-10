@@ -1,11 +1,11 @@
 'use client'
 
+import { formatUsdcCompact } from '@arcpad/shared/browser'
 import { useEffect, useRef } from 'react'
 import { TokenArtwork } from '@/components/layout/TokenArtwork'
 import type { TokenOverview } from '@/components/read/types'
 import { Address } from '@/components/ui/Address'
 import { cx } from '@/components/ui/cx'
-import { Money } from '@/components/ui/Money'
 import { Pill } from '@/components/ui/Pill'
 
 /**
@@ -103,18 +103,34 @@ export function SearchResultRow({
       </span>
 
       <span className="flex shrink-0 items-center gap-3">
-        {row.complete ? (
+        {/*
+          `complete` ILE `graduated` AYNI SEY DEGILDIR, ve burasi ikisini
+          birlestiriyordu: `row.complete` icin "Graduated" yaziyordu.
+
+          `complete`  -> satis arzi bitti, curve kapandi, HAVUZ HENUZ YOK.
+          `graduated` -> odeme yapildi, havuz acildi, islem orada.
+
+          Aradaki fark gercek bir zaman araligidir ve bugun uretimdeki curve
+          tam olarak `complete && !graduated`: `graduationTarget` sifir oldugu
+          icin hicbir sey mezun OLAMIYOR. Yani bu etiket, mezun olmamis bir
+          curve icin "Graduated" diyordu -- kullaniciya var olmayan bir havuz
+          vaat eden bir kelime.
+        */}
+        {row.graduated ? (
           <Pill tone="accent">Graduated</Pill>
+        ) : row.complete ? (
+          <Pill tone="neutral">Complete</Pill>
         ) : (
           <Pill tone="neutral">{`${progressPct}%`}</Pill>
         )}
-        <span className="w-24 text-right text-sm">
+        <span className="w-20 text-right text-sm tabular-nums">
           {marketCap === null ? (
             <span className="text-muted">—</span>
           ) : (
-            /* Piyasa degeri ELE GECEN degil GOSTERILEN bir tutar; asagi
-               yuvarlanir ki var olmayan bir buyukluk gosterilmesin. */
-            <Money native={marketCap} rounding="down" />
+            /* SIKISTIRILMIS: bu satir bir listede taranir, tam ondalik degil
+               buyukluk okunur. Ayni fonksiyon kartlarda ve analitikte de
+               kullaniliyor, yani uc yer ayni sayiyi ayni bicimde gosterir. */
+            <span>{formatUsdcCompact(marketCap)}</span>
           )}
         </span>
       </span>

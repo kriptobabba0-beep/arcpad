@@ -21,6 +21,7 @@ import {
   SEARCH_AGE_LABELS,
   SEARCH_SORT_LABELS,
   searchRequestUrl,
+  trendingRequestUrl,
   tokenHref,
   type SearchPayload,
   type SearchResponse,
@@ -123,17 +124,27 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
    */
   useEffect(() => {
     if (!open) return
-    if (trimmed === '') {
-      setView({ status: 'idle' })
-      return
-    }
+    /*
+     * BOS KUTU ARTIK BOS DEGIL: 24 SAATLIK HACME GORE ILK 10.
+     *
+     * Ayri bir URL, cunku sunucuda da ayri bir dal: `q=''` ile metin aramasi
+     * yapmak `%%` deseni kurmak olurdu. Debounce burada da gecerli --
+     * kullanici kutuyu acip hemen yazmaya baslarsa oneri istegi iptal edilir
+     * ve yalnizca yazdiginin sonucu gelir.
+     *
+     * Siralama ve yas pilleri bu dalda GECMEZ: oneri listesinin tanimi
+     * sabittir ("24 saatte en cok islem gorenler") ve kullanicinin sectigi
+     * siralamaya gore degisseydi, bos kutuda bir siralama secmek anlamsiz bir
+     * listeyi baska turlu anlamsiz yapardi.
+     */
+    const url = trimmed === '' ? trendingRequestUrl() : searchRequestUrl({ q: trimmed, sort, age })
 
     setView({ status: 'loading' })
     const controller = new AbortController()
     const timer = setTimeout(() => {
       void (async () => {
         try {
-          const response = await fetch(searchRequestUrl({ q: trimmed, sort, age }), {
+          const response = await fetch(url, {
             signal: controller.signal,
           })
           const body = (await response.json()) as SearchResponse
@@ -262,44 +273,65 @@ export function SearchDialog({ open, onClose }: SearchDialogProps) {
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          {SEARCH_SORT_LABELS.map(({ key, label }) => {
-            // `relevance` YALNIZCA `q` doluyken etkin: bos bir sorguda
-            // siralanacak bir "alaka" yoktur. Gizlemek yerine devre disi
-            // birakiliyor -- serit sabit kalir, yani kullanicinin gozu her
-            // yazista yeniden yerlesmek zorunda kalmaz.
-            const disabled = key === 'relevance' && trimmed === ''
-            return (
-              <Button
-                key={key}
-                pill
-                size="sm"
-                variant={sort === key ? 'primary' : 'ghost'}
-                aria-pressed={sort === key}
-                disabled={disabled}
-                onClick={() => setSort(key)}
-              >
-                {label}
-              </Button>
-            )
-          })}
-        </div>
+        {/*
+          BOS KUTUDA PILLER CIZILMEZ, BASLIK CIZILIR.
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 text-[12px] uppercase tracking-[0.08em] text-muted">Age</span>
-          {SEARCH_AGE_LABELS.map(({ value, label }) => (
-            <Button
-              key={value}
-              pill
-              size="sm"
-              variant={age === value ? 'primary' : 'ghost'}
-              aria-pressed={age === value}
-              onClick={() => setAge(value)}
-            >
-              {label}
-            </Button>
-          ))}
-        </div>
+          Oneri listesinin tanimi SABITTIR ("24 saatte en cok islem gorenler")
+          ve sunucu tarafinda ayri bir daldan gelir -- yani `sort` ve `age`
+          secimleri o listeye hic ULASMAZ. Onlari gorunur ve tiklanabilir
+          birakmak, hicbir sey degistirmeyen bir kontrol sunmak olurdu; en
+          kotu arayuz hatasi, calisiyormus gibi duran bir dugmedir.
+
+          Yerine listenin NE OLDUGU yaziyor. Kullanici on satirin nereden
+          geldigini bilmeden onlara tiklamamali.
+        */}
+        {trimmed === '' ? (
+          <p className="flex items-center gap-2 text-[13px] font-medium">
+            Trending
+            <span className="font-normal text-muted">by 24h volume</span>
+          </p>
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {SEARCH_SORT_LABELS.map(({ key, label }) => {
+                // `relevance` YALNIZCA `q` doluyken etkin: bos bir sorguda
+                // siralanacak bir "alaka" yoktur. Gizlemek yerine devre disi
+                // birakiliyor -- serit sabit kalir, yani kullanicinin gozu her
+                // yazista yeniden yerlesmek zorunda kalmaz.
+                const disabled = key === 'relevance' && trimmed === ''
+                return (
+                  <Button
+                    key={key}
+                    pill
+                    size="sm"
+                    variant={sort === key ? 'primary' : 'ghost'}
+                    aria-pressed={sort === key}
+                    disabled={disabled}
+                    onClick={() => setSort(key)}
+                  >
+                    {label}
+                  </Button>
+                )
+              })}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="mr-1 text-[12px] uppercase tracking-[0.08em] text-muted">Age</span>
+              {SEARCH_AGE_LABELS.map(({ value, label }) => (
+                <Button
+                  key={value}
+                  pill
+                  size="sm"
+                  variant={age === value ? 'primary' : 'ghost'}
+                  aria-pressed={age === value}
+                  onClick={() => setAge(value)}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+          </>
+        )}
 
         {/*
           Sonuc sayisi DUYURULUR. Gorsel bir listede sayiyi gormek bedava;
@@ -367,11 +399,16 @@ function Body({
 }) {
   if (view.status === 'idle') {
     /*
-     * BOS SORGUDA "SON BAKILANLAR" GOSTERILMEZ.
+     * `idle` ARTIK YALNIZCA ILK KAREDIR.
      *
-     * Yerel bir gecmis tutmak bu fazin kapsami degil, ve kapsam disi olmasi
-     * bir eksiklik degil bir karar: paylasilan bir makinede modali acan
-     * sonraki kisi, oncekinin hangi token'lara baktigini gorurdu.
+     * Bos sorgu artik oneri listesini getiriyor (bkz. efekt), yani bu dal
+     * modal acilip ilk istek yola cikana kadarki bir an icin gorunur. Metin
+     * yine de dogru olmali: bir an icin bile olsa yanlis bir sey yazmak,
+     * yavas bir baglantida kalici hale gelir.
+     *
+     * BOS SORGUDA "SON BAKILANLAR" GOSTERILMEZ ve bu ayri bir karar: yerel bir
+     * gecmis, paylasilan bir makinede modali acan sonraki kisiye oncekinin
+     * hangi token'lara baktigini gosterirdi.
      */
     return <Note>Type to search by name, symbol, or paste a token address.</Note>
   }

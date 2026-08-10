@@ -399,6 +399,20 @@ export const SORTS = {
   oldest: { key: 'created_seq', desc: false },
   marketCap: { key: 'search_key(market_cap_wei, created_seq)', desc: true },
   volume: { key: 'search_key(volume_24h_wei, created_seq)', desc: true },
+  /**
+   * GRADUATION'A EN YAKIN ONCE.
+   *
+   * `progress_ppm` MILYONDA PAYDIR ve `search_key` ile paketlenir, tipki
+   * market cap ve hacim gibi: paketlenmemis bir imlec iki token ayni ppm'e
+   * sahip oldugunda (ki bir bonding curve'de siklikla olur -- ayni miktar
+   * toplanmis iki curve ayni yerdedir) sayfa sinirinda birini ATLAR.
+   *
+   * TAMAMLANMISLAR DISARIDA BIRAKILMAZ. "Graduation'a yakin" listesinin en
+   * ustunde %100'e varmis olanin durmasi DOGRUDUR: o, sirada bekleyen ilk
+   * adaydir. Onu suzmek, listenin adini "graduation'a yakin ama varmamis"
+   * yapardi ve kullanicinin aradigi satiri gizlerdi.
+   */
+  nearGraduation: { key: 'search_key(progress_ppm::numeric, created_seq)', desc: true },
 } as const
 
 export type SortKey = keyof typeof SORTS
@@ -596,6 +610,32 @@ export interface ListTokensOptions {
   ageDays?: number
   cursor?: Cursor
   limit?: number
+  /**
+   * NUMARALI SAYFA ICIN OFFSET -- ve `cursor` ile BIRLIKTE VERILEMEZ.
+   *
+   * Ikisi ayni soruyu iki farkli garantiyle cevaplar. `cursor` "su anahtardan
+   * sonrasi"dir ve araya giren yazimlardan etkilenmez; `offset` "bastan N
+   * satir atla"dir ve CANLI bir siralama anahtarinda satir tekrarlatir ya da
+   * atlatir -- iki sorgu arasinda bir alim gelirse butun liste bir kayar.
+   *
+   * Yine de var, cunku urun numarali sayfa istiyor (1 2 3 …) ve numarali
+   * sayfa OFFSET'siz dogru yapilamaz. Bedeli su siralamalarda gercektir:
+   * `recentBuys`, `marketCap`, `volume`, `nearGraduation`. `newest` ve
+   * `oldest`te YOKTUR: `created_seq` bir daha degismez, yani o iki sekmede
+   * numarali sayfalama tam olarak dogrudur.
+   *
+   * Ikisi birden verilirse fonksiyon REDDEDER. Sessizce birini secmek,
+   * cagiran tarafin hangi garantiyi aldigini bilmemesi demektir.
+   */
+  offset?: number
+  /**
+   * `true` ise sonuc `total` tasir: ayni `WHERE` ile bir `COUNT(*)`.
+   *
+   * Opsiyonel, cunku bedeli var: sayim TAM tabloyu tarar ve numarali sayfa
+   * disinda kimsenin ihtiyaci yok. `KeysetPager` toplami zaten opsiyonel
+   * gosteriyordu; simdi onu VEREBILEN bir yol var.
+   */
+  withTotal?: boolean
 }
 
 /** Explore listesinin sonucu: satirlar, SORGUNUN KENDI hesapladigi imlec, tazelik. */
@@ -613,6 +653,15 @@ export interface ListResult {
    */
   nextCursor: bigint | null
   indexer: IndexerStatus
+  /**
+   * Filtreye uyan TOPLAM satir sayisi -- yalnizca `withTotal: true` istenmisse.
+   *
+   * ALANIN VAR OLMAMASI ILE SIFIR OLMASI AYRI SEYLERDIR ve bu yuzden
+   * opsiyonel: `0` "filtreye uyan hicbir sey yok"tur, `undefined` ise
+   * "sayilmadi". Ikisini birlestirmek, numarali sayfalayiciya sayilmamis bir
+   * listeyi "bos" diye gosterirdi.
+   */
+  total?: number
 }
 
 /**
@@ -637,6 +686,19 @@ export async function listTokens(
   const order = `${key} ${desc ? 'DESC' : 'ASC'}`
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
   const cursor = options.cursor ?? null
+  const offset = options.offset ?? null
+
+  // IKI SAYFALAMA GARANTISI KARISTIRILAMAZ. Bkz. `ListTokensOptions.offset`.
+  if (cursor !== null && offset !== null) {
+    throw new Error(
+      'listTokens: `cursor` and `offset` are different pagination guarantees and cannot be ' +
+        'combined. Pick one: `cursor` is stable under concurrent writes, `offset` is what ' +
+        'numbered pages need.',
+    )
+  }
+  if (offset !== null && (!Number.isInteger(offset) || offset < 0)) {
+    throw new RangeError(`listTokens: offset must be a non-negative integer, got ${offset}`)
+  }
 
   const where: string[] = []
   const params: unknown[] = []
@@ -645,18 +707,41 @@ export async function listTokens(
     params.push(options.ageDays)
     where.push(`created_at >= now() - ($${params.length}::int * interval '1 day')`)
   }
+  // SAYIM, `LIMIT`/`OFFSET` PARAMETRELERI EKLENMEDEN ONCE hazirlanir: sayim
+  // sorgusu ayni `WHERE`i kullanir ama sayfa parametrelerini KULLANMAZ, ve
+  // ikisini ayni dizide biriktirmek sayimi sessizce sayfaya baglardi.
+  const whereSql = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
+  const whereParams = [...params]
+
   if (cursor !== null) {
     params.push(cursor.toString())
     where.push(`${key} ${desc ? '<' : '>'} $${params.length}::numeric`)
   }
+  const pagedWhere = where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''
   params.push(limit)
+  const limitParam = params.length
+  let offsetSql = ''
+  if (offset !== null) {
+    params.push(offset)
+    offsetSql = ` OFFSET $${params.length}`
+  }
 
-  const { rows } = await db.query<OverviewRow & { cursor_key: string | null }>(
-    `SELECT *, (${key})::text AS cursor_key FROM token_overview
-     ${where.length > 0 ? `WHERE ${where.join(' AND ')}` : ''}
-     ORDER BY ${order} LIMIT $${params.length}`,
-    params,
-  )
+  const [{ rows }, total] = await Promise.all([
+    db.query<OverviewRow & { cursor_key: string | null }>(
+      `SELECT *, (${key})::text AS cursor_key FROM token_overview
+       ${pagedWhere}
+       ORDER BY ${order} LIMIT $${limitParam}${offsetSql}`,
+      params,
+    ),
+    options.withTotal === true
+      ? db
+          .query<{ n: string }>(
+            `SELECT count(*)::text AS n FROM token_overview ${whereSql}`,
+            whereParams,
+          )
+          .then((r) => Number(r.rows[0]?.n ?? '0'))
+      : Promise.resolve(undefined),
+  ])
 
   // KISA SAYFA SON SAYFADIR (`searchTokens` ile ayni kural, ayni gerekce).
   const last = rows[rows.length - 1]
@@ -665,7 +750,12 @@ export async function listTokens(
       ? null
       : BigInt(last.cursor_key)
 
-  return { rows: rows.map(toOverview), nextCursor, indexer: await getIndexerStatus(db) }
+  return {
+    rows: rows.map(toOverview),
+    nextCursor,
+    ...(total === undefined ? {} : { total }),
+    indexer: await getIndexerStatus(db),
+  }
 }
 
 /**

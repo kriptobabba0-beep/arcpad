@@ -107,6 +107,15 @@ export type ReadResult<T> =
 export type Page<T> = {
   readonly rows: readonly T[]
   readonly nextCursor: string | null
+  /**
+   * Filtreye uyan TOPLAM satir -- yalnizca `withTotal` istenmisse.
+   *
+   * `undefined` "sayilmadi"dir, `0` ise "hicbir sey yok". Numarali sayfalayici
+   * kac sayfa cizecegini bundan bulur; sayilmamis bir listede sayfa
+   * numarasi CIZMEZ, cunku uydurulmus bir sayfa sayisi kullaniciya olmayan
+   * bir kesinlik vaat eder.
+   */
+  readonly total?: number
 }
 
 /**
@@ -179,6 +188,13 @@ export type ListParams = {
   readonly ageDays: number | null
   readonly cursor: string | null
   readonly limit: number
+  /**
+   * NUMARALI SAYFA ICIN. `cursor` ile birlikte verilemez -- `listTokens`
+   * ikisini birden alirsa REDDEDER, cunku farkli iki garantidir.
+   */
+  readonly offset?: number
+  /** `true` ise sonuc `total` tasir; numarali sayfalayici bunu ister. */
+  readonly withTotal?: boolean
 }
 
 export type PageParams = { readonly cursor: string | null; readonly limit: number }
@@ -243,14 +259,24 @@ function parseCursor(cursor: string | null): bigint | null {
  */
 export async function readTokenList(params: ListParams): Promise<ReadResult<Page<TokenOverview>>> {
   return guard(async () => {
-    const { rows, nextCursor, indexer } = await listTokens(getPool(), {
+    const { rows, nextCursor, total, indexer } = await listTokens(getPool(), {
       sort: params.sort,
       ...(params.ageDays === null ? {} : { ageDays: params.ageDays }),
-      cursor: parseCursor(params.cursor),
+      // `offset` VERILDIYSE `cursor` GONDERILMEZ. `listTokens` ikisini birden
+      // alirsa firlatir; burada susturmak yerine, cagiranin secimi aynen
+      // gecirilir ve celiski varsa GORULUR.
+      ...(params.offset === undefined
+        ? { cursor: parseCursor(params.cursor) }
+        : { offset: params.offset }),
       limit: params.limit,
+      ...(params.withTotal === true ? { withTotal: true } : {}),
     })
     return {
-      value: { rows, nextCursor: nextCursor === null ? null : nextCursor.toString() },
+      value: {
+        rows,
+        nextCursor: nextCursor === null ? null : nextCursor.toString(),
+        ...(total === undefined ? {} : { total }),
+      },
       indexer,
     }
   })

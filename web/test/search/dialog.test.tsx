@@ -120,11 +120,32 @@ describe('<SearchDialog> -- girdi, debounce, iptal', () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('combobox')))
   })
 
-  it('bos `q` ile istek YOK ve "son bakilanlar" GOSTERILMEZ', async () => {
+  /*
+   * BOS KUTU ARTIK ONERI GETIRIR -- VE BU AYRI BIR DALDIR.
+   *
+   * Eski sozlesme "bos `q` ile istek YOK" idi. Degisti: kullanici kutuyu
+   * actiginda 24 saatlik hacme gore ilk 10 gelir. Onemli olan HANGI istegin
+   * gittigi: `?trending=1`, `?q=` DEGIL. `searchTokens` her zaman
+   * `ILIKE $2 OR name % $1` uygular; bos bir sorguyla onu "her seyi dondur"
+   * haline getirmek `%%` deseni kurmak olurdu -- deseni cagiran tarafta
+   * kurmak, bu dosyanin korudugu kuralin ta kendisini delerdi.
+   */
+  it('bos `q` ONERI dalini cagirir, metin aramasini DEGIL', async () => {
     render(<SearchDialog open onClose={noop} />)
-    expect(fetchMock).not.toHaveBeenCalled()
-    expect(screen.getByText(/type to search/i)).toBeVisible()
-    expect(screen.queryByRole('listbox')).not.toBeInTheDocument()
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    const url = pendingAt(0).url
+    expect(url).toContain('trending=1')
+    // Metin aramasinin hicbir parametresi gitmez.
+    expect(url).not.toContain('q=')
+    expect(url).not.toContain('sort=')
+  })
+
+  it('bos kutuda listenin NE OLDUGU yazar, ve "son bakilanlar" GOSTERILMEZ', async () => {
+    render(<SearchDialog open onClose={noop} />)
+    expect(await screen.findByText(/by 24h volume/i)).toBeVisible()
+    // Yerel bir gecmis tutulmuyor: paylasilan bir makinede modali acan
+    // sonraki kisi, oncekinin baktiklarini gormemeli.
+    expect(screen.queryByText(/recently viewed/i)).not.toBeInTheDocument()
   })
 
   it('250 ms debounce: dort tus vurusu TEK istek acar', async () => {
@@ -400,11 +421,26 @@ describe('<SearchDialog> -- bos durumlar ve dusus', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
-  it('`Relevance` yalnizca `q` doluyken etkindir', async () => {
+  /*
+   * BOS KUTUDA SIRALAMA PILLERI HIC CIZILMEZ, VE BU BIR GERILEME DEGIL.
+   *
+   * Onceden `Relevance` gorunur ama `disabled` idi. Simdi butun serit
+   * gizleniyor, cunku oneri listesinin siralamasi SUNUCUDA sabit ("24 saatlik
+   * hacim") ve pillerin hicbiri o istege ulasmiyor. Devre disi bir dugme
+   * "simdi olmaz" der; hicbir sey yapmayan ETKIN bir dugme ise yalan soyler --
+   * serit gorunur kalsaydi `Newest`e basan biri listenin degismedigini gorur
+   * ve arayuzun bozuk oldugunu dusunurdu.
+   *
+   * Kullanici yazmaya BASLAYINCA serit geri gelir ve `Relevance` etkindir:
+   * asagidaki ikinci yari onu kanitlar.
+   */
+  it('bos kutuda pil seridi YOKTUR; yazinca geri gelir ve Relevance etkindir', async () => {
     const user = userEvent.setup()
     render(<SearchDialog open onClose={noop} />)
 
-    expect(screen.getByRole('button', { name: 'Relevance' })).toBeDisabled()
+    await screen.findByText(/by 24h volume/i)
+    expect(screen.queryByRole('button', { name: 'Relevance' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Newest' })).not.toBeInTheDocument()
 
     await user.type(screen.getByRole('combobox'), 'd')
     expect(screen.getByRole('button', { name: 'Relevance' })).toBeEnabled()

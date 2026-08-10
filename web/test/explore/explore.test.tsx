@@ -36,8 +36,52 @@ describe('<TokenCard>', () => {
     expect(card).toHaveTextContent('$DIFF')
     expect(card).toHaveTextContent('25.3%')
     // Kart yogunlugu bir kaynaktir: bes metrik, hicbirinin okunmamasi demek.
+    // Bu ikisi TOP TOKENS seridinde durur, izgarada degil.
     expect(card).not.toHaveTextContent(/holders?/i)
     expect(card).not.toHaveTextContent(/24h/i)
+  })
+
+  /*
+   * UCUNCU METRIK: YAS. Kartin kendi basligi uzun sure "uc metrik" diyordu ve
+   * JSX ikisini ciziyordu -- `createdAt` hic okunmuyordu. Bir launchpad'de
+   * izgara agirlikla YENI olani aramak icin taranir.
+   */
+  it('YAS gorselin uzerinde bir rozettir, ve `now` sabitlenebilir', () => {
+    const now = CLIMBING.createdAt.getTime() + 3 * 60 * 60 * 1000
+    render(<TokenCard overview={CLIMBING} now={now} />)
+    expect(screen.getByRole('link')).toHaveTextContent('3h')
+  })
+
+  it('yas ERISILEBILIR ADDA acik yazilir -- `3h` seslendirilince "uc hache" olur', () => {
+    const now = CLIMBING.createdAt.getTime() + 2 * 24 * 60 * 60 * 1000
+    render(<TokenCard overview={CLIMBING} now={now} />)
+    expect(screen.getByRole('link', { name: /2 days old/ })).toBeInTheDocument()
+  })
+
+  /*
+   * `graduated` ILE `complete` AYNI SEY DEGILDIR ve rozet yalnizca ilkinde
+   * cikar. `complete && !graduated` bugun uretimdeki curve'un HALIDIR: satis
+   * arzi bitti, havuz henuz yok.
+   */
+  it('GRADUATED rozeti yalnizca gercekten mezun olmusta cikar', () => {
+    render(<TokenCard overview={CLIMBING} />)
+    expect(screen.getByRole('link')).not.toHaveTextContent(/graduated/i)
+  })
+
+  it('mezun olmus curve rozeti tasir ve erisilebilir adda da soyler', () => {
+    render(<TokenCard overview={{ ...SMOKE, graduated: true }} />)
+    const card = screen.getByRole('link')
+    expect(card).toHaveTextContent('Graduated')
+    expect(card).toHaveAccessibleName(/, graduated$/)
+  })
+
+  it('FDV bir para birimi isareti tasir ve SIKISTIRILIR', () => {
+    render(<TokenCard overview={CLIMBING} />)
+    const card = screen.getByRole('link')
+    expect(card).toHaveTextContent('FDV')
+    // Alti ondalikli ciplak bir sayi DEGIL: `58.783256` bir izgarada
+    // okunmaz ve birimi belirsizdir.
+    expect(card.textContent ?? '').toMatch(/\$[\d.,]+[KMB]?/)
   })
 
   it('DEVIASYON 3: yuzde ciplak degil, neyin yuzdesi oldugu yazar', () => {
@@ -50,7 +94,7 @@ describe('<TokenCard>', () => {
   it('erisilebilir ad tek bir dizedir ve gorseli icermez', () => {
     render(<TokenCard overview={CLIMBING} />)
     const card = screen.getByRole('link', {
-      name: /Diff \(DIFF\), market cap .*, 25\.3% to graduation/,
+      name: /Diff \(DIFF\), FDV .*, 25\.3% to graduation/,
     })
     expect(card).toBeInTheDocument()
     // Gorsel dekoratif: adi zaten bitisik metin tasiyor.

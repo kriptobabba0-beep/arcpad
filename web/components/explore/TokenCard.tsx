@@ -4,6 +4,7 @@ import { TokenArtwork } from '@/components/layout/TokenArtwork'
 import type { TokenOverview } from '@/components/read/types'
 import { Pill } from '@/components/ui/Pill'
 import { relativeAge, relativeAgeLabel } from '@/components/ui/relativeAge'
+import { GraduatedBadge } from './GraduatedBadge'
 
 /**
  * `progressPpm` MILYONDA PAYDIR. Yuzdeye cevirmek 10.000'e bolmektir.
@@ -71,8 +72,9 @@ export function TokenCard({
    */
   const label =
     `${overview.name} (${overview.symbol}), ` +
-    `market cap ${overview.marketCapWei} wei, ${percent}% to graduation, ` +
-    relativeAgeLabel(overview.createdAt, at)
+    `FDV ${overview.marketCapWei} wei, ${percent}% to graduation, ` +
+    relativeAgeLabel(overview.createdAt, at) +
+    (overview.graduated ? ', graduated' : '')
 
   return (
     <Link
@@ -100,6 +102,7 @@ export function TokenCard({
         >
           {age}
         </span>
+        {overview.graduated ? <GraduatedBadge /> : null}
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col gap-1.5 p-2.5">
@@ -117,7 +120,7 @@ export function TokenCard({
           bicimde gosterir.
         */}
         <div className="flex items-baseline justify-between gap-2">
-          <span className="text-[12px] text-muted">MC</span>
+          <span className="text-[12px] text-muted">FDV</span>
           <span className="text-[13px] font-medium tabular-nums">
             {formatUsdcCompact(overview.marketCapWei)}
           </span>

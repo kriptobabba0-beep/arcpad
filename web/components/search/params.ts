@@ -92,6 +92,21 @@ const MAX_Q_LENGTH = 128
 /** Bir sayfa. URL'den OKUNMAZ: sinirsiz `limit` bir ucuz DoS kolu olurdu. */
 export const SEARCH_LIMIT = 20
 
+/**
+ * BOS KUTUNUN ONERI SAYISI.
+ *
+ * On, cunku bu bir liste degil bir BASLANGIC NOKTASIDIR: kullanici kutuyu
+ * actiginda ya aklindaki seyi yazar ya da gozune carpan bir seye tiklar.
+ * Yirmi satir ikinci davranisi bir taramaya cevirir ve kutunun kendisini
+ * (yazmak) gizler.
+ */
+export const TRENDING_LIMIT = 10
+
+/** Bos kutunun istegi. Metin aramasindan AYRI bir dal -- bkz. rotanin yorumu. */
+export function trendingRequestUrl(): string {
+  return '/api/search?trending=1'
+}
+
 /** Ekrandaki yas filtresi: All / 24h / 7d. `explore/params.ts` ile ayni tablo. */
 const AGE_DAYS: Record<string, number | null> = { all: null, '1': 1, '7': 7 }
 

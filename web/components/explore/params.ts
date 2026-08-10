@@ -1,24 +1,77 @@
-import { SORT_KEYS, type SortKey } from '@/components/read/types'
+import type { SortKey } from '@/components/read/types'
 
 export type ExploreSearchParams = {
-  sort?: string | string[] | undefined
-  age?: string | string[] | undefined
-  after?: string | string[] | undefined
+  tab?: string | string[] | undefined
+  page?: string | string[] | undefined
 }
+
+/**
+ * DORT SEKME, VE HER BIRI BIR (SIRALAMA, PENCERE) CIFTI.
+ *
+ * Onceki hal bes siralama ile uc yas filtresini ayri iki serit halinde
+ * gosteriyordu: on bes kombinasyon, hicbirinin adi yok. Kullanicinin sordugu
+ * soru "hangi kolona gore sirala" degil, "bana neyi goster" -- ve o sorunun
+ * dort cevabi var.
+ *
+ * `sort` ve `ageDays` URL'e YAZILMAZ; yalnizca `tab` yazilir. Iki temsil
+ * (sekme adi + turedigi ciftler) ayni sayfayi iki farkli adresten gostermek
+ * demektir ve hangisinin kanonik oldugu belirsiz kalir.
+ */
+export const TABS = {
+  /**
+   * TRENDING = 24 SAATLIK HACIM.
+   *
+   * "Islem aktivitesi"nin olculmus hali budur. `recentBuys` (son alimin
+   * `event_seq`i) da bir aktivite olcusudur ama YALNIZCA SONLUGU olcer: tek
+   * bir 1 USDC'lik alim, bir gunde 40.000 USDC donmus bir curve'un onune
+   * gecer. Hacim, "ne kadar" sorusunu cevaplar.
+   */
+  trending: { sort: 'volume', ageDays: null, label: 'Trending' },
+  /**
+   * NEW = SON 7 GUN, YENIDEN ESKIYE.
+   *
+   * Yas bir PENCEREdir, siralama degil: `created_at >= now() - 7 gun` kumeyi
+   * daraltir, sira yine `created_seq`tedir. Ikisi ayni olsaydi, ayni saniyede
+   * acilan iki launch arasindaki sira belirsiz olurdu -- ve olculdu, ardisik
+   * bloklarin yarisi ayni timestamp'i tasiyor.
+   */
+  new: { sort: 'newest', ageDays: 7, label: 'New' },
+  /** TOP = FDV, buyukten kucuge. */
+  top: { sort: 'marketCap', ageDays: null, label: 'Top' },
+  /**
+   * NEAR GRADUATION = ILERLEME YUZDESI, YAKINDAN UZAGA.
+   *
+   * Tamamlanmislar SUZULMEZ: %100'e varmis bir curve, "graduation'a en yakin"
+   * listesinin dogal olarak en ustundedir -- sirada bekleyen ilk adaydir.
+   */
+  nearGraduation: { sort: 'nearGraduation', ageDays: null, label: 'Near graduation' },
+} as const satisfies Record<string, { sort: SortKey; ageDays: number | null; label: string }>
+
+export type TabKey = keyof typeof TABS
+
+export const TAB_KEYS = Object.keys(TABS) as readonly TabKey[]
+
+export const DEFAULT_TAB: TabKey = 'trending'
+
+/**
+ * SAYFA BOYUTU, TEK YERDE.
+ *
+ * `packages/db`'nin 200 satirlik ust siniri altinda olmali: `listTokens`
+ * `limit`i `[1, 200]`e kirpar, yani 500 isteyen bir cagiran 200 satir alir ve
+ * "daha var mi" sorusunu yanlis cevaplar. 48 hem o sinirin altinda hem de 2,
+ * 3, 4 ve 6 sutuna TAM bolunur -- her kirilma noktasinda son satir dolu biter.
+ */
+export const PAGE_SIZE = 48
 
 export type ExploreQuery = {
+  readonly tab: TabKey
   readonly sort: SortKey
-  /** `null` = butun zamanlar. Aksi halde gun sayisi. */
   readonly ageDays: number | null
-  readonly cursor: string | null
+  /** 1 tabanli. */
+  readonly page: number
 }
 
-export const DEFAULT_SORT: SortKey = 'recentBuys'
-
-/** Ekran gorutulerindeki yas filtresi: All / 24h / 7d. */
-const AGE_DAYS: Record<string, number | null> = { all: null, '1': 1, '7': 7 }
-
-/** `?sort=a&sort=b` -> Next dizi verir. Ilk deger baglayicidir. */
+/** `?tab=a&tab=b` -> Next dizi verir. Ilk deger baglayicidir. */
 function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value
 }
@@ -26,89 +79,49 @@ function first(value: string | string[] | undefined): string | undefined {
 /**
  * URL'DEN GELEN DIZE HICBIR ZAMAN BIR SQL IFADESINE DONUSMEZ.
  *
- * `sort` burada bir ANAHTAR olarak cozulur ve taninmayan her deger sessizce
+ * `tab` burada bir ANAHTAR olarak cozulur ve taninmayan her deger sessizce
  * varsayilana duser. Sessizce, cunku bir kullaniciya elle yazdigi URL icin
  * hata sayfasi gostermek bir sey kazandirmaz -- ama beyaz listenin disina
  * cikan bir degerin SORGUYA ULASMAMASI zorunludur. Ifadenin kendisi
  * `packages/db`'de durur; buradan gecen tek sey `SORTS`'un bir anahtaridir.
  *
- * `after` cursor'u opak bir dizedir ve DOGRULANIR: keyset cursor'u bir
- * `eventSeq`tir, yani ondalik basamaklardan olusur. Bunu kontrol etmek
- * cursor'un sorguya bir parametre olarak baglanmasindan ayri bir savunma
- * degil, ONUN ONUNDEKI savunmadir.
+ * `page` UST SINIRLIDIR, ve bu keyfi degil: `OFFSET` = (page-1) x 48, ve
+ * kullanicinin elle yazdigi `?page=999999999` Postgres'i 48 milyar satir
+ * atlamaya calisirken oyalardi. Sinir, bu urunun gorebilecegi her listeden
+ * buyuk ve bir saldiri yuzeyinden kucuk.
  */
+const MAX_PAGE = 10_000
+
 export function parseExploreParams(raw: ExploreSearchParams): ExploreQuery {
-  const rawSort = first(raw.sort)
-  const sort = (SORT_KEYS as readonly string[]).includes(rawSort ?? '')
-    ? (rawSort as SortKey)
-    : DEFAULT_SORT
+  const rawTab = first(raw.tab)
+  const tab = (TAB_KEYS as readonly string[]).includes(rawTab ?? '')
+    ? (rawTab as TabKey)
+    : DEFAULT_TAB
 
-  const rawAge = first(raw.age)
-  const ageDays = rawAge !== undefined && rawAge in AGE_DAYS ? (AGE_DAYS[rawAge] ?? null) : null
+  const rawPage = first(raw.page)
+  const parsed = rawPage !== undefined && /^\d{1,6}$/.test(rawPage) ? Number(rawPage) : 1
+  const page = Math.min(Math.max(1, parsed), MAX_PAGE)
 
-  /*
-   * AYNI GENISLETME, AYNI SEBEP -- ve burada da sessizce kiriliyordu.
-   *
-   * Explore'un imleci her zaman bir `eventSeq` DEGILDIR: `marketCap` sirasinda
-   * `market_cap_wei`, `volume` sirasinda `volume_24h_wei`, ikisi de
-   * `numeric(78,0)`. Graduation civarindaki bir market cap zaten 20 basamagi
-   * asar, ve asan her imlec `null`a dusup kullaniciyi birinci sayfaya geri
-   * atardi. Ust sinir `numeric(78,0)`in kendi genisligidir; sinirsiz degil.
-   */
-  const rawCursor = first(raw.after)
-  const cursor = rawCursor !== undefined && /^\d{1,78}$/.test(rawCursor) ? rawCursor : null
-
-  return { sort, ageDays, cursor }
+  const { sort, ageDays } = TABS[tab]
+  return { tab, sort, ageDays, page }
 }
+
+/** Sekme seridindeki etiketler, URL sirasinda. */
+export const TAB_LABELS: ReadonlyArray<{ key: TabKey; label: string }> = TAB_KEYS.map((key) => ({
+  key,
+  label: TABS[key].label,
+}))
 
 /**
- * `?seen=a.b.c` -> ziyaret edilen cursor yigini.
- *
- * BURADA, `KeysetPager.tsx`'te DEGIL: saf bir ayristirici ve `unit` test
- * projesi (node ortami, `.ts`) onu React derleyicisi olmadan calistirabilmeli.
- * Bir `.tsx` dosyasindan import etmek o projede "invalid JS syntax" verir --
- * olculdu.
+ * Bir sekmenin adresi. SAYFA TASINMAZ ve bu bilincli: "Top"un 7. sayfasindan
+ * "New"a gecen biri 7. sayfada degil BASTA olmali -- baska bir listenin 7.
+ * sayfasi onun icin anlamsiz bir yerdir, ve cogu zaman bos bir sayfadir.
  */
-export function parseCursorStack(
-  seen: string | string[] | undefined,
-  after: string | null,
-): string[] {
-  const raw = Array.isArray(seen) ? seen[0] : seen
-  const stack = raw === undefined || raw === '' ? [] : raw.split('.').filter((s) => /^\d+$/.test(s))
-  if (after !== null) stack.push(after)
-  return stack
+export function tabHref(tab: TabKey): string {
+  return tab === DEFAULT_TAB ? '/' : `/?tab=${tab}`
 }
 
-/** Filtre seridindeki etiketler. Deger = URL'e yazilan sey. */
-export const SORT_LABELS: ReadonlyArray<{ key: SortKey; label: string }> = [
-  { key: 'recentBuys', label: 'Recent buys' },
-  { key: 'newest', label: 'Newest' },
-  { key: 'oldest', label: 'Oldest' },
-  { key: 'marketCap', label: 'Market cap' },
-  { key: 'volume', label: 'Volume' },
-]
-
-export const AGE_LABELS: ReadonlyArray<{ value: string; label: string }> = [
-  { value: 'all', label: 'All' },
-  { value: '1', label: '24h' },
-  { value: '7', label: '7d' },
-]
-
-/** Mevcut sorguyu koruyarak tek bir anahtari degistiren bir href uretir. */
-export function exploreHref(
-  current: ExploreQuery,
-  patch: { sort?: SortKey; age?: string },
-): string {
-  const params = new URLSearchParams()
-  const sort = patch.sort ?? current.sort
-  if (sort !== DEFAULT_SORT) params.set('sort', sort)
-
-  const age = patch.age ?? (current.ageDays === null ? 'all' : String(current.ageDays))
-  if (age !== 'all') params.set('age', age)
-
-  // Bir filtre degistiginde cursor DUSURULUR. Tasinsaydi, yeni siralamada
-  // anlami olmayan bir anahtardan devam edilirdi -- kullanici "Market cap"e
-  // tikladiginda listenin ortasindan basliyor olurdu.
-  const query = params.toString()
-  return query === '' ? '/' : `/?${query}`
+/** Numarali sayfalayicinin koruyacagi parametreler (sayfa numarasi HARIC). */
+export function tabQuery(query: ExploreQuery): Record<string, string> {
+  return query.tab === DEFAULT_TAB ? {} : { tab: query.tab }
 }
