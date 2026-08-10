@@ -30,6 +30,7 @@ const ALL_TABLES = [
   'fee_events',
   'holders',
   'launches',
+  'limit_orders',
   'rejected_launches',
   'schema_migrations',
   'schema_state',
@@ -88,6 +89,24 @@ describe('kisitlar gercekten bagli mi', () => {
        VALUES ($1, $2, 'gm', 1, 55000000, $3, $4, now())`,
       [TOKEN, ALICE, hash32(0xc4a7), `0x${'ab'.repeat(65)}`],
     )
+    /*
+     * EMIRLERIN TOHUM SATIRI, ayni gerekceyle: `limit_orders`in yazicisi da
+     * indexer degil `web`in POST rotasidir, yani `replayRange` onu asla
+     * doldurmaz ve tohumsuz bir tablo bosluk muhafizini patlatirdi.
+     *
+     * ALIM tarafi secildi cunku `limit_orders_side_units_check` iki daldan
+     * BIRINI dolu ister; satiri KOPYALAYIP tek bir sutunu bozan tarama, o
+     * dalin butun sutunlarini birlikte tasir ve boylece yalnizca bozulan
+     * sutunun kisitini olcer.
+     */
+    await pool.query(
+      `INSERT INTO limit_orders
+         (token, owner_addr, is_buy, amount_wei, min_out_tok, status, expires_at,
+          nonce_hex, signature_hex, issued_at)
+       VALUES ($1, $2, true, 1000000000000000000, 500, 'open', now() + interval '1 day',
+               $3, $4, now())`,
+      [TOKEN, ALICE, hash32(0x0dea), `0x${'cd'.repeat(65)}`],
+    )
   })
 
   // ---------------------------------------------------------------
@@ -129,6 +148,7 @@ describe('kisitlar gercekten bagli mi', () => {
       'launches.curve',
       'launches.launch_creator',
       'launches.token',
+      'limit_orders.owner_addr',
       'rejected_launches.expected',
       'rejected_launches.raw_addr',
       'token_transfers.from_addr',
@@ -229,7 +249,7 @@ describe('kisitlar gercekten bagli mi', () => {
       client.release()
     }
     // Tarama gercekten butun aileyi gezdi.
-    expect(checked).toHaveLength(19)
+    expect(checked).toHaveLength(20)
   })
 
   it('adres tasiyan HER sutun ya desenle ya yabanci anahtarla korunur', async () => {
@@ -335,6 +355,8 @@ describe('kisitlar gercekten bagli mi', () => {
       'launches.curve',
       'launches.launch_creator',
       'launches.token',
+      'limit_orders.owner_addr',
+      'limit_orders.token',
       'rejected_launches.curve',
       'rejected_launches.expected',
       'rejected_launches.raw_addr',

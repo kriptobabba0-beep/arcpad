@@ -29,12 +29,13 @@ const EXPECTED = [
   '011_head_observed_at.sql',
   '012_pool_trade_amounts.sql',
   '013_chat.sql',
+  '014_limit_orders.sql',
 ]
 
 describe('runMigrations', () => {
   beforeEach(dropSchema)
 
-  it('diskteki migration listesi tam olarak beklenen on uc dosyadir', async () => {
+  it('diskteki migration listesi tam olarak beklenen on dort dosyadir', async () => {
     // Sirali ve TAM. Bir testin gecici olarak yazdigi bozuk dosya temizlenmemis
     // olsaydi burasi kirmizi olurdu -- yani sizinti sessiz kalamaz.
     await expect(migrationFiles()).resolves.toEqual(EXPECTED)
@@ -210,7 +211,7 @@ describe('runMigrations', () => {
     )
     try {
       await expect(runMigrations(pool, await migrationFiles())).rejects.toThrow(
-        /003a_between\.tmp\.sql: uygulanmamis, ama uygulanmis olan 013_chat\.sql/,
+        /003a_between\.tmp\.sql: uygulanmamis, ama uygulanmis olan 014_limit_orders\.sql/,
       )
     } finally {
       await unlink(join(MIGRATIONS_DIR, inserted))
@@ -221,10 +222,10 @@ describe('runMigrations', () => {
     // Kapinin fazla siki OLMADIGININ kaniti: normal evrim yolu -- `007_...` --
     // engellenmiyor.
     await runMigrations(pool)
-    // `014_`: son mesru dosya artik `013_chat.sql`.
-    // `013_appended` onun ONUNE siralanirdi ('a' < 'c') ve kapi onu -- DOGRU
+    // `015_`: son mesru dosya artik `014_limit_orders.sql`.
+    // `014_appended` onun ONUNE siralanirdi ('a' < 'l') ve kapi onu -- DOGRU
     // OLARAK -- araya ekleme sayardi.
-    const appended = '014_appended.tmp.sql'
+    const appended = '015_appended.tmp.sql'
     await writeFile(
       join(MIGRATIONS_DIR, appended),
       'CREATE TABLE appended_ok (x int PRIMARY KEY);\n',

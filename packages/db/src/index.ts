@@ -39,6 +39,30 @@ export {
 export { type Deployment, getDeployment, putDeployment } from './deployment'
 export { type Address, fromHexBytes, lower, lowerHash32, pgSafeText, toHexBytes } from './hex'
 export { MIGRATIONS_DIR, migrationFiles, runMigrations } from './migrate'
+export {
+  cancelOrder,
+  countRecentOrders,
+  DEFAULT_ORDER_RATE_LIMIT,
+  encodeOrderCursor,
+  expireDueOrders,
+  getOrder,
+  type LimitOrderRow,
+  type LimitOrderTerms,
+  LIVE_STATUSES,
+  listLiveOrders,
+  listOrders,
+  markExpired,
+  markFilled,
+  markTriggered,
+  type OrderInsert,
+  type OrderPlaceOutcome,
+  type OrderRateLimit,
+  type OrderStatus,
+  orderPreflight,
+  parseOrderCursor,
+  placeOrder,
+  type TransitionResult,
+} from './orders'
 export { createPool, type Pool, type PoolClient, type Queryable, withTransaction } from './pool'
 export {
   type ClaimableFees,

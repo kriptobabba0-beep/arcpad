@@ -380,6 +380,10 @@ async function stableSnapshot(): Promise<Record<string, unknown[]>> {
     // yeni sutun burada da beyan edilmek zorunda; sessizce kacmasi tam olarak
     // bu iddianin onlemek icin var oldugu sey.
     'chat_messages.created_at',
+    // `limit_orders.created_at` -- ikinci kullanici-yazili tablo, ayni
+    // gerekceyle: replay ona hic dokunmaz ama liste KATALOGDAN turedigi icin
+    // yeni sutun burada da beyan edilmek zorunda.
+    'limit_orders.created_at',
     'rejected_launches.seen_at',
     'schema_migrations.applied_at',
     'schema_state.updated_at',

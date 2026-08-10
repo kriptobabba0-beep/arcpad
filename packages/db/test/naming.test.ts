@@ -159,6 +159,16 @@ const EXEMPT_NON_AMOUNT = new Set([
   // UCU DE hicbir kovaya dusmuyordu. Bu commit'te tip-kapsamli muafiyet
   // makinesi kuruldu ve sonra kendi yeni adim icin kapsamsiz yol secildi.
   'inventory_json',
+  // `limit_orders.status` -- emrin durum makinesindeki yeri
+  // (`open|triggered|filled|cancelled|expired`). `complete` / `graduated` /
+  // `kind` / `reason` ile AYNI sinifta: bir DURUM tasir, bir miktar degil.
+  //
+  // Bir sonek uydurmak (`status_kind`) kapiya HICBIR SEY kazandirmazdi ve
+  // muafiyet TIP KAPSAMLI oldugu icin bir sey de kaybettirmiyor: `status
+  // bigint` yine `undeclaredInteger` kovasina duser ve kapi kirilir. Kapinin
+  // korumaya calistigi sey "gorunumunu bildirmeden USDC tasiyan sutun"dur ve
+  // bes sabit dizeden birini tutan bir `text` onu tasiyamaz.
+  'status',
 ])
 
 /**
@@ -442,6 +452,22 @@ const EXPECTED_INVENTORY = [
   'public:r:launches.tx_hash',
   'public:r:launches.uri',
   'public:r:launches.uri_hex',
+  'public:r:limit_orders.amount_tok',
+  'public:r:limit_orders.amount_wei',
+  'public:r:limit_orders.created_at',
+  'public:r:limit_orders.expires_at',
+  'public:r:limit_orders.fill_tx_hash',
+  'public:r:limit_orders.is_buy',
+  'public:r:limit_orders.issued_at',
+  'public:r:limit_orders.min_out_tok',
+  'public:r:limit_orders.min_out_wei',
+  'public:r:limit_orders.nonce_hex',
+  'public:r:limit_orders.order_seq',
+  'public:r:limit_orders.owner_addr',
+  'public:r:limit_orders.signature_hex',
+  'public:r:limit_orders.status',
+  'public:r:limit_orders.token',
+  'public:r:limit_orders.trigger_block_number',
   'public:r:rejected_launches.created_seq',
   'public:r:rejected_launches.curve',
   'public:r:rejected_launches.expected',
@@ -674,7 +700,11 @@ describe('adlandirma kapisi', () => {
     // Bos kumeyi gecmesini onler -- "hepsi gecti" sifir sutun uzerinde de
     // dogrudur.
     // 42 -> 43: `chat_messages.balance_tok` (gonderi anindaki bakiye).
-    expect(g.numerics).toBe(43)
+    // 43 -> 47: `limit_orders`in DORT miktar sutunu. Dort olmasinin sebebi tam
+    // olarak bu kapinin var olma sebebi: bir alim USDC (18-decimal native
+    // gorunum) taahhut eder, bir satim TOKEN taahhut eder, ve ikisini ayni
+    // sutunda tasimak o sutunu gorunumunu BILDIREMEZ hale getirirdi.
+    expect(g.numerics).toBe(47)
     expect(g.badNumeric).toEqual([])
   })
 
