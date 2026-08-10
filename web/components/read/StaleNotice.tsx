@@ -50,8 +50,32 @@ export function StaleNotice({
   )
 }
 
-/** Arc'ta olculen blok suresi. Bloklari saniyeye cevirmenin TEK yeri. */
-export const ARC_BLOCK_SECONDS = 0.35
+/**
+ * Arc'ta OLCULEN blok suresi. Bloklari saniyeye cevirmenin TEK yeri.
+ *
+ * OLCUM 2026-08-10, canli testnet, bes ayri pencere -- ve hepsi ayni yeri
+ * gosteriyor, yani deger dalgalanmiyor:
+ *
+ *     son     1.000 blok ->   512 sn  -> 0,5120 sn/blok
+ *     son    10.000 blok ->  5.149 sn -> 0,5149
+ *     son   100.000 blok -> 51.923 sn -> 0,5192
+ *     son   500.000 blok -> 258.249 sn-> 0,5165
+ *     son 1.652.000 blok -> 848.591 sn-> 0,5137   (fabrikanin dagitimindan beri)
+ *
+ * BU SABIT 0,35'TI VE YANLISTI -- %47 kadar, ve TEHLIKELI YONDE. Deger
+ * bloklari YASA cevirir; kucuk bir sabit yasi kucuk gosterir, yani veriyi
+ * OLDUGUNDAN TAZE gosterir. Canli sitede olculdu: indexer 1.229.458 blok
+ * geridiyken uyari "~5 days" yaziyordu, dogrusu ~7,4 gundu. Bir islem
+ * sitesinde bayatligi eksik soylemek, fazla soylemekten cok daha kotudur.
+ *
+ * BU YUZDEN YUKARI YUVARLANDI. Olculen aralik 0,5137-0,5192; 0,52 hepsinin
+ * ustunde. Suphede kalindiginda yas BUYUK gorunmeli.
+ *
+ * VE BU SAYI BAYATLAR. Zincirin hizi bizim kontrolumuzde degil; 0,35 de bir
+ * zamanlar olculmustu. Yeniden olcmek icin iki blogun `timestamp` farkini
+ * span'a bolmek yeterli -- yukaridaki tablo tam olarak bu.
+ */
+export const ARC_BLOCK_SECONDS = 0.52
 
 /**
  * ============ BAYATLIGIN CUMLESI -- IKI OLGU, HICBIRI DUSMEZ ============
@@ -147,10 +171,23 @@ export function describeBlockLag(blocksBehind: bigint | null): string {
   return `${blocks.toLocaleString('en-US')} block${blocks === 1n ? '' : 's'} (~${describeDuration(seconds)})`
 }
 
+/**
+ * `1 second`, `2 seconds` -- ve TEKILI OLAN "1" ELDE VARDI DEGIL.
+ *
+ * Bu hata dosyada zaten duruyordu ve GORUNMUYORDU: `ARC_BLOCK_SECONDS` 0,35
+ * iken tek bir blok `Math.round(0,35) = 0` verip "0 seconds" yaziyordu, ki
+ * cogul dogru. Sabit olculen degerine (0,52) cekilince ayni blok 1'e yuvarlandi
+ * ve "1 seconds" ekrana cikti. Bir sayiyi duzeltmek, o sayinin sakladigi
+ * hatayi ortaya cikardi.
+ */
+function plural(value: number, unit: string): string {
+  return `${value} ${unit}${value === 1 ? '' : 's'}`
+}
+
 function describeDuration(seconds: number): string {
-  if (seconds < 90) return `${Math.round(seconds)} seconds`
+  if (seconds < 90) return plural(Math.round(seconds), 'second')
   const minutes = seconds / 60
-  if (minutes < 90) return `${Math.round(minutes)} minutes`
+  if (minutes < 90) return plural(Math.round(minutes), 'minute')
   const hours = minutes / 60
-  return hours < 48 ? `${Math.round(hours)} hours` : `${Math.round(hours / 24)} days`
+  return hours < 48 ? plural(Math.round(hours), 'hour') : plural(Math.round(hours / 24), 'day')
 }

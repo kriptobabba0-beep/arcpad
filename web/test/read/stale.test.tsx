@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import {
+  ARC_BLOCK_SECONDS,
   describeBlockLag,
   describeLag,
   describeStaleness,
@@ -51,9 +52,9 @@ describe('<StaleNotice> -- canli ama geride', () => {
     const notice = screen.getByTestId('stale-notice')
     expect(notice).toHaveTextContent('This page may be out of date')
     expect(notice).toHaveTextContent('510,000 blocks')
-    // 510.000 x 0,35 sn = 178.500 sn = 49,58 saat, ve 48 saat gun esigidir
-    // (`describeLag` ile ayni sinir) -> "2 days".
-    expect(notice).toHaveTextContent('~2 days')
+    // 510.000 x 0,52 sn = 265.200 sn = 73,7 saat, ve 48 saat gun esigidir
+    // (`describeLag` ile ayni sinir) -> "3 days".
+    expect(notice).toHaveTextContent('~3 days')
     // ...ve "yazma durdu" DEMEZ: indexer bir saniye once yazdi ve bu dogru.
     expect(notice).not.toHaveTextContent('may have stopped')
   })
@@ -151,10 +152,30 @@ describe('<StaleNotice> -- canli ama zincire bakamiyor', () => {
 describe('describeBlockLag -- sinirlar', () => {
   it('tekil blok, bilinmeyen blok, ve gruplu binlik', () => {
     expect(describeBlockLag(null)).toBe('an unknown number of blocks')
-    expect(describeBlockLag(1n)).toBe('1 block (~0 seconds)')
+    // TEK blok, TEK saniye -- ve ikisi de TEKIL. 0,35'lik sabit bu satiri
+    // "~0 seconds"a yuvarlayarak cogul hatasini saklıyordu.
+    expect(describeBlockLag(1n)).toBe('1 block (~1 second)')
     expect(describeBlockLag(767_504n)).toContain('767,504 blocks')
-    // 767.504 x 0,35 = 268.626 sn = 74,6 saat -> "3 days" (48 saat esigi asili).
-    expect(describeBlockLag(767_504n)).toContain('~3 days')
+    // 767.504 x 0,52 = 399.102 sn = 110,9 saat -> "5 days" (48 saat esigi asili).
+    expect(describeBlockLag(767_504n)).toContain('~5 days')
+  })
+
+  /*
+   * SABITIN YONU BIR TESTTIR, DEGERI DEGIL.
+   *
+   * `ARC_BLOCK_SECONDS` 0,35'ti ve zincir 0,52'de kosuyordu, yani site her
+   * bayatligi %47 EKSIK soyluyordu -- 7,4 gunluk gecikmeyi "~5 days" diye.
+   * Bir islem sitesinde yanlisin yonu onemlidir: yasi buyuk gostermek
+   * kullaniciyi temkinli yapar, kucuk gostermek ise bayat bir fiyata
+   * guvendirir.
+   *
+   * Bu yuzden test DEGERI degil YONU pinler: sabit, olculen en yavas
+   * pencereden (0,5192) kucuk olamaz. Zincir hizlanirsa bu test dusmez --
+   * dusmesi de gerekmez, cunku o yon guvenlidir.
+   */
+  it('sabit, OLCULEN blok suresinden kucuk olamaz -- yon guvenli tarafta kalir', () => {
+    const SLOWEST_MEASURED = 0.5192 // 2026-08-10, 100.000 bloklu pencere
+    expect(ARC_BLOCK_SECONDS).toBeGreaterThanOrEqual(SLOWEST_MEASURED)
   })
 })
 
