@@ -50,9 +50,22 @@ export type LaunchFacts = {
   readonly openingMarketCapWei: bigint
   readonly protocolFeeBps: bigint
   readonly creatorFeeBps: bigint
+  /**
+   * Has governance armed `LaunchFactory.graduationTarget`?
+   *
+   * DERIVED FROM THE CHAIN, NOT DECLARED. Every other field here comes from
+   * the curve profile and cannot change; this one is governance state. It is
+   * on `LaunchFacts` so it shares their fate: when the factory cannot be read
+   * the whole object is `null` and the card prints "—" rather than a claim
+   * about liquidity that nothing verified.
+   */
+  readonly graduationArmed: boolean
 }
 
-export function launchFactsFrom(profile: CurveProfile): LaunchFacts {
+/** The zero address — `graduationTarget` before governance arms it. */
+const UNSET_TARGET = '0x0000000000000000000000000000000000000000'
+
+export function launchFactsFrom(profile: CurveProfile, graduationTarget: string): LaunchFacts {
   const { virtualTokenReserves: t, virtualQuoteReserves: v, saleSupply: s } = profile
   const poolSeedTok = poolSeedSupply(s, t)
   return {
@@ -67,6 +80,9 @@ export function launchFactsFrom(profile: CurveProfile): LaunchFacts {
     openingMarketCapWei: marketCap(v, t, TOTAL_SUPPLY_TOK),
     protocolFeeBps: PROTOCOL_FEE_BPS,
     creatorFeeBps: CREATOR_FEE_BPS,
+    // Case-insensitive: the chain answers checksummed, and a `!==` against a
+    // lowercase literal would report every unset factory as armed.
+    graduationArmed: graduationTarget.toLowerCase() !== UNSET_TARGET,
   }
 }
 

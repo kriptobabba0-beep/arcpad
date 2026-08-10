@@ -50,8 +50,8 @@ export default async function CreatePage() {
    */
   let facts: LaunchFacts | null = null
   try {
-    const { profile } = await getCurveProfile()
-    facts = launchFactsFrom(profile)
+    const { profile, graduationTarget } = await getCurveProfile()
+    facts = launchFactsFrom(profile, graduationTarget)
   } catch (error) {
     console.error('curve profile unavailable; /create draws without the preview numbers', error)
   }

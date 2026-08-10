@@ -29,6 +29,20 @@ import { LAUNCH_FACTORY_ABI } from './factoryAbi'
 export type IdentifiedProfile = {
   readonly name: ProfileName
   readonly profile: CurveProfile
+  /**
+   * `LaunchFactory.graduationTarget()` — the zero address until governance
+   * arms it, and `BondingCurve.graduate()` reverts `GraduationTargetUnset()`
+   * for every curve while it is.
+   *
+   * IT IS READ HERE RATHER THAN ASSUMED because the create page states the
+   * liquidity guarantee, and that is the single most consequential sentence a
+   * creator reads. It shipped as a fixed line -- "the pool and its permanent
+   * lock ship in a later phase" -- which was true when written and becomes
+   * false the moment a target lands, with nothing on the page or in CI able
+   * to notice. The triple beside it is `immutable`; this is not, which is
+   * exactly why it cannot be a constant in a component.
+   */
+  readonly graduationTarget: Address
 }
 
 export class CurveProfileError extends Error {
@@ -38,9 +52,15 @@ export class CurveProfileError extends Error {
   }
 }
 
+/** What one round trip to the factory brings back. */
+export type FactoryState = {
+  readonly triple: readonly [bigint, bigint, bigint]
+  readonly graduationTarget: Address
+}
+
 /** Narrow seam so the identification logic is testable without an RPC. */
 export interface CurveProfileReader {
-  readCurveTriple(factory: Address): Promise<readonly [bigint, bigint, bigint]>
+  readFactoryState(factory: Address): Promise<FactoryState>
 }
 
 export function identifyProfile(profile: CurveProfile): ProfileName {
@@ -59,16 +79,28 @@ export async function readCurveProfile(
   reader: CurveProfileReader,
   factory: Address,
 ): Promise<IdentifiedProfile> {
-  const [virtualTokenReserves, virtualQuoteReserves, saleSupply] =
-    await reader.readCurveTriple(factory)
+  const {
+    triple: [virtualTokenReserves, virtualQuoteReserves, saleSupply],
+    graduationTarget,
+  } = await reader.readFactoryState(factory)
   const profile: CurveProfile = { virtualTokenReserves, virtualQuoteReserves, saleSupply }
-  return { name: identifyProfile(profile), profile }
+  return { name: identifyProfile(profile), profile, graduationTarget }
 }
 
 /**
- * One multicall, three immutables. Arc rate-limits concurrent AND sequential
- * `eth_call`s, so three separate reads is three chances to be throttled for a
- * value that cannot change -- the factory stores these as `immutable`.
+ * One multicall, four values. Arc rate-limits concurrent AND sequential
+ * `eth_call`s, so four separate reads is four chances to be throttled.
+ *
+ * Three of them cannot change -- the factory stores them as `immutable`. The
+ * fourth, `graduationTarget`, can, so it rides along rather than earning a
+ * second round trip: `getCurveProfile` is wrapped in React's per-request
+ * `cache()`, which is exactly the lifetime a mutable read may safely share
+ * with immutable ones.
+ *
+ * `allowFailure: false` COVERS ALL FOUR ON PURPOSE. A factory that cannot
+ * answer must leave the preview card showing "—" on every line it drives,
+ * including the liquidity line. Letting the target fail softly to a default
+ * would print a claim about locked liquidity that nothing verified.
  */
 export function multicallCurveProfileReader(client: {
   multicall: (args: {
@@ -77,22 +109,31 @@ export function multicallCurveProfileReader(client: {
   }) => Promise<readonly unknown[]>
 }): CurveProfileReader {
   return {
-    async readCurveTriple(factory: Address) {
+    async readFactoryState(factory: Address) {
       const results = (await client.multicall({
         contracts: [
           { address: factory, abi: LAUNCH_FACTORY_ABI, functionName: 'VIRTUAL_TOKEN_RESERVES' },
           { address: factory, abi: LAUNCH_FACTORY_ABI, functionName: 'VIRTUAL_QUOTE_RESERVES' },
           { address: factory, abi: LAUNCH_FACTORY_ABI, functionName: 'SALE_SUPPLY' },
+          { address: factory, abi: LAUNCH_FACTORY_ABI, functionName: 'graduationTarget' },
         ],
         allowFailure: false,
-      })) as readonly bigint[]
-      const [t, v, s] = results
+      })) as readonly unknown[]
+      const [t, v, s, target] = results
       if (typeof t !== 'bigint' || typeof v !== 'bigint' || typeof s !== 'bigint') {
         throw new CurveProfileError(
           `the factory's immutables did not decode as three uint256 values: ${JSON.stringify(results.map(String))}`,
         )
       }
-      return [t, v, s] as const
+      // A target that is not an address is not "unset" -- it is an answer
+      // nobody can act on, and defaulting it to zero here would print
+      // "graduation is not armed" for a factory that never said so.
+      if (typeof target !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(target)) {
+        throw new CurveProfileError(
+          `the factory's graduationTarget did not decode as an address: ${JSON.stringify(String(target))}`,
+        )
+      }
+      return { triple: [t, v, s] as const, graduationTarget: target as Address }
     },
   }
 }

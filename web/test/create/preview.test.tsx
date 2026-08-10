@@ -25,7 +25,7 @@ const TESTNET: CurveProfile = {
   saleSupply: 793_100_000n * 10n ** 18n,
 }
 
-const FACTS = launchFactsFrom(TESTNET)
+const FACTS = launchFactsFrom(TESTNET, '0x0000000000000000000000000000000000000000')
 
 describe('launchFactsFrom -- sekiz satirin sayilari', () => {
   it('toplam arz turetilmez: `LaunchToken.TOTAL_SUPPLY` = 1e27', () => {
@@ -94,13 +94,60 @@ describe('<TokenPreviewCard>', () => {
     expect(row('Launch fee').queryByText(/0\.000000/)).toBeNull()
   })
 
-  it('LIKIDITE SATIRI FAZ 2 IBARESINI TASIR ve "Locked" tek basina yazmaz', () => {
+  /*
+   * ============================================================
+   *  LIKIDITE SATIRI: SAYFANIN EN AGIR CUMLESI, VE ARTIK TURETILMIS.
+   * ============================================================
+   *
+   * Sabit metindi -- "the pool and its permanent lock ship in a later phase"
+   * -- ve yazildigi gun dogruydu. Havuz katmani o zamandan beri dagitildi;
+   * canli olmayan sey mezuniyetin KENDISI, cunku `graduationTarget` sifir.
+   * Yani cumle dogru sonucu yanlis gerekce ile soyluyordu, ve yonetisim
+   * hedefi silahlandirdigi an yalana donusecekti -- hicbir sey gormeden.
+   *
+   * Uc dal da burada, cunku YANLIS OLANI SESSIZCE dogru gorunur:
+   * silahlanmamis dal bugunku uretim fabrikasidir, silahli dal yarinki, ve
+   * `null` dali "fabrika cevap veremedi"dir -- orada bir likidite iddiasi
+   * BASILMAMALIDIR.
+   */
+  it('hedef SIFIRKEN: garanti VAAT EDILMEZ, ve sebep dogru soylenir', () => {
     render(<TokenPreviewCard fields={EMPTY_FIELDS} facts={FACTS} />)
     const liquidity = row('Liquidity')
-    // "Liquidity: Locked" yazmak, bugun var olmayan bir garantiyi vaat etmek
-    // olurdu. Havuz ve kalici kilit Faz 2'dedir.
-    expect(liquidity.getByText(/not live on testnet yet/i)).toBeInTheDocument()
-    expect(liquidity.queryByText('Locked')).toBeNull()
+    expect(liquidity.getByText(/not armed on this deployment/i)).toBeInTheDocument()
+    expect(liquidity.getByText(/no curve can open a pool yet/i)).toBeInTheDocument()
+    // Ve eski cumle GERI GELMEZ: havuz katmani dagitildi, "later phase"
+    // artik yanlis bir gerekce.
+    expect(liquidity.queryByText(/later phase/i)).toBeNull()
+    expect(liquidity.queryByText(/not live on testnet/i)).toBeNull()
+  })
+
+  it('hedef SILAHLIYKEN: kilit soylenir, ve "bize dahil" acikca yazilir', () => {
+    const armed = launchFactsFrom(TESTNET, '0x0e7771091a3471Dc12CbfE38836BaDC7bf5a98E8')
+    render(<TokenPreviewCard fields={EMPTY_FIELDS} facts={armed} />)
+    const liquidity = row('Liquidity')
+    expect(liquidity.getByText(/permanently/i)).toBeInTheDocument()
+    expect(liquidity.getByText(/including us/i)).toBeInTheDocument()
+    expect(liquidity.queryByText(/not armed/i)).toBeNull()
+  })
+
+  it('BUYUK/KUCUK HARF: zincir checksum`lu cevap verir, hedef yine de SIFIRDIR', () => {
+    // `graduationTarget` sifirken viem `0x0000...0000` dondurur, ama bir
+    // proxy ya da farkli bir istemci onu buyuk harfle verebilir. Kucuk harfe
+    // indirmeyen bir karsilastirma her SILAHSIZ fabrikayi SILAHLI sayar --
+    // yani sayfanin en agir cumlesini tam ters yone cevirir.
+    const upper = launchFactsFrom(
+      TESTNET,
+      '0x0000000000000000000000000000000000000000'.toUpperCase(),
+    )
+    expect(upper.graduationArmed).toBe(false)
+  })
+
+  it('FABRIKA CEVAP VEREMEZSE hicbir likidite IDDIASI basilmaz', () => {
+    render(<TokenPreviewCard fields={EMPTY_FIELDS} facts={null} />)
+    const liquidity = row('Liquidity')
+    expect(liquidity.getByText('—')).toBeInTheDocument()
+    expect(liquidity.queryByText(/locked/i)).toBeNull()
+    expect(liquidity.queryByText(/not armed/i)).toBeNull()
   })
 
   it('para hucreleri `<Money>`den gecer ve yonu ISIMLENDIRILMISTIR', () => {

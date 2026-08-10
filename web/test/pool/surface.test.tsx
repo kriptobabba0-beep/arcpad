@@ -53,9 +53,17 @@ function surface(
   // TRIPLE AND NAME TRAVEL AS ONE READING -- see `TradeSurface`'s prop. The
   // ladder for the money chips is chosen by the name, every quote by the
   // triple, so the two may never be passed separately.
-  profile: { name: 'testnet' | 'production'; profile: typeof TESTNET_PROFILE } | null = {
+  profile: {
+    name: 'testnet' | 'production'
+    profile: typeof TESTNET_PROFILE
+    graduationTarget: `0x${string}`
+  } | null = {
     name: 'testnet',
     profile: TESTNET_PROFILE,
+    // Unset, matching the live testnet factory. This surface does not read it
+    // -- it travels because it arrives in the same factory read as the pair
+    // above, and splitting the reading is what the comment above forbids.
+    graduationTarget: '0x0000000000000000000000000000000000000000',
   },
 ) {
   return render(
@@ -148,9 +156,14 @@ describe('the profile name reaches the curve panel', () => {
     name: 'testnet' | 'production'
     profile: typeof TESTNET_PROFILE
   }) =>
-    within(surface({ complete: false, graduated: false }, identified).container).getByTestId(
-      'curve-panel',
-    )
+    within(
+      surface(
+        { complete: false, graduated: false },
+        // The target is irrelevant to what this block asserts, so it is
+        // supplied here rather than threaded through every case.
+        { ...identified, graduationTarget: '0x0000000000000000000000000000000000000000' },
+      ).container,
+    ).getByTestId('curve-panel')
 
   it('forwards testnet as testnet', () => {
     const panel = nameOn({ name: 'testnet', profile: TESTNET_PROFILE })

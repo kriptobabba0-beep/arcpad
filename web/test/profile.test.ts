@@ -52,7 +52,10 @@ describe('identifying the curve profile', () => {
 })
 
 describe('reading the profile from the factory', () => {
-  it('returns the identified profile from one multicall', async () => {
+  const UNSET = '0x0000000000000000000000000000000000000000'
+  const LOCKER = '0x0e7771091a3471Dc12CbfE38836BaDC7bf5a98E8'
+
+  it('returns the identified profile and the graduation target from ONE multicall', async () => {
     const calls: unknown[][] = []
     const reader = multicallCurveProfileReader({
       async multicall(args) {
@@ -61,23 +64,67 @@ describe('reading the profile from the factory', () => {
           PROFILES.testnet.virtualTokenReserves,
           PROFILES.testnet.virtualQuoteReserves,
           PROFILES.testnet.saleSupply,
+          UNSET,
         ]
       },
     })
     const result = await readCurveProfile(reader, FACTORY)
     expect(result.name).toBe('testnet')
     expect(result.profile).toEqual(PROFILES.testnet)
+    expect(result.graduationTarget).toBe(UNSET)
     // ONE round trip. Arc rate-limits sequential eth_calls as well as
-    // concurrent ones, so three separate reads is three chances to be
-    // throttled for values the factory stores as `immutable`.
+    // concurrent ones, so four separate reads is four chances to be throttled.
+    // The target rides along with the three immutables rather than earning a
+    // second trip: `getCurveProfile` is per-request cached, which is exactly
+    // the lifetime a mutable read may share with immutable ones.
     expect(calls).toHaveLength(1)
-    expect(calls[0]).toHaveLength(3)
+    expect(calls[0]).toHaveLength(4)
+  })
+
+  it('carries an ARMED target through unchanged', async () => {
+    const reader = multicallCurveProfileReader({
+      async multicall() {
+        return [
+          PROFILES.testnet.virtualTokenReserves,
+          PROFILES.testnet.virtualQuoteReserves,
+          PROFILES.testnet.saleSupply,
+          LOCKER,
+        ]
+      },
+    })
+    expect((await readCurveProfile(reader, FACTORY)).graduationTarget).toBe(LOCKER)
   })
 
   it('refuses a factory whose immutables do not decode as three uint256s', async () => {
     const reader = multicallCurveProfileReader({
       async multicall() {
-        return ['0x', 1n, 2n]
+        return ['0x', 1n, 2n, UNSET]
+      },
+    })
+    await expect(readCurveProfile(reader, FACTORY)).rejects.toThrow(CurveProfileError)
+  })
+
+  /*
+   * A TARGET THAT DOES NOT DECODE IS NOT "UNSET", and the difference is the
+   * whole point of reading it. `/create` states the liquidity guarantee from
+   * this value; defaulting an undecodable answer to the zero address would
+   * print "graduation is not armed on this deployment" for a factory that
+   * never said so -- a specific, confident claim derived from nothing.
+   */
+  it.each([
+    ['missing entirely', undefined],
+    ['a number', 42n],
+    ['a truncated address', '0xdeadbeef'],
+    ['an address with a bad character', '0xzzzz771091a3471Dc12CbfE38836BaDC7bf5a98E8'],
+  ])('refuses a graduationTarget that is %s rather than calling it unset', async (_l, bad) => {
+    const reader = multicallCurveProfileReader({
+      async multicall() {
+        return [
+          PROFILES.testnet.virtualTokenReserves,
+          PROFILES.testnet.virtualQuoteReserves,
+          PROFILES.testnet.saleSupply,
+          bad,
+        ]
       },
     })
     await expect(readCurveProfile(reader, FACTORY)).rejects.toThrow(CurveProfileError)
@@ -93,6 +140,7 @@ describe('reading the profile from the factory', () => {
           PROFILES.production.virtualTokenReserves,
           PROFILES.production.virtualQuoteReserves,
           PROFILES.production.saleSupply,
+          '0x0000000000000000000000000000000000000000',
         ]
       },
     })

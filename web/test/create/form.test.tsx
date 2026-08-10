@@ -7,11 +7,15 @@ import type { LaunchDriver } from '@/components/create/useLaunch'
 import { renderWithProviders } from '../ui/harness'
 import { launchedLog, SMOKE_CURVE, SMOKE_TOKEN } from './fixtures'
 
-const FACTS = launchFactsFrom({
-  virtualTokenReserves: 1_073_000_000n * 10n ** 18n,
-  virtualQuoteReserves: 4_292n * 10n ** 15n,
-  saleSupply: 793_100_000n * 10n ** 18n,
-})
+const FACTS = launchFactsFrom(
+  {
+    virtualTokenReserves: 1_073_000_000n * 10n ** 18n,
+    virtualQuoteReserves: 4_292n * 10n ** 15n,
+    saleSupply: 793_100_000n * 10n ** 18n,
+  },
+  // Unset, which is what the live testnet factory answers today.
+  '0x0000000000000000000000000000000000000000',
+)
 
 function stubDriver(overrides: Partial<LaunchDriver> = {}): LaunchDriver {
   return {

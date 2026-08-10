@@ -134,14 +134,41 @@ export function TokenPreviewCard({ fields, facts }: TokenPreviewCardProps) {
         </Row>
 
         {/*
-          "Liquidity: Locked" YAZILMAZ.
-          Havuz ve kalici kilit FAZ 2'dedir. Bugun var olmayan bir garantiyi
-          vaat etmek, kullanicinin bir launch'a yatirim kararini olmayan bir
-          korumaya dayandirmasi demektir.
+          BU SATIR ZINCIRDEN TURETILIR, VE TURETILMESI GEREKIYORDU.
+
+          Sabit bir cumleydi -- "the pool and its permanent lock ship in a
+          later phase" -- ve YAZILDIGI GUN DOGRUYDU. Havuz katmani o zamandan
+          beri dagitildi; canli olmayan sey mezuniyetin KENDISI, cunku
+          `graduationTarget` hala sifir. Yani cumle bugun dogru sonucu YANLIS
+          gerekce ile soyluyordu, ve yonetisim hedefi silahlandirdigi an duz
+          bir yalana donusecekti -- ne sayfada ne CI'da bunu gorecek hicbir sey
+          yokken.
+
+          Bir launchpad'de bir kurucunun okudugu EN AGIR cumle budur. Sabit
+          metin olamaz.
         */}
         <Row label="Liquidity">
-          <span className="text-muted">Locked at graduation — not live on testnet yet</span>
-          <Note>The pool and its permanent lock ship in a later phase.</Note>
+          {facts === null ? (
+            <span>—</span>
+          ) : facts.graduationArmed ? (
+            <>
+              <span>Locked at graduation — permanently</span>
+              <Note>
+                The pool opens when the curve completes and its liquidity is locked by contract.
+                Nobody can withdraw it, including us.
+              </Note>
+            </>
+          ) : (
+            <>
+              <span className="text-muted">
+                Locked at graduation — not armed on this deployment
+              </span>
+              <Note>
+                Graduation is switched off here: the factory has no graduation target, so no curve
+                can open a pool yet. Trading on the curve is unaffected.
+              </Note>
+            </>
+          )}
         </Row>
       </dl>
     </Card>
