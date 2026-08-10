@@ -1,6 +1,7 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterAll, describe, expect, it } from 'vitest'
 import type { Address } from 'viem'
 import { renderEvent } from '../src/alert'
@@ -487,5 +488,118 @@ describe('fileQuarantineStore', () => {
     store.hold(CURVE, payoutRejected, 1_000)
     store.clear(CURVE)
     expect(fileQuarantineStore(path, identity).entry(CURVE)).toBeUndefined()
+  })
+})
+
+// ---------------------------------------------------------------
+// Runbook §0, `TODO(owner)` sayaci.
+//
+// NEDEN BIR TEST. §0 devredilmemis her deleigi sayar ve ikisi de PROSE
+// icinde yazili: baslikta bir sayi, ozet cumlesinde iki sayi, ve altinda
+// operatorun elle kosacagi iki `grep`. Prose bir build DUSURMEZ.
+//
+// Ve tam olarak bu sekilde surukleniyor: `arcpad-indexer.service` kendi
+// `TODO(owner) 2` isaretiyle eklendi, toplam degisti, bu satira kimse
+// dokunmadi. Belge 17 diyordu, gercek 18'di -- ve §0'in kendisi ayni
+// arizanin daha eskisini anlatiyor (`graduation-window.md` §7 "uc" derken
+// dordunu tasiyordu). Bir belge kendi uyardigi hataya iki kere dustuyse,
+// sayaci artik makine tutmalidir.
+// ---------------------------------------------------------------
+describe('runbook §0 sayaci GERCEKLE ayni kalir', () => {
+  const RUNBOOK = fileURLToPath(new URL('../../docs/runbooks/keeper-vps.md', import.meta.url))
+
+  /**
+   * KUTUNUN TAMAMI, yalnizca keeper degil. Site ayni VPS'te, ayni
+   * `/etc/arcpad`ten, ayni servis hesabiyla kosuyor; delikleri de ayni
+   * defterde. Bu liste `keeper-vps.md` §0'in "whole box" cumlesinin
+   * MAKINE tarafi -- ikisi ayrilirsa bu suite soyler.
+   */
+  const SCANNED = [
+    RUNBOOK,
+    fileURLToPath(new URL('../../docs/runbooks/web-vps.md', import.meta.url)),
+    fileURLToPath(new URL('../deploy', import.meta.url)),
+    fileURLToPath(new URL('../../web/deploy', import.meta.url)),
+  ]
+
+  /** `grep -rho 'TODO(owner) [0-9]' <the four paths above>` */
+  function markers(): string[] {
+    const files = SCANNED.flatMap((p) =>
+      statSync(p).isDirectory() ? readdirSync(p).map((f) => join(p, f)) : [p],
+    )
+    return files
+      .filter((f) => statSync(f).isFile())
+      .flatMap((f) => readFileSync(f, 'utf8').match(/TODO\(owner\) \d+/g) ?? [])
+  }
+
+  const WORDS = [
+    'zero',
+    'one',
+    'two',
+    'three',
+    'four',
+    'five',
+    'six',
+    'seven',
+    'eight',
+    'nine',
+    'ten',
+    'eleven',
+    'twelve',
+    'thirteen',
+    'fourteen',
+    'fifteen',
+    'sixteen',
+    'seventeen',
+    'eighteen',
+    'nineteen',
+    'twenty',
+    'twenty-one',
+    'twenty-two',
+    'twenty-three',
+    'twenty-four',
+    'twenty-five',
+    'twenty-six',
+    'twenty-seven',
+    'twenty-eight',
+    'twenty-nine',
+    'thirty',
+  ]
+
+  const runbook = readFileSync(RUNBOOK, 'utf8')
+  const found = markers()
+  const values = new Set(found).size
+  const sites = found.length
+
+  it('BASLIK dogru DEGER sayisini soyler', () => {
+    const heading = /## 0\. The `TODO\(owner\)` holes — there are \*\*([a-z]+)\*\*/.exec(runbook)
+    expect(heading, 'runbook §0 basligi bulunamadi -- basligi mi degistirdiniz?').not.toBeNull()
+    expect(WORDS.indexOf(heading![1]!)).toBe(values)
+  })
+
+  it('OZET CUMLESI hem degeri hem SITE sayisini dogru soyler', () => {
+    // `[a-z-]+`: yirmiyi gecince sayilar TIRELI yazilir (`twenty-five`) ve
+    // tireyi disarida birakan bir regex, dogru bir cumleyi "bulunamadi"
+    // diye reddeder -- kirmizi, ama yanlis sebeple.
+    const summary = /\*\*([A-Z][a-z-]+) values, ([a-z-]+) sites\*\*/.exec(runbook)
+    expect(summary, 'runbook §0 ozet cumlesi bulunamadi').not.toBeNull()
+    expect(WORDS.indexOf(summary![1]!.toLowerCase())).toBe(values)
+    expect(WORDS.indexOf(summary![2]!)).toBe(sites)
+  })
+
+  it('OPERATORUN KOSACAGI iki grep, yazili beklentileriyle ayni sonucu verir', () => {
+    // `# -> N` yorumlari §0'daki bash blogunun ta kendisi. Bir operator bu
+    // iki komutu 3'te kosar; ciktilarinin yaninda yazan sayilar yanlissa
+    // dogru davranisi ariza sanip aramaya baslar.
+    const expectations = [...runbook.matchAll(/# -> (\d+)/g)].map((m) => Number(m[1]))
+    expect(expectations, 'iki `# -> N` beklentisi olmali').toEqual([values, sites])
+  })
+
+  it('HICBIR isaret 9u GECMEZ -- yoksa runbook`un kendi grep`i yanlis sayar', () => {
+    // Belgelenen komut `[0-9]` kullanir, yani TEK hane eslestirir:
+    // `TODO(owner) 10` onun icin `TODO(owner) 1`dir ve sessizce yanlis
+    // sayar. Onuncu delige kadar bu dogru; onuncuyu ekleyen bu testi
+    // kirar ve grep`i duzeltmesi gerektigini ogrenir.
+    const highest = Math.max(...found.map((m) => Number(m.slice('TODO(owner) '.length))))
+    expect(highest).toBeLessThanOrEqual(9)
   })
 })

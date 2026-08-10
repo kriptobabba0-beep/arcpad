@@ -4,40 +4,50 @@
 
 Two processes, one forwarder per process, one file each, and one thing outside the box that notices when the files stop growing.
 
-| Unit | What it is | Key? | Reads |
-|---|---|---|---|
-| `arcpad-keeper-window.service` | the graduation-window watcher — the control [`graduation-window.md`](graduation-window.md) is written about | no | address book |
-| `arcpad-keeper-graduate.service` | the graduation executor — the **only** thing that routinely calls `ArcpadLocker.graduate(curve)` | **yes** | address book |
-| `arcpad-keeper-notify@window.service` | reads `alerts.log`, pages, checks in | no | the log |
-| `arcpad-keeper-notify@graduate.service` | reads `graduate.log`, pages, checks in | no | the log |
+| Unit                                    | What it is                                                                                                  | Key?    | Reads        |
+| --------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------- | ------------ |
+| `arcpad-keeper-window.service`          | the graduation-window watcher — the control [`graduation-window.md`](graduation-window.md) is written about | no      | address book |
+| `arcpad-keeper-graduate.service`        | the graduation executor — the **only** thing that routinely calls `ArcpadLocker.graduate(curve)`            | **yes** | address book |
+| `arcpad-keeper-notify@window.service`   | reads `alerts.log`, pages, checks in                                                                        | no      | the log      |
+| `arcpad-keeper-notify@graduate.service` | reads `graduate.log`, pages, checks in                                                                      | no      | the log      |
 
 Artifacts are in [`keeper/deploy/`](../../keeper/deploy). Every one of them carries its reasoning inline; this document carries the reasoning that spans them.
 
 ---
 
-## 0. The `TODO(owner)` holes — there are **six**
+## 0. The `TODO(owner)` holes — there are **nine**
 
 They are left as visible blanks rather than plausible defaults, for the reason `graduation-window.md` §7 already gives: a blank gets filled and a wrong value gets trusted at 3 am.
 
-| Marker | Hole | Where the marker is | Blocks |
-|---|---|---|---|
-| `TODO(owner) 1` | The keeper's signing key — generate, encrypt, fund | `arcpad-keeper-graduate.service` | the executor broadcasting anything |
-| `TODO(owner) 2` | `MemoryMax=` after a week of real data | both keeper units | nothing today; an unbounded process later |
-| `TODO(owner) 3` | `KEEPER_NOTIFY_PAGE_URL` — the page webhook | `notify-window.env.example`, `notify-graduate.env.example` | every `PAGE` reaching a human |
-| `TODO(owner) 4` | `KEEPER_NOTIFY_HEARTBEAT_URL` for **window** | `notify-window.env.example` | the watcher's dead-man's switch |
-| `TODO(owner) 5` | `KEEPER_NOTIFY_HEARTBEAT_URL` for **graduate** | `notify-graduate.env.example` | the executor's dead-man's switch |
-| `TODO(owner) 6` | `KEEPER_ALERT_LOG_URL` — publish the sink for CI | §7 of this file | the weekly drill |
+**This is the registry for the whole box, not just the keeper.** The site runs on the same VPS, from the same `/etc/arcpad`, under the same service account, so its holes are numbered here too (`8`, `9`) rather than in a second list nobody would think to check. `web-vps.md` describes them; this table is where you count them.
 
-**Six values, seventeen sites** — several holes are marked in more than one place because one value is needed in more than one file (marker `2` in both keeper units, marker `3` in both forwarder env files), and each is named again in the table above. **Count the values, not the markers**, and check both numbers mechanically:
+| Marker          | Hole                                                                                  | Where the marker is                                        | Blocks                                                                                 |
+| --------------- | ------------------------------------------------------------------------------------- | ---------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `TODO(owner) 1` | The keeper's signing key — generate, encrypt, fund                                    | `arcpad-keeper-graduate.service`                           | the executor broadcasting anything                                                     |
+| `TODO(owner) 2` | `MemoryMax=` after a week of real data                                                | both keeper units                                          | nothing today; an unbounded process later                                              |
+| `TODO(owner) 3` | `KEEPER_NOTIFY_PAGE_URL` — the page webhook                                           | `notify-window.env.example`, `notify-graduate.env.example` | every `PAGE` reaching a human                                                          |
+| `TODO(owner) 4` | `KEEPER_NOTIFY_HEARTBEAT_URL` for **window**                                          | `notify-window.env.example`                                | the watcher's dead-man's switch                                                        |
+| `TODO(owner) 5` | `KEEPER_NOTIFY_HEARTBEAT_URL` for **graduate**                                        | `notify-graduate.env.example`                              | the executor's dead-man's switch                                                       |
+| `TODO(owner) 6` | `KEEPER_ALERT_LOG_URL` — publish the sink for CI                                      | §7 of this file                                            | the weekly drill                                                                       |
+| `TODO(owner) 7` | A **second RPC endpoint** so the keepers stop sharing the indexer's rate-limit bucket | §1 of this file                                            | nothing today; a 4.2× measured backfill penalty, and both falling behind on a busy day |
+| `TODO(owner) 8` | A **domain and a TLS certificate** for the site                                       | `web-vps.md` §5                                            | WalletConnect entirely, and any honest invitation to the public                        |
+| `TODO(owner) 9` | `pg_dump` for `chat_messages`                                                         | `web-vps.md` §7                                            | nothing today; it is the one table no chain can rebuild                                |
+
+**Nine values, twenty-five sites** — several holes are marked in more than one place because one value is needed in more than one file (marker `2` in all three units, marker `3` in both forwarder env files), and each is named again in the table above. **Count the values, not the markers**, and check both numbers mechanically:
 
 ```bash
-grep -rho 'TODO(owner) [0-9]' keeper/deploy docs/runbooks/keeper-vps.md | sort -u | wc -l   # -> 6
-grep -rho 'TODO(owner) [0-9]' keeper/deploy docs/runbooks/keeper-vps.md | wc -l             # -> 17
+SCAN='keeper/deploy web/deploy docs/runbooks/keeper-vps.md docs/runbooks/web-vps.md'
+grep -rho 'TODO(owner) [0-9]' $SCAN | sort -u | wc -l   # -> 9
+grep -rho 'TODO(owner) [0-9]' $SCAN | wc -l             # -> 25
 ```
+
+The site count drifted once already, and the way it drifted is the lesson: `arcpad-indexer.service` was added carrying its own copy of marker `2`, which moved the total without anyone touching this line. **A number in prose does not fail a build** — so this one now does: `graduateInfra.test.ts` recomputes both counts from the files and asserts the heading, this sentence, and the two `# -> N` expectations all agree with them.
+
+That test also fixes the _next_ reader's problem rather than this one's: write the marker's literal name in a paragraph and you have created another site, which is how the sentence you are reading first came out wrong by one.
 
 That distinction is why this section leads with a number: `graduation-window.md` §7 said "three" while carrying four, and it was wrong for several rounds before anyone counted.
 
-**#6 is not a new hole.** It is `graduation-window.md` §7's *Drill transport*, restated here because the VPS is the first place it can actually be filled. Filling it once fills both. The other three holes in that table — On-call, Escalation, Paging provider — are unchanged by this work, except that **Paging provider is no longer waiting on any code**: the two rules it names are implemented (`keeper/src/notify.ts`) and all that remains is choosing a provider and pasting two URLs, which are #3–#5 here.
+**#6 is not a new hole.** It is `graduation-window.md` §7's _Drill transport_, restated here because the VPS is the first place it can actually be filled. Filling it once fills both. The other three holes in that table — On-call, Escalation, Paging provider — are unchanged by this work, except that **Paging provider is no longer waiting on any code**: the two rules it names are implemented (`keeper/src/notify.ts`) and all that remains is choosing a provider and pasting two URLs, which are #3–#5 here.
 
 **#1 and #3–#5 are release gates.** A keeper with no key graduates nothing; a keeper with no forwarder is a heartbeat nobody counts, which the runbook it serves already calls decoration.
 
@@ -89,20 +99,49 @@ sudo -u arcpad env $(grep -v '^#' /etc/arcpad/keeper-graduate.env | grep -v DRY_
 
 **Note the separate cursor file, and see §4 — it is not optional.** A read-only pass against the production book prints the backlog and exits 0 today, because `graduationTarget` is `0x0`. Measured on 2026-08-09 from a cold cursor: `armed=false known=2 caughtUp=true pending=1 pendingRaise=12.16USDC broadcast=0`, zero pages.
 
+### On a cold box the indexer goes FIRST, and alone
+
+The three processes on this box — indexer, window watcher, graduation executor — share **one** rate-limit bucket, because they share one RPC endpoint. Arc's limiter is per-endpoint, not per-client, so they do not queue politely behind each other: they starve each other, and the one that loses is the one that actually needs throughput.
+
+Measured here on 2026-08-10, same box, same endpoint, back to back:
+
+|                        | blocks per 180s | ETA for a 1.49M-block backfill |
+| ---------------------- | --------------- | ------------------------------ |
+| indexer + both keepers | 5,000           | **14 hours**                   |
+| indexer alone          | 21,000          | **3 hours**                    |
+
+A **4.2×** penalty, and it is paid entirely by the cold start. So the install order in §1 gains a condition: on a box whose indexer is more than a few thousand blocks behind, **stop the keepers until the backfill lands**.
+
+```bash
+systemctl stop arcpad-keeper-window arcpad-keeper-graduate    # still `enabled`
+# watch it drain:
+watch -n60 "sudo -u postgres psql -d arcpad -tAc \
+  'select head_block - last_block from sync_state where id=1'"
+systemctl start arcpad-keeper-window arcpad-keeper-graduate   # when it is small
+```
+
+Three things make this safe rather than a shortcut:
+
+- **`stop` is not `disable`.** The units stay enabled, so a reboot mid-backfill brings the keepers back on its own — the operator cannot forget them into a permanently unwatched box.
+- **The keepers lose nothing by waiting.** Both keep file cursors that survive the stop, and neither can act today regardless: `graduationTarget` is `0x0`, so every `graduate()` reverts `GraduationTargetUnset()`.
+- **It is a cold-start rule, not a steady-state one.** Once caught up the indexer follows the head and its RPC appetite collapses to a poll; the contention that justifies this disappears with the backfill that caused it.
+
+**The durable fix is a second endpoint, and it costs money.** Splitting the keepers onto their own RPC provider removes the shared bucket entirely and is the right answer before any announcement — a platform whose indexer cannot catch up while its keeper is watching is one busy day away from both being late. Until that is bought, this ordering is the control. TODO(owner) 7.
+
 ---
 
 ## 2. Supervision — what happens when it dies
 
 **systemd, not Docker.** There is no Dockerfile in this repo and no container build in CI; introducing one to run two Node processes adds an image pipeline, a registry and a second place for the address book to go stale, and buys isolation that `ProtectSystem=strict` + a service account already give. The one thing a container would genuinely add — a pinned runtime — is better solved by pinning `node` on the box, because the address book must come from **the checkout**, and a container that bakes it in acquires exactly the "hand-set at build time" weakness §5 exists to prevent.
 
-| Event | What systemd does | What the keeper does |
-|---|---|---|
-| **Crash / uncaught throw** | `Restart=always`, `RestartSec=15` | the cursor is persisted **per chunk**, atomically (write-and-rename), so the walk resumes; the quarantine store and locks survive on disk |
-| **OOM-kill** | the kernel kills it, `Restart=always` brings it back | same as crash. **No memory figure has been measured on a VPS** — `MemoryAccounting=yes` is on and `MemoryMax=` is deliberately unset (TODO(owner) 2) |
-| **Reboot** | `WantedBy=multi-user.target` starts all four | a cold cursor is walked at 1 chunk/pass and says `state=catching-up` every pass while it does |
-| **Crash loop** | `StartLimitIntervalSec=0` — systemd **never gives up** | no heartbeats are emitted → the dead-man's switch pages within its grace period |
+| Event                      | What systemd does                                      | What the keeper does                                                                                                                                 |
+| -------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Crash / uncaught throw** | `Restart=always`, `RestartSec=15`                      | the cursor is persisted **per chunk**, atomically (write-and-rename), so the walk resumes; the quarantine store and locks survive on disk            |
+| **OOM-kill**               | the kernel kills it, `Restart=always` brings it back   | same as crash. **No memory figure has been measured on a VPS** — `MemoryAccounting=yes` is on and `MemoryMax=` is deliberately unset (TODO(owner) 2) |
+| **Reboot**                 | `WantedBy=multi-user.target` starts all four           | a cold cursor is walked at 1 chunk/pass and says `state=catching-up` every pass while it does                                                        |
+| **Crash loop**             | `StartLimitIntervalSec=0` — systemd **never gives up** | no heartbeats are emitted → the dead-man's switch pages within its grace period                                                                      |
 
-The last row is the deliberate one. systemd's default rate limiter parks a unit in `failed` after five restarts and stops trying, which produces a permanently dead keeper that nothing restarts and nothing announces. Disabling it converts that into a crash loop, and a crash loop is *loud* — it writes no `HEARTBEAT`, and the whole of §6 exists to turn that silence into a page.
+The last row is the deliberate one. systemd's default rate limiter parks a unit in `failed` after five restarts and stops trying, which produces a permanently dead keeper that nothing restarts and nothing announces. Disabling it converts that into a crash loop, and a crash loop is _loud_ — it writes no `HEARTBEAT`, and the whole of §6 exists to turn that silence into a page.
 
 ### The restart / lock interaction, stated precisely
 
@@ -146,23 +185,24 @@ Fixed in `keeper/src/graduate/loop.ts` (`runPollLoop` resolves only after a stop
 The evidence, in the order it should be checked:
 
 1. **`ArcpadLocker.graduate(address)` never reads its caller.** `msg.sender` occurs three times in `contracts/src/ArcpadLocker.sol` — twice in a NatSpec comment and once executably, at line 177, inside `unlockCallback` (`if (msg.sender != address(poolManager)) revert NotPoolManager()`). `graduate` contains no caller term, no modifier, no owner, no role. The contract has no `Ownable`, no `AccessControl`.
-2. **The payout does not follow the caller.** `BondingCurve.graduate()` resolves `address target = ILaunchFactory(factory).graduationTarget()` and then pays **`target`**: `emit Graduated(token, target, …)`, `IERC20(token).transfer(target, baseAmount)`, `target.call{value: quoteAmount}("")`. `msg.sender` appears once, in the check `if (msg.sender != target) revert NotGraduationTarget()` — and the sender there is the *locker*, a contract. The EOA that pays for the transaction never enters the money path. A thief who calls `graduate()` pays gas and hands the raise to the locker.
+2. **The payout does not follow the caller.** `BondingCurve.graduate()` resolves `address target = ILaunchFactory(factory).graduationTarget()` and then pays **`target`**: `emit Graduated(token, target, …)`, `IERC20(token).transfer(target, baseAmount)`, `target.call{value: quoteAmount}("")`. `msg.sender` appears once, in the check `if (msg.sender != target) revert NotGraduationTarget()` — and the sender there is the _locker_, a contract. The EOA that pays for the transaction never enters the money path. A thief who calls `graduate()` pays gas and hands the raise to the locker.
 3. **Live, read-only, 2026-08-09 against `https://rpc.testnet.arc.network` at head 56114118** — `locker.graduate(0xDdB9e739…f27b)` from four different `from` addresses:
 
-   | `from` | result |
-   |---|---|
-   | *(none)* | `0xfe30fa5b` |
-   | `0xe92c64C4…92fD2` (deployer) | `0xfe30fa5b` |
-   | `0x000000…DeaDBeef` (a stranger) | `0xfe30fa5b` |
+   | `from`                                 | result       |
+   | -------------------------------------- | ------------ |
+   | _(none)_                               | `0xfe30fa5b` |
+   | `0xe92c64C4…92fD2` (deployer)          | `0xfe30fa5b` |
+   | `0x000000…DeaDBeef` (a stranger)       | `0xfe30fa5b` |
    | `0x97053469…D2C22` (the governor Safe) | `0xfe30fa5b` |
 
-   Identical. **Read this one honestly**: production's `graduationTarget` is `0x0`, so all four fail at `GraduationTargetUnset()` inside the curve — the check order means this measurement shows the *entry point* does not discriminate, not that a *successful* graduation would. The claim that a successful one is equally indifferent rests on (1) and (2), and on `contracts/test/fork/GraduationCycle.live.fork.t.sol`, which calls `locker.graduate(curve)` from the plain test contract — no `vm.prank` to any privileged identity — and measures the full cycle 8/8 against the live `PoolManager`, `FeeEscrow`, `FeeSchedule` and USDC.
+   Identical. **Read this one honestly**: production's `graduationTarget` is `0x0`, so all four fail at `GraduationTargetUnset()` inside the curve — the check order means this measurement shows the _entry point_ does not discriminate, not that a _successful_ graduation would. The claim that a successful one is equally indifferent rests on (1) and (2), and on `contracts/test/fork/GraduationCycle.live.fork.t.sol`, which calls `locker.graduate(curve)` from the plain test contract — no `vm.prank` to any privileged identity — and measures the full cycle 8/8 against the live `PoolManager`, `FeeEscrow`, `FeeSchedule` and USDC.
+
 4. **The key holds no governance.** `factory.governor()` reads `0x9705…D2C22`, the 2-of-3 Safe, whose owners (`contracts/deploy/expected-governance.json`) are three addresses that are **not** the deployer and must not be the keeper. `proposeGraduationTarget` and `setProtocolTreasury` are governor-only; the keeper key cannot reach either.
 5. **Fees cannot be redirected.** `FeeEscrow.claim(address recipient)` is permissionless and pays **`recipient`**, not `msg.sender`. A stolen key cannot sweep anyone's accrued fees — it can only push someone else's balance to them, at its own expense.
 
 **So the loss ceiling is the balance on the key.** Two honest riders:
 
-- `applyGraduationTarget()` is permissionless too, so a funded stolen key is a *funded* attacker — but it gains no capability, only a few USDC of ammunition it took from us.
+- `applyGraduationTarget()` is permissionless too, so a funded stolen key is a _funded_ attacker — but it gains no capability, only a few USDC of ammunition it took from us.
 - **Stealing the key almost certainly means owning the box, and that is strictly worse than the key.** A box owner can stop the keeper (a delay, not a loss — the permissionless fallback survives) and can **forge the alert log**, which `graduation-window.md` §8 already records as an accepted limit: the sink is an ordinary append-only file with no signature, and the drill reads it over plain `curl`. Do not let "the key is worthless" become "the box is unimportant."
 
 ### How the key is held
@@ -178,7 +218,7 @@ systemd-creds encrypt --name=graduate-key /run/keeper.key /etc/arcpad/graduate-k
 shred -u /run/keeper.key
 ```
 
-The unit then passes `KEEPER_GRADUATE_PRIVATE_KEY_FILE=%d/graduate-key`. That variable is new (`keeper/src/graduate/config.ts`): it reads the file, trims trailing whitespace, validates the same 32-byte hex shape, refuses if `KEEPER_GRADUATE_PRIVATE_KEY` is *also* set — "which one won" is an answer about **which address signs**, and picking silently would leave no trace of it — and **never prints the contents**, only the source, because an error line goes to journald and from there to every collector.
+The unit then passes `KEEPER_GRADUATE_PRIVATE_KEY_FILE=%d/graduate-key`. That variable is new (`keeper/src/graduate/config.ts`): it reads the file, trims trailing whitespace, validates the same 32-byte hex shape, refuses if `KEEPER_GRADUATE_PRIVATE_KEY` is _also_ set — "which one won" is an answer about **which address signs**, and picking silently would leave no trace of it — and **never prints the contents**, only the source, because an error line goes to journald and from there to every collector.
 
 If this host's systemd predates 250, fall back to a `0400` file owned by `arcpad` and point the same variable at it.
 
@@ -192,7 +232,7 @@ So the refill policy is a **procedure, not a threshold**:
 
 1. Fund the key from the faucet (10 USDC per request) — enough to be non-zero and to cover the first few transactions.
 2. When the first real graduation lands, read `gasUsed` from the `OK … graduation-landed` line the executor prints (it re-reads `graduated()` on chain at the receipt's block, so the line is not taken on trust).
-3. Set the alert threshold at **20× that measured cost**, and record the measurement *in this file* with its date and transaction hash.
+3. Set the alert threshold at **20× that measured cost**, and record the measurement _in this file_ with its date and transaction hash.
 4. Until step 2 exists, watch the balance by hand at each on-call handover.
 
 Two facts the on-call should carry: a graduation **buy-out** costs 12.16 USDC (that is the trade that completes a curve, not the keeper's gas), and running out mid-run is not silent — the send path pages on the **second consecutive** failure carrying viem's own "insufficient funds" text.
@@ -207,7 +247,7 @@ The keeper reads `contracts/deploy/addresses.<chainId>.json` and derives everyth
 
 `KEEPER_GRADUATE_START_BLOCK` is in the list on its own merits. Alone it does not redirect the factory — it moves where the `Launched` scan begins, and a start block past the first launch means those curves are never seen. `.env.example` records the measured sibling of that bug: a hand-written start block produced a keeper that paged every poll and emitted no heartbeats, ~35,000 pages a day at the 5s default.
 
-`src=book` now appears in every executor heartbeat and every pass summary. Without it, a correctly configured executor and one redirected at another stack write the *same* healthy line — `target=0x0 armed=false pending=1` is true for both — so "we are watching the wrong stack" was invisible in the only stream the pager sees.
+`src=book` now appears in every executor heartbeat and every pass summary. Without it, a correctly configured executor and one redirected at another stack write the _same_ healthy line — `target=0x0 armed=false pending=1` is true for both — so "we are watching the wrong stack" was invisible in the only stream the pager sees.
 
 ### The one-off window procedure needs its own cursor file — and this bit us
 
@@ -215,7 +255,7 @@ The keeper reads `contracts/deploy/addresses.<chainId>.json` and derives everyth
 
 Observed here on 2026-08-09 while verifying the `--book-only` control: a single dry-run against the disposable factory left `.cursor-graduate` holding `factory: 0xfE11Db90…4849, lastScannedBlock: 56096842`. The file was removed rather than left to confuse the next reader.
 
-**So the window procedure gains one line** (and correctly does *not* pass `--book-only`, which is the flag's whole point — it is the service's gate, not a ban on deliberate one-off runs):
+**So the window procedure gains one line** (and correctly does _not_ pass `--book-only`, which is the flag's whole point — it is the service's gate, not a ban on deliberate one-off runs):
 
 ```bash
 KEEPER_GRADUATE_CURSOR_FILE=/tmp/disposable-cursor \
@@ -240,7 +280,7 @@ It refuses to start with only one of the two URLs. Half of this control is worse
 
 Five properties worth knowing at 3 am:
 
-- **Nothing watches the forwarder, and nothing needs to.** It is *inside* the monitored path: forwarder dead, box dead, or network dead all stop the check-ins, and the switch fires. The "who watches the watcher" chain ends here.
+- **Nothing watches the forwarder, and nothing needs to.** It is _inside_ the monitored path: forwarder dead, box dead, or network dead all stop the check-ins, and the switch fires. The "who watches the watcher" chain ends here.
 - **An undeliverable page suspends the heartbeat.** If the page endpoint is down, queued pages block check-ins, so a broken alarm path becomes a dead-man's-switch trip instead of a green stream. Verified live against a local endpoint returning 502: `pagesSent=0 queued=1 pinged=0`.
 - **One switch per component.** `alert.ts` split `keeper.graduationWindow` from `keeper.graduate` so neither could pass the other's liveness gate; pointing both at one switch would undo that at the transport layer, with the executor's check-ins concealing a dead watcher.
 - **Match the prefix, not the state.** A watcher mid-backfill writes `state=catching-up` and is alive. The forwarder counts both states — a rule that counted only `state=current` would declare every cold start dead.
@@ -296,7 +336,7 @@ Two things not to get wrong:
 
 And underneath that: `graduate()` is permissionless. Keeper downtime is a delay, not a loss, because the fallback is a property of the contract rather than of a process.
 
-So the procedure is short, and its only real requirement is *order*.
+So the procedure is short, and its only real requirement is _order_.
 
 ```bash
 # 1. Test the new code where it is safe to be wrong.
@@ -343,5 +383,5 @@ Two rules that are not optional:
 ## 9. What is still not wired
 
 - **A Graduate button in the web app.** `keeper-graduation-report.md` §2: the permissionless fallback only exists if a human can reach it, and today a completed curve renders no action at all. Not this package.
-- **Backlog ageing.** The executor reports pending count and raise every pass but does not page when a curve stays pending *while armed* for longer than N. The threshold depends on the poll interval and on whether a human is expected to intervene; inventing one here would be the unstated precondition this repo keeps finding. Repeated failure to land already pages.
+- **Backlog ageing.** The executor reports pending count and raise every pass but does not page when a curve stays pending _while armed_ for longer than N. The threshold depends on the poll interval and on whether a human is expected to intervene; inventing one here would be the unstated precondition this repo keeps finding. Repeated failure to land already pages.
 - **The limit-order executor.** The spec pairs "graduation fallback" with one. It does not exist.
