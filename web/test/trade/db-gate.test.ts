@@ -34,29 +34,7 @@ const PANEL_FILES = [
   'components/token/MaxButton.tsx',
   'components/token/SlippageControl.tsx',
   'components/token/ApproveStep.tsx',
-  // FAZ 7. `LimitPanel` bir emri IMZALAR ve bir rotaya POST eder; kotasini
-  // `packages/shared`in saf fonksiyonlarindan ve `useCurveState`ten alir.
-  // Veritabanina dokunmasi icin bir sebep YOK ve bu satir onu boyle tutar.
-  'components/token/LimitPanel.tsx',
-  'components/token/useOrderPost.ts',
 ] as const
-
-/**
- * ============ LISTEDE OLMAYAN IKI FAZ 7 DOSYASI, VE NEDEN ============
- *
- * `components/token/OrdersPanel.tsx` ve `components/token/TradeSurface.tsx`
- * `@arcpad/db`den YALNIZCA BIR TIP alir (`import type { LimitOrderRow }`) --
- * `ChatPanel.tsx`in `ChatMessageRow` icin yaptiginin aynisi. Bir `import type`
- * derlemede TAMAMEN SILINIR, yani bu kapinin korudugu sey (`pg`nin tarayici
- * paketine girmesi) o yoldan OLAMAZ.
- *
- * Yukaridaki `importsFrom` bu ayrimi GOREMEZ (metinde `from '@arcpad/db'`
- * geciyor), ve regex'i "tip importlarini gecir" diye gevsetmek kapiyi gercek
- * bir deger importunda da gevsetme riskini tasir. Bu yuzden iki dosya listede
- * DEGIL ve onlarin kaniti BASKA bir yerde: `next build` -- bir deger importu
- * olsaydi derleme `Module not found: Can't resolve 'fs'` ile duserdi, ki bu
- * depoda tam olarak boyle bir kez dustu.
- */
 
 const WEB_ROOT = join(import.meta.dirname, '..', '..')
 

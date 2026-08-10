@@ -1,9 +1,8 @@
-import { within } from '@testing-library/react'
+import { render, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { resolveLifecycle } from '@/components/token/lifecycle'
 import { TradeSurface } from '@/components/token/TradeSurface'
 import { CURVE, TESTNET_PROFILE, TOKEN } from '../trade/fixtures'
-import { renderWithProviders } from '../ui/harness'
 
 /**
  * ============ WHICH VENUE A TOKEN TRADES ON, RENDERED ============
@@ -15,16 +14,19 @@ import { renderWithProviders } from '../ui/harness'
  * This is the half a source scan cannot give. `test/pool/page.test.ts` counts
  * the call sites; this runs the component they call.
  *
- * ============ FAZ 7: `renderWithProviders`, VE NEDEN GEREKTI ============
+ * ============ A BARE `render`, AND WHY IT IS BACK ============
  *
- * `TradeSurface` artik `'use client'`tir ve `Market | Limit | Orders` seridini
- * KENDISI tasiyor (spec §7.1). Serit bir tarayici durumu oldugu icin bilesen
- * `useArcNetwork`e -- dolayisiyla wagmi'ye -- dokunuyor, ve ciplak bir
- * `render` `WagmiProviderNotFoundError` ile duser.
+ * This file briefly used `renderWithProviders` because `TradeSurface` had been
+ * made a client component to own a `Market | Limit | Orders` strip -- a tab
+ * selection is browser state, so the component reached `useArcNetwork` and a
+ * bare `render` died with `WagmiProviderNotFoundError`.
  *
- * DEGISEN SEY TESTIN OLCTUGU SEY DEGIL: asagidaki iddialarin tamami hala
- * MEKAN KARARIDIR, ve panellerin sahte olmasi hala o karari panellerin
- * kendisinden ayirmaktadir.
+ * The strip is gone with limit orders, and with it the only reason this
+ * component was ever a client component. A bare `render` is the stronger test:
+ * it would FAIL if somebody reintroduced a wagmi hook here, which is exactly
+ * the change that should have to be argued for. What this file asserts has not
+ * moved in either direction -- it is the VENUE DECISION, and the panels stay
+ * faked so the decision is measured apart from them.
  */
 vi.mock('@/components/token/TradePanel', () => ({
   TradePanel: (props: { symbol: string }) => (
@@ -41,7 +43,7 @@ function surface(
   lifecycleInput: { complete: boolean; graduated: boolean },
   profile = TESTNET_PROFILE,
 ) {
-  return renderWithProviders(
+  return render(
     <TradeSurface
       token={TOKEN}
       curve={CURVE}

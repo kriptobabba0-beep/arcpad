@@ -1,14 +1,6 @@
-'use client'
-
-import type { LimitOrderRow } from '@arcpad/db'
 import type { CurveProfile } from '@arcpad/shared/browser'
-import { useCallback, useEffect, useState } from 'react'
-import type { HexAddress, Page, ReadResult } from '@/components/read/types'
-import { Tabs } from '@/components/ui/Tabs'
-import { useArcNetwork } from '@/hooks/useArcNetwork'
-import { LimitPanel } from './LimitPanel'
+import type { HexAddress } from '@/components/read/types'
 import type { Lifecycle } from './lifecycle'
-import { OrdersPanel } from './OrdersPanel'
 import { PoolTradePanel } from './PoolTradePanel'
 import { TradePanel } from './TradePanel'
 
@@ -43,29 +35,30 @@ import { TradePanel } from './TradePanel'
  * does not use failed.
  *
  * ==========================================================================
- *  FAZ 7: `Market | Limit | Orders`, VE NEDEN ARTIK CIZILIYORLAR
+ *  THERE IS NO TAB STRIP HERE, AND THAT IS THE DECISION -- NOT AN OMISSION
  * ==========================================================================
  *
- * Faz 4 bu serit icin ADIYLA su karari verdi: *"bu fazda YALNIZCA `Market`
- * sekmesi render edilir, diger ikisi hic cizilmez. Gerekce: tiklandiginda
- * hicbir sey yapmayan bir sekme, olmayan bir sekmeden kotudur."* `Tabs.tsx`
- * bunu bir bilesen sozlesmesine cevirdi -- "devre disi sekme" degil,
- * "cizilmeyen sekme": gelmeyen sekme `items`a HIC KONMAZ.
+ * A `Market | Limit | Orders` strip was built on top of this component and has
+ * been REMOVED along with limit orders themselves. The requirement for it never
+ * came from the protocol: it traced to a reference SCREENSHOT
+ * (`docs/plans/2026-07-30-arcpad-phase4-frontend.md:20` records the strip as
+ * something the screenshots had), and the venue it was a strip OVER does not
+ * exist -- arcpad has exactly one place to trade a given token at a given
+ * moment, which is precisely what this component computes below.
  *
- * O kural burada da geceridir ve bu yuzden `Limit` ile `Orders` ancak ISLERI
- * OLDUGU IÇIN listeye giriyor. Ikisinin de yaptigi sey gercektir; yalnizca
- * `Limit`in verdigi soz, verilebilecek en genis soz DEGILDIR ve panelin
- * kendisi bunu iki cumleyle yaziyor.
+ * SO THERE IS NO "Market" LABEL EITHER. Phase 4 wrote the rule this obeys --
+ * *"a tab that does nothing when clicked is worse than a tab that isn't
+ * there"* -- and `Tabs.tsx` turned it into a component contract. A strip of ONE
+ * is the same defect wearing a different shape: it promises a choice, and then
+ * there is nothing to choose. The only control a trader needs on this screen is
+ * `Buy | Sell`, and that control lives INSIDE the panel that owns the trade
+ * (`TradePanel` on the curve, `PoolTradePanel` on the pool) because that is
+ * where the direction actually changes the calldata.
  *
- * ==========================================================================
- *  BU DOSYA ARTIK BIR ISTEMCI BILESENI, VE BEDELI OLCULDU
- * ==========================================================================
- *
- * Sekme secimi bir tarayici durumudur; sunucu hangi sekmenin acik oldugunu
- * bilemez. Alternatif -- secimi URL'e koymak -- her sekme degisiminde bir
- * sunucu gidis donusu demekti ve panel zaten `'use client'`ti. Aldigi butun
- * proplar serilestirilebilir ve `TradePanel` ZATEN ayni proplari (bigint
- * tasiyan `profile` dahil) sunucu sinirindan geciriyordu.
+ * A CONSEQUENCE WORTH NAMING: this file is a SERVER component again. The strip
+ * was the only reason it was ever `'use client'` -- a selected tab is browser
+ * state -- and with the strip gone the wrapper does no client work at all.
+ * Both panels below carry their own `'use client'`.
  */
 export type TradeSurfaceProps = {
   readonly token: HexAddress
@@ -74,59 +67,9 @@ export type TradeSurfaceProps = {
   /** `null` -> `getCurveProfile()` failed. Only the curve panel needs it. */
   readonly profile: CurveProfile | null
   readonly symbol: string
-  /**
-   * Bagli cuzdanin emirlerini getirir. `undefined` -> "Orders" sekmesi hic
-   * cizilmez, cunku okuyacagi bir sey yoktur.
-   *
-   * NEDEN BIR PROP: bu dosya bir istemci bileseni ve `@arcpad/db`ye ya da
-   * `@/lib/read`e DOKUNAMAZ (`pg` tarayici paketine girerdi -- `next build`i
-   * dusuren olculmus hata). Sayfa server action'i baglar ve gecer; ayni
-   * `loadMoreChat` deseni.
-   */
-  readonly loadOrders?: (
-    owner: string,
-    cursor: string | null,
-  ) => Promise<ReadResult<Page<LimitOrderRow>>>
 }
 
-type Mode = 'market' | 'limit' | 'orders'
-
-const MODE_LABEL: Readonly<Record<Mode, string>> = {
-  market: 'Market',
-  limit: 'Limit',
-  orders: 'Orders',
-}
-
-export function TradeSurface({
-  token,
-  curve,
-  lifecycle,
-  profile,
-  symbol,
-  loadOrders,
-}: TradeSurfaceProps) {
-  const [mode, setMode] = useState<Mode>('market')
-  const network = useArcNetwork()
-  const owner = network.address
-  const [orders, setOrders] = useState<ReadResult<Page<LimitOrderRow>> | null>(null)
-
-  const refresh = useCallback(() => {
-    if (loadOrders === undefined || owner === undefined) {
-      setOrders(null)
-      return
-    }
-    void loadOrders(owner, null).then(setOrders, () => {
-      setOrders({ ok: false, reason: 'unavailable', indexer: null })
-    })
-  }, [loadOrders, owner])
-
-  useEffect(() => {
-    // Cuzdan baglandiginda ya da DEGISTIGINDE yeniden okunur. Adres
-    // bagimliligi tasiyicidir: cuzdan degistirip ayni listeyi gormek,
-    // baskasinin emirlerini kendi emri sanmak demekti.
-    refresh()
-  }, [refresh])
-
+export function TradeSurface({ token, curve, lifecycle, profile, symbol }: TradeSurfaceProps) {
   /*
    * GRADUATED FIRST. `resolveLifecycle` already orders `graduated` above
    * `complete` because on chain `graduated => complete` always holds and a
@@ -134,71 +77,17 @@ export function TradeSurface({
    * FURTHER state is the true one. Repeating that order here rather than
    * checking `complete` keeps one rule in one place.
    */
-  const graduated = lifecycle.kind === 'graduated'
-  const market = graduated ? (
-    <PoolTradePanel token={token} symbol={symbol} />
-  ) : profile === null ? null : (
-    <TradePanel token={token} curve={curve} lifecycle={lifecycle} profile={profile} symbol={symbol} />
-  )
-
-  /*
-   * ============ HANGI SEKMELER CIZILIR -- `Tabs.tsx`IN KURALI ============
-   *
-   * `Limit` YALNIZCA curve mekaninda cizilir. Mezun olmus bir token'da bir
-   * limit emrinin dolmasi HAVUZ kotasini ister ve keeper'in havuz yolu bugun
-   * CANLI BIR HAVUZA KARSI HIC CALISMADI -- uretim factory'sinin
-   * `graduationTarget`i `0x0`, yani zincirde tek bir arcpad havuzu yok.
-   * Calistigini iddia edemedigimiz bir sekmeyi cizmek, tiklandiginda hicbir
-   * sey yapmayan bir sekmeden farksiz olurdu.
-   *
-   * `Orders` HER IKI durumda da cizilir (emirler token'a asilidir ve mezun bir
-   * token'da da GECMIS emirler gorunmelidir) -- ama yalnizca onlari
-   * getirebilecek bir yol varsa.
-   */
-  const items: { id: Mode; label: string }[] = [{ id: 'market', label: MODE_LABEL.market }]
-  if (!graduated && profile !== null) items.push({ id: 'limit', label: MODE_LABEL.limit })
-  if (loadOrders !== undefined) items.push({ id: 'orders', label: MODE_LABEL.orders })
-
-  // Tek sekme kaldiysa serit CIZILMEZ: bir sekme seridi bir SECIM vaat eder.
-  const strip =
-    items.length > 1 ? (
-      <Tabs
-        items={items}
-        value={mode}
-        onChange={(next) => {
-          setMode(next as Mode)
-        }}
-        label="Trading mode"
-        idBase="surface"
-      />
-    ) : null
-
-  // Cizilmeyen bir sekme SECILI KALAMAZ. Curve mezun olurken `Limit` acik
-  // olsaydi, panel bos bir govde cizerdi.
-  const active: Mode = items.some((i) => i.id === mode) ? mode : 'market'
-
+  if (lifecycle.kind === 'graduated') {
+    return <PoolTradePanel token={token} symbol={symbol} />
+  }
+  if (profile === null) return null
   return (
-    <div className="flex flex-col gap-3" data-testid="trade-surface">
-      {strip}
-      <div
-        role="tabpanel"
-        id={`surface-panel-${active}`}
-        aria-labelledby={`surface-tab-${active}`}
-      >
-        {active === 'market' ? market : null}
-        {active === 'limit' && profile !== null ? (
-          <LimitPanel token={token} curve={curve} symbol={symbol} profile={profile} />
-        ) : null}
-        {active === 'orders' ? (
-          <OrdersPanel
-            token={token}
-            curve={curve}
-            symbol={symbol}
-            orders={orders}
-            onChanged={refresh}
-          />
-        ) : null}
-      </div>
-    </div>
+    <TradePanel
+      token={token}
+      curve={curve}
+      lifecycle={lifecycle}
+      profile={profile}
+      symbol={symbol}
+    />
   )
 }

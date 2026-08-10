@@ -17,7 +17,6 @@ import {
   type CreatorEarnings,
   encodeChatCursor,
   encodeHolderCursor,
-  encodeOrderCursor,
   encodePositionCursor,
   type FreshIndexer,
   getCreatorEarnings,
@@ -26,11 +25,9 @@ import {
   getTokenOverview,
   type HolderRow,
   type IndexerStatus,
-  type LimitOrderRow,
   listChatMessages,
   listHolders,
   listLaunchesByCreator,
-  listOrders,
   listPositionsByHolder,
   listProtocolDaily,
   listTokens,
@@ -38,7 +35,6 @@ import {
   listTradesByTrader,
   parseChatCursor,
   parseHolderCursor,
-  parseOrderCursor,
   parsePositionCursor,
   type PositionRow,
   type ProtocolDay,
@@ -549,61 +545,6 @@ export async function readChat(
     const last = rows.length < params.limit ? undefined : rows[rows.length - 1]
     return {
       value: { rows, nextCursor: last === undefined ? null : encodeChatCursor(last) },
-      indexer,
-    }
-  })
-}
-
-// ===========================================================================
-//  FAZ 7 -- LIMIT ORDERS
-// ===========================================================================
-
-/**
- * "Orders" SEKMESININ SAYFA BOYU. Chat'inkiyle ayni gerekce ve ayni tavan.
- */
-export const ORDERS_PAGE_SIZE = 20
-
-/**
- * ============ BIR SAHIBIN, BIR TOKEN'DAKI EMIRLERI ============
- *
- * Spec §6.3'un ayrimi burada da aynen: okuma bir server component sorgusudur,
- * yazma `app/api/orders/route.ts`ten gecer, ve o rotada bir `GET` YOKTUR.
- *
- * ==========================================================================
- *  BU OKUMA KIMLIK DOGRULAMAZ, VE BEDELI ACIKCA YAZILI
- * ==========================================================================
- *
- * `owner` bir PARAMETREDIR ve cagirandan gelir; hicbir imza istenmez.
- * Dolayisiyla **bir adresi ve bir token'i bilen herkes o adresin acik
- * emirlerini gorebilir.**
- *
- * Neden boyle: bir OKUMAYI imzayla korumak, kullanicinin kendi emirlerini
- * GORMEK icin her sayfa yuklemesinde bir cuzdan penceresi acmasi demekti --
- * ve Faz 6 bir OTURUM kurmayi bilerek reddetti (calinan bir oturum butun
- * gelecek yazmalari ele gecirir). Ikisinin arasinda ucuncu bir yol yok.
- *
- * Bunun tasidigi risk SINIRLIDIR ve siniri custody olcumunden geliyor: bir
- * emri goren kimse onu DOLDURAMAZ, IPTAL EDEMEZ ve DEGISTIREMEZ -- bunlarin
- * hepsi sahibin imzasini ister. Sizan sey NIYETTIR: "su adres, su fiyatta
- * alacak". Bir onculuk (front-running) yuzeyi acar, ve bu yuzey ekranda
- * SOYLENIR (`OrdersPanel`). Kapatmak isteyen bir sonraki faz icin yol da
- * belli: ayni imza semasi, bu sefer okuma uzerinde.
- */
-export async function readOrders(
-  token: string,
-  owner: string,
-  params: PageParams,
-): Promise<ReadResult<Page<LimitOrderRow>>> {
-  return guard(async () => {
-    const pool = getPool()
-    const rows = await listOrders(pool, token as `0x${string}`, owner as `0x${string}`, {
-      before: parseOrderCursor(params.cursor),
-      limit: params.limit,
-    })
-    const indexer = await getIndexerStatus(pool)
-    const last = rows.length < params.limit ? undefined : rows[rows.length - 1]
-    return {
-      value: { rows, nextCursor: last === undefined ? null : encodeOrderCursor(last) },
       indexer,
     }
   })

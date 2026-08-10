@@ -12,7 +12,7 @@ import {
   TABLE_PAGE_SIZE,
   valueOf,
 } from '@/lib/read'
-import { loadMoreChat, loadMoreHolders, loadMoreTrades, loadOrders } from './actions'
+import { loadMoreChat, loadMoreHolders, loadMoreTrades } from './actions'
 import {
   asHex,
   type Canonicity,
@@ -264,7 +264,6 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
             lifecycle={lifecycle}
             profile={profile}
             symbol={overview.symbol}
-            loadOrders={loadOrders.bind(null, overview.token)}
           />
           {/*
             `TradeSurface` REPLACED A DIRECT `<TradePanel>` HERE, AND THE
@@ -476,26 +475,12 @@ function ChainDrawnLaunch({
             `graduated()` in its own multicall, so this branch resolves the same
             lifecycle -- and a user whose indexer is down still reaches the pool.
           */}
-          {/*
-            `loadOrders` BU DALDA DA GECER, VE GECMESI BILINCLI.
-
-            Bu dal indexer DUSTUGUNDE ya da launch HENUZ INDEKSLENMEDIGINDE
-            cizilir. Ikisi ayni sey degil ve emirler acisindan sonuclari da
-            ayni degil: indexer dustuyse `limit_orders` satirlari YERINDE
-            durur ve kullanicinin acik emirlerini gormesi TAM DA O ANDA
-            onemlidir; launch hic indekslenmemisse `readOrders` bos doner ve
-            panel "No orders" der. Prop'u burada VERMEMEK, birinci durumda
-            kullanicinin emirlerini ekrandan silerdi -- ve bu, bu deponun
-            "bir dalda duzeltildi, otekinde unutuldu" arizasinin tam olarak
-            emirler uzerindeki hali olurdu.
-          */}
           <TradeSurface
             token={chain.token}
             curve={chain.curve}
             lifecycle={lifecycle}
             profile={profile}
             symbol={chain.symbol}
-            loadOrders={loadOrders.bind(null, chain.token)}
           />
         </div>
       </div>
