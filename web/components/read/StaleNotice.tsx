@@ -35,19 +35,68 @@ export function StaleNotice({
   /** "Prices", "This page" -- neyin bayat oldugu. */
   what: string
 }) {
+  /*
+   * BIR SATIR GORUNUR, GERISI ACILIR -- VE HICBIRI SILINMEZ.
+   *
+   * Onceki hal her sayfanin tepesinde uc satirlik kirmizi bir blok ciziyordu:
+   * neyin bayat oldugu, kac blok geride oldugu, neden geride oldugu, ve
+   * neyin ETKILENMEDIGI. Hepsi dogruydu ve hepsi gerekli -- ama ilk ekranin
+   * ucte birini kaplayan bir uyari, urunun kendisinden once okunur ve bir sure
+   * sonra hic okunmaz.
+   *
+   * `<details>` ikisini birden verir: ozet satiri her zaman gorunur (uyari
+   * KAYBOLMAZ), tam gerekce bir tiklama uzaktadir. Ozet, "ne kadar geride"
+   * sayisini TASIR -- acilmadan da olcunun kendisi gorunur olmali, yoksa
+   * kapali hali bir his bildirir, bir olgu degil.
+   *
+   * "Trading is unaffected" cumlesi de ozette kalir. Kullanicinin ilk sorusu
+   * "imzalayacagim sayi yanlis mi" ve cevabi hayir; onu bir accordion'un
+   * icine koymak, korkuyu gorunur, teselliyi gizli yapardi.
+   */
   return (
     <div
       role="status"
       data-testid="stale-notice"
-      className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-card border border-negative/30 bg-negative/8 px-4 py-2.5 text-[13px]"
+      className="rounded-card border border-negative/30 bg-negative/8 px-4 py-2.5 text-[13px]"
     >
-      <span className="font-medium">{what} may be out of date.</span>
-      <span className="text-muted">
-        {describeStaleness(indexer)} Trading reads reserves straight from the chain and is
-        unaffected.
-      </span>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="font-medium">{what} may be out of date.</span>
+        <span className="text-muted">{describeBlockLag(blocksBehindOf(indexer))} behind.</span>
+        <span className="text-muted">
+          Trading reads reserves straight from the chain and is unaffected.
+        </span>
+      </div>
+
+      {/*
+        `role="status"` DISARIDAKI SARMALDA KALIR, `<summary>`DE DEGIL.
+        Ilk denemede ozet satirinin kendisi `role="status"` idi ve bu
+        `<summary>`nin ORTUK DUGME ROLUNU eziyordu -- ekran okuyucuyla gezen
+        biri satiri duyar ama ACILABILIR oldugunu ogrenemezdi. Simdi canli
+        bolge disarida, acilir-kapanir olan iceride, ve ikisi birbirinin
+        anlamini bozmuyor.
+      */}
+      <details className="group mt-1.5">
+        <summary className="inline-flex cursor-pointer list-none items-center text-[12px] text-muted hover:text-text [&::-webkit-details-marker]:hidden">
+          <span className="group-open:hidden">Why is it behind?</span>
+          <span className="hidden group-open:inline">Hide</span>
+        </summary>
+        <p className="mt-1.5 max-w-[90ch] leading-relaxed text-muted">
+          {describeStaleness(indexer)}
+        </p>
+      </details>
     </div>
   )
+}
+
+/**
+ * Ozet satirinin sayisi. `null` "olculemedi"dir ve SIFIR DEGILDIR -- bu ayrim
+ * `describeStaleness`in bes dalindan birinin tamami (`head-unknown`), ve
+ * `describeBlockLag` onu "an unknown number of blocks" diye yazar.
+ */
+function blocksBehindOf(indexer: StaleIndexer): bigint | null {
+  const head = indexer.at?.head
+  if (head === undefined) return null
+  return head.measured ? head.blocksBehind : head.lastKnownBlocksBehind
 }
 
 /**

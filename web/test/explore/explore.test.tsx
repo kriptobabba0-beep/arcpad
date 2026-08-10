@@ -97,12 +97,25 @@ describe('izgara geometrisi', () => {
     }
   })
 
-  it('bes kirilma noktasi tanimli', () => {
-    expect(GRID_CLASS).toContain('grid-cols-1')
-    expect(GRID_CLASS).toContain('min-[480px]:grid-cols-2')
+  /*
+   * ALTI KIRILMA NOKTASI, VE EN DARI ARTIK IKI SUTUN.
+   *
+   * `grid-cols-1` KALDIRILDI: telefonda tek sutunlu bir izgara, ekran
+   * yuksekligine bir buçuk kart sigdiriyordu ve bir launchpad'de taranan sey
+   * COKLUKTUR -- tek kart bir liste degil, bir slayt gosterisidir.
+   *
+   * `2xl:grid-cols-6` EKLENDI: 1600px'lik bir ekranda bes sutun karti ~290px
+   * yapiyordu ve gorsel metni eziyordu. Referans arayuzlerin izgara adimi da
+   * ~240px civarinda.
+   */
+  it('alti kirilma noktasi tanimli, ve en darda IKI sutun var', () => {
+    expect(GRID_CLASS).toContain('grid-cols-2')
     expect(GRID_CLASS).toContain('md:grid-cols-3')
     expect(GRID_CLASS).toContain('lg:grid-cols-4')
     expect(GRID_CLASS).toContain('xl:grid-cols-5')
+    expect(GRID_CLASS).toContain('2xl:grid-cols-6')
+    // Tek sutuna DUSMEZ: `grid-cols-1` bir kelime olarak hic gecmemeli.
+    expect(GRID_CLASS.split(' ')).not.toContain('grid-cols-1')
   })
 
   it('iskelet tek satirlik bir "Loading" degil, kart sayisinca kutu cizer', () => {

@@ -13,7 +13,12 @@ import { TokenCard } from './TokenCard'
  * cozdugu problemin ta kendisi.
  */
 export const GRID_CLASS =
-  'grid grid-cols-1 gap-3 min-[480px]:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5'
+  // 2xl'de ALTI sutun. Bes sutunda 1600px'lik bir ekranda kart genisligi
+  // ~290px'e cikiyordu ve gorsel kartin geri kalanini eziyordu; alti sutun
+  // karti ~240px'e cekiyor, ki referans arayuzlerin (pools.trade,
+  // ponsfamily.com) izgara adimi da bu civarda. Daha dar bir kart demek, ilk
+  // ekranda daha cok launch demek -- bir launchpad'de taranan sey odur.
+  'grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6'
 
 export function TokenGrid({ tokens, label }: { tokens: readonly TokenOverview[]; label: string }) {
   return (

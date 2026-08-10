@@ -12,6 +12,7 @@ import { Address } from '@/components/ui/Address'
 import { buttonClassName } from '@/components/ui/Button'
 import { cx } from '@/components/ui/cx'
 import { Money } from '@/components/ui/Money'
+import { relativeAge } from '@/components/ui/relativeAge'
 import { Pill } from '@/components/ui/Pill'
 import { VisuallyHidden } from '@/components/ui/VisuallyHidden'
 import {
@@ -65,27 +66,13 @@ export type TradesTableProps = {
 }
 
 /**
- * YAS `blockTime`'DAN, VE YALNIZCA GOSTERIM ICIN.
+ * YAS `components/ui/relativeAge`TEN GELIR, ve burada YENIDEN TANIMLANMAZ.
  *
- * Siralama `eventSeq` uzerindedir, cunku olculdu (003_trades_and_curve_state.sql):
- * 553 ardisik blok ciftinin %49'u AYNI timestamp'i tasiyor. Yani zaman bir
- * siralama anahtari degil; burada da yalnizca "ne kadar once" sorusunu yanitlar.
- *
- * GELECEK BIR `blockTime` NEGATIF YAS URETMEZ. Sunucunun saati ile
- * kullanicinin saati arasindaki fark bir kac saniye olabilir ve "-3s" yazan bir
- * satir bir hata gibi gorunur; alt sinir sifirdir.
+ * Explore kartlari da ayni bicimi gosteriyor ve onlar SUNUCUDA cizilir; ortak
+ * modul bu yuzden var. Yeniden ihrac ediliyor cunku bu dosyanin testleri
+ * `relativeAge`i buradan aliyor ve fonksiyonun ADRESI degismedi.
  */
-export function relativeAge(blockTime: Date, now: number): string {
-  const at = blockTime.getTime()
-  if (Number.isNaN(at)) return '—'
-  const seconds = Math.max(0, Math.floor((now - at) / 1000))
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h`
-  return `${Math.floor(hours / 24)}d`
-}
+export { relativeAge }
 
 /**
  * TOOLTIP ORAN DEGIL MUTLAK DEGER GOSTERIR.

@@ -4,6 +4,7 @@ import {
   NoLaunchesYet,
   ReadUnavailable,
 } from '@/components/explore/EmptyState'
+import { ExploreHero } from '@/components/explore/ExploreHero'
 import { FilterBar } from '@/components/explore/FilterBar'
 import { KeysetPager } from '@/components/explore/KeysetPager'
 import {
@@ -61,35 +62,42 @@ export default async function Home({
   return (
     <div className="flex flex-col gap-10">
       {/*
-        SAYFANIN `h1`I -- GORSEL OLARAK GIZLI, VE BU BIR KACAMAK DEGIL.
+        SAYFANIN `h1`I ARTIK GORUNUR, VE BU BIR GERI ADIM DEGIL.
 
-        OLCULEREK BULUNDU: axe bu rotada `page-has-heading-one` veriyordu, uc
-        genislikte de (`web/e2e/audit/a11y.spec.ts`). Sayfa iki `h2` ile
-        basliyordu -- "Complete" ve "Explore" -- ve hicbir `h1` yoktu, yani
-        ekran okuyucuyla gezen biri icin bu sayfanin BIR ADI yoktu; baslik
-        listesi iki es duzey bolumle basliyordu ve hangisinin sayfa oldugu
-        soylenmiyordu.
+        Onceden `sr-only` idi ve gerekcesi yaziliydi: axe bu rotada
+        `page-has-heading-one` veriyordu, sayfa iki `h2` ile basliyordu, ve
+        "tasarim bilerek Complete seridiyle aciliyor" deniyordu. Erisilebilirlik
+        tarafi dogruydu; TASARIM tarafi ise olculdugunde tutmadi -- goren bir
+        ziyaretcinin gordugu ilk oge KIRMIZI BIR UYARI KUTUSUYDU ve urunun ne
+        oldugunu soyleyen hicbir cumle yoktu.
 
-        Gorunur bir baslik EKLENMEDI cunku tasarim bilerek "Complete"
-        seridiyle aciliyor ve onun ustune ikinci bir goruntu baslik koymak
-        duzeni bozardi. `sr-only` bir `h1`, tam olarak bu durum icin olan
-        kalip: gorsel hiyerarsi degismez, ANLAMSAL hiyerarsi tamamlanir.
-
-        Bu kusuru hicbir birim testi goremezdi ve gormedi: 645 test yesildi.
-        Tarayici acilmadan gorunmedi.
+        `<ExploreHero>` gorunur bir `h1` tasiyor, yani `sr-only` olan
+        KALDIRILDI: iki `h1` (biri gizli, biri gorunur) ekran okuyucuya bu
+        sayfanin iki adi oldugunu soylerdi. Bir sayfanin bir adi vardir.
       */}
-      <h1 className="sr-only">Explore token launches on Arc</h1>
+      <ExploreHero />
 
       {/*
-        BAYAT VERI UYARISI EN USTTE, izgaranin degil SAYFANIN basinda: bayat
-        olan tek bir kart degil butun listedir.
+        BAYAT VERI UYARISI HERO'NUN ALTINDA, izgaranin degil LISTENIN ustunde:
+        bayat olan tek bir kart degil butun listedir. Sayfanin EN ustunde
+        degil, cunku oradaki hali urunu tanitmadan once bir ariza bildiriyordu.
       */}
       {listStale === null ? null : <StaleNotice indexer={listStale} what="Prices and volumes" />}
 
       <CompleteSection tokens={completeTokens} />
 
       <section aria-labelledby="explore-heading" className="flex flex-col gap-4">
-        <div className="flex flex-wrap items-end justify-between gap-3">
+        {/*
+          BASLIK VE FILTRELER AYNI KENARDA, ALT ALTA.
+
+          Onceki hal `justify-between` idi: baslik solda, filtreler sagda, ve
+          1600px'lik bir ekranda aralarinda bin piksel bosluk. Ikisi ayni
+          kontrolun parcasi -- "neye bakiyorum" ve "nasil siralanmis" -- ama
+          ekranin iki ucunda durunca ilgisiz iki oge gibi okunuyorlardi, ve
+          filtreler bir izgaranin degil bir sonraki bolumun basligi gibi
+          duruyordu.
+        */}
+        <div className="flex flex-col gap-3">
           <h2 id="explore-heading" className="font-serif text-2xl leading-none">
             Explore
           </h2>
