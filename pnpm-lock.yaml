@@ -66,9 +66,6 @@ importers:
 
   keeper:
     dependencies:
-      '@arcpad/db':
-        specifier: workspace:*
-        version: link:../packages/db
       '@arcpad/shared':
         specifier: workspace:*
         version: link:../packages/shared

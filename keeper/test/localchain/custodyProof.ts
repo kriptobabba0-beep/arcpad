@@ -13,22 +13,35 @@ import {
 import { privateKeyToAccount } from 'viem/accounts'
 
 /**
- * ============ CUSTODY PROOF -- FAZ 7'NIN TEK TASIYICI OLCUMU ============
+ * ==========================================================================
+ *  CUSTODY PROOF -- BASKASI BENIM FONUMLA TICARET YAPABILIR MI?
+ * ==========================================================================
  *
  * `pnpm --filter @arcpad/keeper custody-proof`
  *
- * SORU: bir limit emri, sahibinin FONUYLA ve sahibine TESLIMATLA, BASKA BIR
- * ADRES tarafindan doldurulabilir mi? Cunku bir limit emri tam olarak budur --
- * "simdi degil, sonra, ben orada olmasam bile" sozu. Cevap HAYIRSA, keeper bir
- * DOLDURUCU degil bir GOZLEMCIDIR ve urunun ekranda soylemesi gereken cumle
- * degisir.
+ * SORU, VE HICBIR URUN OZELLIGINE BAGLI DEGIL: bir islem, SAHIBININ FONUYLA
+ * ve SAHIBINE TESLIMATLA, BASKA BIR ADRES tarafindan gonderilebilir mi? Yani
+ * arcpad'in bir sunucusu -- keeper -- kullanicinin YERINE ticaret yapabilir
+ * mi? Cevap HAYIRSA, bu sunucu bir VEKIL degil bir GOZLEMCIDIR, ve bu, uzerine
+ * urun kurulabilecek ya da kurulamayacak bir SINIRDIR.
  *
- * BU DOSYA O CEVABI OKUYARAK DEGIL CALISTIRARAK VERIR. Kaynak okumasi
- * ("`msg.sender`e transfer ediyor") bir iddiadir; asagidaki dort adim
- * ZINCIRIN KENDI BYTECODE'UNA karsi calisir.
+ * ============ BU DOSYA NEDEN DURUYOR ============
  *
- * NASIL: `anvil --fork-url <Arc testnet>`, yani UZAK durum YEREL bir EVM'de.
- * Hicbir zincire TEK BIR ISLEM bile yayinlanmaz; kullanilan curve canli
+ * Bu olcum ILK KEZ limit emirleri icin yapildi ve o ozellik URUNDEN KALDIRILDI
+ * (migration 015). DOSYA KALDI, cunku olctugu sey limit emirlerine ait DEGIL:
+ * zincirin kendi custody sinirina ait. "Keeper kullanici adina yapsin" diyen
+ * HER gelecek onerinin -- otomatik satis, stop-loss, abonelikli alim, tek
+ * tikla ne olursa -- cevabi burada, ve iddia degil OLCUM olarak duruyor.
+ * Limit emirleri o onerilerin yalnizca BIRINCISIYDI.
+ *
+ * Kontratlar dondurulmus oldugu icin bu cevap yeniden muzakere edilemez. Onu
+ * degistirmenin tek yolu yeni kontrat yayinlamaktir, ve o gun geldiginde bu
+ * dosya "hala boyle mi" sorusunu CALISTIRARAK cevaplar.
+ *
+ * ============ NASIL ============
+ *
+ * `anvil --fork-url <Arc testnet>`, yani UZAK durum YEREL bir EVM'de. Hicbir
+ * zincire TEK BIR ISLEM bile yayinlanmaz; kullanilan curve canli
  * `0x53Bba88F...44c9` ACIK e2e curve'udur ve fork'ta ona yapilan alim gercek
  * zincirde HICBIR IZ BIRAKMAZ (AGENT-CONTEXT o curve'un acik kalmasini
  * istiyor -- burasi onu kapatmaz cunku burasi zincir degil).
@@ -44,27 +57,34 @@ import { privateKeyToAccount } from 'viem/accounts'
  * ============ NE OLCULUYOR ============
  *
  *   1  Bir ucuncu taraf ("keeper") curve'e `buyExactQuoteIn` gonderir.
- *      TOKENLER KEEPER'A GIDER, emir sahibine DEGIL. Kontrol grubu: ayni
- *      cagriyi sahip yaparsa tokenler SAHIBE gider -- yani olculen sey
+ *      TOKENLER KEEPER'A GIDER, fonu harcayan tarafa DEGIL. Kontrol grubu:
+ *      ayni cagriyi sahip yaparsa tokenler SAHIBE gider -- yani olculen sey
  *      "kimse alamiyor" degil, "ALAN, CAGIRANDIR".
  *   2  Sahip keeper'a SINIRSIZ `approve` verir. Keeper `sellExactTokensIn`
  *      cagirir. ONAY HICBIR SEY SATIN ALMAZ: curve `transferFrom(msg.sender,
  *      ...)` yapar, yani keeper'in KENDI bakiyesinden ceker ve keeper'in
  *      tokeni yoktur. Kontrol grubu: keeper KENDI aldigi tokenle satabilir --
  *      yani basarisizlik "satis bozuk" degil "onay yanlis tarafta".
- *   3  Curve'un ZINCIRDEKI runtime bytecode'unda, bilinen ABI'nin DISINDA
- *      hicbir fonksiyon selector'u yoktur. Yani gizli bir `buyFor(address)`
- *      YOKTUR -- 1 ve 2'nin kapattigi kapinin YANINDA acik bir kapi yok.
- *   4  Ayni tarama `ArcpadRouter` icin. Router'in dort takas girisi bir `to`
- *      ALIR ama bir `payer` ALMAZ; imzalar selector'lardan dogrulanir.
+ *   3  Curve'de, 1 ve 2'nin kapattigi kapinin YANINDA acik bir kapi yoktur:
+ *      gizli bir `buyFor(address)`, bir `executeWithSig`, bir `setOperator`
+ *      YOK. `DELEGATION_CANDIDATES`in tamami zincirde tek tek denenir.
+ *   4  Ayni probe `ArcpadRouter` icin. Router'in dort takas girisi bir ALICI
+ *      (`to`) ALIR ama bir ODEYEN (`payer`) ALMAZ.
  *
- * 3 ve 4'un tekniği PUSH4 taramasidir ve SINIRI YAZILI: solc her selector'u
- * bir PUSH4 sabiti olarak gomer, yani tarama fonksiyon selector'larini
- * KESINLIKLE bulur; yanlis pozitif uretebilir (bir sabit tesadufen dort bayt
- * olabilir) ama YANLIS NEGATIF uretemez. Iddia "listede fazladan bir sey yok"
- * degil, **"bilinmeyen bir GIRIS NOKTASI yok"**tur ve o yon icin tarama
- * yeterlidir: bulunan her selector ya bilinen ABI'dendir ya da bilinmeyen
- * olarak RAPOR EDILIR.
+ * 3 ve 4'un teknigi BIR DAVRANIS PROBE'UDUR, bir bytecode taramasi DEGIL, ve
+ * aradaki fark olculerek ogrenildi. ILK surum bir PUSH4 taramasiydi ve YANLIS
+ * CIKTI: curve'de 38 "bilinmeyen" dort-bayt sabiti buldu, neredeyse hepsi ozel
+ * hata selector'u (`0xc0ba73dd NotEnoughTokensToBuy`) ya da CAGRILAN tarafin
+ * selector'u (`0xa9059cbb transfer`). Dort-bayt SABITLERINI sayiyordu, GIRIS
+ * NOKTALARINI degil.
+ *
+ * Yerine gecen probe, kontratin KENDI davranisini kullanir: `fallback()`
+ * olmadigi icin BILINMEYEN bir selector BOS veriyle revert eder, bilinen bir
+ * selector ise ya doner ya da DOLU veriyle (bir ozel hatayla) revert eder. Bu
+ * ayrimin yanlis pozitifi yoktur, ve KENDI KONTROLUNU TASIR: gercekten var
+ * olan girisler (`complete()`, `realTokenReserves()`, `poolManager()`,
+ * `hook()`) ayni probe'dan PRESENT olarak gecer -- yani "hicbiri yok" sonucu,
+ * probe'un korlugu ile aciklanamaz.
  */
 
 // ---------------------------------------------------------------
@@ -371,8 +391,9 @@ async function main(): Promise<number> {
       for (const f of failures) console.error(`  FAILED: ${f}`)
       return 1
     }
-    console.log('CUSTODY VERDICT: no address other than the order owner can trade the owner\'s funds')
-    console.log('                 into the owner\'s hands on either venue. The keeper cannot fill.')
+    console.log('CUSTODY VERDICT: no address other than the fund owner can trade the owner\'s funds')
+    console.log('                 into the owner\'s hands on either venue. The keeper cannot trade')
+    console.log('                 on a user\'s behalf, and no delegated entrypoint exists to let it.')
     return 0
   } finally {
     if (anvil !== undefined) await stopAnvil(anvil)
