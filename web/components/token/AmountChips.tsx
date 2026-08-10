@@ -20,14 +20,16 @@ export type AmountChipsProps = {
  * is the part that would look right and be wrong if it were done with buy-side
  * arithmetic.
  *
- * NOTHING IS RENDERED WHEN NOTHING RESOLVES, and that is the interesting case
- * rather than an edge one: on today's curve profile a curve absorbs 12.16 USDC
- * in TOTAL and no sell can ever return more than ~16.45 USDC, so the whole
- * `$25 / $100 / $500` ladder is outside what this protocol can transact and
- * this component draws nothing at all. `amountChipsFor` carries the
- * measurement and the one-line change that makes them live.
+ * NOTHING IS RENDERED WHEN NOTHING RESOLVES, and that is not an edge case --
+ * it is the invariant. The ladder is now chosen per profile (testnet
+ * $1/$5/$10, production $25/$100/$500) so the common case has chips, but a
+ * ladder being right for a PROFILE does not make it right at every point in a
+ * CURVE's life: an early production curve has no depth for $500, and a curve
+ * near the top cannot absorb any of them without clamping. `amountChipsFor`
+ * resolves every chip through the planner and this component draws only what
+ * came back.
  *
- * A DISABLED CHIP IS NOT AN OPTION HERE. `MaxButton` disables its percentages
+ * A DISABLED CHIP IS NOT AN OPTION HERE. `SpendableMaxButton` disables itself
  * and explains why in a `title`, because "MAX" is a promise about the user's
  * OWN balance and its absence needs accounting for. `$500` is a promise about
  * nothing but itself: a user who cannot afford it does not need a greyed-out

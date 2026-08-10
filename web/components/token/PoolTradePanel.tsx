@@ -18,7 +18,7 @@ import { ARCPAD_ROUTER_ABI } from '@/lib/routerAbi'
 import { AmountInput } from './AmountInput'
 import { ApproveStep } from './ApproveStep'
 import { spendableFrom } from './gas'
-import { MaxButton } from './MaxButton'
+import { SpendableMaxButton } from './SpendableMaxButton'
 import { useGasReserve } from './useGasReserve'
 import {
   buildPoolPlan,
@@ -350,7 +350,7 @@ export function PoolTradeForm({
               </span>
             ) : null}
           </p>
-          <MaxButton
+          <SpendableMaxButton
             spendable={tab === 'sell' ? tokenBalance : spendable}
             reason={gasReason}
             onPick={(picked) =>
@@ -642,7 +642,7 @@ export function PoolTradePanel({ token, symbol }: PoolTradePanelProps) {
    * to send" means when the transaction pulls funds. The curve never met it:
    * its buys are `payable` and need no allowance.
    *
-   * So the shortcuts go dark WITH A REASON, exactly as `MaxButton` was built
+   * So MAX goes dark WITH A REASON, exactly as `SpendableMaxButton` was built
    * for. The alternative -- reserving a made-up constant -- is trying an
    * unmeasured number on the user's money, which `gas.ts` refuses by design.
    */

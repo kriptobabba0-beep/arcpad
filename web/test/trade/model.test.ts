@@ -2,14 +2,20 @@ import {
   asTok,
   graduationRaise,
   planBuyExactQuoteIn,
+  PROFILE_DIGESTS,
   resolveSellForNet,
   totalSpentOf,
   TRADE_ACTIONS,
   USDC_VIEW_SCALE,
 } from '@arcpad/shared/browser'
+// `profileDigest` lives in the SERVER half of the package (`profiles.ts` opens
+// `profiles.toml` with `node:fs`). A test runs in node, so importing it here is
+// fine -- and it is the only way to check the fixture against the pinned digest
+// without copying the hash a third time.
+import { profileDigest } from '@arcpad/shared'
 import { describe, expect, it } from 'vitest'
 import {
-  AMOUNT_CHIPS_USDC,
+  AMOUNT_CHIPS_BY_PROFILE,
   amountChipsFor,
   BOUND_LABEL,
   buttonFor,
@@ -33,9 +39,9 @@ import {
 import {
   CLIMBED,
   CREATOR,
-  DEEP_FRESH,
-  DEEP_HOLDING,
-  DEEP_PROFILE,
+  PRODUCTION_FRESH,
+  PRODUCTION_HOLDING,
+  PRODUCTION_PROFILE,
   EXTREME_FEES,
   FEES,
   FRESH,
@@ -496,16 +502,56 @@ describe('amountChipsFor', () => {
     amountChipsFor({
       tab,
       spendable: RICH,
-      tokenBalance: DEEP_HOLDING,
-      state: DEEP_FRESH,
-      profile: DEEP_PROFILE,
+      tokenBalance: PRODUCTION_HOLDING,
+      state: PRODUCTION_FRESH,
+      profile: PRODUCTION_PROFILE,
+      profileName: 'production',
       fees: FEES,
       ...over,
     } as Parameters<typeof amountChipsFor>[0])
 
-  it('is the owner ladder, in order, when the curve can carry it', () => {
-    expect(AMOUNT_CHIPS_USDC).toEqual([25n, 100n, 500n])
+  const chipsOnTestnet = (tab: 'spend' | 'receive' | 'sell', over: Record<string, unknown> = {}) =>
+    amountChipsFor({
+      tab,
+      spendable: RICH,
+      tokenBalance: TESTNET_PROFILE.saleSupply / 2n,
+      state: FRESH,
+      profile: TESTNET_PROFILE,
+      profileName: 'testnet',
+      fees: FEES,
+      ...over,
+    } as Parameters<typeof amountChipsFor>[0])
+
+  it('is the PRODUCTION ladder on the production profile', () => {
+    expect(AMOUNT_CHIPS_BY_PROFILE.production).toEqual([25n, 100n, 500n])
     expect(chipsOn('spend').map((c) => c.usdc)).toEqual([25n, 100n, 500n])
+  })
+
+  it('is the TESTNET ladder on the testnet profile, and it is a different ladder', () => {
+    // THE WHOLE POINT OF KEYING OFF THE PROFILE. `$25` is not wrong, it is
+    // right for a curve that raises 12_161 USDC and unreachable on one that
+    // raises 12.16 -- the same factor of 1000 that separates the two `V`s.
+    expect(AMOUNT_CHIPS_BY_PROFILE.testnet).toEqual([1n, 5n, 10n])
+    expect(chipsOnTestnet('spend').map((c) => c.usdc)).toEqual([1n, 5n, 10n])
+  })
+
+  it('the two ladders are in the same ratio as the two profiles', () => {
+    // 1000x in `V` is 1000x in every quote-denominated figure, the ladder
+    // included. A ladder that did not scale with the profile would be a
+    // hardcoded `V` wearing a different hat.
+    const testnet = AMOUNT_CHIPS_BY_PROFILE.testnet
+    const production = AMOUNT_CHIPS_BY_PROFILE.production
+    expect(testnet).toHaveLength(production.length)
+    expect(PRODUCTION_PROFILE.virtualQuoteReserves).toBe(
+      TESTNET_PROFILE.virtualQuoteReserves * 1000n,
+    )
+  })
+
+  it('the production fixture IS the pinned production profile', () => {
+    // Not an invented "deep curve": the digest is the cross-language gate that
+    // says so, and without this assertion the fixture could drift into fiction.
+    expect(profileDigest(PRODUCTION_PROFILE)).toBe(PROFILE_DIGESTS.production)
+    expect(profileDigest(TESTNET_PROFILE)).toBe(PROFILE_DIGESTS.testnet)
   })
 
   it('fills the money itself on Spend USDC', () => {
@@ -519,7 +565,7 @@ describe('amountChipsFor', () => {
 
   it('fills TOKENS on Receive tokens, and they are what that budget buys', () => {
     for (const chip of chipsOn('receive')) {
-      const plan = planBuyExactQuoteIn(DEEP_FRESH, DEEP_PROFILE, FEES, chip.wei, 0)
+      const plan = planBuyExactQuoteIn(PRODUCTION_FRESH, PRODUCTION_PROFILE, FEES, chip.wei, 0)
       expect(chip.fill).toBe(plan.tokens)
       // NOT the money. A chip that wrote `25e18` into a token field would be
       // asking for 25 tokens, and both views are 1e18-scaled so it would look
@@ -533,11 +579,11 @@ describe('amountChipsFor', () => {
     expect(chips.length).toBeGreaterThan(0)
     for (const chip of chips) {
       const found = resolveSellForNet(
-        DEEP_FRESH,
-        DEEP_PROFILE,
+        PRODUCTION_FRESH,
+        PRODUCTION_PROFILE,
         FEES,
         chip.wei,
-        DEEP_HOLDING,
+        PRODUCTION_HOLDING,
         USDC_VIEW_SCALE,
       )
       expect(found.ok).toBe(true)
@@ -545,7 +591,13 @@ describe('amountChipsFor', () => {
       expect(chip.fill).toBe(found.tokensIn)
       // THE DIRECTION MUTANT, at the panel's own level: the buy-side answer for
       // the same money is a different, smaller quantity.
-      const buySide = planBuyExactQuoteIn(DEEP_FRESH, DEEP_PROFILE, FEES, chip.wei, 0).tokens
+      const buySide = planBuyExactQuoteIn(
+        PRODUCTION_FRESH,
+        PRODUCTION_PROFILE,
+        FEES,
+        chip.wei,
+        0,
+      ).tokens
       expect(chip.fill).not.toBe(buySide)
     }
   })
@@ -566,7 +618,7 @@ describe('amountChipsFor', () => {
 
   it('drops a sell chip the holding cannot make', () => {
     // Enough token for $25, not for $500.
-    const small = DEEP_PROFILE.saleSupply / 500n
+    const small = PRODUCTION_PROFILE.saleSupply / 500n
     const usable = chipsOn('sell', { tokenBalance: small }).map((c) => c.usdc)
     expect(usable).not.toContain(500n)
     expect(usable.length).toBeLessThan(3)
@@ -582,15 +634,15 @@ describe('amountChipsFor', () => {
     // completing it. The money and the label part company, which is the one
     // thing a shortcut on a payment surface may not do.
     const nearlyDone = {
-      ...DEEP_FRESH,
-      realTokenReserves: asTok(DEEP_PROFILE.saleSupply / 1_000_000n),
+      ...PRODUCTION_FRESH,
+      realTokenReserves: asTok(PRODUCTION_PROFILE.saleSupply / 1_000_000n),
     }
     expect(chipsOn('spend', { state: nearlyDone })).toEqual([])
   })
 
   it('offers nothing on a completed curve', () => {
-    expect(chipsOn('spend', { state: { ...DEEP_FRESH, complete: true } })).toEqual([])
-    expect(chipsOn('sell', { state: { ...DEEP_FRESH, complete: true } })).toEqual([])
+    expect(chipsOn('spend', { state: { ...PRODUCTION_FRESH, complete: true } })).toEqual([])
+    expect(chipsOn('sell', { state: { ...PRODUCTION_FRESH, complete: true } })).toEqual([])
   })
 
   /**
@@ -598,12 +650,16 @@ describe('amountChipsFor', () => {
    *  THE MEASUREMENT THAT DECIDED THE SHAPE OF THIS FEATURE
    * ======================================================================
    */
-  it('resolves to NOTHING on the profile that is actually deployed', () => {
-    // Measured against the live open curve on 2026-08-10: a real curve absorbs
-    // 12.161433 USDC in TOTAL, so all three chips clamp and complete it; and no
-    // sell on any arcpad curve can ever return more than ~16.45 USDC. The row
-    // is therefore EMPTY in production, and that is the assertion -- not a
-    // gap in the tests.
+  /**
+   * ======================================================================
+   *  THE SUPPRESSION IS THE INVARIANT, AND IT OUTLIVES THE RIGHT LADDER
+   * ======================================================================
+   */
+  it('suppresses the PRODUCTION ladder on a curve without the depth for it', () => {
+    // The production ladder meeting a testnet-depth curve. This is the case the
+    // measurement found and it must stay closed no matter which ladder is
+    // configured: a curve that raises 12.16 USDC in total cannot fill a $25
+    // chip, so nothing renders.
     for (const tab of ['spend', 'receive', 'sell'] as const) {
       expect(
         amountChipsFor({
@@ -612,21 +668,46 @@ describe('amountChipsFor', () => {
           tokenBalance: TESTNET_PROFILE.saleSupply / 2n,
           state: FRESH,
           profile: TESTNET_PROFILE,
+          profileName: 'production',
           fees: FEES,
         }),
       ).toEqual([])
     }
   })
 
-  it('the whole testnet curve costs less than the smallest chip', () => {
-    // The arithmetic behind the assertion above, stated so a future reader does
-    // not have to rediscover it: `V*S/(vT0-S)`.
+  it('suppresses the chips a LATE production curve can no longer absorb', () => {
+    // The ladder being right for the profile does not make it right at every
+    // point in a curve's life. Near the top there is not enough reserve left,
+    // so the chips that would clamp go and the rest stay.
+    const late = {
+      ...PRODUCTION_FRESH,
+      realTokenReserves: asTok(PRODUCTION_PROFILE.saleSupply / 20_000n),
+    }
+    const usable = chipsOn('spend', { state: late }).map((c) => c.usdc)
+    expect(usable).not.toContain(500n)
+    expect(usable.length).toBeLessThan(3)
+  })
+
+  it('suppresses the testnet sell chips above the curve ceiling', () => {
+    // A fresh testnet curve's sell asymptote is `virtualQuoteReserves` =
+    // 4.292 USDC, so $5 and $10 are unreachable to EVERY holder while $1 is
+    // fine. The buy side of the same ladder is unaffected -- three entrypoints,
+    // three boundaries.
+    expect(chipsOnTestnet('sell').map((c) => c.usdc)).toEqual([1n])
+    expect(chipsOnTestnet('spend').map((c) => c.usdc)).toEqual([1n, 5n, 10n])
+  })
+
+  it('the whole testnet curve costs less than the smallest PRODUCTION chip', () => {
+    // `V*S/(vT0-S)`, the number that decided the ladder split.
     const raise = graduationRaise(
       TESTNET_PROFILE.saleSupply,
       TESTNET_PROFILE.virtualQuoteReserves,
       TESTNET_PROFILE.virtualTokenReserves,
     )
     expect(raise).toBe(12_161_433_369_060_378_706n)
-    expect(raise).toBeLessThan(AMOUNT_CHIPS_USDC[0]! * ONE_USDC)
+    expect(raise).toBeLessThan(AMOUNT_CHIPS_BY_PROFILE.production[0]! * ONE_USDC)
+    // ...and MORE than the largest testnet chip, which is what makes that
+    // ladder fillable.
+    expect(raise).toBeGreaterThan(AMOUNT_CHIPS_BY_PROFILE.testnet[2]! * ONE_USDC)
   })
 })

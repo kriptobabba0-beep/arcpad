@@ -1,5 +1,5 @@
-import type { CurveProfile } from '@arcpad/shared/browser'
 import type { HexAddress } from '@/components/read/types'
+import type { IdentifiedProfile } from '@/lib/profile'
 import type { Lifecycle } from './lifecycle'
 import { PoolTradePanel } from './PoolTradePanel'
 import { TradePanel } from './TradePanel'
@@ -64,8 +64,21 @@ export type TradeSurfaceProps = {
   readonly token: HexAddress
   readonly curve: HexAddress
   readonly lifecycle: Lifecycle
-  /** `null` -> `getCurveProfile()` failed. Only the curve panel needs it. */
-  readonly profile: CurveProfile | null
+  /**
+   * `null` -> `getCurveProfile()` failed. Only the curve panel needs it.
+   *
+   * THE TRIPLE AND ITS NAME TRAVEL TOGETHER, as one object, because they are
+   * one reading: `getCurveProfile()` reads `T`/`V`/`S` off the factory AND
+   * hashes them against `PROFILE_DIGESTS` to name the profile. Two separate
+   * props would admit a pair that disagrees -- production numbers under a
+   * testnet name -- and the money-chip ladder is chosen by the name while every
+   * quote is computed from the triple, so a mismatch would be spendable.
+   *
+   * `import type` on purpose: `@/lib/profile` is server-only (it pulls the
+   * address book, which opens `node:fs`), and a type-only import is erased
+   * before anything is emitted.
+   */
+  readonly profile: IdentifiedProfile | null
   readonly symbol: string
 }
 
@@ -86,7 +99,8 @@ export function TradeSurface({ token, curve, lifecycle, profile, symbol }: Trade
       token={token}
       curve={curve}
       lifecycle={lifecycle}
-      profile={profile}
+      profile={profile.profile}
+      profileName={profile.name}
       symbol={symbol}
     />
   )

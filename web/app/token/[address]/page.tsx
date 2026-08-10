@@ -1,4 +1,3 @@
-import type { CurveProfile } from '@arcpad/shared/browser'
 import { isAddress } from 'viem'
 import { notFound } from 'next/navigation'
 import { verifyCanonical } from '@/lib/canonical'
@@ -32,7 +31,7 @@ import { TradeSurface } from '@/components/token/TradeSurface'
 import { ChatPanel } from '@/components/token/ChatPanel'
 import { resolveLifecycle } from '@/components/token/lifecycle'
 import { type ChainToken, readChainToken } from '@/lib/chainToken'
-import { getCurveProfile } from '@/lib/profile'
+import { getCurveProfile, type IdentifiedProfile } from '@/lib/profile'
 import { StaleNotice } from '@/components/read/StaleNotice'
 
 /**
@@ -105,7 +104,7 @@ export default async function TokenPage({ params }: { params: Promise<{ address:
 }
 
 async function IndexedToken({ overview }: { overview: TokenOverview }) {
-  const [metadata, trades, holders, chat, profile] = await Promise.all([
+  const [metadata, trades, holders, chat, identified] = await Promise.all([
     resolveMetadata(overview.uri),
     readTrades(asHex(overview.token), { cursor: null, limit: TABLE_PAGE_SIZE }),
     readHolders(asHex(overview.token), { cursor: null, limit: TABLE_PAGE_SIZE }),
@@ -116,8 +115,13 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
     // PROFIL FACTORY'DEN, ve dusmesi sayfayi dusurmez: al-sat paneli o zaman
     // cizilmez, geri kalan her sey cizilir. Uydurulmus bir yedek KONMAZ --
     // testnet ile uretim yalnizca `V`de ve tam 1000 kat ayrisir.
+    // THE NAME IS KEPT NOW, NOT DISCARDED. `getCurveProfile()` has always
+    // returned `{ name, profile }` -- the triple read off the factory and the
+    // profile it hashes to -- and this call threw the name away. The money-chip
+    // ladder is chosen by it (testnet $1/$5/$10, production $25/$100/$500),
+    // because the two profiles differ in `V` by exactly 1000.
     getCurveProfile().then(
-      ({ profile: p }) => p,
+      (found) => found,
       (error: unknown) => {
         console.error(
           'curve profile unavailable; the token page draws without a trade panel',
@@ -127,6 +131,8 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
       },
     ),
   ])
+  // Every other consumer on this page wants the triple, unchanged.
+  const profile = identified?.profile ?? null
   /*
    * `overview.graduated` GECILIYOR, VE GECILMEDIGI SURECE `graduated` DALI
    * HICBIR SAYFADA URETILEMIYORDU.
@@ -262,7 +268,7 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
             token={asHex(overview.token)}
             curve={asHex(overview.curve)}
             lifecycle={lifecycle}
-            profile={profile}
+            profile={identified}
             symbol={overview.symbol}
           />
           {/*
@@ -342,7 +348,7 @@ async function ChainOnly({
   notice: 'not-indexed' | 'unavailable'
 }) {
   const identified = canonicity === 'canonical' ? await profileOrNull() : null
-  const chain = identified === null ? null : await readChainToken(token, identified)
+  const chain = identified === null ? null : await readChainToken(token, identified.profile)
 
   return (
     <div className="flex flex-col gap-6">
@@ -378,16 +384,15 @@ async function ChainOnly({
           <p className="text-[13px] text-muted">Provenance: {canonicity}</p>
         </>
       ) : (
-        <ChainDrawnLaunch chain={chain} profile={identified} canonicity={canonicity} />
+        <ChainDrawnLaunch chain={chain} identified={identified} canonicity={canonicity} />
       )}
     </div>
   )
 }
 
-async function profileOrNull(): Promise<CurveProfile | null> {
+async function profileOrNull(): Promise<IdentifiedProfile | null> {
   try {
-    const { profile } = await getCurveProfile()
-    return profile
+    return await getCurveProfile()
   } catch (error) {
     console.error('curve profile unavailable; the chain-only branch cannot draw', error)
     return null
@@ -396,13 +401,15 @@ async function profileOrNull(): Promise<CurveProfile | null> {
 
 function ChainDrawnLaunch({
   chain,
-  profile,
+  identified,
   canonicity,
 }: {
   chain: ChainToken
-  profile: CurveProfile
+  /** Triple AND name, as one reading -- see `TradeSurface`'s prop. */
+  identified: IdentifiedProfile
   canonicity: Canonicity
 }) {
+  const profile = identified.profile
   // Zincir dali da AYNI iki bayragi besler: `readChainToken` `graduated()`i
   // artik ayni multicall icinde okuyor, yani indexer dustugunde de mezuniyet
   // ekranda GORUNUR. Iki dali ayri beslemek, birini duzeltip otekini unutmanin
@@ -479,7 +486,7 @@ function ChainDrawnLaunch({
             token={chain.token}
             curve={chain.curve}
             lifecycle={lifecycle}
-            profile={profile}
+            profile={identified}
             symbol={chain.symbol}
           />
         </div>

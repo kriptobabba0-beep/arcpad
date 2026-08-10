@@ -50,6 +50,13 @@ export {
   quoteBuyTokensOut,
   quoteSellProceeds,
 } from './curve'
+/**
+ * PROFIL ADI, ve neden burada olmasi gerekiyor: al-sat panelinin mutlak para
+ * kisayollarinin merdiveni profile baglidir ve panel bir `'use client'`
+ * bilesenidir. `profiles.ts` bunu yeniden disa aktarir, dolayisiyla sunucu
+ * tarafi degismez -- tanim tektir.
+ */
+export { isProfileName, PROFILE_DIGESTS, PROFILE_NAMES, type ProfileName } from './profileNames'
 export {
   asTok,
   asWei,

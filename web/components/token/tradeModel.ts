@@ -4,6 +4,7 @@ import {
   type FeeBps,
   formatTokenAmount,
   parseUsdcAmount,
+  type ProfileName,
   planBuyExactQuoteIn,
   planBuyExactTokensOut,
   planSellExactTokensIn,
@@ -291,17 +292,40 @@ export function shortcutBaseFor(input: {
  *     curve loaded all the way to graduation. That is a HARD CEILING on what
  *     any sell can ever return on any arcpad curve.
  *
- * SO THE LADDER BELOW IS THE OWNER'S, UNCHANGED, AND ON TODAY'S PROFILE IT
- * RENDERS NOTHING. That is deliberate and it is the repository's own rule, not
- * a new one: `TradeSurface.tsx` records why the `Market | Limit | Orders` strip
- * was deleted this morning -- *"a tab that does nothing when clicked is worse
- * than a tab that isn't there"* -- and three chips that are permanently
- * unfillable are that defect wearing a different shape. `amountChipsFor`
- * returns only chips it has RESOLVED through the planner, so the row is
- * self-suppressing: change the numbers here to something this profile can
- * transact (`[1n, 5n, 10n]`) and three live chips appear with no other edit.
+ * ------------------------------------------------------------------------
+ *  SO THE LADDER IS PER PROFILE, LIKE EVERY OTHER FIGURE OF THIS KIND
+ * ------------------------------------------------------------------------
+ *
+ * `$25 / $100 / $500` is not wrong -- it is RIGHT FOR PRODUCTION and
+ * unreachable on testnet, in exactly the proportion everything else on this
+ * chain is. The two profiles differ in `V` by a factor of 1000, so they differ
+ * in every quote-denominated quantity by 1000: `MIN_GRADUATION_RAISE` is
+ * `12.161433` on testnet and `12_161.43` on production. A single hardcoded
+ * ladder was the same category error as a hardcoded `V`.
+ *
+ * The key is the PROFILE NAME, and it arrives already identified. `getCurveProfile()`
+ * reads the factory's own immutables and hashes them against `PROFILE_DIGESTS`
+ * (`web/lib/profile.ts`), which are the same pinned digests
+ * `assertBookMatchesProfile` validates the address book's `profile` field
+ * against -- so this IS the book's field, reached by the one route that works
+ * in a browser. `readProfiles()` cannot be that route: it opens `profiles.toml`
+ * with `node:fs`, and this file is imported by a `'use client'` component.
+ *
+ * ------------------------------------------------------------------------
+ *  THE SUPPRESSION IS THE INVARIANT; THE LADDER IS ONLY ITS INPUT
+ * ------------------------------------------------------------------------
+ *
+ * `amountChipsFor` returns only chips it has RESOLVED through the planner for
+ * the tab's own entrypoint. That does not become decorative now that the
+ * numbers fit the profile -- it is what keeps the PRODUCTION ladder honest
+ * against an EARLY production curve, which has barely any depth and cannot
+ * absorb $500 until it has filled up. A chip that cannot be filled is not
+ * rendered, on either profile, at every point in a curve's life.
  */
-export const AMOUNT_CHIPS_USDC: readonly bigint[] = [25n, 100n, 500n]
+export const AMOUNT_CHIPS_BY_PROFILE: Readonly<Record<ProfileName, readonly bigint[]>> = {
+  testnet: [1n, 5n, 10n],
+  production: [25n, 100n, 500n],
+}
 
 const ONE_USDC_WEI = 1_000_000_000_000_000_000n
 
@@ -326,6 +350,12 @@ export type AmountChipInput = {
   readonly state: CurveState
   readonly profile: CurveProfile
   readonly fees: FeeBps
+  /**
+   * WHICH LADDER. Identified from the factory's own immutables by
+   * `getCurveProfile()`, not guessed from the chain id -- a chain could carry
+   * either profile and the digest is what actually settles it.
+   */
+  readonly profileName: ProfileName
 }
 
 /**
@@ -343,11 +373,11 @@ export type AmountChipInput = {
  * it promised. The user can still type it, see the breakdown, and choose it.
  */
 export function amountChipsFor(input: AmountChipInput): readonly AmountChip[] {
-  const { tab, spendable, tokenBalance, state, profile, fees } = input
+  const { tab, spendable, tokenBalance, state, profile, fees, profileName } = input
   if (state.complete) return []
 
   const out: AmountChip[] = []
-  for (const usdc of AMOUNT_CHIPS_USDC) {
+  for (const usdc of AMOUNT_CHIPS_BY_PROFILE[profileName]) {
     const wei = usdc * ONE_USDC_WEI
     const fill = resolveChip(tab, wei, { spendable, tokenBalance, state, profile, fees })
     if (fill !== null) out.push({ usdc, wei, fill })
@@ -355,7 +385,13 @@ export function amountChipsFor(input: AmountChipInput): readonly AmountChip[] {
   return out
 }
 
-function resolveChip(tab: TradeTab, wei: bigint, ctx: Omit<AmountChipInput, 'tab'>): bigint | null {
+function resolveChip(
+  tab: TradeTab,
+  wei: bigint,
+  // `profileName` chose the ladder; it has no say in whether a given amount
+  // resolves. Excluding it keeps that boundary visible rather than implied.
+  ctx: Omit<AmountChipInput, 'tab' | 'profileName'>,
+): bigint | null {
   const { spendable, tokenBalance, state, profile, fees } = ctx
 
   if (tab === 'sell') {

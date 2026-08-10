@@ -31,7 +31,8 @@ const PANEL_FILES = [
   'components/token/gas.ts',
   'components/token/QuoteBreakdown.tsx',
   'components/token/AmountInput.tsx',
-  'components/token/MaxButton.tsx',
+  'components/token/SpendableMaxButton.tsx',
+  'components/token/AmountChips.tsx',
   'components/token/SlippageControl.tsx',
   'components/token/ApproveStep.tsx',
 ] as const

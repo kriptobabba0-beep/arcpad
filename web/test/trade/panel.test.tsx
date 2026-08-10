@@ -14,9 +14,9 @@ import type { TradeRow } from '@/components/read/types'
 import {
   CLIMBED,
   CREATOR,
-  DEEP_FRESH,
-  DEEP_HOLDING,
-  DEEP_PROFILE,
+  PRODUCTION_FRESH,
+  PRODUCTION_HOLDING,
+  PRODUCTION_PROFILE,
   FEES,
   FRESH,
   ONE_USDC,
@@ -41,6 +41,7 @@ const DEFAULTS: TradeFormProps = {
   symbol: 'DIFF',
   state: FRESH,
   profile: TESTNET_PROFILE,
+  profileName: 'testnet',
   fees: FEES,
   connection: 'connected',
   chainName: 'Arc Testnet',
@@ -205,7 +206,7 @@ describe('MAX and the gas reserve', () => {
     const spendable = balance - 300_000_000_000_000n
     const t = setup({ usdcBalance: balance, spendable })
 
-    await t.user.click(t.q.getByTestId('shortcut-100'))
+    await t.user.click(t.q.getByTestId('max-button'))
     expect(t.field()).toHaveValue('0.999700')
 
     await t.user.click(t.button())
@@ -226,26 +227,35 @@ describe('MAX and the gas reserve', () => {
 
   it('produces NOTHING at all when the balance is exactly the transaction cost', async () => {
     const t = setup({ usdcBalance: 300_000_000_000_000n, spendable: 0n })
-    await t.user.click(t.q.getByTestId('shortcut-100'))
+    await t.user.click(t.q.getByTestId('max-button'))
     expect(t.field()).toHaveValue('0.000000')
     // Ve boyle bir tutar gonderilemez: buton "Enter an amount"ta kalir.
     expect(t.button()).toBeDisabled()
     expect(t.button().textContent).toBe('Enter an amount')
   })
 
-  it('disables every shortcut, with a reason, when the estimate failed', () => {
+  it('disables MAX, with a reason, when the estimate failed', () => {
     const t = setup({ spendable: null, gasReason: 'Gas could not be estimated right now.' })
-    for (const percent of [25, 50, 75, 100]) {
-      const button = t.q.getByTestId(`shortcut-${percent}`)
-      expect(button).toBeDisabled()
-      expect(button).toHaveAttribute('title', 'Gas could not be estimated right now.')
+    const button = t.q.getByTestId('max-button')
+    expect(button).toBeDisabled()
+    expect(button).toHaveAttribute('title', 'Gas could not be estimated right now.')
+  })
+
+  it('is the ONLY fraction-of-balance control: the percentages are gone', () => {
+    // `25% · 50% · 75%` were removed deliberately. MAX stays because it carries
+    // a number the user cannot see -- the per-transaction gas reserve -- and a
+    // quarter of a printed balance carries nothing.
+    const t = setup()
+    for (const percent of [25, 50, 75]) {
+      expect(t.q.queryByTestId(`shortcut-${percent}`)).toBeNull()
     }
+    expect(t.q.getByTestId('max-button')).toBeInTheDocument()
   })
 
   it('divides the TOKEN balance on the sell tab, where gas is not the constraint', async () => {
     const t = setup({ ...SELL_DEFAULTS, tokenBalance: ONE_USDC_TOKENS, approval: 'sufficient' })
     await t.user.click(t.tab(/^Sell$/))
-    await t.user.click(t.q.getByTestId('shortcut-100'))
+    await t.user.click(t.q.getByTestId('max-button'))
     expect(t.field()).toHaveValue('200723953.120761')
   })
 })
@@ -534,21 +544,22 @@ describe('a fixture guard', () => {
  * these press the button on the assembled panel and read what comes out of
  * `onSubmit`: the field text, the unit, and the calldata.
  *
- * DEEP FIXTURES, BECAUSE THE REAL ONES CANNOT CARRY THE LADDER. See
+ * PRODUCTION FIXTURES, BECAUSE THE REAL ONES CANNOT CARRY THE LADDER. See
  * `fixtures.ts`: on the deployed profile all three chips are unfillable and the
  * row is empty, which is asserted separately and on purpose.
  */
 describe('the money chips', () => {
-  const DEEP: Partial<TradeFormProps> = {
-    state: DEEP_FRESH,
-    profile: DEEP_PROFILE,
+  const PRODUCTION: Partial<TradeFormProps> = {
+    state: PRODUCTION_FRESH,
+    profile: PRODUCTION_PROFILE,
+    profileName: 'production',
     spendable: 10_000n * ONE_USDC,
     usdcBalance: 10_000n * ONE_USDC,
-    tokenBalance: DEEP_HOLDING,
+    tokenBalance: PRODUCTION_HOLDING,
   }
 
   it('draws $25 / $100 / $500 when the curve can carry them', () => {
-    const t = setup(DEEP)
+    const t = setup(PRODUCTION)
     const row = t.q.getByTestId('amount-chips')
     expect(within(row).getByTestId('chip-25')).toHaveTextContent('$25')
     expect(within(row).getByTestId('chip-100')).toHaveTextContent('$100')
@@ -556,7 +567,7 @@ describe('the money chips', () => {
   })
 
   it('Spend USDC: $25 fills 25 and sends it as msg.value', async () => {
-    const t = setup(DEEP)
+    const t = setup(PRODUCTION)
     await t.user.click(t.q.getByTestId('chip-25'))
     expect(t.field()).toHaveValue('25.000000')
 
@@ -570,7 +581,7 @@ describe('the money chips', () => {
   })
 
   it('Receive tokens: $100 fills TOKENS, not the number 100', async () => {
-    const t = setup(DEEP)
+    const t = setup(PRODUCTION)
     await t.user.click(t.tab(/Receive tokens/))
     await t.user.click(t.q.getByTestId('chip-100'))
 
@@ -578,7 +589,13 @@ describe('the money chips', () => {
     // hundred tokens; both views are 1e18-scaled so nothing on screen looks
     // wrong. The field must carry the token quantity that budget buys.
     expect(t.field()).not.toHaveValue('100.000000')
-    const expected = planBuyExactQuoteIn(DEEP_FRESH, DEEP_PROFILE, FEES, 100n * ONE_USDC, 0)
+    const expected = planBuyExactQuoteIn(
+      PRODUCTION_FRESH,
+      PRODUCTION_PROFILE,
+      FEES,
+      100n * ONE_USDC,
+      0,
+    )
     expect(t.field()).toHaveValue(formatTokenAmount(expected.tokens).replace(/,/g, ''))
 
     await t.user.click(t.button())
@@ -587,7 +604,7 @@ describe('the money chips', () => {
   })
 
   it('Sell: $25 fills a token quantity resolved in the SELL direction', async () => {
-    const t = setup({ ...DEEP, approval: 'sufficient' })
+    const t = setup({ ...PRODUCTION, approval: 'sufficient' })
     await t.user.click(t.tab(/^Sell$/))
     await t.user.click(t.q.getByTestId('chip-25'))
 
@@ -598,11 +615,11 @@ describe('the money chips', () => {
     // difference is the guarantee that the chip delivers $25 rather than
     // 24.999999999996747628.
     const found = resolveSellForNet(
-      DEEP_FRESH,
-      DEEP_PROFILE,
+      PRODUCTION_FRESH,
+      PRODUCTION_PROFILE,
       FEES,
       25n * ONE_USDC,
-      DEEP_HOLDING,
+      PRODUCTION_HOLDING,
       USDC_VIEW_SCALE,
     )
     expect(found.ok).toBe(true)
@@ -625,7 +642,7 @@ describe('the money chips', () => {
   it('the SAME chip fills three different numbers on the three tabs', async () => {
     // One ladder, three units. If any two of these agreed, a conversion would
     // be missing.
-    const t = setup({ ...DEEP, approval: 'sufficient' })
+    const t = setup({ ...PRODUCTION, approval: 'sufficient' })
     await t.user.click(t.q.getByTestId('chip-25'))
     const spend = (t.field() as HTMLInputElement).value
 
@@ -648,29 +665,39 @@ describe('the money chips', () => {
     // and MAX writes less than $100. The coordinator's `$500` case, measurable.
     const balance = 100n * ONE_USDC
     const spendable = balance - 300_000_000_000_000n
-    const t = setup({ ...DEEP, spendable, usdcBalance: balance })
+    const t = setup({ ...PRODUCTION, spendable, usdcBalance: balance })
 
     expect(t.q.queryByTestId('chip-100')).toBeNull()
     expect(t.q.queryByTestId('chip-500')).toBeNull()
     expect(t.q.getByTestId('chip-25')).toBeInTheDocument()
 
-    await t.user.click(t.q.getByTestId('shortcut-100'))
+    await t.user.click(t.q.getByTestId('max-button'))
     expect(t.field()).toHaveValue('99.999700')
   })
 
-  it('draws no row at all on the profile that is actually deployed', () => {
-    // The default fixtures ARE the deployed profile. A curve absorbs 12.16 USDC
-    // in total and no sell can ever return more than ~16.45 USDC, so every chip
-    // in the ladder is unfillable and the row is absent rather than dead.
+  it('draws the TESTNET ladder on the deployed profile', () => {
+    // The default fixtures ARE the deployed profile, and its ladder is
+    // $1/$5/$10 -- a testnet curve absorbs 12.161433 USDC in total, so these
+    // fit and $25 would not.
     const t = setup()
+    const row = t.q.getByTestId('amount-chips')
+    expect(within(row).getByTestId('chip-1')).toHaveTextContent('$1')
+    expect(within(row).getByTestId('chip-5')).toHaveTextContent('$5')
+    expect(within(row).getByTestId('chip-10')).toHaveTextContent('$10')
+    expect(t.q.queryByTestId('chip-25')).toBeNull()
+  })
+
+  it('suppresses the row when the PRODUCTION ladder meets a testnet curve', () => {
+    // The invariant that survives the ladder being right: a chip that cannot be
+    // resolved is not rendered. Same curve, production ladder, nothing drawn.
+    const t = setup({ profileName: 'production' })
     expect(t.q.queryByTestId('amount-chips')).toBeNull()
-    // MAX and the percentages are untouched by that -- they are sized from the
-    // user's own balance, not from a fixed ladder.
-    expect(t.q.getByTestId('amount-shortcuts')).toBeInTheDocument()
+    // MAX is untouched -- it is sized from the user's balance, not a ladder.
+    expect(t.q.getByTestId('max-button')).toBeInTheDocument()
   })
 
   it('draws no row when the gas estimate failed, on either buy tab', async () => {
-    const t = setup({ ...DEEP, spendable: null, gasReason: 'no estimate' })
+    const t = setup({ ...PRODUCTION, spendable: null, gasReason: 'no estimate' })
     expect(t.q.queryByTestId('amount-chips')).toBeNull()
     await t.user.click(t.tab(/Receive tokens/))
     expect(t.q.queryByTestId('amount-chips')).toBeNull()

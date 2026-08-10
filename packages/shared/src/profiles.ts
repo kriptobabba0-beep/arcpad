@@ -18,22 +18,13 @@ export type { CurveProfile } from './curve'
 import type { CurveProfile } from './curve'
 
 /**
- * `keccak256(abi.encode(T, V, S))`, PROFIL BASINA, ELLE YAZILMIS.
- *
- * `contracts/script/Profiles.sol` icindeki `TESTNET_DIGEST` /
- * `PRODUCTION_DIGEST` ile AYNI literallerdir ve oyle olmalidir. Dosyadan
- * okunani hash'leyip buraya yazan bir uretim adimi TOTOLOJI olurdu: hash
- * her zaman kendisiyle esitlenirdi. Elle yazilmis olmalari sayesinde
- * `profiles.test.ts` GERCEK bir capraz-dil kapisidir -- Solidity ile
- * TypeScript "testnet"in ne demek oldugu konusunda ayrisirsa, bunu soyleyen
- * test odur.
+ * PROFIL KIMLIGI ARTIK `profileNames.ts`TE, ve sebebi `CurveProfile`inkiyle
+ * AYNI: bu modul `node:fs` okur ve tarayici girisinden erisilemez, ama al-sat
+ * panelinin para kisayollari profilin ADINA baglidir. Buradan yeniden disa
+ * aktariliyor, yani mevcut her importer aynen calisir; TEK bir tanim vardir.
  */
-export const PROFILE_DIGESTS = {
-  testnet: '0xa67f784bd45f49baa48601d390ecafdb2fe44aadffd974b4b0bd582c10d6600d',
-  production: '0x7def5669fd9a5fd109bf35f1d1b04c651e124b6f0f22c37ced26fb77880a80e3',
-} as const
-
-export type ProfileName = keyof typeof PROFILE_DIGESTS
+export { isProfileName, PROFILE_DIGESTS, PROFILE_NAMES, type ProfileName } from './profileNames'
+import { PROFILE_NAMES, type ProfileName } from './profileNames'
 
 /**
  * ZINCIR -> GOVERNANCE ANAHTARI. `Profiles.sol`daki `chainKeyFor`in ikizi.
@@ -69,12 +60,6 @@ export function chainKeyFor(chainId: number): string {
     )
   }
   return key
-}
-
-export const PROFILE_NAMES = Object.keys(PROFILE_DIGESTS) as ProfileName[]
-
-export function isProfileName(name: string): name is ProfileName {
-  return Object.prototype.hasOwnProperty.call(PROFILE_DIGESTS, name)
 }
 
 /** Depo koku. Bu dosya `<root>/packages/shared/src/profiles.ts`tir. */

@@ -9,6 +9,7 @@ import {
   launchTokenAbi,
   planBuyExactQuoteIn,
   priceWeiPerToken,
+  type ProfileName,
   type TradePlan,
 } from '@arcpad/shared/browser'
 import { useRouter } from 'next/navigation'
@@ -31,7 +32,7 @@ import { AmountInput } from './AmountInput'
 import { ApproveStep } from './ApproveStep'
 import { spendableFrom } from './gas'
 import type { Lifecycle } from './lifecycle'
-import { MaxButton } from './MaxButton'
+import { SpendableMaxButton } from './SpendableMaxButton'
 import { QuoteBreakdown } from './QuoteBreakdown'
 import { DEFAULT_SLIP_BPS, SlippageControl } from './SlippageControl'
 import {
@@ -101,6 +102,8 @@ export type TradeFormProps = {
   readonly symbol: string
   readonly state: CurveState
   readonly profile: CurveProfile
+  /** Hangi merdiven. `getCurveProfile()` fabrikanin immutable'larindan kimliklendirir. */
+  readonly profileName: ProfileName
   readonly fees: FeeBps
   readonly connection: ConnectionState
   readonly chainName: string
@@ -130,6 +133,7 @@ export function TradeForm({
   symbol,
   state,
   profile,
+  profileName,
   fees,
   connection,
   chainName,
@@ -224,8 +228,8 @@ export function TradeForm({
   // actually be FILLED -- not the ladder. See `amountChipsFor`: on today's
   // profile it is empty, and the measurement behind that is recorded there.
   const chips = useMemo(
-    () => amountChipsFor({ tab, spendable, tokenBalance, state, profile, fees }),
-    [tab, spendable, tokenBalance, state, profile, fees],
+    () => amountChipsFor({ tab, spendable, tokenBalance, state, profile, fees, profileName }),
+    [tab, spendable, tokenBalance, state, profile, fees, profileName],
   )
 
   const available = tab === 'sell' ? tokenBalance : spendable
@@ -337,10 +341,10 @@ export function TradeForm({
               </span>
             ) : null}
           </p>
-          <MaxButton
+          <SpendableMaxButton
             spendable={shortcutBase}
             reason={gasReason}
-            onPick={(picked) => setText(fieldText(picked))}
+            onPick={(picked: bigint) => setText(fieldText(picked))}
           />
         </div>
 
@@ -522,10 +526,24 @@ export type TradePanelProps = {
   readonly lifecycle: Lifecycle
   /** Sunucudan: `getCurveProfile()`. `T`, `V`, `S` -- ilerleme ve fiyat bundan. */
   readonly profile: CurveProfile
+  /**
+   * AYNI OKUMANIN DIGER YARISI. `getCurveProfile()` uclugu fabrikadan okur VE
+   * `PROFILE_DIGESTS`e karsi hash'leyerek adlandirir; sayfa bugune kadar adi
+   * atiyordu. Para kisayollarinin merdiveni buna baglidir -- iki profil `V`de
+   * 1000 kat ayrisir, yani ayni merdiven ikisinde birden dogru olamaz.
+   */
+  readonly profileName: ProfileName
   readonly symbol: string
 }
 
-export function TradePanel({ token, curve, lifecycle, profile, symbol }: TradePanelProps) {
+export function TradePanel({
+  token,
+  curve,
+  lifecycle,
+  profile,
+  profileName,
+  symbol,
+}: TradePanelProps) {
   const router = useRouter()
   const network = useArcNetwork()
   const { state, fees, refetch: refetchCurve } = useCurveState(curve)
@@ -670,6 +688,7 @@ export function TradePanel({ token, curve, lifecycle, profile, symbol }: TradePa
       symbol={symbol}
       state={state}
       profile={profile}
+      profileName={profileName}
       fees={fees}
       connection={connection}
       chainName={chainNameOf()}

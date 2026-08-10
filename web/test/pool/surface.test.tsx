@@ -2,7 +2,7 @@ import { render, within } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { resolveLifecycle } from '@/components/token/lifecycle'
 import { TradeSurface } from '@/components/token/TradeSurface'
-import { CURVE, TESTNET_PROFILE, TOKEN } from '../trade/fixtures'
+import { CURVE, PRODUCTION_PROFILE, TESTNET_PROFILE, TOKEN } from '../trade/fixtures'
 
 /**
  * ============ WHICH VENUE A TOKEN TRADES ON, RENDERED ============
@@ -29,8 +29,17 @@ import { CURVE, TESTNET_PROFILE, TOKEN } from '../trade/fixtures'
  * faked so the decision is measured apart from them.
  */
 vi.mock('@/components/token/TradePanel', () => ({
-  TradePanel: (props: { symbol: string }) => (
-    <div data-testid="curve-panel" data-symbol={props.symbol} />
+  TradePanel: (props: {
+    symbol: string
+    profileName: string
+    profile: { virtualQuoteReserves: bigint }
+  }) => (
+    <div
+      data-testid="curve-panel"
+      data-symbol={props.symbol}
+      data-profile-name={props.profileName}
+      data-v={String(props.profile.virtualQuoteReserves)}
+    />
   ),
 }))
 vi.mock('@/components/token/PoolTradePanel', () => ({
@@ -41,7 +50,13 @@ vi.mock('@/components/token/PoolTradePanel', () => ({
 
 function surface(
   lifecycleInput: { complete: boolean; graduated: boolean },
-  profile = TESTNET_PROFILE,
+  // TRIPLE AND NAME TRAVEL AS ONE READING -- see `TradeSurface`'s prop. The
+  // ladder for the money chips is chosen by the name, every quote by the
+  // triple, so the two may never be passed separately.
+  profile: { name: 'testnet' | 'production'; profile: typeof TESTNET_PROFILE } | null = {
+    name: 'testnet',
+    profile: TESTNET_PROFILE,
+  },
 ) {
   return render(
     <TradeSurface
@@ -108,5 +123,52 @@ describe('the curve profile is only the curve’s business', () => {
     const q = within(surface({ complete: false, graduated: false }, null as never).container)
     expect(q.queryByTestId('curve-panel')).toBeNull()
     expect(q.queryByTestId('pool-panel')).toBeNull()
+  })
+})
+
+/**
+ * ==========================================================================
+ *  THE PROFILE NAME IS FORWARDED, NOT INVENTED
+ * ==========================================================================
+ *
+ * ADDED AFTER A SURVIVING MUTANT. Replacing `profileName={profile.name}` in
+ * `TradeSurface` with the literal `"production"` passed all 356 tests: the
+ * money-chip ladder is chosen by that name, every test that exercised the
+ * ladder built `TradePanel` directly, and NOTHING measured the one hop between
+ * them. That is this repository's most-repeated defect -- a property covered on
+ * one entrypoint reading as covered on all -- and it appeared inside the fix
+ * that was keying the ladder off the profile in the first place.
+ *
+ * Both profiles are asserted. One would not do it: a hardcoded `"production"`
+ * passes a production-only test, and a hardcoded `"testnet"` passes a
+ * testnet-only one.
+ */
+describe('the profile name reaches the curve panel', () => {
+  const nameOn = (identified: {
+    name: 'testnet' | 'production'
+    profile: typeof TESTNET_PROFILE
+  }) =>
+    within(surface({ complete: false, graduated: false }, identified).container).getByTestId(
+      'curve-panel',
+    )
+
+  it('forwards testnet as testnet', () => {
+    const panel = nameOn({ name: 'testnet', profile: TESTNET_PROFILE })
+    expect(panel).toHaveAttribute('data-profile-name', 'testnet')
+    expect(panel).toHaveAttribute('data-v', String(TESTNET_PROFILE.virtualQuoteReserves))
+  })
+
+  it('forwards production as production', () => {
+    const panel = nameOn({ name: 'production', profile: PRODUCTION_PROFILE })
+    expect(panel).toHaveAttribute('data-profile-name', 'production')
+    expect(panel).toHaveAttribute('data-v', String(PRODUCTION_PROFILE.virtualQuoteReserves))
+  })
+
+  it('keeps the name and the triple together', () => {
+    // The pairing is the invariant: the ladder is chosen by the name and every
+    // quote computed from the triple, so a panel handed one profile's name with
+    // the other's numbers would offer chips it cannot fill.
+    const panel = nameOn({ name: 'production', profile: PRODUCTION_PROFILE })
+    expect(panel.getAttribute('data-v')).not.toBe(String(TESTNET_PROFILE.virtualQuoteReserves))
   })
 })

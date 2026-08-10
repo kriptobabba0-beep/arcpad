@@ -424,7 +424,7 @@ test.describe('Arc testnet', () => {
      * It used to report the signing key's own address, which made the claim
      * unmeasurable for a read-only run: the harness generates an UNFUNDED
      * throwaway when no key is configured, `spendableFrom(0, reserve)` is
-     * `null`, `MaxButton` disables all four shortcuts, and Playwright's
+     * `null`, `SpendableMaxButton` disables MAX, and Playwright's
      * `click()` waits for an enabled element -- so the test burned its full
      * 120 s timeout waiting for a button that was correctly disabled. MEASURED
      * on the first run against an open curve.

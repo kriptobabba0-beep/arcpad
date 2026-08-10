@@ -64,6 +64,7 @@ function renderPanel(lifecycleKind: 'trading' | 'complete' = 'trading') {
       curve={CURVE as HexAddress}
       lifecycle={lifecycleKind === 'trading' ? { kind: 'trading' } : { kind: 'complete' }}
       profile={TESTNET_PROFILE}
+      profileName="testnet"
       symbol="DIFF"
     />,
     { connected: true },

@@ -5,8 +5,7 @@ import {
   GAS_SAFETY_NUMERATOR,
   gasReserveFrom,
   quantiseToInput,
-  shortcutAmount,
-  SHORTCUT_PERCENTS,
+  maxAmount,
   spendableFrom,
 } from '@/components/token/gas'
 
@@ -63,29 +62,30 @@ describe('spendableFrom', () => {
   })
 })
 
-describe('the shortcuts', () => {
+/**
+ * MAX, ve ARTIK TEK KONTROL. `25% · 50% · 75%` kaldirildi: bir bakiyenin
+ * dortte biri kullanicinin zaten ekranda gordugu bir figur uzerinde kendi
+ * yapabilecegi bir bolme islemidir. MAX'i vazgecilmez yapan sey ise
+ * kullanicinin GOREMEDIGI bir sayiyi tasimasi -- islem basina olculen gaz payi.
+ */
+describe('MAX', () => {
   const BALANCE = 1_000_000_000_000_000_000n
   const RESERVE = 300_000_000_000_000n
 
-  it('MAX is strictly smaller than the balance whenever gas costs anything', () => {
+  it('is strictly smaller than the balance whenever gas costs anything', () => {
     // BU, "spendable yerine balance" MUTANTININ OLDUGU YER. `balance`
     // uzerinden hesaplanan bir MAX bakiyenin TAMAMINI yazar ve bu iddia
     // kirilir.
     const spendable = spendableFrom(BALANCE, RESERVE)
-    const max = shortcutAmount(spendable, 100)
+    const max = maxAmount(spendable)
     expect(max).not.toBeNull()
     expect(max as bigint).toBeLessThan(BALANCE)
     expect(max).toBe(999_700_000_000_000_000n)
   })
 
-  it('divides the spendable balance, not the raw balance, at every step', () => {
-    const spendable = spendableFrom(BALANCE, RESERVE)
-    for (const percent of SHORTCUT_PERCENTS) {
-      const amount = shortcutAmount(spendable, percent) as bigint
-      expect(amount).toBeLessThanOrEqual((BALANCE * BigInt(percent)) / 100n)
-    }
-    // %25 bile bakiyenin dortte birinden KUCUK: taban degisiyor, yuzde degil.
-    expect(shortcutAmount(spendable, 25)).toBe(249_925_000_000_000_000n)
+  it('leaves the reserve behind exactly, not approximately', () => {
+    const spendable = spendableFrom(BALANCE, RESERVE) as bigint
+    expect(BALANCE - (maxAmount(spendable) as bigint)).toBe(RESERVE)
   })
 
   it('never produces an amount the input field would reject', () => {
@@ -93,18 +93,13 @@ describe('the shortcuts', () => {
     // once alana yazilir sonra reddedilir: kullanici kendi bastigi dugmenin
     // hata verdigini gorur.
     const odd = spendableFrom(1_000_000_000_000_000_001n, 1n)
-    for (const percent of SHORTCUT_PERCENTS) {
-      const amount = shortcutAmount(odd, percent) as bigint
-      expect(amount % 1_000_000_000_000n).toBe(0n)
-    }
+    expect((maxAmount(odd) as bigint) % 1_000_000_000_000n).toBe(0n)
   })
 
   it('is disabled -- null, not zero -- when there is no estimate', () => {
     // Sifir donmek "harcayacak paran yok" demek olurdu; `null` "olculemedi"
-    // der ve dugmeleri KAPATIR.
-    for (const percent of SHORTCUT_PERCENTS) {
-      expect(shortcutAmount(null, percent)).toBeNull()
-    }
+    // der ve dugmeyi KAPATIR.
+    expect(maxAmount(null)).toBeNull()
   })
 
   it('rounds the quantum DOWN', () => {
@@ -118,7 +113,7 @@ describe('the shortcuts', () => {
  *  THE MONEY CHIPS AND MAX MUST NOT DISAGREE
  * ==========================================================================
  *
- * `chipFits` and `shortcutAmount` are the two things that put a number in the
+ * `chipFits` and `maxAmount` are the two things that put a number in the
  * amount field, and on Arc both are bounded by the same fact: gas is paid in
  * the asset being spent. A chip sized against `balance` while MAX is sized
  * against `spendable` is the exact defect this file was opened for, one scale
@@ -148,17 +143,17 @@ describe('chipFits agrees with MAX at the boundary', () => {
     // therefore also sit at or below what MAX would write, or the two controls
     // would contradict each other on the same screen.
     const spendable = spendableFrom(BALANCE, RESERVE) as bigint
-    const max = shortcutAmount(spendable, 100) as bigint
+    const max = maxAmount(spendable) as bigint
     for (const usdc of [1n, 25n, 100n, 500n]) {
       const chip = usdc * 1_000_000_000_000_000_000n
       if (chipFits(spendable, chip)) expect(chip).toBeLessThanOrEqual(max)
     }
   })
 
-  it('offers nothing at all when the estimate failed, exactly as the percentages do', () => {
+  it('offers nothing at all when the estimate failed, exactly as MAX does', () => {
     expect(chipFits(null, 1n)).toBe(false)
     expect(chipFits(null, 0n)).toBe(false)
-    expect(shortcutAmount(null, 100)).toBeNull()
+    expect(maxAmount(null)).toBeNull()
   })
 
   it('refuses a negative chip rather than offering it', () => {

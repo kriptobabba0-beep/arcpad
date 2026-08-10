@@ -74,20 +74,28 @@ export function quantiseToInput(wei: bigint): bigint {
   return (wei / USDC_VIEW_SCALE) * USDC_VIEW_SCALE
 }
 
-export const SHORTCUT_PERCENTS = [25, 50, 75, 100] as const
-export type ShortcutPercent = (typeof SHORTCUT_PERCENTS)[number]
-
 /**
- * `25% · 50% · 75% · MAX` -- HEPSI `spendable` UZERINDEN.
+ * MAX -- AND IT IS THE ONLY FRACTION-OF-BALANCE CONTROL LEFT, DELIBERATELY.
  *
- * `balance` uzerinden hesaplanan bir %100 gaz payini yok sayar; ama %25 de
- * yok sayar, yalnizca daha kucuk bir olcekte: bakiyenin dortte biri gaz
- * payindan kucukse islem yine kurulamaz. Bu yuzden yuzdenin TABANI degisir,
- * yuzdenin kendisi degil.
+ * `25% · 50% · 75%` used to sit beside this and have been REMOVED. The reason
+ * is the same one that makes MAX indispensable: MAX is the only control that
+ * knows something the user cannot see. A quarter of a balance is a division the
+ * user can do against a figure already printed two centimetres away; the LARGEST
+ * SENDABLE AMOUNT is not, because the gas reserve is measured per-transaction
+ * (`useGasReserve`) and never displayed as a number to subtract. So MAX earns
+ * its place by carrying information, and the percentages did not.
+ *
+ * `spendable`, NEVER `balance`. On Arc gas is paid in the asset being spent, so
+ * a MAX over the raw balance produces a transaction with nothing left to pay
+ * the fee -- it fails every time, and only after the user has signed.
+ *
+ * `null` -> the estimate failed, so there is no maximum to offer. Not zero:
+ * zero would say "you have nothing to spend", which is a different and false
+ * claim.
  */
-export function shortcutAmount(spendable: bigint | null, percent: ShortcutPercent): bigint | null {
+export function maxAmount(spendable: bigint | null): bigint | null {
   if (spendable === null) return null
-  return quantiseToInput((spendable * BigInt(percent)) / 100n)
+  return quantiseToInput(spendable)
 }
 
 /**
@@ -101,8 +109,8 @@ export function shortcutAmount(spendable: bigint | null, percent: ShortcutPercen
  * directions rather than trusting the sentence.
  *
  * `spendable === null` -> the gas estimate failed and NOTHING is offered, for
- * exactly the reason the percentages are disabled in that state: an amount that
- * leaves no room for gas is an amount that cannot be sent.
+ * exactly the reason MAX goes dark in that state: an amount that leaves no room
+ * for gas is an amount that cannot be sent.
  *
  * Note this takes `spendable`, never `balance`. That is the whole point -- on
  * Arc gas is paid in the asset being spent, so a chip sized against the raw

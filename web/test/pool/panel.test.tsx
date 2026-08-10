@@ -10,7 +10,7 @@ import {
   PoolTradeForm,
   type PoolTradeFormProps,
 } from '@/components/token/PoolTradePanel'
-import { SHORTCUT_PERCENTS, shortcutAmount } from '@/components/token/gas'
+import { maxAmount } from '@/components/token/gas'
 import type { PoolPlan } from '@/components/token/poolPlan'
 import { decodePoolSwapError } from '@/lib/poolOutcome'
 import { MEASURED_ROUTER_SELECTORS, MEASURED_USDC_ALLOWANCE_REVERT } from '@/lib/routerAbi'
@@ -377,24 +377,24 @@ describe('balances, gas and the shortcuts', () => {
 
   /**
    * A POOL SWAP CANNOT BE GAS-ESTIMATED BEFORE IT IS APPROVED -- the estimate
-   * runs the real call and it reverts inside `transferFrom`. The shortcuts go
-   * dark WITH A REASON rather than reserving a made-up constant.
+   * runs the real call and it reverts inside `transferFrom`. MAX goes dark
+   * WITH A REASON rather than reserving a made-up constant.
    */
-  it('with no estimate the shortcuts are disabled and the reason is on them', () => {
+  it('with no estimate MAX is disabled and the reason is on it', () => {
     const t = setup({ spendable: null, gasReason: 'Gas cannot be estimated until approved.' })
-    const max = t.q.getByTestId('shortcut-100')
+    const max = t.q.getByTestId('max-button')
     expect(max).toBeDisabled()
     expect(max.getAttribute('title')).toBe('Gas cannot be estimated until approved.')
   })
 
   it('MAX fills the field with a value the field accepts, and the dust is dropped', async () => {
     const t = setup({ spendable: 99n * ONE_USDC_WEI + 999_999_999_999n })
-    await t.user.click(t.q.getByTestId('shortcut-100'))
+    await t.user.click(t.q.getByTestId('max-button'))
     expect((t.field() as HTMLInputElement).value).toBe('99.000000')
     // NO GROUPING SEPARATOR: `parseUsdcAmount` refuses commas, so a MAX that
     // produced one would be rejected by the field it just filled.
     const big = setup({ spendable: 1_234_567n * ONE_USDC_WEI })
-    await big.user.click(big.q.getByTestId('shortcut-100'))
+    await big.user.click(big.q.getByTestId('max-button'))
     expect((big.field() as HTMLInputElement).value).toBe('1234567.000000')
   })
 
@@ -402,23 +402,21 @@ describe('balances, gas and the shortcuts', () => {
    * AND THE REASON THE ROUNDING DIRECTION ABOVE IS UNOBSERVABLE, WRITTEN DOWN.
    *
    * MEASURED by mutation: flipping the panel's formatter to `rounding: 'up'`
-   * SURVIVES. That is not a hole -- it is because `shortcutAmount` has ALREADY
+   * SURVIVES. That is not a hole -- it is because `maxAmount` has ALREADY
    * quantised to the 1e12 grid, so there is never a fraction left to round in
    * either direction. The first draft of this file also called
    * `quantiseToInput` in the panel, which was a THIRD copy of the same
    * quantisation and equally unobservable; it is gone.
    *
-   * The precondition is asserted rather than assumed, because if
-   * `shortcutAmount` ever stopped quantising, `rounding: 'down'` would become
-   * load-bearing -- rounding UP would overshoot `spendable` by a micro-USDC and
-   * eat exactly the gas reserve it had just left.
+   * The precondition is asserted rather than assumed, because if `maxAmount`
+   * ever stopped quantising, `rounding: 'down'` would become load-bearing --
+   * rounding UP would overshoot `spendable` by a micro-USDC and eat exactly the
+   * gas reserve it had just left.
    */
-  it('CONTROL: the shortcut helper is what quantises, and it always does', () => {
-    for (const percent of SHORTCUT_PERCENTS) {
-      const picked = shortcutAmount(99n * ONE_USDC_WEI + 999_999_999_999n, percent)
-      expect(picked, `${percent}% produced null`).not.toBeNull()
-      expect(picked! % 1_000_000_000_000n, `${percent}% left a fraction`).toBe(0n)
-    }
+  it('CONTROL: the MAX helper is what quantises, and it always does', () => {
+    const picked = maxAmount(99n * ONE_USDC_WEI + 999_999_999_999n)
+    expect(picked).not.toBeNull()
+    expect(picked! % 1_000_000_000_000n).toBe(0n)
   })
 
   it('affordability is measured on what leaves the wallet', async () => {
