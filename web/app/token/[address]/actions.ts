@@ -1,8 +1,17 @@
 'use server'
 
+import type { ChatMessageRow } from '@arcpad/db'
 import { isAddress } from 'viem'
 import type { HolderRow, TradeRow } from '@/components/read/types'
-import { type Page, type ReadResult, readHolders, readTrades, TABLE_PAGE_SIZE } from '@/lib/read'
+import {
+  CHAT_PAGE_SIZE,
+  type Page,
+  type ReadResult,
+  readChat,
+  readHolders,
+  readTrades,
+  TABLE_PAGE_SIZE,
+} from '@/lib/read'
 
 /**
  * "LOAD MORE" -- THE HALF THAT WAS NEVER WRITTEN.
@@ -71,6 +80,28 @@ export async function loadMoreTrades(
   const address = normalise(token)
   if (address === null) return rejected<TradeRow>()
   return readTrades(address, { cursor, limit: TABLE_PAGE_SIZE })
+}
+
+/**
+ * The next page of chat, newest-first, keyed on `message_seq`.
+ *
+ * A SERVER ACTION AND NOT A `GET /api/chat`, and the distinction is the one
+ * §6.3 draws: reads never get an API route. The write side of chat DOES have
+ * one (`app/api/chat/route.ts`) and it carries no `GET` -- so the two
+ * directions stay on the two paths the spec assigns them, on the same screen.
+ *
+ * Same re-validation as the other two: the address is checked here rather than
+ * trusted from the bind, the cursor goes through `parseChatCursor` (a
+ * malformed one is the first page, never SQL), and THE LIMIT IS NOT A
+ * PARAMETER.
+ */
+export async function loadMoreChat(
+  token: string,
+  cursor: string,
+): Promise<ReadResult<Page<ChatMessageRow>>> {
+  const address = normalise(token)
+  if (address === null) return rejected<ChatMessageRow>()
+  return readChat(address, { cursor, limit: CHAT_PAGE_SIZE })
 }
 
 /** The next page of holders, largest-first, keyed on `(balance_tok, holder)`. */

@@ -13,7 +13,9 @@
  */
 
 import {
+  type ChatMessageRow,
   type CreatorEarnings,
+  encodeChatCursor,
   encodeHolderCursor,
   encodePositionCursor,
   type FreshIndexer,
@@ -23,6 +25,7 @@ import {
   getTokenOverview,
   type HolderRow,
   type IndexerStatus,
+  listChatMessages,
   listHolders,
   listLaunchesByCreator,
   listPositionsByHolder,
@@ -30,6 +33,7 @@ import {
   listTokens,
   listTrades,
   listTradesByTrader,
+  parseChatCursor,
   parseHolderCursor,
   parsePositionCursor,
   type PositionRow,
@@ -492,6 +496,55 @@ export async function readPositions(
     const last = rows.length < params.limit ? undefined : rows[rows.length - 1]
     return {
       value: { rows, nextCursor: last === undefined ? null : encodePositionCursor(last) },
+      indexer,
+    }
+  })
+}
+
+// ===========================================================================
+//  FAZ 6 -- HOLDER-GATED CHAT
+// ===========================================================================
+
+/**
+ * SOHBET PANELININ SAYFA BOYU.
+ *
+ * `TABLE_PAGE_SIZE`den AYRI ve daha kucuk: mesajlar dar bir kolonda, cok
+ * satirli govdelerle cizilir; 25 mesaj o kolonu iki ekran uzatirdi. Ayni
+ * `<= 200` tavani gecerli (bkz. `TABLE_PAGE_SIZE`in yorumu).
+ */
+export const CHAT_PAGE_SIZE = 20
+
+/**
+ * ============ OKUMA YOLU BIR SERVER COMPONENT SORGUSUDUR ============
+ *
+ * Spec §6.3: "Liste ve gecmis -- server component'lerden DOGRUDAN Postgres
+ * sorgusu. Araya ayri bir API katmani konmaz. API route'lari YALNIZCA yazma
+ * icin." Chat bu kuralin iki yarisini da ayni ekranda tasiyan ilk ozellik:
+ * panel BURADAN okur, gonderme `app/api/chat/route.ts`ten gecer. `/api/chat`
+ * icinde bir `GET` YOKTUR ve olmayacaktir.
+ *
+ * TAZELIK YINE DE ILISTIRILIR (`getIndexerStatus`), ama anlami burada
+ * FARKLIDIR ve panel bunu soyler: mesajlarin kendisi indexer'dan GELMEZ, bu
+ * tabloyu web yazar. Bayat olabilecek sey mesajin YANINDAKI olculerdir --
+ * yazarin SU ANKI bakiyesi (`holders`) ve creator isareti. Bir mesajin
+ * gorunmesi indexer'in ilerlemesine bagli degildir.
+ */
+export async function readChat(
+  token: string,
+  params: PageParams,
+): Promise<ReadResult<Page<ChatMessageRow>>> {
+  return guard(async () => {
+    const pool = getPool()
+    const rows = await listChatMessages(pool, token as `0x${string}`, {
+      // Bozuk imlec ILK SAYFADIR, 500 degil: deger URL'den ya da bir istemci
+      // argumanindan gelir.
+      before: parseChatCursor(params.cursor),
+      limit: params.limit,
+    })
+    const indexer = await getIndexerStatus(pool)
+    const last = rows.length < params.limit ? undefined : rows[rows.length - 1]
+    return {
+      value: { rows, nextCursor: last === undefined ? null : encodeChatCursor(last) },
       indexer,
     }
   })

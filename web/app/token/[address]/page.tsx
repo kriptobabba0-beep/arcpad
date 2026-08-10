@@ -3,8 +3,16 @@ import { isAddress } from 'viem'
 import { notFound } from 'next/navigation'
 import { verifyCanonical } from '@/lib/canonical'
 import { resolveMetadata } from '@/lib/metadata'
-import { readHolders, readTokenOverview, readTrades, TABLE_PAGE_SIZE, valueOf } from '@/lib/read'
-import { loadMoreHolders, loadMoreTrades } from './actions'
+import {
+  CHAT_PAGE_SIZE,
+  readChat,
+  readHolders,
+  readTokenOverview,
+  readTrades,
+  TABLE_PAGE_SIZE,
+  valueOf,
+} from '@/lib/read'
+import { loadMoreChat, loadMoreHolders, loadMoreTrades } from './actions'
 import {
   asHex,
   type Canonicity,
@@ -21,6 +29,7 @@ import { StatRow, statsFromOverview } from '@/components/token/StatRow'
 import { TableTabs } from '@/components/token/TableTabs'
 import { AboutPanel, TokenHeader } from '@/components/token/TokenHeader'
 import { TradeSurface } from '@/components/token/TradeSurface'
+import { ChatPanel } from '@/components/token/ChatPanel'
 import { resolveLifecycle } from '@/components/token/lifecycle'
 import { type ChainToken, readChainToken } from '@/lib/chainToken'
 import { getCurveProfile } from '@/lib/profile'
@@ -96,10 +105,14 @@ export default async function TokenPage({ params }: { params: Promise<{ address:
 }
 
 async function IndexedToken({ overview }: { overview: TokenOverview }) {
-  const [metadata, trades, holders, profile] = await Promise.all([
+  const [metadata, trades, holders, chat, profile] = await Promise.all([
     resolveMetadata(overview.uri),
     readTrades(asHex(overview.token), { cursor: null, limit: TABLE_PAGE_SIZE }),
     readHolders(asHex(overview.token), { cursor: null, limit: TABLE_PAGE_SIZE }),
+    // CHAT AYRI BIR OKUMA, ve `Promise.all`in AYRI bir dali: bir tanesinin
+    // dusmesi otekileri karartmaz -- `guard` her birini kendi
+    // `ReadResult`ine sariyor, yani burada reddedilen bir promise yok.
+    readChat(asHex(overview.token), { cursor: null, limit: CHAT_PAGE_SIZE }),
     // PROFIL FACTORY'DEN, ve dusmesi sayfayi dusurmez: al-sat paneli o zaman
     // cizilmez, geri kalan her sey cizilir. Uydurulmus bir yedek KONMAZ --
     // testnet ile uretim yalnizca `V`de ve tam 1000 kat ayrisir.
@@ -270,6 +283,28 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
             use the curve profile, and losing the only trading surface because an
             unrelated read failed would be a new instance of the same class.
           */}
+          {/*
+            SAG KOLONDA CHAT -- spec §7.1'in yerlesimi ("sağ chat").
+
+            `loadMoreChat` GECILIYOR, ve gecilmedigi surece panel EN COK 20
+            mesaj gosterebilirdi: `useKeysetRows` `loadMore` olmadan
+            `canLoadMore: false` doner ve `LoadMoreFooter` HICBIR SEY cizmez.
+            Bu dosya ayni kusuru `loadMoreTrades`/`loadMoreHolders` icin
+            zaten bir kez kaydetti -- "eksik bir prop, ekranda hicbir iz
+            birakmaz" -- ve ayni tuzagin yeni bir ornegini eklememek icin
+            satir yazildigi anda gecirildi.
+
+            `symbol` bos kutunun ve yazma kutusunun metnine giriyor: "Holders
+            of SMOKE can start the conversation" cumlesi, jenerik bir
+            "No messages" den kullaniciya ne yapmasi gerektigini soyleyen tek
+            farktir.
+          */}
+          <ChatPanel
+            token={asHex(overview.token)}
+            symbol={overview.symbol}
+            chat={chat}
+            loadMore={loadMoreChat.bind(null, overview.token)}
+          />
           <AboutPanel
             {...(metadata?.description === undefined ? {} : { description: metadata.description })}
             {...(metadata === null
