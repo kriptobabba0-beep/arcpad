@@ -26,6 +26,7 @@ import { useUsdcBalance } from '@/hooks/useUsdcBalance'
 import { getWebConfig } from '@/lib/addresses'
 import type { ArcpadFailure } from '@/lib/decodeRevert'
 import { decodeArcpadError } from '@/lib/decodeRevert'
+import { AmountChips } from './AmountChips'
 import { AmountInput } from './AmountInput'
 import { ApproveStep } from './ApproveStep'
 import { spendableFrom } from './gas'
@@ -34,12 +35,13 @@ import { MaxButton } from './MaxButton'
 import { QuoteBreakdown } from './QuoteBreakdown'
 import { DEFAULT_SLIP_BPS, SlippageControl } from './SlippageControl'
 import {
+  type AmountChip,
+  amountChipsFor,
   type ApprovalState,
   buttonFor,
   clampToReserve,
   type ConnectionState,
   DEFAULT_TAB,
-  isBuyTab,
   parseAmount,
   type Quote,
   quoteFor,
@@ -204,6 +206,28 @@ export function TradeForm({
     slipBps,
   })
 
+  /**
+   * A PICKED AMOUNT BECOMES FIELD TEXT IN EXACTLY ONE PLACE.
+   *
+   * MAX and the money chips write into the same field, and the field's unit
+   * changes with the tab. Two copies of this ternary is two chances for a token
+   * quantity to be written as a USDC figure -- both views are 1e18-scaled, so
+   * that mistake is invisible on screen and only shows up in what gets signed.
+   */
+  const fieldText = useCallback(
+    (amount: bigint): string =>
+      tab === 'spend' ? formatUsdcInput(amount) : formatTokenAmount(amount).replace(/,/g, ''),
+    [tab],
+  )
+
+  // Resolved through the planners, so this is the row of chips that can
+  // actually be FILLED -- not the ladder. See `amountChipsFor`: on today's
+  // profile it is empty, and the measurement behind that is recorded there.
+  const chips = useMemo(
+    () => amountChipsFor({ tab, spendable, tokenBalance, state, profile, fees }),
+    [tab, spendable, tokenBalance, state, profile, fees],
+  )
+
   const available = tab === 'sell' ? tokenBalance : spendable
   const button = buttonFor({
     connection,
@@ -291,6 +315,13 @@ export function TradeForm({
           {...(parsed.ok || parsed.reason === null ? {} : { error: parsed.reason })}
         />
 
+        {/*
+          MONEY CHIPS. The user picks dollars on EVERY tab; the resolution into
+          the field's own unit already happened in `amountChipsFor`, through the
+          planner for this tab's entrypoint.
+        */}
+        <AmountChips chips={chips} onPick={(chip: AmountChip) => setText(fieldText(chip.fill))} />
+
         <div className="flex items-center justify-between gap-2">
           {/*
             TEK BIR USDC FIGURU. Ayni fonun iki gorunumunu (18 ondalikli
@@ -309,13 +340,7 @@ export function TradeForm({
           <MaxButton
             spendable={shortcutBase}
             reason={gasReason}
-            onPick={(picked) =>
-              setText(
-                isBuyTab(tab) && tab === 'spend'
-                  ? formatUsdcInput(picked)
-                  : formatTokenAmount(picked).replace(/,/g, ''),
-              )
-            }
+            onPick={(picked) => setText(fieldText(picked))}
           />
         </div>
 

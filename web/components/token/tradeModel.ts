@@ -7,12 +7,15 @@ import {
   planBuyExactQuoteIn,
   planBuyExactTokensOut,
   planSellExactTokensIn,
+  resolveSellForNet,
   type TradeAction,
   type TradePlan,
   TradePlanError,
   type TradePlanErrorName,
+  USDC_VIEW_SCALE,
 } from '@arcpad/shared/browser'
 import type { ArcpadFailure } from '@/lib/decodeRevert'
+import { chipFits } from './gas'
 
 /**
  * PANELIN BUTUN KARARLARI, REACT'TAN AYRI.
@@ -248,6 +251,141 @@ export function shortcutBaseFor(input: {
   if (spendable === null) return null
   if (tab === 'spend') return spendable
   return maxTokensFromSpendable({ ...input, spendable })
+}
+
+// --------------------------------------------------------------------------
+// Mutlak para kisayollari
+// --------------------------------------------------------------------------
+
+/**
+ * ==========================================================================
+ *  THE MONEY CHIPS. ONE LADDER, BOTH SIDES, AND THE PANEL SHOWS ONLY THE
+ *  ONES THAT CAN ACTUALLY BE FILLED.
+ * ==========================================================================
+ *
+ * The owner's decision, taken against Uniswap's meme-launch panel: the
+ * shortcut is MONEY on both sides, never a fraction. A user picks "$25" and
+ * means twenty-five dollars whether they are buying or selling; the panel does
+ * the unit conversion, not the user.
+ *
+ * ------------------------------------------------------------------------
+ *  MEASURED, AND THE MEASUREMENT MATTERS MORE THAN THE LADDER
+ * ------------------------------------------------------------------------
+ *
+ * Read against the LIVE open curve `0x53Bba88F…44c9` on 2026-08-10 with the
+ * shared port -- the same functions that quote the trade:
+ *
+ *   BUY   $25  -> clamped, spends 12.163451, refunds 12.836549, COMPLETES the curve
+ *         $100 -> clamped, spends 12.163451, refunds 87.836549, COMPLETES the curve
+ *         $500 -> clamped, spends 12.163451, refunds 487.836549, COMPLETES the curve
+ *   SELL  $25 / $100 / $500 -> UNREACHABLE. Not "the user is short": no token
+ *         quantity on this curve, up to the ENTIRE 793.1M sale supply, realises
+ *         that much.
+ *
+ * Both are consequences of the frozen profile, not of this deployment's state:
+ *   - a curve absorbs `V*S/(vT0-S) = 12.161433…` USDC IN TOTAL before it
+ *     graduates, so every chip at $25 or above buys the whole curve out and
+ *     refunds the rest, and all three do the IDENTICAL thing;
+ *   - sell proceeds are `x*vQ/(vT+x)`, which approaches `virtualQuoteReserves`
+ *     and never reaches it -- 4.44 USDC on this curve now, 16.45 USDC on a
+ *     curve loaded all the way to graduation. That is a HARD CEILING on what
+ *     any sell can ever return on any arcpad curve.
+ *
+ * SO THE LADDER BELOW IS THE OWNER'S, UNCHANGED, AND ON TODAY'S PROFILE IT
+ * RENDERS NOTHING. That is deliberate and it is the repository's own rule, not
+ * a new one: `TradeSurface.tsx` records why the `Market | Limit | Orders` strip
+ * was deleted this morning -- *"a tab that does nothing when clicked is worse
+ * than a tab that isn't there"* -- and three chips that are permanently
+ * unfillable are that defect wearing a different shape. `amountChipsFor`
+ * returns only chips it has RESOLVED through the planner, so the row is
+ * self-suppressing: change the numbers here to something this profile can
+ * transact (`[1n, 5n, 10n]`) and three live chips appear with no other edit.
+ */
+export const AMOUNT_CHIPS_USDC: readonly bigint[] = [25n, 100n, 500n]
+
+const ONE_USDC_WEI = 1_000_000_000_000_000_000n
+
+export type AmountChip = {
+  /** Whole USDC. THE LABEL -- `$25`. */
+  readonly usdc: bigint
+  /** The label as money, in native wei. */
+  readonly wei: bigint
+  /**
+   * WHAT GOES INTO THE FIELD, in the field's own unit: USDC wei on `spend`,
+   * token base units on `receive` and `sell`. Resolved through the planner for
+   * the tab's own entrypoint -- never converted with a price.
+   */
+  readonly fill: bigint
+}
+
+export type AmountChipInput = {
+  readonly tab: TradeTab
+  /** Gas-reserve-adjusted USDC. `null` -> no estimate, no chips. */
+  readonly spendable: bigint | null
+  readonly tokenBalance: bigint | null
+  readonly state: CurveState
+  readonly profile: CurveProfile
+  readonly fees: FeeBps
+}
+
+/**
+ * The chips this tab can actually fill, in ladder order.
+ *
+ * EVERY CHIP IS RESOLVED, NOT ESTIMATED. A chip survives only if the planner
+ * for THIS TAB'S entrypoint returns a plan for it, which is why the three tabs
+ * read so differently below -- they are three entrypoints with three boundary
+ * behaviours, and this repository has been burned by treating them as one.
+ *
+ * A CLAMPING BUY IS NOT OFFERED. `buyExactQuoteIn` clamps at the top of the
+ * curve and refunds the difference, which is the right CHAIN behaviour and the
+ * wrong thing to hide behind a button: a chip that says `$25` and spends
+ * `$12.16` -- while completing the curve -- has filled a different amount than
+ * it promised. The user can still type it, see the breakdown, and choose it.
+ */
+export function amountChipsFor(input: AmountChipInput): readonly AmountChip[] {
+  const { tab, spendable, tokenBalance, state, profile, fees } = input
+  if (state.complete) return []
+
+  const out: AmountChip[] = []
+  for (const usdc of AMOUNT_CHIPS_USDC) {
+    const wei = usdc * ONE_USDC_WEI
+    const fill = resolveChip(tab, wei, { spendable, tokenBalance, state, profile, fees })
+    if (fill !== null) out.push({ usdc, wei, fill })
+  }
+  return out
+}
+
+function resolveChip(tab: TradeTab, wei: bigint, ctx: Omit<AmountChipInput, 'tab'>): bigint | null {
+  const { spendable, tokenBalance, state, profile, fees } = ctx
+
+  if (tab === 'sell') {
+    // SELL DIRECTION, and it has to be: `resolveSellForNet` searches
+    // `planSellExactTokensIn`'s own output. Resolving this with buy-side
+    // arithmetic gives a number of the right magnitude and the wrong value.
+    if (tokenBalance === null || tokenBalance <= 0n) return null
+    // THE FIELD'S QUANTUM IS PART OF THE QUESTION. The amount field carries six
+    // decimals and quantises DOWN, so a quantity resolved at full precision
+    // arrives at the chain worth less than the chip promised -- measured at
+    // 3.25e-6 USDC short on a $25 chip before this argument existed. Searching
+    // on the quantum makes the resolved number and the displayed number the
+    // same number.
+    const found = resolveSellForNet(state, profile, fees, wei, tokenBalance, USDC_VIEW_SCALE)
+    return found.ok ? found.tokensIn : null
+  }
+
+  // BOTH BUY TABS SPEND USDC, so both are bound by the gas reserve -- the same
+  // `spendable` MAX is computed from, compared by the same function.
+  if (!chipFits(spendable, wei)) return null
+
+  // Zero slippage: this is asking "what does this budget BUY", not building the
+  // transaction. The tolerance is applied later, to the plan the user submits.
+  const quote = quoteFor({ tab: 'spend', amount: wei, state, profile, fees, slipBps: 0 })
+  if (!quote.ok || quote.plan.clamped) return null
+
+  if (tab === 'spend') return wei
+  // `receive` takes TOKENS. The tokens this budget buys is the planner's own
+  // `tokens`, not a price multiplication.
+  return quote.plan.tokens
 }
 
 // --------------------------------------------------------------------------

@@ -1,6 +1,16 @@
-import { totalSpentOf, TRADE_ACTIONS } from '@arcpad/shared/browser'
+import {
+  asTok,
+  graduationRaise,
+  planBuyExactQuoteIn,
+  resolveSellForNet,
+  totalSpentOf,
+  TRADE_ACTIONS,
+  USDC_VIEW_SCALE,
+} from '@arcpad/shared/browser'
 import { describe, expect, it } from 'vitest'
 import {
+  AMOUNT_CHIPS_USDC,
+  amountChipsFor,
   BOUND_LABEL,
   buttonFor,
   type ButtonInput,
@@ -23,6 +33,9 @@ import {
 import {
   CLIMBED,
   CREATOR,
+  DEEP_FRESH,
+  DEEP_HOLDING,
+  DEEP_PROFILE,
   EXTREME_FEES,
   FEES,
   FRESH,
@@ -457,5 +470,163 @@ describe('a fixture sanity check', () => {
     const quote: Quote = quoteFor({ ...base, tab: 'spend', amount: ONE_USDC })
     if (!quote.ok) throw new Error('expected a plan')
     expect(quote.plan.priceAfterWeiPerToken).toBe(6_052_733_351n)
+  })
+})
+
+// --------------------------------------------------------------------------
+// Mutlak para kisayollari
+// --------------------------------------------------------------------------
+
+/**
+ * ==========================================================================
+ *  THE MONEY CHIPS -- ONE LADDER, THREE TABS, THREE UNITS
+ * ==========================================================================
+ *
+ * The owner's decision is that the user always picks MONEY, on both sides. So
+ * the chip's job is a unit conversion, and it is a different conversion per
+ * tab: identity on `spend`, a BUY quote on `receive`, a SELL quote on `sell`.
+ * Nothing proved about one of those transfers to the others -- the three tabs
+ * are three entrypoints, which is the rule the rest of this file is organised
+ * around.
+ */
+describe('amountChipsFor', () => {
+  const RICH = 10_000n * ONE_USDC
+
+  const chipsOn = (tab: 'spend' | 'receive' | 'sell', over: Record<string, unknown> = {}) =>
+    amountChipsFor({
+      tab,
+      spendable: RICH,
+      tokenBalance: DEEP_HOLDING,
+      state: DEEP_FRESH,
+      profile: DEEP_PROFILE,
+      fees: FEES,
+      ...over,
+    } as Parameters<typeof amountChipsFor>[0])
+
+  it('is the owner ladder, in order, when the curve can carry it', () => {
+    expect(AMOUNT_CHIPS_USDC).toEqual([25n, 100n, 500n])
+    expect(chipsOn('spend').map((c) => c.usdc)).toEqual([25n, 100n, 500n])
+  })
+
+  it('fills the money itself on Spend USDC', () => {
+    // The identity case, and it still has to be asserted: a conversion applied
+    // where none belongs is exactly as wrong as one omitted where it does.
+    for (const chip of chipsOn('spend')) {
+      expect(chip.fill).toBe(chip.usdc * ONE_USDC)
+      expect(chip.fill).toBe(chip.wei)
+    }
+  })
+
+  it('fills TOKENS on Receive tokens, and they are what that budget buys', () => {
+    for (const chip of chipsOn('receive')) {
+      const plan = planBuyExactQuoteIn(DEEP_FRESH, DEEP_PROFILE, FEES, chip.wei, 0)
+      expect(chip.fill).toBe(plan.tokens)
+      // NOT the money. A chip that wrote `25e18` into a token field would be
+      // asking for 25 tokens, and both views are 1e18-scaled so it would look
+      // entirely normal.
+      expect(chip.fill).not.toBe(chip.wei)
+    }
+  })
+
+  it('fills TOKENS on Sell, resolved in the SELL direction', () => {
+    const chips = chipsOn('sell')
+    expect(chips.length).toBeGreaterThan(0)
+    for (const chip of chips) {
+      const found = resolveSellForNet(
+        DEEP_FRESH,
+        DEEP_PROFILE,
+        FEES,
+        chip.wei,
+        DEEP_HOLDING,
+        USDC_VIEW_SCALE,
+      )
+      expect(found.ok).toBe(true)
+      if (!found.ok) continue
+      expect(chip.fill).toBe(found.tokensIn)
+      // THE DIRECTION MUTANT, at the panel's own level: the buy-side answer for
+      // the same money is a different, smaller quantity.
+      const buySide = planBuyExactQuoteIn(DEEP_FRESH, DEEP_PROFILE, FEES, chip.wei, 0).tokens
+      expect(chip.fill).not.toBe(buySide)
+    }
+  })
+
+  it('drops a chip the gas reserve cannot cover, on BOTH buy tabs', () => {
+    // $100 spendable: $25 survives, $100 does not -- the reserve is inside it.
+    const spendable = 100n * ONE_USDC - 300_000_000_000_000n
+    expect(chipsOn('spend', { spendable }).map((c) => c.usdc)).toEqual([25n])
+    // The receive tab spends USDC too, and forgetting it there is precisely
+    // the "covered on one entrypoint" failure this repo keeps hitting.
+    expect(chipsOn('receive', { spendable }).map((c) => c.usdc)).toEqual([25n])
+  })
+
+  it('drops every chip when the gas estimate failed', () => {
+    expect(chipsOn('spend', { spendable: null })).toEqual([])
+    expect(chipsOn('receive', { spendable: null })).toEqual([])
+  })
+
+  it('drops a sell chip the holding cannot make', () => {
+    // Enough token for $25, not for $500.
+    const small = DEEP_PROFILE.saleSupply / 500n
+    const usable = chipsOn('sell', { tokenBalance: small }).map((c) => c.usdc)
+    expect(usable).not.toContain(500n)
+    expect(usable.length).toBeLessThan(3)
+  })
+
+  it('drops every sell chip when the wallet holds nothing', () => {
+    expect(chipsOn('sell', { tokenBalance: 0n })).toEqual([])
+    expect(chipsOn('sell', { tokenBalance: null })).toEqual([])
+  })
+
+  it('does NOT offer a buy chip that would clamp', () => {
+    // A clamping chip says `$500` and spends whatever is left on the curve,
+    // completing it. The money and the label part company, which is the one
+    // thing a shortcut on a payment surface may not do.
+    const nearlyDone = {
+      ...DEEP_FRESH,
+      realTokenReserves: asTok(DEEP_PROFILE.saleSupply / 1_000_000n),
+    }
+    expect(chipsOn('spend', { state: nearlyDone })).toEqual([])
+  })
+
+  it('offers nothing on a completed curve', () => {
+    expect(chipsOn('spend', { state: { ...DEEP_FRESH, complete: true } })).toEqual([])
+    expect(chipsOn('sell', { state: { ...DEEP_FRESH, complete: true } })).toEqual([])
+  })
+
+  /**
+   * ======================================================================
+   *  THE MEASUREMENT THAT DECIDED THE SHAPE OF THIS FEATURE
+   * ======================================================================
+   */
+  it('resolves to NOTHING on the profile that is actually deployed', () => {
+    // Measured against the live open curve on 2026-08-10: a real curve absorbs
+    // 12.161433 USDC in TOTAL, so all three chips clamp and complete it; and no
+    // sell on any arcpad curve can ever return more than ~16.45 USDC. The row
+    // is therefore EMPTY in production, and that is the assertion -- not a
+    // gap in the tests.
+    for (const tab of ['spend', 'receive', 'sell'] as const) {
+      expect(
+        amountChipsFor({
+          tab,
+          spendable: RICH,
+          tokenBalance: TESTNET_PROFILE.saleSupply / 2n,
+          state: FRESH,
+          profile: TESTNET_PROFILE,
+          fees: FEES,
+        }),
+      ).toEqual([])
+    }
+  })
+
+  it('the whole testnet curve costs less than the smallest chip', () => {
+    // The arithmetic behind the assertion above, stated so a future reader does
+    // not have to rediscover it: `V*S/(vT0-S)`.
+    const raise = graduationRaise(
+      TESTNET_PROFILE.saleSupply,
+      TESTNET_PROFILE.virtualQuoteReserves,
+      TESTNET_PROFILE.virtualTokenReserves,
+    )
+    expect(raise).toBe(12_161_433_369_060_378_706n)
+    expect(raise).toBeLessThan(AMOUNT_CHIPS_USDC[0]! * ONE_USDC)
   })
 })

@@ -89,3 +89,27 @@ export function shortcutAmount(spendable: bigint | null, percent: ShortcutPercen
   if (spendable === null) return null
   return quantiseToInput((spendable * BigInt(percent)) / 100n)
 }
+
+/**
+ * DOES AN ABSOLUTE MONEY CHIP FIT? -- THE SAME RULE MAX USES, FROM THE SAME
+ * PLACE.
+ *
+ * A `$500` chip and MAX must not disagree. They cannot, because they are the
+ * same comparison against the same `spendable`: MAX fills
+ * `quantiseToInput(spendable)` and a chip is offered only while it is `<=
+ * spendable`. `web/test/trade/gas.test.ts` pins the boundary in both
+ * directions rather than trusting the sentence.
+ *
+ * `spendable === null` -> the gas estimate failed and NOTHING is offered, for
+ * exactly the reason the percentages are disabled in that state: an amount that
+ * leaves no room for gas is an amount that cannot be sent.
+ *
+ * Note this takes `spendable`, never `balance`. That is the whole point -- on
+ * Arc gas is paid in the asset being spent, so a chip sized against the raw
+ * balance is a chip that cannot pay for itself.
+ */
+export function chipFits(spendable: bigint | null, chipWei: bigint): boolean {
+  if (chipWei < 0n) throw new RangeError(`chipFits: negatif tutar (${chipWei})`)
+  if (spendable === null) return false
+  return chipWei <= spendable
+}

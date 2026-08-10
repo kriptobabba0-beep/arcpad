@@ -34,6 +34,8 @@ export {
   planBuyExactQuoteIn,
   planBuyExactTokensOut,
   planSellExactTokensIn,
+  resolveSellForNet,
+  type SellForNetResult,
   type TokAmount,
   totalSpentOf,
   TRADE_ACTIONS,

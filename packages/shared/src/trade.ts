@@ -376,6 +376,169 @@ export function planSellExactTokensIn(
   }
 }
 
+/**
+ * ==========================================================================
+ *  "SELL $50 WORTH" -- RESOLVED IN THE SELL DIRECTION, BY THE SELL PLANNER
+ * ==========================================================================
+ *
+ * A money-denominated shortcut on the SELL side names a figure the user wants
+ * to RECEIVE; the field underneath it takes TOKENS. Something has to invert
+ * the curve, and the direction matters more than it looks:
+ * `quoteBuyCost`/`quoteBuyTokensOut` and `quoteSellProceeds` are DIFFERENT
+ * functions of the same reserves -- the buy path divides by `vT - tokens` and
+ * the sell path by `vT + tokens`. Resolving a sell with buy-side arithmetic
+ * produces a number of exactly the right magnitude and the wrong value, which
+ * is the failure mode that survives a screenshot review.
+ *
+ * SO NOTHING HERE COMPUTES THE CURVE. It calls `planSellExactTokensIn` --
+ * literally the function that will quote the trade -- and searches its OUTPUT.
+ * A second closed-form inverse would be a second implementation of the fee
+ * rounding, and the two would drift.
+ *
+ * THE TARGET IS THE **NET**, fees already deducted. That is what "I want fifty
+ * dollars" means, and it is the same quantity `minQuoteOut` guards
+ * (`boundKind: 'minReceiveAfterFees'`). Targeting the pre-fee proceeds would
+ * hand the user ~1.25% less than the chip promised, every time.
+ *
+ * MINIMALITY IS APPROXIMATE BY ONE UNIT, AND THAT IS NOT A BUG TO FIX.
+ * `netOut(p) = p - ceil(p*pBps/1e4) - ceil(p*cBps/1e4)`, so as proceeds rise by
+ * one unit both ceilings can tick together and the net can fall by one:
+ * `netOut` is non-decreasing IN THE LARGE but dips by 1 at isolated points. A
+ * bisection over a predicate that is not a true up-set can therefore land one
+ * unit above the true minimum. The GUARANTEE is restored by verifying the
+ * winner forward before returning it, which is what `confirm` below does --
+ * the returned `tokensIn` always satisfies `netOut >= target`. One unit here is
+ * 1e-18 USDC, six orders of magnitude below the input field's own quantum.
+ */
+
+export type SellForNetResult =
+  /** `tokensIn` reaches `target`, verified against the sell planner. */
+  | { readonly ok: true; readonly tokensIn: TokAmount; readonly netOut: WeiUsdc }
+  /**
+   * Unreachable, and the two reasons are NOT the same sentence to a user:
+   * `holding` -> sell everything you have and it still falls short.
+   * `curve`   -> the curve itself cannot pay that much to ANYONE. Sell proceeds
+   *              are `x*vQ/(vT+x)`, which approaches `virtualQuoteReserves` and
+   *              never reaches it, so every arcpad curve has a hard ceiling on
+   *              what any sell can ever return.
+   */
+  | {
+      readonly ok: false
+      readonly reason: 'holding' | 'curve'
+      /** The best net the holding can actually realise. */
+      readonly bestNetOut: WeiUsdc
+    }
+
+/** The net a given `tokensIn` realises, straight off the sell plan. `null` -> the planner refuses it. */
+function netOutFor(
+  state: CurveState,
+  profile: CurveProfile,
+  fees: FeeBps,
+  tokensIn: bigint,
+): bigint | null {
+  if (tokensIn <= 0n) return null
+  try {
+    return netProceedsOf(planSellExactTokensIn(state, profile, fees, tokensIn, 0))
+  } catch {
+    // `ProceedsTooSmall` at the bottom, `CurveComplete` everywhere. Both mean
+    // "this quantity realises nothing you can have", which is a zero for the
+    // search, not an exception for the caller.
+    return null
+  }
+}
+
+/**
+ * The smallest `tokensIn <= maxTokensIn` whose sell realises at least
+ * `targetNet`.
+ *
+ * `maxTokensIn` is the USER'S BALANCE. Searching past it would return a
+ * quantity the wallet cannot deliver, and `sellExactTokensIn` would revert in
+ * `transferFrom` after the user had already signed.
+ *
+ * ------------------------------------------------------------------------
+ *  `step` -- AND IT IS LOAD-BEARING, NOT A CONVENIENCE
+ * ------------------------------------------------------------------------
+ *
+ * MEASURED, at the composed panel level, on the first run of
+ * `web/test/trade/panel.test.tsx`: a `$25` sell chip resolved EXACTLY, was
+ * written into the amount field, and came back out worth
+ * `24_999_999_999_996_747_628` -- 3.25e-6 USDC SHORT of what the chip had
+ * promised. Nothing in the resolver was wrong. The amount field carries SIX
+ * DECIMALS and `formatTokenAmount` quantises DOWN, so a quantity resolved at
+ * full precision loses its guarantee on the way through the text box.
+ *
+ * A caller that will round the answer must therefore not be handed an answer
+ * that only works unrounded. `step` makes the SEARCH walk the caller's own
+ * quantum -- the returned quantity is already a multiple of it, so the text the
+ * user sees, the number that is parsed back, and the number that was verified
+ * against `targetNet` are all the same number. Correcting after the fact would
+ * have been a second rounding rule in a second place, which is how the screen
+ * and the signature come to disagree.
+ *
+ * This is an instance of the class it was written to close, found inside the
+ * fix for that class. That keeps happening here; it is why the assertion runs
+ * on the assembled panel and not only on this function.
+ */
+export function resolveSellForNet(
+  state: CurveState,
+  profile: CurveProfile,
+  fees: FeeBps,
+  targetNet: bigint,
+  maxTokensIn: bigint,
+  step = 1n,
+): SellForNetResult {
+  if (targetNet <= 0n)
+    throw new RangeError(`resolveSellForNet: target must be positive (${targetNet})`)
+  if (step <= 0n) throw new RangeError(`resolveSellForNet: step must be positive (${step})`)
+
+  // THE CURVE'S OWN CEILING FIRST, and it is checked against the WHOLE sale
+  // supply rather than the holding: it answers a different question ("could
+  // anyone ever get this much out of this curve?") and it is the honest reason
+  // to show when the answer is no.
+  const ceilingProbe = netOutFor(state, profile, fees, profile.saleSupply)
+  if (ceilingProbe !== null && ceilingProbe < targetNet) {
+    const best = maxTokensIn <= 0n ? 0n : (netOutFor(state, profile, fees, maxTokensIn) ?? 0n)
+    return { ok: false, reason: 'curve', bestNetOut: asWei(best) }
+  }
+
+  // THE CEILING OF THE SEARCH IS ON THE STEP, not the raw balance: a quantity
+  // the field cannot express is a quantity the user cannot send.
+  const steps = maxTokensIn / step
+  const reachable = steps * step
+  const best = reachable <= 0n ? null : netOutFor(state, profile, fees, reachable)
+  if (best === null || best < targetNet) {
+    return { ok: false, reason: 'holding', bestNetOut: asWei(best ?? 0n) }
+  }
+
+  let lo = 1n
+  let hi = steps
+  let winner = steps
+  while (lo <= hi) {
+    const mid = (lo + hi) / 2n
+    const net = netOutFor(state, profile, fees, mid * step)
+    if (net !== null && net >= targetNet) {
+      winner = mid
+      hi = mid - 1n
+    } else {
+      lo = mid + 1n
+    }
+  }
+
+  // THE VERIFY-FORWARD STEP. See the header: the predicate dips by one unit at
+  // isolated points, so the bisection's winner is confirmed -- and nudged up if
+  // it landed in a dip -- against the planner that will quote the trade.
+  let confirm = netOutFor(state, profile, fees, winner * step)
+  while ((confirm === null || confirm < targetNet) && winner < steps) {
+    winner += 1n
+    confirm = netOutFor(state, profile, fees, winner * step)
+  }
+  if (confirm === null || confirm < targetNet) {
+    return { ok: false, reason: 'holding', bestNetOut: asWei(best) }
+  }
+
+  return { ok: true, tokensIn: asTok(winner * step), netOut: asWei(confirm) }
+}
+
 /** What the seller actually receives: the curve amount minus both fee parts. */
 export function netProceedsOf(plan: TradePlan): WeiUsdc {
   if (plan.action !== 'sellExactTokensIn') {

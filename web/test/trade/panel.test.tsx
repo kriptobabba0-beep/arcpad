@@ -1,4 +1,10 @@
-import type { TradePlan } from '@arcpad/shared/browser'
+import {
+  formatTokenAmount,
+  planBuyExactQuoteIn,
+  resolveSellForNet,
+  type TradePlan,
+  USDC_VIEW_SCALE,
+} from '@arcpad/shared/browser'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
@@ -8,6 +14,9 @@ import type { TradeRow } from '@/components/read/types'
 import {
   CLIMBED,
   CREATOR,
+  DEEP_FRESH,
+  DEEP_HOLDING,
+  DEEP_PROFILE,
   FEES,
   FRESH,
   ONE_USDC,
@@ -505,5 +514,165 @@ describe('a fixture guard', () => {
     expect(CLIMBED.creator).toBe(CREATOR)
     expect(FRESH.realTokenReserves).toBe(TESTNET_PROFILE.saleSupply)
     expect(screen).toBeDefined()
+  })
+})
+
+// --------------------------------------------------------------------------
+// Mutlak para kisayollari -- UC SEKMEDE DE, AYNI EKRANDA
+// --------------------------------------------------------------------------
+
+/**
+ * ==========================================================================
+ *  THE MONEY CHIPS, PRESSED -- AND FOLLOWED ALL THE WAY TO THE PLAN
+ * ==========================================================================
+ *
+ * `test/trade/model.test.ts` proves `amountChipsFor` resolves the right
+ * quantity. THAT IS NOT THIS. The defect this repository keeps shipping is a
+ * correct function that the screen never reaches, or reaches with the wrong
+ * argument -- `TradePanel` measured by 645 tests while no page drew it, two
+ * switch controls on one composed screen with both component tests green. So
+ * these press the button on the assembled panel and read what comes out of
+ * `onSubmit`: the field text, the unit, and the calldata.
+ *
+ * DEEP FIXTURES, BECAUSE THE REAL ONES CANNOT CARRY THE LADDER. See
+ * `fixtures.ts`: on the deployed profile all three chips are unfillable and the
+ * row is empty, which is asserted separately and on purpose.
+ */
+describe('the money chips', () => {
+  const DEEP: Partial<TradeFormProps> = {
+    state: DEEP_FRESH,
+    profile: DEEP_PROFILE,
+    spendable: 10_000n * ONE_USDC,
+    usdcBalance: 10_000n * ONE_USDC,
+    tokenBalance: DEEP_HOLDING,
+  }
+
+  it('draws $25 / $100 / $500 when the curve can carry them', () => {
+    const t = setup(DEEP)
+    const row = t.q.getByTestId('amount-chips')
+    expect(within(row).getByTestId('chip-25')).toHaveTextContent('$25')
+    expect(within(row).getByTestId('chip-100')).toHaveTextContent('$100')
+    expect(within(row).getByTestId('chip-500')).toHaveTextContent('$500')
+  })
+
+  it('Spend USDC: $25 fills 25 and sends it as msg.value', async () => {
+    const t = setup(DEEP)
+    await t.user.click(t.q.getByTestId('chip-25'))
+    expect(t.field()).toHaveValue('25.000000')
+
+    await t.user.click(t.button())
+    const plan = t.onSubmit.mock.calls[0]?.[0] as TradePlan
+    expect(plan.action).toBe('buyExactQuoteIn')
+    expect(plan.value).toBe(25n * ONE_USDC)
+    // The chip promised twenty-five dollars and twenty-five dollars is what
+    // leaves the wallet -- no clamp, no surprise refund.
+    expect(plan.clamped).toBe(false)
+  })
+
+  it('Receive tokens: $100 fills TOKENS, not the number 100', async () => {
+    const t = setup(DEEP)
+    await t.user.click(t.tab(/Receive tokens/))
+    await t.user.click(t.q.getByTestId('chip-100'))
+
+    // THE UNIT MUTANT. Writing `100` into a token field would ask for one
+    // hundred tokens; both views are 1e18-scaled so nothing on screen looks
+    // wrong. The field must carry the token quantity that budget buys.
+    expect(t.field()).not.toHaveValue('100.000000')
+    const expected = planBuyExactQuoteIn(DEEP_FRESH, DEEP_PROFILE, FEES, 100n * ONE_USDC, 0)
+    expect(t.field()).toHaveValue(formatTokenAmount(expected.tokens).replace(/,/g, ''))
+
+    await t.user.click(t.button())
+    const plan = t.onSubmit.mock.calls[0]?.[0] as TradePlan
+    expect(plan.action).toBe('buyExactTokensOut')
+  })
+
+  it('Sell: $25 fills a token quantity resolved in the SELL direction', async () => {
+    const t = setup({ ...DEEP, approval: 'sufficient' })
+    await t.user.click(t.tab(/^Sell$/))
+    await t.user.click(t.q.getByTestId('chip-25'))
+
+    // THE QUANTUM IS PASSED HERE TOO, and that is the point of the assertion:
+    // the field carries six decimals, so the resolved quantity has to be one
+    // the field can express. Without it this expectation reads
+    // `6366667.853370` while the panel writes `6366667.853371` -- and the
+    // difference is the guarantee that the chip delivers $25 rather than
+    // 24.999999999996747628.
+    const found = resolveSellForNet(
+      DEEP_FRESH,
+      DEEP_PROFILE,
+      FEES,
+      25n * ONE_USDC,
+      DEEP_HOLDING,
+      USDC_VIEW_SCALE,
+    )
+    expect(found.ok).toBe(true)
+    if (!found.ok) return
+    // Six decimals is the field's quantum, so the comparison is on the text the
+    // field actually carries.
+    expect(t.field()).toHaveValue(formatTokenAmount(found.tokensIn).replace(/,/g, ''))
+
+    await t.user.click(t.button())
+    const plan = t.onSubmit.mock.calls[0]?.[0] as TradePlan
+    expect(plan.action).toBe('sellExactTokensIn')
+    expect(plan.value).toBe(0n)
+    // AND THE MONEY ARRIVES. The chip said $25; the plan's net proceeds must
+    // reach it. A buy-side resolution lands here and falls short.
+    expect(plan.curveAmount - plan.protocolFee - plan.creatorFee).toBeGreaterThanOrEqual(
+      25n * ONE_USDC,
+    )
+  })
+
+  it('the SAME chip fills three different numbers on the three tabs', async () => {
+    // One ladder, three units. If any two of these agreed, a conversion would
+    // be missing.
+    const t = setup({ ...DEEP, approval: 'sufficient' })
+    await t.user.click(t.q.getByTestId('chip-25'))
+    const spend = (t.field() as HTMLInputElement).value
+
+    await t.user.click(t.tab(/Receive tokens/))
+    await t.user.click(t.q.getByTestId('chip-25'))
+    const receive = (t.field() as HTMLInputElement).value
+
+    await t.user.click(t.tab(/^Sell$/))
+    await t.user.click(t.q.getByTestId('chip-25'))
+    const sell = (t.field() as HTMLInputElement).value
+
+    expect(new Set([spend, receive, sell]).size).toBe(3)
+    // And the sell quantity is the LARGER of the two token figures: the curve
+    // pays less for a token than it charges for one.
+    expect(Number(sell)).toBeGreaterThan(Number(receive))
+  })
+
+  it('the gas reserve binds the chips exactly as it binds MAX', async () => {
+    // Holding exactly $100, with the reserve inside it: the $100 chip is gone
+    // and MAX writes less than $100. The coordinator's `$500` case, measurable.
+    const balance = 100n * ONE_USDC
+    const spendable = balance - 300_000_000_000_000n
+    const t = setup({ ...DEEP, spendable, usdcBalance: balance })
+
+    expect(t.q.queryByTestId('chip-100')).toBeNull()
+    expect(t.q.queryByTestId('chip-500')).toBeNull()
+    expect(t.q.getByTestId('chip-25')).toBeInTheDocument()
+
+    await t.user.click(t.q.getByTestId('shortcut-100'))
+    expect(t.field()).toHaveValue('99.999700')
+  })
+
+  it('draws no row at all on the profile that is actually deployed', () => {
+    // The default fixtures ARE the deployed profile. A curve absorbs 12.16 USDC
+    // in total and no sell can ever return more than ~16.45 USDC, so every chip
+    // in the ladder is unfillable and the row is absent rather than dead.
+    const t = setup()
+    expect(t.q.queryByTestId('amount-chips')).toBeNull()
+    // MAX and the percentages are untouched by that -- they are sized from the
+    // user's own balance, not from a fixed ladder.
+    expect(t.q.getByTestId('amount-shortcuts')).toBeInTheDocument()
+  })
+
+  it('draws no row when the gas estimate failed, on either buy tab', async () => {
+    const t = setup({ ...DEEP, spendable: null, gasReason: 'no estimate' })
+    expect(t.q.queryByTestId('amount-chips')).toBeNull()
+    await t.user.click(t.tab(/Receive tokens/))
+    expect(t.q.queryByTestId('amount-chips')).toBeNull()
   })
 })

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  chipFits,
   GAS_SAFETY_DENOMINATOR,
   GAS_SAFETY_NUMERATOR,
   gasReserveFrom,
@@ -109,5 +110,58 @@ describe('the shortcuts', () => {
   it('rounds the quantum DOWN', () => {
     expect(quantiseToInput(1_999_999_999_999n)).toBe(1_000_000_000_000n)
     expect(quantiseToInput(999_999_999_999n)).toBe(0n)
+  })
+})
+
+/**
+ * ==========================================================================
+ *  THE MONEY CHIPS AND MAX MUST NOT DISAGREE
+ * ==========================================================================
+ *
+ * `chipFits` and `shortcutAmount` are the two things that put a number in the
+ * amount field, and on Arc both are bounded by the same fact: gas is paid in
+ * the asset being spent. A chip sized against `balance` while MAX is sized
+ * against `spendable` is the exact defect this file was opened for, one scale
+ * up -- and it is invisible until the user has signed.
+ */
+describe('chipFits agrees with MAX at the boundary', () => {
+  const BALANCE = 1_000_000_000_000_000_000n
+  const RESERVE = 300_000_000_000_000n
+
+  it('offers a chip worth exactly the spendable balance, and refuses one wei more', () => {
+    const spendable = spendableFrom(BALANCE, RESERVE) as bigint
+    expect(chipFits(spendable, spendable)).toBe(true)
+    expect(chipFits(spendable, spendable + 1n)).toBe(false)
+  })
+
+  it('refuses a chip worth the WHOLE balance -- the mutant that ignores the reserve', () => {
+    // Someone holding exactly $1 must not be offered a $1 chip: the reserve is
+    // inside that dollar. This is the coordinator's `$500` case in miniature.
+    const spendable = spendableFrom(BALANCE, RESERVE) as bigint
+    expect(chipFits(spendable, BALANCE)).toBe(false)
+    // ...and `balance` in place of `spendable` would pass it.
+    expect(chipFits(BALANCE, BALANCE)).toBe(true)
+  })
+
+  it('never offers a chip that MAX could not also fill', () => {
+    // MAX quantises DOWN to the field's six decimals. A chip that fits must
+    // therefore also sit at or below what MAX would write, or the two controls
+    // would contradict each other on the same screen.
+    const spendable = spendableFrom(BALANCE, RESERVE) as bigint
+    const max = shortcutAmount(spendable, 100) as bigint
+    for (const usdc of [1n, 25n, 100n, 500n]) {
+      const chip = usdc * 1_000_000_000_000_000_000n
+      if (chipFits(spendable, chip)) expect(chip).toBeLessThanOrEqual(max)
+    }
+  })
+
+  it('offers nothing at all when the estimate failed, exactly as the percentages do', () => {
+    expect(chipFits(null, 1n)).toBe(false)
+    expect(chipFits(null, 0n)).toBe(false)
+    expect(shortcutAmount(null, 100)).toBeNull()
+  })
+
+  it('refuses a negative chip rather than offering it', () => {
+    expect(() => chipFits(1n, -1n)).toThrow(RangeError)
   })
 })

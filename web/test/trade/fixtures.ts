@@ -109,3 +109,44 @@ export const COMPLETED: CurveState = {
   realTokenReserves: asTok(0n),
   complete: true,
 }
+
+/**
+ * ==========================================================================
+ *  A CURVE DEEP ENOUGH FOR THE $25 / $100 / $500 LADDER TO EXIST
+ * ==========================================================================
+ *
+ * NOT A DEPLOYMENT. This profile is a THOUSAND times deeper in quote than the
+ * one on chain, and it is here for one reason: the money chips are unfillable
+ * on the real profile, and a mechanism that is only ever tested in its empty
+ * state is not tested.
+ *
+ * Measured on the LIVE curve `0x53Bba88F…44c9` on 2026-08-10 with the shared
+ * port -- the numbers this fixture exists to contrast with:
+ *   - a real curve absorbs `V*S/(vT0-S) = 12.161433…` USDC IN TOTAL, so every
+ *     one of $25 / $100 / $500 buys the whole curve out and refunds the rest;
+ *   - a sell can never return more than `virtualQuoteReserves`, which is
+ *     4.44 USDC on that curve today and 16.45 USDC on one loaded all the way to
+ *     graduation. All three chips are unreachable on the sell side FOREVER.
+ *
+ * `V x 1000` puts the graduation raise at ~12,161 USDC and the sell asymptote
+ * at 4,292 USDC, so all three chips resolve on both sides and the tests below
+ * measure the resolution rather than the suppression. `test/trade/model.test.ts`
+ * asserts BOTH: live chips here, and an empty row on `TESTNET_PROFILE`.
+ */
+export const DEEP_PROFILE: CurveProfile = {
+  virtualTokenReserves: 1_073_000_000n * 10n ** 18n,
+  virtualQuoteReserves: 4_292n * 10n ** 18n,
+  saleSupply: 793_100_000n * 10n ** 18n,
+}
+
+export const DEEP_FRESH: CurveState = {
+  virtualTokenReserves: DEEP_PROFILE.virtualTokenReserves,
+  virtualQuoteReserves: DEEP_PROFILE.virtualQuoteReserves,
+  realTokenReserves: asTok(DEEP_PROFILE.saleSupply),
+  realQuoteReserves: asWei(0n),
+  complete: false,
+  creator: CREATOR,
+}
+
+/** Half the sale supply -- enough for the $500 sell chip to resolve on `DEEP_FRESH`. */
+export const DEEP_HOLDING = DEEP_PROFILE.saleSupply / 2n
