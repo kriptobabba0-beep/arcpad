@@ -102,3 +102,39 @@ export function getArcChain(chainId: number): ArcChain {
   }
   return chain
 }
+
+/**
+ * ===========================================================================
+ *  ARC PUBLISHES FOUR ENDPOINTS, ONE PER PROVIDER, AND THEIR BUDGETS ARE
+ *  INDEPENDENT.
+ * ===========================================================================
+ *
+ * VERIFIED 2026-08-11 from the deployment, all four answering `eth_chainId`
+ * with `0x4cef52`:
+ *
+ *   rpc.testnet.arc.network              (the one everything used)
+ *   rpc.blockdaemon.testnet.arc.network
+ *   rpc.drpc.testnet.arc.network
+ *   rpc.quicknode.testnet.arc.network
+ *
+ * And in the same second, on a range holding a launch WE indexed:
+ *
+ *   rpc.testnet.arc.network         eth_getLogs -> `rate limit exceeded`
+ *   the other three                 20 logs each, identical
+ *
+ * WHY THIS MATTERS MORE THAN A RETRY LOOP. What Arc limits is not how OFTEN
+ * we ask; it is a per-IP cost budget specific to `eth_getLogs`. When it is
+ * empty, a ONE-BLOCK query is refused exactly like a ten-thousand-block one,
+ * while `eth_call` and `eth_blockNumber` sail through on their own budget --
+ * which is precisely the confusing shape measured here before the cause was
+ * understood. Backing off and retrying against an empty bucket cannot help;
+ * four budgets can.
+ *
+ * These are DEFAULTS, not a policy: `ARC_RPC_FALLBACK_URLS` overrides them,
+ * and an operator on a private endpoint will want it to.
+ */
+export const ARC_TESTNET_FALLBACK_RPCS = [
+  'https://rpc.blockdaemon.testnet.arc.network',
+  'https://rpc.drpc.testnet.arc.network',
+  'https://rpc.quicknode.testnet.arc.network',
+] as const

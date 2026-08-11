@@ -88,6 +88,7 @@ export {
 export {
   ARC_CHAINS,
   ARC_TESTNET_CHAIN_ID,
+  ARC_TESTNET_FALLBACK_RPCS,
   type ArcChain,
   type ArcChainConfig,
   arcTestnet,
@@ -96,7 +97,12 @@ export {
   MULTICALL3_ADDRESS,
   USDC_ERC20_ADDRESS,
 } from './chain'
-export { arcRpcUrls, assertArcChain, type ChainIdSource, createArcClient } from './client'
+export {
+  arcRpcUrls,
+  assertArcChain,
+  type ChainIdSource,
+  createArcClient,
+} from './client'
 export {
   CHAIN_KEYS,
   chainKeyFor,
