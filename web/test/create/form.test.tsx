@@ -34,7 +34,7 @@ describe('<LaunchForm> -- S16, "Advanced" bolumu YOKTUR', () => {
   it('sabit-parametre satiri cizilir', async () => {
     renderWithProviders(<LaunchForm facts={FACTS} pinningConfigured />)
     expect(await screen.findByTestId('fixed-parameters')).toHaveTextContent(
-      'Curve parameters are fixed for every launch.',
+      'Curve parameters are the same for every launch.',
     )
   })
 
@@ -54,15 +54,21 @@ describe('<LaunchForm> -- S16, "Advanced" bolumu YOKTUR', () => {
 describe('<LaunchForm> -- S4, dev buy IKINCI BIR ISLEMDIR', () => {
   it('ayri islem oldugu ve tavan OLMADIGI yazilir', async () => {
     renderWithProviders(<LaunchForm facts={FACTS} pinningConfigured />)
-    expect(
-      await screen.findByText('A separate transaction. Your launch is live either way.'),
-    ).toBeInTheDocument()
-    expect(screen.getByTestId('no-cap-note')).toHaveTextContent(/no cap on a creator's first buy/i)
+    expect(await screen.findByText(/A separate transaction, with no cap/i)).toBeInTheDocument()
+    /*
+     * "TAVAN YOK" CUMLESI KALMALI, AMA ARTIK TEK SATIRDA.
+     * Uc ayri paragraf iki cumleye indi; korunan OLGU degismedi: kontratta
+     * tavan yok ve arayuz bunu SOYLUYOR. Soylememek daha kotudur --
+     * kullanici olmayan bir korumaya guvenerek buyuk bir ilk alim yapar.
+     */
+    expect(screen.getByText(/with no cap/i)).toBeInTheDocument()
+    // Ve fazlanin iade edildigi de yazili: imzadan once bilinmesi gereken sey.
+    expect(screen.getByTestId('refund-note')).toHaveTextContent(/refunded in the same transaction/i)
   })
 
   it('dev buy bolumunde HICBIR YUZDE gecmez', async () => {
     const { container } = renderWithProviders(<LaunchForm facts={FACTS} pinningConfigured />)
-    await screen.findByTestId('no-cap-note')
+    await screen.findByTestId('refund-note')
     const section = container.querySelector('section[aria-labelledby="devbuy-heading"]')
     expect(section).not.toBeNull()
     /*
@@ -149,7 +155,7 @@ describe('<LaunchForm> -- bos ve hata durumlari', () => {
     await screen.findByRole('button', { name: 'Launch' })
 
     await user.type(screen.getByLabelText('Name'), 'Diffusion')
-    await user.type(screen.getByLabelText('Symbol'), 'DIFF')
+    await user.type(screen.getByLabelText('Ticker'), 'DIFF')
     await user.type(screen.getByPlaceholderText('0.00'), '12.5')
     await user.click(screen.getByRole('button', { name: 'Launch' }))
 
@@ -162,7 +168,7 @@ describe('<LaunchForm> -- bos ve hata durumlari', () => {
      * baglamak olurdu.
      */
     expect(screen.getByLabelText('Name')).toHaveValue('Diffusion')
-    expect(screen.getByLabelText('Symbol')).toHaveValue('DIFF')
+    expect(screen.getByLabelText('Ticker')).toHaveValue('DIFF')
     expect(screen.getByPlaceholderText('0.00')).toHaveValue('12.5')
     // Ve tekrar denenebilir.
     expect(screen.getByRole('button', { name: 'Launch' })).toBeEnabled()
@@ -253,7 +259,7 @@ describe('<LaunchForm> -- launch sonrasi', () => {
     await screen.findByRole('button', { name: 'Launch' })
 
     await user.type(screen.getByLabelText('Name'), 'Diffusion')
-    await user.type(screen.getByLabelText('Symbol'), 'DIFF')
+    await user.type(screen.getByLabelText('Ticker'), 'DIFF')
     await user.type(screen.getByPlaceholderText('0.00'), '12.5')
     await user.click(screen.getByRole('button', { name: 'Launch' }))
 

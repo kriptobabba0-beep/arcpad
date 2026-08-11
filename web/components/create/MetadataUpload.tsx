@@ -151,10 +151,46 @@ export function MetadataUpload({
               }}
               className="text-[13px] text-muted file:mr-3 file:rounded-input file:border file:border-border file:bg-surface-2 file:px-3 file:py-1.5 file:text-text disabled:opacity-45"
             />
+            {/*
+              SECILEN GORSEL KALDIRILABILIR OLMALI.
+
+              Onceki hal yalnizca dosya ADINI yaziyordu ve geri donusu yoktu:
+              yanlis gorseli secen biri onu kaldiramiyordu. Tarayicinin kendi
+              dosya secicisi yeni bir secimle uzerine yazmaya izin verir, ama
+              SIFIRLAMAYA izin vermez -- ve pinlenmis URI formda kalmaya devam
+              ederdi, yani kullanici zincire YANLIS gorseli yazardi.
+
+              `input.value = ''` sart: aksi halde AYNI dosya ikinci kez
+              secildiginde `change` olayi hic atesmez (tarayici degeri ayni
+              gorur) ve kaldirdiktan sonra ayni gorseli geri koymak imkansiz
+              olurdu.
+            */}
             {file ? (
-              <p className="text-[12px] text-muted">
-                Selected: <span className="text-text">{file.name}</span>
-              </p>
+              <div className="flex items-center gap-2 rounded-input border border-border bg-surface-2 px-3 py-2">
+                <span className="min-w-0 flex-1 truncate text-[13px] text-text">{file.name}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFile(null)
+                    setUpload({ kind: 'idle' })
+                    if (inputRef.current !== null) inputRef.current.value = ''
+                    // Pinlenmis URI de DUSER: gorsel kaldirildiysa onu
+                    // gosteren adres de kalmamali.
+                    onPatch({ uri: '', image: '' })
+                  }}
+                  aria-label={`Remove ${file.name}`}
+                  className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted transition-colors duration-150 hover:bg-white/10 hover:text-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/40"
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                    <path
+                      d="M1 1l10 10M11 1L1 11"
+                      stroke="currentColor"
+                      strokeWidth="1.6"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </button>
+              </div>
             ) : null}
           </div>
 

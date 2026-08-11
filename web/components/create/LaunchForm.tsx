@@ -76,50 +76,52 @@ export function LaunchForm({ facts, pinningConfigured, driver }: LaunchFormProps
         }}
         className="flex flex-col gap-6"
       >
-        <section aria-labelledby="onchain-heading" className="flex flex-col gap-4">
-          <div>
-            <h2 id="onchain-heading" className="text-base font-semibold">
-              On chain, forever
-            </h2>
-            <p className="mt-1 text-[13px] leading-snug text-muted">
-              These three go into the transaction and cannot be changed afterwards. There is no
-              rename, and there is no second mint.
-            </p>
+        {/*
+          AD VE SEMBOL YAN YANA, VE BOLUM BASLIGI YOK.
+
+          Onceden her ikisi tam genislikte, ustlerinde bir baslik ve iki
+          satirlik bir aciklama vardi. Iki kisa alan icin uc satirlik cerceve,
+          formu okunmasi gereken bir DOKUMAN haline getiriyordu; oysa bir
+          launch formu DOLDURULUR. Degismezlik uyarisi kalir ama tek satira
+          iner ve alanlarin ALTINA gecer -- once ne yazacagini gor, sonra
+          bunun kalici oldugunu ogren.
+        */}
+        <section aria-labelledby="onchain-heading" className="flex flex-col gap-3">
+          <h2 id="onchain-heading" className="sr-only">
+            Name and ticker
+          </h2>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-[minmax(0,1fr)_180px]">
+            <div className="flex flex-col gap-1.5">
+              <Input
+                label="Name"
+                placeholder="Token name"
+                value={fields.name}
+                onChange={(event) => patch({ name: event.target.value })}
+                {...(launch.fieldErrors.name ? { error: launch.fieldErrors.name } : {})}
+              />
+              <ByteCounter value={fields.name} maxBytes={METADATA_LIMITS.name} />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Input
+                label="Ticker"
+                placeholder="symbol"
+                value={fields.symbol}
+                onChange={(event) => patch({ symbol: event.target.value })}
+                {...(launch.fieldErrors.symbol ? { error: launch.fieldErrors.symbol } : {})}
+              />
+              <ByteCounter value={fields.symbol} maxBytes={METADATA_LIMITS.symbol} />
+            </div>
           </div>
 
-          <div className="flex flex-col gap-1.5">
-            <Input
-              label="Name"
-              placeholder="Diffusion"
-              value={fields.name}
-              onChange={(event) => patch({ name: event.target.value })}
-              {...(launch.fieldErrors.name ? { error: launch.fieldErrors.name } : {})}
-            />
-            <ByteCounter value={fields.name} maxBytes={METADATA_LIMITS.name} />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Input
-              label="Symbol"
-              placeholder="DIFF"
-              value={fields.symbol}
-              onChange={(event) => patch({ symbol: event.target.value })}
-              {...(launch.fieldErrors.symbol ? { error: launch.fieldErrors.symbol } : {})}
-            />
-            <ByteCounter value={fields.symbol} maxBytes={METADATA_LIMITS.symbol} />
-          </div>
+          <p className="text-[13px] text-muted">Both go on chain and cannot be changed later.</p>
         </section>
 
         <section aria-labelledby="offchain-heading" className="flex flex-col gap-4">
-          <div>
-            <h2 id="offchain-heading" className="text-base font-semibold">
-              In the metadata file
-            </h2>
-            <p className="mt-1 text-[13px] leading-snug text-muted">
-              The description, the artwork and the links are not on chain. They live in the JSON
-              your metadata URI points at.
-            </p>
-          </div>
+          <h2 id="offchain-heading" className="sr-only">
+            Description, artwork and links
+          </h2>
 
           <div className="flex flex-col gap-1.5">
             <label htmlFor={descriptionId} className="text-[13px] font-medium text-muted">
@@ -147,18 +149,21 @@ export function LaunchForm({ facts, pinningConfigured, driver }: LaunchFormProps
             </span>
           </div>
 
-          <Input
-            label="X"
-            placeholder="https://x.com/…"
-            value={fields.x}
-            onChange={(event) => patch({ x: event.target.value })}
-          />
-          <Input
-            label="Telegram"
-            placeholder="https://t.me/…"
-            value={fields.telegram}
-            onChange={(event) => patch({ telegram: event.target.value })}
-          />
+          {/* Iki baglanti YAN YANA: ikisi de kisa ve ikisi de istege bagli. */}
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Input
+              label="X profile"
+              placeholder="https://x.com/…"
+              value={fields.x}
+              onChange={(event) => patch({ x: event.target.value })}
+            />
+            <Input
+              label="Telegram"
+              placeholder="https://t.me/…"
+              value={fields.telegram}
+              onChange={(event) => patch({ telegram: event.target.value })}
+            />
+          </div>
 
           <MetadataUpload
             pinningConfigured={pinningConfigured}
@@ -179,11 +184,8 @@ export function LaunchForm({ facts, pinningConfigured, driver }: LaunchFormProps
           ve bir kullaniciyi acip icinde bir sey aramaya gonderir. Ayni yere tek
           satir konur.
         */}
-        <p
-          data-testid="fixed-parameters"
-          className="rounded-card border border-border bg-surface-2 px-4 py-3 text-[13px] text-muted"
-        >
-          Curve parameters are fixed for every launch.
+        <p data-testid="fixed-parameters" className="text-[13px] text-muted">
+          Curve parameters are the same for every launch.
         </p>
 
         <section aria-labelledby="devbuy-heading" className="flex flex-col gap-3">
@@ -202,36 +204,34 @@ export function LaunchForm({ facts, pinningConfigured, driver }: LaunchFormProps
               olurdu -- ve tavan olmadigini SOYLEMEMEK daha kotusudur:
               kullanici bir koruma varsayarak daha buyuk bir ilk alim yapar.
             */}
-            <p className="mt-1 text-[13px] leading-snug text-muted">
-              A separate transaction. Your launch is live either way.
-            </p>
-            <p data-testid="no-cap-note" className="mt-1 text-[13px] leading-snug text-muted">
-              There is no cap on a creator&apos;s first buy: nothing in the contract limits it, so
-              nothing here can promise one.
-            </p>
             {/*
-              TAVANSIZ ILE SESSIZ AYNI SEY DEGIL.
+              UC PARAGRAF YERINE IKI CUMLE.
 
-              Ustteki cumle dogru ve kalir: kontratta tavan yok, arayuzun
-              uyduracagi bir tavan yalan olurdu. Ama tavani olmayan bir kutuya
-              1000 yazan biri 1000 harcayacagini SANIR -- ve harcamaz:
-              `buyExactQuoteIn` kalan rezervin tamamini satar, ucreti o kisilmis
-              anapara uzerinden alir ve GERI KALANI AYNI ISLEMDE iade eder
-              (`BondingCurve._settleBuy`; iade duserse islem komple geri doner,
-              yani "iade edemedik ama tuttuk" hali yok).
+              Onceden burada uc ayri aciklama alt alta duruyordu: "ayri bir
+              islem", "tavan yok", ve iade cumlesi. Ucu de DOGRUYDU ve ucu de
+              ust uste okundugunda hicbiri okunmuyordu -- bir form alaninin
+              ustundeki uc satirlik metin, alanin kendisini gozden siler.
 
-              Kullanicinin bunu ISLEMI IMZALAMADAN once bilmesi gerekir. Sayi
-              `graduationRaiseWei` DEGIL: o curve'e giren tutardir, bu ise
-              gonderilen tutardir ve aradaki fark ucrettir (95 + 30 bps).
+              KALAN IKI OLGU, VE IKISI DE ATILAMAZ:
+              (1) TAVAN YOK. `LaunchFactory.launch` `payable` degildir ve
+                  hicbir yerde tavan kontrolu yoktur; arayuzun gosterecegi bir
+                  tavan yalan olurdu, ve tavani SOYLEMEMEK daha kotudur --
+                  kullanici olmayan bir korumaya guvenerek buyuk bir ilk alim
+                  yapar.
+              (2) FAZLASI IADE EDILIR. `buyExactQuoteIn` kalan rezervi satar ve
+                  artani AYNI islemde geri oder; bunu imzadan once bilmeyen
+                  biri 1000 harcadigini sanir.
             */}
+            <p className="mt-1 text-[13px] leading-snug text-muted">
+              A separate transaction, with no cap — you can buy the whole curve.
+            </p>
             {facts === null ? null : (
               <p data-testid="refund-note" className="mt-1 text-[13px] leading-snug text-muted">
                 The whole curve costs{' '}
                 <span className="font-medium text-text">
                   <Money native={facts.fullCurveBudgetWei} rounding="up" unit />
                 </span>
-                . Send more than that and the extra comes straight back in the same transaction —
-                the curve sells what is left and refunds the rest.
+                . Anything above that is refunded in the same transaction.
               </p>
             )}
           </div>
