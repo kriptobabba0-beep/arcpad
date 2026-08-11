@@ -1147,14 +1147,16 @@ export async function runWithRetry(
       const { details } = asRpcError(info.error)
       console.warn(
         `[indexer] ${info.rateLimited ? 'RATE LIMITED' : 'transient RPC error'}, ` +
-          `retrying in ${info.delayMs}ms (attempt ${info.attempt}/${
-            info.rateLimited ? config.rateLimitMaxAttempts : config.maxAttempts
+          `retrying in ${info.delayMs}ms (attempt ${info.attempt}${
+            info.rateLimited ? '' : `/${config.maxAttempts}`
           }): ${details}`,
       )
     })
   let lastError: unknown
   let attempts = 0
   let rateLimited = 0
+
+
   for (;;) {
     try {
       return await runOnce(pool, client, deployment, config, options)
@@ -1163,8 +1165,31 @@ export async function runWithRetry(
       lastError = error
       const limited = isRateLimit(error)
       if (limited) {
+        /*
+         * ===============================================================
+         *  HIZ SINIRI BIR ARIZA DEGIL, BIR ORTAM KOSULUDUR -- VE ARTIK
+         *  BU SUREC ONUN YUZUNDEN OLMEZ.
+         * ===============================================================
+         *
+         * ESKI HAL: sekiz denemeden sonra `throw` -> surec `exit 1` ->
+         * systemd 5 sn sonra yeniden baslatir -> ayni dolu kovaya AYNI
+         * istegi yollar -> yine olur. Uretimde olculdu: 141 yeniden
+         * baslatma, ve imlec 60 saniyede SIFIR blok ilerledi. Yani
+         * "yavaslama" olarak tasarlanan sey CANLI KILIDE donusmustu, ve
+         * yeniden baslatmanin kendisi durumu KOTULESTIRIYORDU: her acilis
+         * kovayi yeniden dolduran taze bir istek demek.
+         *
+         * Bir zinciri takip etmekle gorevli bir surec, karsi tarafin
+         * "simdi degil" demesi yuzunden PES ETMEZ. Yavaslar. Bu yuzden
+         * hiz siniri dalinda ust sinir YOKTUR ve `backoffMs` zaten 30
+         * saniyede tavanlanir -- yani en kotu ihtimalle 30 saniyede bir
+         * dener, sonsuza kadar, ve kova bosaldigi an devam eder.
+         *
+         * `maxAttempts` DIGER gecici hatalar icin AYNEN DURUYOR: bir DNS
+         * arizasi ya da kopuk bir soket, sekiz denemede gecmiyorsa
+         * gercekten yanlis bir sey var ve gurultulu olmasi dogru.
+         */
         rateLimited += 1
-        if (rateLimited >= config.rateLimitMaxAttempts) throw lastError
       } else {
         attempts += 1
         if (attempts >= config.maxAttempts) throw lastError

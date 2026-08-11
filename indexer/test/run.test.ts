@@ -657,6 +657,61 @@ describe('gecici hata politikasi', () => {
   })
 
   /**
+   * ==========================================================================
+   *  HIZ SINIRI BU SURECI ARTIK OLDURMEZ -- URETIMDE OLCULEN ARIZA.
+   * ==========================================================================
+   *
+   * ESKI SOZLESME: sekiz denemeden sonra firlat -> `exit 1` -> systemd 5 sn
+   * sonra yeniden baslatir -> ayni dolu kovaya AYNI istegi yollar -> yine
+   * olur. Uretimde olculdu: 141 YENIDEN BASLATMA ve imlec 60 saniyede SIFIR
+   * blok. Yani "yavaslama" diye tasarlanan sey CANLI KILIDE donusmustu, ve
+   * yeniden baslatmanin kendisi durumu KOTULESTIRIYORDU -- her acilis, zaten
+   * dolu kovaya taze bir istek demek.
+   *
+   * YENI SOZLESME: hiz sinirinda deneme sayisinin USTU YOKTUR. `backoffMs`
+   * 30 saniyede tavanlanir, yani en kotu ihtimalle 30 saniyede bir dener --
+   * sonsuza kadar -- ve kova bosaldigi an devam eder. Bir zinciri takip
+   * etmekle gorevli bir surec, karsi taraf "simdi degil" dedi diye pes etmez.
+   *
+   * `maxAttempts` DIGER gecici hatalar icin aynen duruyor: bir DNS arizasi
+   * sekiz denemede gecmiyorsa gercekten yanlis bir sey vardir.
+   */
+  it('hiz siniri ESKI BUTCEYI KAT KAT assa bile surec pes ETMEZ', async () => {
+    let refusals = 0
+    // Eski butce 8'di. Onun uc katindan fazla reddet.
+    const REFUSALS = 25
+    const stubborn: RpcClient = {
+      request: async (args) => {
+        if (args.method === 'eth_getLogs' && refusals < REFUSALS) {
+          refusals += 1
+          throw Object.assign(new Error('rate limit exceeded'), { code: -32005 })
+        }
+        return new ChainNode(logs).request(args)
+      },
+    }
+    const slept: number[] = []
+    const result = await runWithRetry(pool, stubborn, LIVE_DEPLOYMENT, CONFIG, {
+      sleep: async (ms) => {
+        slept.push(ms)
+      },
+    })
+
+    expect(refusals).toBe(REFUSALS)
+    // Eski hal burada FIRLATIRDI. Simdi is bitiyor ve imlec ILERLIYOR --
+    // yavas, ama duruyor degil.
+    expect(result).not.toBeNull()
+    expect((await getCursor(pool))?.lastBlock).toBe(LAST)
+    /*
+     * BIR GECISTE BIRDEN COK `eth_getLogs` VAR (ayri konu gruplari), yani
+     * 25 ret 25'ten COK yeniden deneme uretir. Olculen sey sayinin kendisi
+     * degil: HER ret yeniden denendi (>= REFUSALS) ve HICBIR bekleme 30
+     * saniyelik tavani asmadi -- sonsuz sabir, sonsuz bekleme DEGIL.
+     */
+    expect(slept.length).toBeGreaterThanOrEqual(REFUSALS)
+    for (const ms of slept) expect(ms).toBeLessThanOrEqual(30_000)
+  })
+
+  /**
    * ============ BOS BLOK YANITI: GECICI, VE ESKIDEN OYLE DEGILDI ============
    *
    * Uc blok okuma yeri de CIPLAK `new Error(...)` firlatiyordu. `name`
@@ -775,9 +830,20 @@ describe('gecici hata politikasi', () => {
    * arizayi ISKALARDI -- eski kod da bes kez deniyordu.
    */
   it('HIZ SINIRI kendi butcesini ve merdivenini kullanir -- saniyeler, milisaniyeler degil', async () => {
+    /*
+     * SINIRLI SAYIDA REDDET, SONRA GECIR.
+     *
+     * Eski hal SONSUZA KADAR reddediyordu ve testin bitis kosulu
+     * `runWithRetry`in bir butceyi tuketip FIRLATMASIYDI. O sozlesme kalkti:
+     * hiz sinirinda ust sinir YOKTUR artik (uretimde olculdu -- 141 yeniden
+     * baslatma ve imlec 60 saniyede sifir blok). Olculen OZELLIK degismedi,
+     * yalnizca nereden okundugu degisti: merdiven `delays` dizisinden.
+     */
+    let refusals = 0
     const limited: RpcClient = {
       request: async (args) => {
-        if (args.method === 'eth_getLogs') {
+        if (args.method === 'eth_getLogs' && refusals < 8) {
+          refusals += 1
           throw Object.assign(new Error('rate limit exceeded'), { code: -32005, status: 429 })
         }
         return new ChainNode(logs).request(args)
@@ -785,25 +851,18 @@ describe('gecici hata politikasi', () => {
     }
     const slept: number[] = []
     const delays: number[] = []
-    await expect(
-      runWithRetry(
-        pool,
-        limited,
-        LIVE_DEPLOYMENT,
-        { ...CONFIG, maxAttempts: 3, rateLimitMaxAttempts: 8 },
-        {
-          sleep: async (ms) => {
-            slept.push(ms)
-          },
-          onRetry: (info) => {
-            delays.push(info.delayMs)
-          },
-        },
-      ),
-    ).rejects.toThrow(/rate limit/)
+    await runWithRetry(pool, limited, LIVE_DEPLOYMENT, { ...CONFIG, maxAttempts: 3 }, {
+      sleep: async (ms) => {
+        slept.push(ms)
+      },
+      onRetry: (info) => {
+        delays.push(info.delayMs)
+      },
+    })
 
-    // GENEL butce (3) DEGIL, hiz siniri butcesi (8) harcandi.
-    expect(delays).toHaveLength(7)
+    // GENEL butce (3) hiz sinirini SINIRLAMAZ: sekiz reddin sekizi de
+    // yeniden denendi, yani `maxAttempts` bu dala hic karismadi.
+    expect(delays).toHaveLength(8)
     const total = delays.reduce((a, b) => a + b, 0)
     // Eski davranisin TAVANI 3.750ms idi ve limit 3.000ms araliklarda bile
     // bir kez reddediyordu. Yeni taban tek basina onu asiyor.
@@ -814,8 +873,16 @@ describe('gecici hata politikasi', () => {
     // SAYISI artar, SURESI degil -- C1'in butun mekanizmasi budur.
     expect(Math.max(...slept)).toBeLessThanOrEqual(LIVENESS_BEAT_MS)
     expect(slept.reduce((a, b) => a + b, 0)).toBe(total)
-    // Ve imlec YERINDE: butce tukendiginde bile hicbir sey yazilmadi.
-    expect(await getCursor(pool)).toBeNull()
+    /*
+     * VE IMLEC ARTIK ILERLIYOR -- olculen sey de bu degil.
+     *
+     * Eski hal "butce tukendi, hicbir sey yazilmadi" diyordu. O sozlesme
+     * kalkti: hiz sinirinda butce YOK, surec bekler ve gecince isini yapar.
+     * Bu testin korudugu ozellik MERDIVENIN OLCEGI (saniyeler, milisaniyeler
+     * degil) ve o yukarida olculuyor. Imlecin ilerlemesi, duzeltmenin
+     * calistiginin ta kendisi.
+     */
+    expect(await getCursor(pool)).not.toBeNull()
   })
 
   /**
@@ -845,20 +912,24 @@ describe('gecici hata politikasi', () => {
     if (!before.stale) throw new Error('unreachable')
     expect(before.why).toBe('stopped-and-behind')
 
+    /*
+     * UC KEZ REDDET, SONRA GECIR. Eski hal sonsuza kadar reddediyordu ve
+     * testin bitis kosulu bir butcenin tukenmesiydi -- o sozlesme kalkti.
+     * OLCULEN SEY AYNI: geri cekilme SESSIZ DEGILDIR, sirasinda canlilik
+     * yazilir, ve okuma katmani "durmus" demez.
+     */
+    let refusals = 0
     const limited: RpcClient = {
-      request: () =>
-        Promise.reject(
-          Object.assign(new Error('rate limit exceeded'), { code: -32005, status: 429 }),
-        ),
+      request: async (args) => {
+        if (refusals < 3) {
+          refusals += 1
+          throw Object.assign(new Error('rate limit exceeded'), { code: -32005, status: 429 })
+        }
+        return new ChainNode(logs).request(args)
+      },
     }
     // GERCEK uykular: `sleep` gecilmiyor.
-    await expect(
-      runWithRetry(pool, limited, LIVE_DEPLOYMENT, {
-        ...CONFIG,
-        maxAttempts: 3,
-        rateLimitMaxAttempts: 3,
-      }),
-    ).rejects.toThrow(/rate limit/)
+    await runWithRetry(pool, limited, LIVE_DEPLOYMENT, { ...CONFIG, maxAttempts: 3 })
 
     const after = await getIndexerStatus(pool, { staleAfterSeconds: 1 })
     if (!after.stale) throw new Error('unreachable')

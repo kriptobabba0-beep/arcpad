@@ -134,12 +134,25 @@ main().catch((error: unknown) => {
   // doygunluk altinda (5.376 istegin 5.374'u reddedildi) indexer YEDI kez geri
   // cekildi, toplam 74,5 saniye bekledi, sonra bu satirdan cikti. Eski tavan
   // 3,75 saniyeydi.
+  /*
+   * BURAYA HIZ SINIRIYLA GELINMEZ, VE GELINMEMELI.
+   *
+   * Eski hal: hiz siniri sekiz denemede gecmezse `runWithRetries` firlatirdi
+   * ve bu dal `exit 1` verirdi. Uretimde olculdu -- 141 yeniden baslatma,
+   * imlec 60 saniyede sifir blok. Cikmak durumu DUZELTMIYOR, kotulestiriyor:
+   * her yeniden baslatma, zaten dolu olan kovaya taze bir istek yolluyor.
+   *
+   * `run.ts` artik hiz sinirinda ust sinir tanimiyor (30 sn tavanli sonsuz
+   * geri cekilme) ve aralik kendini yariliyor, yani bu surec hiz siniri
+   * yuzunden ASLA cikmaz. Bu dal, siniflandirmanin bir gun degismesi
+   * ihtimaline karsi duruyor ve artik "cikiyorum" DEMIYOR -- cunku buraya
+   * duserse gercekten beklenmedik bir sey olmus demektir.
+   */
   if (isRateLimit(error)) {
     console.error(
-      `[indexer] EXITING because Arc's rate limit did not clear across ${loadConfig().rateLimitMaxAttempts} attempts. ` +
-        `This is a BUDGET decision, not a classification bug: the code is retried, and it was retried. ` +
-        `Raise INDEXER_RATE_LIMIT_MAX_ATTEMPTS, raise INDEXER_MIN_REQUEST_INTERVAL_MS, or use a less contended endpoint. ` +
-        `The cursor was NOT advanced, so a restart resumes exactly where this run stopped.`,
+      `[indexer] UNEXPECTED: a rate-limit error escaped the retry loop, which no longer gives up ` +
+        `on rate limiting. The cursor was NOT advanced, so a restart resumes exactly where this ` +
+        `run stopped -- but this path should be unreachable and is worth investigating.`,
     )
   }
   process.exitCode = 1
