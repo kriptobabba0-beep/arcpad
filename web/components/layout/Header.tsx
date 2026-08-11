@@ -33,38 +33,47 @@ export function Header() {
         ile hizalanmis bir arama kutusu o anda sola kayardi.
       */}
       <div className="mx-auto flex h-[68px] max-w-[1500px] items-center gap-3 px-4 sm:px-6">
-        <Link
-          href="/"
-          className="flex items-baseline gap-2 rounded-sm"
-          aria-label={`${BRAND.name} home`}
-        >
-          {/*
+        {/*
+          SOL KUME `flex-1 basis-0` -- VE BU, ORTALAMANIN SARTI.
+          Ilk hal yalnizca ORTA bolgeye `flex-1` veriyordu; yan bolgeler
+          dogal genisliginde kaliyordu, dolayisiyla orta bolgenin merkezi
+          CUBUGUN merkezi degildi ve kutu saga kayik duruyordu. Uc bolge de
+          `basis-0` ile ayni payi alinca orta bolge gercekten ortalanir --
+          icerikleri farkli genislikte olsa bile.
+        */}
+        <div className="flex min-w-0 flex-1 basis-0 items-center gap-2 sm:gap-3">
+          <Link
+            href="/"
+            className="flex items-baseline gap-2 rounded-sm"
+            aria-label={`${BRAND.name} home`}
+          >
+            {/*
             Serif wordmark, geometrik sans govde (§7.3). Serif YALNIZCA burada,
             footer'daki sloganda ve token monogramlarinda gorunur -- ucu de
             "kimlik" isi. Arayuzun geri kalani tek bir sans yuzudur; iki yuzun
             her yerde yarismasi yogun bir tarama yuzeyini yorar.
           */}
-          <span className="font-serif text-[26px] leading-none tracking-[-0.015em] text-text">
-            {BRAND.wordmark}
-          </span>
-        </Link>
+            <span className="font-serif text-[26px] leading-none tracking-[-0.015em] text-text">
+              {BRAND.wordmark}
+            </span>
+          </Link>
 
-        {/*
+          {/*
           Gizleme SARMALAYICIDA, Pill'in kendi className'inde DEGIL. `cx`
           cakisma cozmez (bkz. `components/ui/cx.ts`) ve `hidden` ile Pill'in
           taban `inline-flex`'i ayni ozelliktir: hangisinin kazandigini
           Tailwind'in URETIM SIRASI belirler, yazim sirasi degil. Olculdu --
           `className="hidden sm:inline-flex"` 390px'te gizlemedi.
         */}
-        {chain.testnet ? (
-          <span className="hidden sm:block">
-            <Pill tone="accent" dot>
-              {chain.name}
-            </Pill>
-          </span>
-        ) : null}
+          {chain.testnet ? (
+            <span className="hidden sm:block">
+              <Pill tone="accent" dot>
+                {chain.name}
+              </Pill>
+            </span>
+          ) : null}
 
-        {/*
+          {/*
           NAVIGATION IS WHAT MAKES A ROUTE EXIST.
 
           `/analytics` shipped with no link to it and would have been reachable
@@ -76,20 +85,21 @@ export function Header() {
           address at the header level. It is reached from the wallet chip, from
           a launch's creator, and from a holder row.
         */}
-        <nav aria-label="Primary" className="ml-2 hidden items-center gap-4 md:flex">
-          <Link
-            href="/"
-            className="rounded-sm px-1 text-[15px] text-muted transition-colors duration-150 hover:text-text"
-          >
-            Explore
-          </Link>
-          <Link
-            href="/analytics"
-            className="rounded-sm px-1 text-[15px] text-muted transition-colors duration-150 hover:text-text"
-          >
-            Analytics
-          </Link>
-        </nav>
+          <nav aria-label="Primary" className="ml-2 hidden items-center gap-4 md:flex">
+            <Link
+              href="/"
+              className="rounded-sm px-1 text-[15px] text-muted transition-colors duration-150 hover:text-text"
+            >
+              Explore
+            </Link>
+            <Link
+              href="/analytics"
+              className="rounded-sm px-1 text-[15px] text-muted transition-colors duration-150 hover:text-text"
+            >
+              Analytics
+            </Link>
+          </nav>
+        </div>
 
         {/*
           ORTA BOLGE. `flex-1` + `justify-center`: kutu, kendisinden solda ve
@@ -100,11 +110,11 @@ export function Header() {
           `SearchBar`'da. Bolunmenin sebebi: kabuk, veritabanina ve
           `verifyCanonical`'a bagli olan aramadan ONCE ayakta olmali.
         */}
-        <div className="flex min-w-0 flex-1 justify-center px-2">
+        <div className="flex min-w-0 flex-1 basis-0 justify-center px-2">
           <SearchBar />
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-1 basis-0 items-center justify-end gap-2">
           {/*
             `aria-label` KOSULSUZ. Dar ekranda "Create" metni gizlenir ve
             geriye yalnizca `aria-hidden` bir `+` kalir -- yani baglantinin

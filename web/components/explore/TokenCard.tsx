@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { TokenArtwork } from '@/components/layout/TokenArtwork'
 import type { TokenOverview } from '@/components/read/types'
+import { cx } from '@/components/ui/cx'
 import { LiveNumber } from '@/components/ui/LiveNumber'
 import { Pill } from '@/components/ui/Pill'
 import { relativeAge, relativeAgeLabel } from '@/components/ui/relativeAge'
@@ -80,7 +81,25 @@ export function TokenCard({
     <Link
       href={`/token/${overview.token}`}
       aria-label={label}
-      className="group flex flex-col overflow-hidden rounded-card border border-border bg-surface transition-colors duration-150 hover:border-white/18 hover:bg-surface-2"
+      /*
+        HOVER'DA HAFIF BIR YUKSELME.
+        Yalnizca renk degistiren bir kart, farenin altinda oldugunu ZAR ZOR
+        soyler -- ozellikle 48 kartlik bir izgarada, hepsi ayni renkteyken.
+        `-translate-y-1` + buyuyen bir golge, karti duzlemden AYIRIR ve
+        "bunun uzerindesin" bilgisini renge degil DERINLIGE yazar.
+
+        `motion-reduce:` dali zorunlu: hareketi azaltilmis bir sistemde
+        yukselme ve olcek KAPANIR, renk ve kenarlik kalir (WCAG 2.3.3).
+        `will-change` YOK -- 48 kart icin 48 kompozit katman, kazandirdigi
+        birkac milisaniyeden pahaliya mal olur.
+      */
+      className={cx(
+        'group flex flex-col overflow-hidden rounded-card border border-border bg-surface',
+        'transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out',
+        'hover:-translate-y-1 hover:border-white/25 hover:bg-surface-2 hover:shadow-xl hover:shadow-black/50',
+        'focus-visible:-translate-y-1 focus-visible:shadow-xl focus-visible:shadow-black/50',
+        'motion-reduce:transform-none motion-reduce:hover:translate-y-0',
+      )}
     >
       {/*
         YAS ROZETI GORSELIN USTUNDE DURUR, metin blogunda degil.
@@ -94,7 +113,7 @@ export function TokenCard({
           uri={imageUrl ?? null}
           size="fill"
           symbol={overview.symbol}
-          className="rounded-none border-0 border-b border-border"
+          className="rounded-none border-0 border-b border-border transition-transform duration-300 ease-out group-hover:scale-[1.04] motion-reduce:transform-none"
         />
         <span
           aria-hidden="true"

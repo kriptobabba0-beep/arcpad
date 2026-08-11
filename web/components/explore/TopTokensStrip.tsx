@@ -116,7 +116,14 @@ export function TopTokensStrip({
         ref={railRef}
         onScroll={measure}
         aria-label="Top tokens by FDV"
-        className="-mx-1 flex gap-4 overflow-x-hidden px-1 pb-1"
+        /*
+          DIKEY PAY, HOVER YUKSELMESI ICIN -- VE BU BIR CSS KURALI, TERCIH DEGIL.
+          `overflow-x: hidden` verilince digor eksen `visible` KALAMAZ: CSS onu
+          `auto`ya cevirir, yani serit DIKEYDE DE kirpar. Payi olmayan bir
+          seritte `hover:-translate-y-1` kartin ustunu ve golgesini keserdi.
+          `-my-2 py-3` disaridaki bosluk butcesini bozmadan iceride yer acar.
+        */
+        className="-mx-1 -my-2 flex gap-4 overflow-x-hidden px-1 py-3"
       >
         {tokens.map((t) => (
           <li key={t.token}>
@@ -183,7 +190,13 @@ function TopTokenCard({
     <Link
       href={`/token/${overview.token}`}
       aria-label={label}
-      className="flex w-[356px] shrink-0 overflow-hidden rounded-card border border-border bg-surface transition-colors duration-150 hover:border-white/18 hover:bg-surface-2"
+      className={cx(
+        'group flex w-[356px] shrink-0 overflow-hidden rounded-card border border-border bg-surface',
+        'transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out',
+        'hover:-translate-y-1 hover:border-white/25 hover:bg-surface-2 hover:shadow-xl hover:shadow-black/50',
+        'focus-visible:-translate-y-1 focus-visible:shadow-xl focus-visible:shadow-black/50',
+        'motion-reduce:transform-none motion-reduce:hover:translate-y-0',
+      )}
     >
       <div className="relative w-[124px] shrink-0">
         <TokenArtwork
@@ -191,7 +204,7 @@ function TopTokenCard({
           uri={imageUrl}
           size="fill"
           symbol={overview.symbol}
-          className="h-full rounded-none border-0"
+          className="h-full rounded-none border-0 transition-transform duration-300 ease-out group-hover:scale-[1.04] motion-reduce:transform-none"
         />
         <span
           aria-hidden="true"
