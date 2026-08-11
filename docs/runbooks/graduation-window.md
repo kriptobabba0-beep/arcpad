@@ -223,6 +223,29 @@ poll, as `state=catching-up` plus `log-scan-deferred`.
 
 If you ever see `watcher-state-read-failed` naming `request limit reached`, the retry budget has been exhausted, not bypassed: the endpoint is degraded beyond what 14 attempts can ride out. That is a real page.
 
+### The limit is weighted **by method**, and the scan now backs off when it loses
+
+**Re-measured 2026-08-11 on the live deployment**, and the first measurement was wrong in a way worth recording. Twenty `eth_getLogs` sent 400 ms apart returned **0/20** — but that burst *was* the load; the diagnostic drained the bucket it was measuring. Paced honestly, one call every five seconds for a minute:
+
+| Method | Result in the same minute |
+|---|---|
+| `eth_getLogs` (204 blocks, factory topics) | **2/12** succeeded |
+| `eth_call`, `eth_blockNumber` | **12/12** succeeded |
+
+**The budget is per-method, and only the log budget was gone.** We spent it ourselves: the indexer walks the chain and this watcher scans the factory, from one IP against one endpoint. In the thirty minutes before the fix the watcher produced **8 pages and 4 heartbeats**, including `watcher-heartbeat-missed: no completed poll for 90022ms` — a poll that spends fourteen retries on a call that will not succeed cannot finish inside a 60 s budget.
+
+**The response is not a bigger constant.** The section above already established there is no "slow enough" number to pick. Instead `ScanHealth` now carries a cooldown: after consecutive scan failures the scan is **skipped** for 0, 0, 1, 3, 7, 15 polls (capped — 7.5 minutes at the deployed interval), cleared by any success.
+
+Three properties, and the first is the one that matters:
+
+1. **The alarm does not slow down.** Severity comes from `classify(state, allowlist)` — `graduationTarget`, `pendingGraduationTarget`, `eta`, all `eth_call`, all healthy. Exposure comes from the logs and, as the code's own NatSpec says, "does not enter the severity level, it only enriches the message". A hostile target is caught on the same poll whether the scan ran or not. A unit test asserts exactly this: an unallowlisted target that has already landed pages **during** a cooldown.
+2. **The first cooldown starts after the page, not before it.** The ladder is 0 for the first two failures, and two consecutive failures is what pages — so the watcher tries at full speed right up to the moment it admits something is wrong.
+3. **A skip is neither success nor failure.** The counter holds and a page that has fired stays fired. What gets quieter is the retrying, not the warning.
+
+Observed on the box within four minutes of deploying: `log-scan-failed` page at 22:00:57, then `log-scan-cooling-down` at 22:02:20 instead of a third identical attempt — while the indexer stayed at `behind 0`, writing every five seconds.
+
+**This is mitigation, not a cure.** One endpoint serving two log-scanning processes is the underlying condition, and its fix is `TODO(owner) 7` — a second RPC endpoint. Until then the exposure figure goes stale during a squeeze, and says so.
+
 **Arc has at least two rate-limit codes, and the second was documented as "unused".** The first round measured `-32011` and `chainReader.ts` recorded that `-32005` "is not used by Arc; accepted for completeness". Re-measured against the same endpoint on 2026-08-02, the answers came back **mixed** — `-32005`, `-32011`, `-32005` on consecutive ids. Both are in the retry set so the behaviour was always right, but the *reason written down* was wrong, and a wrong reason is what gets a working guard deleted as dead code. **Do not trim either code.** If `-32005` were removed, every rate limit carrying it would go un-retried: the poll fails, **no heartbeat is emitted**, and the weekly drill reports "there was no watcher" for a watcher that is alive.
 
 ### A range error is not a rate limit, and only one of them is fixed by waiting
