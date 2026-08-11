@@ -11,6 +11,7 @@ import {
 import type { ReactNode } from 'react'
 import { cx } from '@/components/ui/cx'
 import { Money } from '@/components/ui/Money'
+import { UsdcMark } from '@/components/ui/UsdcMark'
 import {
   BOUND_LABEL,
   formatBps,
@@ -97,7 +98,7 @@ function Row({
 
 const Usdc = ({ native, rounding }: { native: bigint; rounding: 'up' | 'down' }) => (
   <>
-    <Money native={native} rounding={rounding} /> <span className="text-muted">USDC</span>
+    <Money native={native} rounding={rounding} /> <UsdcMark size={14} className="text-muted" />
   </>
 )
 

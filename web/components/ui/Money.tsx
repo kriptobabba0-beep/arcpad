@@ -1,5 +1,6 @@
 import { formatUsdcAmount, type Rounding } from '@arcpad/shared/browser'
 import { cx } from './cx'
+import { UsdcMark } from './UsdcMark'
 
 export type MoneyProps = {
   /**
@@ -55,7 +56,12 @@ export function Money({
   return (
     <span className={cx('tabular-nums', className)} data-rounding={rounding}>
       {text}
-      {unit ? <span className="ml-1 text-muted">USDC</span> : null}
+      {/*
+        BIRIM ARTIK ISARET + AD. Isaret `aria-hidden`, ad okunur -- bkz.
+        `UsdcMark`. Metin "USDC" tek basina dogruydu; isaret onu bir MARKA
+        yapar ve para birimini bir bakista taninir kilar.
+      */}
+      {unit ? <UsdcMark size={14} className="ml-1.5 text-muted" /> : null}
     </span>
   )
 }

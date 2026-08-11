@@ -5,6 +5,7 @@ import { useCallback, useId, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { Money } from '@/components/ui/Money'
+import { UsdcMark } from '@/components/ui/UsdcMark'
 import { getWebConfig } from '@/lib/addresses'
 import { useArcNetwork } from '@/hooks/useArcNetwork'
 import { ByteCounter } from './ByteCounter'
@@ -241,7 +242,7 @@ export function LaunchForm({ facts, pinningConfigured, driver }: LaunchFormProps
             hideLabel
             inputMode="decimal"
             placeholder="0.00"
-            suffix="USDC"
+            suffix={<UsdcMark size={16} />}
             value={buyAmount}
             onChange={(event) => setBuyAmount(event.target.value)}
             {...(buyInvalid ? { error: 'Enter an amount like 12.50, or leave this empty.' } : {})}
