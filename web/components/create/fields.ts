@@ -5,7 +5,7 @@ import {
   sanitiseForDisplay,
   utf8ByteLength,
 } from '@arcpad/shared/browser'
-import { DESCRIPTION_LIMIT } from '@/lib/metadata'
+import { DESCRIPTION_LIMIT } from '@/lib/metadataLimits'
 
 /**
  * UC ALAN ZINCIRE GIDER, DORT ALAN GITMEZ.
