@@ -99,9 +99,35 @@ describe('<LaunchForm> -- bos ve hata durumlari', () => {
     await user.type(name, 'Diffusion')
     expect(name).toHaveValue('Diffusion')
 
-    expect(screen.getByRole('button', { name: 'Connect wallet' })).toBeDisabled()
-    // Devre disi bir buton cikmaz sokaktir; nereye gidilecegi YAZILI.
-    expect(screen.getByText(/Use the Connect wallet button at the top/i)).toBeInTheDocument()
+    /*
+     * BUTON ARTIK ETKIN VE BAGLANTIYI KENDISI ACIYOR.
+     *
+     * Eski sozlesme: devre disi bir buton + altinda "yukaridaki dugmeyi
+     * kullan" cumlesi. Cumle dogru bir reflekstir (devre disi bir buton
+     * cikmaz sokaktir ve nereye gidilecegi yazili olmali) ama daha dogrusu
+     * BUTONU CALISTIRMAKTI: kullanici formu doldurmus, imzalamaya hazir, ve
+     * ona ekranin baska bir yerine gitmesi soyleniyordu.
+     *
+     * Ikinci bir baglayici listesi KURULMUYOR: buton `WalletButton`in
+     * `data-wallet-connect` tasiyan dugmesine basiyor -- `TradePanel` de ayni
+     * yoldan geciyor ve o bilesenin yorumu iki liste kurmayi acikca
+     * yasakliyor.
+     */
+    const connect = screen.getByRole('button', { name: 'Connect wallet' })
+    expect(connect).toBeEnabled()
+    // Ve form gonderMEZ: bagli degilken tip `button`, `submit` degil.
+    expect(connect).toHaveAttribute('type', 'button')
+
+    let clicked = 0
+    const proxy = document.createElement('button')
+    proxy.setAttribute('data-wallet-connect', '')
+    proxy.addEventListener('click', () => {
+      clicked += 1
+    })
+    document.body.appendChild(proxy)
+    await user.click(connect)
+    expect(clicked).toBe(1)
+    proxy.remove()
   })
 
   it('yanlis agda buton ag degistirir, launch etmez', async () => {

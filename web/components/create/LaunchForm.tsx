@@ -152,15 +152,23 @@ export function LaunchForm({ facts, pinningConfigured, driver }: LaunchFormProps
 
           {/* Iki baglanti YAN YANA: ikisi de kisa ve ikisi de istege bagli. */}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {/*
+              SABIT KISIM EKRANDA, KULLANICI YALNIZCA KULLANICI ADINI YAZAR.
+              Tam URL yazdirmak gereksiz bir is ve bir belirsizlik kaynagi:
+              "https://x.com/ad" mi, "x.com/ad" mi, "@ad" mi? Onek bunu
+              gosterir ve soruyu ortadan kaldirir.
+            */}
             <Input
               label="X profile"
-              placeholder="https://x.com/…"
+              prefix="x.com/"
+              placeholder="handle"
               value={fields.x}
               onChange={(event) => patch({ x: event.target.value })}
             />
             <Input
               label="Telegram"
-              placeholder="https://t.me/…"
+              prefix="t.me/"
+              placeholder="community"
               value={fields.telegram}
               onChange={(event) => patch({ telegram: event.target.value })}
             />
@@ -192,7 +200,7 @@ export function LaunchForm({ facts, pinningConfigured, driver }: LaunchFormProps
         <section aria-labelledby="devbuy-heading" className="flex flex-col gap-3">
           <div>
             <h2 id="devbuy-heading" className="text-base font-semibold">
-              Buy after launch (optional)
+              Developer buy (optional)
             </h2>
             {/*
               =================================================================
@@ -262,24 +270,36 @@ export function LaunchForm({ facts, pinningConfigured, driver }: LaunchFormProps
             </Button>
           ) : (
             <Button
-              type="submit"
+              {...(connected ? { type: 'submit' as const } : { type: 'button' as const })}
               variant="primary"
               size="lg"
-              disabled={!connected || busy || buyInvalid}
+              disabled={connected && (busy || buyInvalid)}
               className="w-full"
+              {...(connected
+                ? {}
+                : {
+                    onClick: () => {
+                      /*
+                       * TEK DUGME, TEK BAGLAYICI LISTESI.
+                       *
+                       * Onceki hal DEVRE DISI bir "Connect wallet" cizip
+                       * altina "yukaridaki dugmeyi kullan" yaziyordu.
+                       * Kullanici formu doldurmus, imzalamaya hazir, ve ona
+                       * ekranin baska bir yerine gitmesi soyleniyordu.
+                       *
+                       * Ikinci bir `<WalletButton>` cizmek yerine ONUN
+                       * dugmesine basiliyor: o bilesen `data-wallet-connect`
+                       * tasiyor ve `TradePanel` de ayni yoldan geciyor.
+                       * Iki ayri EIP-6963 listesi kurmak, o bilesenin kendi
+                       * yorumunun yasakladigi sey.
+                       */
+                      document.querySelector<HTMLElement>('[data-wallet-connect]')?.click()
+                    },
+                  })}
             >
               {!connected ? 'Connect wallet' : busy ? SUBMIT_BUSY_LABEL[launch.status] : 'Launch'}
             </Button>
           )}
-
-          {!connected && !wrongNetwork ? (
-            // Devre disi bir buton klavye kullanicisi icin cikmaz sokaktir;
-            // nereye gidecegi YAZILI olmali.
-            <p className="text-[12px] text-muted">
-              Use the Connect wallet button at the top of the page. The form keeps everything you
-              have typed.
-            </p>
-          ) : null}
 
           {launch.status === 'pending' && launch.hash ? (
             <p role="status" className="text-[12px] text-muted">

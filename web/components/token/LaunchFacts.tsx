@@ -24,7 +24,16 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   return (
     <div className="flex items-baseline justify-between gap-4 px-4 py-2.5 text-[13px]">
       <dt className="shrink-0 text-muted">{label}</dt>
-      <dd className="min-w-0 text-right">{children}</dd>
+      {/*
+        DEGER KUTUDAN TASAMAZ.
+        `min-w-0` daralmaya IZIN verir ama bolunmeye izin vermez:
+        `206,886,011.183597` bosluksuz tek bir parcadir ve sutundan genisse
+        disari tasar -- ekran goruntusundeki hal tam olarak buydu.
+        `overflow-wrap: anywhere` en kotu durumda satirin icinde bolerek
+        tasmayi imkansiz kilar; normalde zaten bosluktan boluner ve yuzde alt
+        satira iner.
+      */}
+      <dd className="min-w-0 text-right [overflow-wrap:anywhere]">{children}</dd>
     </div>
   )
 }

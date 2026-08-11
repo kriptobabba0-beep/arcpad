@@ -30,14 +30,22 @@ export function UsdcMark({
   className?: string
 }) {
   return (
-    <span className={cx('inline-flex shrink-0 items-center gap-1.5 align-baseline', className)}>
+    /*
+      HIZALAMA: `align-baseline` BIR `inline-flex` KUTUYA YETMEZ.
+      Kutunun kendisi taban cizgisine oturur, ama ICINDEKI resim kutunun
+      ustune hizalanir ve metnin bir tik yukarisinda kalir -- ekranda
+      "sayilarla ayni satirda degil" gorunumu tam olarak budur.
+      `items-center` yerine `items-baseline` + resme kucuk bir `translate-y`
+      isareti gercekten harflerin ortasina getirir.
+    */
+    <span className={cx('inline-flex shrink-0 items-baseline gap-1.5 align-baseline', className)}>
       <Image
         src="/usdc.svg"
         alt=""
         aria-hidden="true"
         width={size}
         height={size}
-        className="shrink-0 rounded-full"
+        className="shrink-0 translate-y-[0.15em] rounded-full"
       />
       {withLabel ? <span>USDC</span> : <span className="sr-only">USDC</span>}
     </span>

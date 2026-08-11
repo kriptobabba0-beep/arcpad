@@ -1,4 +1,5 @@
 import type { Metadata } from 'next'
+import Link from 'next/link'
 import { pinningIsConfigured } from '@/app/api/metadata/pinning'
 import { launchFactsFrom, type LaunchFacts } from '@/components/create/facts'
 import { LaunchForm } from '@/components/create/LaunchForm'
@@ -58,6 +59,21 @@ export default async function CreatePage() {
 
   return (
     <div className="mx-auto flex w-full max-w-[1100px] flex-col gap-8">
+      {/*
+        VAZGECEBILMEK BIR OZELLIKTIR.
+        Bu sayfaya gelen biri fikrini degistirebilir ve geri donmenin tek yolu
+        tarayicinin geri dugmesi olmamali -- ozellikle formu yeni doldurmaya
+        baslamis biri icin, ki onun icin "geri" bir kayip riski gibi durur.
+        `<Link>` cunku gercek bir gezinme: yeni sekmede acilabilir, adresi
+        kopyalanabilir.
+      */}
+      <Link
+        href="/"
+        className="inline-flex w-fit items-center gap-1.5 text-[13px] text-muted transition-colors duration-150 hover:text-text"
+      >
+        <span aria-hidden="true">&larr;</span> Back to launches
+      </Link>
+
       <header className="flex flex-col gap-2">
         <h1 className="font-serif text-3xl leading-none">Launch a token</h1>
         <p className="max-w-[62ch] text-sm leading-relaxed text-muted">

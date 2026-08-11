@@ -11,6 +11,14 @@ export type InputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'id'> & {
   error?: string
   /** Sag ic kenardaki birim/kisayol (`USDC`, `MAX`). */
   suffix?: ReactNode
+  /**
+   * Sol ic kenardaki sabit parca (`x.com/`, `t.me/`).
+   *
+   * KULLANICIYA TAM URL YAZDIRMAK GEREKSIZ BIR IS. Sabit kismi ekranda
+   * gostermek hem yazilacagi azaltir hem de BEKLENEN BICIMI gosterir --
+   * "https://x.com/ad" mi "@ad" mi diye dusunmek zorunda kalinmaz.
+   */
+  prefix?: ReactNode
 }
 
 /**
@@ -27,6 +35,7 @@ export function Input({
   hint,
   error,
   suffix,
+  prefix,
   className,
   ...rest
 }: InputProps) {
@@ -51,6 +60,7 @@ export function Input({
           error ? 'border-negative/60' : 'border-border',
         )}
       >
+        {prefix ? <span className="shrink-0 select-none text-sm text-muted">{prefix}</span> : null}
         <input
           id={id}
           className={cx(
