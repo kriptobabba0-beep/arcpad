@@ -96,7 +96,7 @@ export {
   MULTICALL3_ADDRESS,
   USDC_ERC20_ADDRESS,
 } from './chain'
-export { assertArcChain, type ChainIdSource, createArcClient } from './client'
+export { arcRpcUrls, assertArcChain, type ChainIdSource, createArcClient } from './client'
 export {
   CHAIN_KEYS,
   chainKeyFor,

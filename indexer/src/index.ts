@@ -1,5 +1,5 @@
 import 'dotenv/config'
-import { ARC_TESTNET_CHAIN_ID, assertArcChain, createArcClient } from '@arcpad/shared'
+import { ARC_TESTNET_CHAIN_ID, arcRpcUrls, assertArcChain, createArcClient } from '@arcpad/shared'
 import { createPool } from '@arcpad/db'
 import { loadConfig } from './config'
 import { createAddressWidthMemo, createPacer, type RpcClient } from './logs'
@@ -40,7 +40,9 @@ async function main(): Promise<void> {
   // devreye giriyor. Bu satirdan once indexer canliya karsi bes aralik sonra
   // `-32005` ile `exit 1` etti; stack'te `withRetry.delay.count.count`
   // (viem/utils/buildRequest.ts) goruluyordu.
-  const client = createArcClient(config.rpcUrl, { retryCount: 0 })
+  const client = createArcClient(arcRpcUrls(config.rpcUrl, config.rpcFallbackUrls), {
+    retryCount: 0,
+  })
   await assertArcChain(client)
 
   const pool = createPool(config.databaseUrl)

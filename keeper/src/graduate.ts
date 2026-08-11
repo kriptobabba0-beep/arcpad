@@ -1,7 +1,7 @@
 import { argv, env as processEnv, exit } from 'node:process'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { assertArcChain, createArcClient, formatUsdc } from '@arcpad/shared'
+import { assertArcChain, arcRpcUrls, createArcClient, formatUsdc } from '@arcpad/shared'
 import { type Address, getAddress } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import {
@@ -157,7 +157,9 @@ async function main(): Promise<number> {
   // `packages/shared/src/client.ts` bunu canli olarak olctu: UC bosluksuz
   // `eth_getLogs` Arc'ta limiti tetiklemeye YETIYOR, ve varsayilan tek bir
   // mantiksal istegi DORT bosluksuz istege ceviriyor.
-  const client = createArcClient(config.rpcUrl, { retryCount: 0 })
+  const client = createArcClient(arcRpcUrls(config.rpcUrl, config.rpcFallbackUrls), {
+    retryCount: 0,
+  })
   await assertArcChain(client)
   const reader = viemChainReader(client)
   await assertLockerMatchesFactory(reader, config.locker, config.factory)

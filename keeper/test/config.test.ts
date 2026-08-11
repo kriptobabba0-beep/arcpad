@@ -24,6 +24,8 @@ describe('loadKeeperConfig', () => {
     })
     expect(config).toEqual({
       rpcUrl: 'https://rpc.testnet.arc.io',
+      // Yapilandirilmamis bir dagitimda BOS -- yani tek uc, bugunku davranis.
+      rpcFallbackUrls: '',
       pollIntervalMs: 2000,
       dryRun: false,
     })

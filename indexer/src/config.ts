@@ -14,6 +14,8 @@ import { ARC_GETLOGS_MAX_RANGE } from './cursor'
  */
 export interface IndexerConfig {
   rpcUrl: string
+  /** Virgul/bosluk ayrilmis ek uclar; bos ise davranis degismez. */
+  rpcFallbackUrls: string
   databaseUrl: string
   factory: Address
   /**
@@ -150,6 +152,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): IndexerConfig 
 
   return {
     rpcUrl: required(env, 'ARC_RPC_URL'),
+    /*
+     * IKINCI (VE UCUNCU) UC NOKTA -- ISTEGE BAGLI, VIRGUL YA DA BOSLUKLA.
+     *
+     * Verilmezse liste tek elemanlidir ve `createArcClient` tam olarak
+     * eskisi gibi tek bir `http()` tasiyicisi kurar: yapilandirilmamis her
+     * dagitim icin bu bir no-op'tur.
+     *
+     * Neden var: olculdu (2026-08-11), Arc'in genel ucu `eth_getLogs`i metot
+     * bazinda sinirliyor ve TEK BLOKLUK bir sorgu bile reddediliyor -- yani
+     * "daha kucuk parca" bir care degil. Ayni dakikada ikinci bir uc ayni
+     * sorguyu 10/10 yanitladi ve ayni blok hash'lerini verdi.
+     */
+    rpcFallbackUrls: env['ARC_RPC_FALLBACK_URLS'] ?? '',
     databaseUrl: required(env, 'DATABASE_URL'),
     factory: factory.toLowerCase() as Address,
     startBlock,

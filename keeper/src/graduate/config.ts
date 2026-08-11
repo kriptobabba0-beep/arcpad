@@ -20,6 +20,8 @@ import { DEFAULT_COMPLETED_WATCH_MS } from './completedWatch'
 
 export type GraduatorConfig = {
   rpcUrl: string
+  /** Virgul/bosluk ayrilmis ek uclar; bos ise davranis degismez (bkz. `arcRpcUrls`). */
+  rpcFallbackUrls: string
   chainId: number
   factory: Address
   locker: Address
@@ -123,6 +125,8 @@ export function loadGraduatorConfig(
   const bookDir = opts?.bookDir
   const rpcUrl = blankToUndefined(env['ARC_RPC_URL'])
   if (!rpcUrl) throw new Error('ARC_RPC_URL is not set (see .env.example)')
+  // Bos birakildiginda tek uc, yani bugunku davranis. Bkz. `arcRpcUrls`.
+  const rpcFallbackUrls = blankToUndefined(env['ARC_RPC_FALLBACK_URLS']) ?? ''
 
   // ============ `--book-only`: ADRESLER ENV'DEN GELEMEZ ============
   //
@@ -334,6 +338,7 @@ export function loadGraduatorConfig(
 
   return {
     rpcUrl,
+    rpcFallbackUrls,
     chainId,
     factory,
     locker,

@@ -43,6 +43,7 @@ const LAST = BigInt(logs[logs.length - 1]!.blockNumber)
 
 const CONFIG: IndexerConfig = {
   rpcUrl: 'http://unused',
+  rpcFallbackUrls: '',
   databaseUrl: 'postgres://unused',
   factory: LIVE.factory,
   startBlock: LIVE_DEPLOYMENT.startBlock,

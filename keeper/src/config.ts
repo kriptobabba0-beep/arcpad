@@ -8,6 +8,8 @@ import { type Allowlist, DEFAULT_MAX_CHUNKS_PER_POLL, ZERO_ADDRESS } from './wat
 export interface KeeperConfig {
   rpcUrl: string
   pollIntervalMs: number
+  /** Virgul/bosluk ayrilmis ek uclar; bos ise davranis degismez. */
+  rpcFallbackUrls: string
   dryRun: boolean
 }
 
@@ -22,6 +24,18 @@ const DEFAULT_POLL_INTERVAL_MS = 5_000
 export function loadKeeperConfig(env: NodeJS.ProcessEnv): KeeperConfig {
   const rpcUrl = blankToUndefined(env['ARC_RPC_URL'])
   if (!rpcUrl) throw new Error('ARC_RPC_URL is not set (see .env.example)')
+
+  /*
+   * EK UCLAR -- ISTEGE BAGLI, VIRGUL YA DA BOSLUKLA AYRILMIS.
+   *
+   * Bos birakildiginda liste tek elemanlidir ve davranis TAM OLARAK eskisi
+   * gibidir. Bu izleyici icin olculen ariza tam da burada yasiyordu: Arc'in
+   * genel ucu `eth_getLogs`i metot bazinda sinirliyor (1 sn arayla 10 cagri
+   * -> 0/10, ayni dakikada `eth_call` 12/12) ve indexer'la ayni IP'den
+   * yarisinca factory taramasi ust uste dusuyor, "the watcher is not
+   * watching" sayfasi cikiyordu.
+   */
+  const rpcFallbackUrls = blankToUndefined(env['ARC_RPC_FALLBACK_URLS']) ?? ''
 
   // BOSLUK DA BOSTUR, ve bu satirin `blankToUndefined`siz hali `.env.example`in
   // sekiz degisken icin ogrettigi "bos birak = varsayilan" kuralini TAM BURADA
@@ -38,6 +52,7 @@ export function loadKeeperConfig(env: NodeJS.ProcessEnv): KeeperConfig {
   return {
     rpcUrl,
     pollIntervalMs,
+    rpcFallbackUrls,
     dryRun: env['KEEPER_DRY_RUN'] !== 'false',
   }
 }

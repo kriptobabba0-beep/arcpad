@@ -1,4 +1,4 @@
-import { ARC_TESTNET_CHAIN_ID, assertArcChain, createArcClient } from '@arcpad/shared'
+import { ARC_TESTNET_CHAIN_ID, assertArcChain, arcRpcUrls, createArcClient } from '@arcpad/shared'
 import type { Address } from 'viem'
 import {
   alert,
@@ -31,7 +31,7 @@ async function main(): Promise<void> {
 
   const config = loadKeeperConfig(process.env)
   const watcher = loadWatcherConfig(process.env)
-  const client = createArcClient(config.rpcUrl)
+  const client = createArcClient(arcRpcUrls(config.rpcUrl, config.rpcFallbackUrls))
   await assertArcChain(client)
 
   const reader = viemChainReader(client)

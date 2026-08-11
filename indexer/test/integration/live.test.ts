@@ -196,6 +196,7 @@ const paced: RpcClient = {
 
 const CONFIG: IndexerConfig = {
   rpcUrl: RPC_URL,
+  rpcFallbackUrls: '',
   databaseUrl: DATABASE_URL,
   factory: FACTORY,
   startBlock: START_BLOCK,
