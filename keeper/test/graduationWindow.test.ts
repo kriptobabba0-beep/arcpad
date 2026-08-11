@@ -2854,3 +2854,174 @@ describe('hayatta kalan mutantlarin kapatilmasi', () => {
     })
   })
 })
+
+/**
+ * ============================================================================
+ *  C3b: TUKENMIS BIR KOVAYA VURMAYI BIRAKMAK -- AMA ALARMI BIRAKMAMAK
+ * ============================================================================
+ *
+ * OLCULDU, uretimde, 2026-08-11, canli uc noktaya karsi. Patlama degil,
+ * TEMPOLU olcum -- bes saniyede bir `eth_getLogs`, bir dakika boyunca:
+ *
+ *     XXXXXXXXXX..    2/12 gecti  (%17)
+ *
+ * Ayni dakikada `eth_call` ve `eth_blockNumber` 12/12 geciyordu. Sinir
+ * METODA gore agirlikli ve getLogs butcesi tukenmisti -- tuketen de BIZDIK:
+ * indexer zincir yuruyusunu yapiyor, bu izleyici de kendi taramasini. Sonuc
+ * canli journalde: 30 dakikada 8 sayfa, 4 kalp atisi, ve "the watcher is not
+ * watching".
+ *
+ * Runbook'un kendi olcumu diyor ki secilebilecek bir "yeterince yavas" sabit
+ * YOKTUR. O halde care sabit degil, GOZLENENE tepkidir: tarama ust uste
+ * dustuyse, bir sonraki poll'da ayni istegi ayni dolu kovaya yollamak sadece
+ * bizi degil indexer'i da ac birakir.
+ *
+ * ASAGIDAKI ILK TEST BU DOSYADAKI EN ONEMLISIDIR: soguma sirasinda dusmanca
+ * bir hedef HALA AYNI POLL'DA yakalanmali. Yakalanmiyorsa bu degisiklik bir
+ * iyilestirme degil, bir guvenlik gerilemesidir.
+ */
+describe('tarama sogumasi: siklik duser, ALARM DUSMEZ', () => {
+  it('SOGUMA SIRASINDA BILE izinsiz bir hedef AYNI POLL\'DA sayfa cikarir', async () => {
+    const health = createScanHealth()
+    const sink = recorder()
+    // Ust uste dort dusus: sayac 4, yani soguma 3 poll.
+    const failing = (): Promise<void> =>
+      runWatcher({
+        client: syntheticChain({ blockNumber: 50n, failLogs: true }),
+        factory: PINNED,
+        startBlock: 1n,
+        allowlist: ALLOW_GOOD,
+        alert: sink.alert,
+        heartbeat: sink.heartbeat,
+        scanHealth: health,
+        nowMs: localClock(NOW),
+      })
+    /*
+     * UC dusen poll -> sayac 3 -> merdiven 1 poll soguma. DORDUNCU cagri
+     * atlanacak olandir.
+     *
+     * DIKKAT: burada `health.shouldSkip()` ile dogrulama YAPILMAZ, cunku o
+     * cagri bir soguma adimini TUKETIR ve tam olarak olcmek istedigi seyi
+     * bozar -- ilk yazilisinda bu testi dusuren de buydu. Sogumanin
+     * gerceklestigi asagidaki poll'un YAZDIGI seyden okunur.
+     */
+    await failing()
+    await failing()
+    await failing()
+
+    // Simdi zincir DEGISIR: izin verilmeyen bir hedef zaten LANDED.
+    const hostile = recorder()
+    await runWatcher({
+      client: syntheticChain({
+        blockNumber: 60n,
+        failLogs: true,
+        currentTarget: EVIL_TARGET,
+      }),
+      factory: PINNED,
+      startBlock: 1n,
+      allowlist: ALLOW_GOOD,
+      alert: hostile.alert,
+      heartbeat: hostile.heartbeat,
+      scanHealth: health,
+      nowMs: localClock(NOW),
+    })
+
+    expect(
+      hostile.oks().some((m) => m.includes('log-scan-cooling-down')),
+      'bu poll gercekten bir soguma poll\'u olmali, yoksa test hicbir sey kanitlamaz',
+    ).toBe(true)
+    const page = hostile.pages().find((m) => m.includes('NOT on the allowlist'))
+    expect(page, 'soguma alarmi susturamaz -- seviye state\'ten gelir, loglardan degil').toBeDefined()
+  })
+
+  it('soguma sirasinda getLogs HIC yayilmaz', async () => {
+    const health = createScanHealth()
+    // Uc dusus -> soguma 2 poll.
+    for (let i = 0; i < 3; i += 1) health.fail()
+
+    let logCalls = 0
+    const counting = syntheticChain({ blockNumber: 50n })
+    const sink = recorder()
+    await runWatcher({
+      client: {
+        ...counting,
+        getLogs: async (...args: Parameters<typeof counting.getLogs>) => {
+          logCalls += 1
+          return counting.getLogs(...args)
+        },
+      },
+      factory: PINNED,
+      startBlock: 1n,
+      allowlist: ALLOW_GOOD,
+      alert: sink.alert,
+      heartbeat: sink.heartbeat,
+      scanHealth: health,
+      nowMs: localClock(NOW),
+    })
+
+    expect(logCalls, 'sogumanin TEK amaci bu istegi yapmamaktir').toBe(0)
+    expect(sink.oks().some((m) => m.includes('log-scan-cooling-down'))).toBe(true)
+  })
+
+  it('ILK IKI dususta soguma YOKTUR -- sayfa cikana kadar tam hizda denenir', () => {
+    const health = createScanHealth()
+    expect(health.fail()).toBe(1)
+    expect(health.shouldSkip(), 'tek bir gecici -32005 sik ve zararsizdir').toBe(false)
+    expect(health.fail()).toBe(2)
+    // Ikinci dusus SAYFADIR; geri cekilme ancak "bu gecici degil" kanitlandiktan
+    // SONRA baslar, yani bu poll'da da denenir.
+    expect(health.shouldSkip()).toBe(false)
+  })
+
+  it('merdiven ustel ve TAVANLI: 0, 0, 1, 3, 7, 15, 15…', () => {
+    const skipsAfter = (failures: number): number => {
+      const health = createScanHealth()
+      for (let i = 0; i < failures; i += 1) health.fail()
+      let skips = 0
+      while (health.shouldSkip()) skips += 1
+      return skips
+    }
+    expect([1, 2, 3, 4, 5, 6, 9].map(skipsAfter)).toEqual([0, 0, 1, 3, 7, 15, 15])
+  })
+
+  it('BIR BASARI sogumayi da sayaci da bitirir', () => {
+    const health = createScanHealth()
+    for (let i = 0; i < 5; i += 1) health.fail()
+    expect(health.shouldSkip()).toBe(true)
+    health.succeed()
+    // Kova doldu; bekletmeye devam etmek maruziyet rakamini sebepsiz eskitirdi.
+    expect(health.shouldSkip()).toBe(false)
+    expect(health.fail(), 'sayac da sifirlanmis olmali').toBe(1)
+  })
+
+  it('soguma bir ARIZA olarak SAYILMAZ -- sayfa ne cogalir ne kaybolur', async () => {
+    const health = createScanHealth()
+    const sink = recorder()
+    const poll = (): Promise<void> =>
+      runWatcher({
+        client: syntheticChain({ blockNumber: 50n, failLogs: true }),
+        factory: PINNED,
+        startBlock: 1n,
+        allowlist: ALLOW_GOOD,
+        alert: sink.alert,
+        heartbeat: sink.heartbeat,
+        scanHealth: health,
+        nowMs: localClock(NOW),
+      })
+    const failedPages = (): number =>
+      sink.pages().filter((m) => m.includes('log-scan-failed')).length
+
+    await poll() // 1: sayfa degil
+    await poll() // 2: SAYFA
+    await poll() // 3: sayfa, ve 1 poll'luk soguma kurar
+    const before = failedPages()
+    expect(before, 'ikinci dususten itibaren sayfa cikar').toBeGreaterThan(0)
+
+    // DORDUNCU poll SOGUMADIR: tarama hic yapilmaz, dolayisiyla yeni bir
+    // tarama sayfasi da cikmaz -- ama cikmis olanlar da SILINMEZ. Susturulan
+    // sey uyari degil, tekrar denemenin sikligi.
+    await poll()
+    expect(failedPages(), 'soguma yeni sayfa URETMEZ').toBe(before)
+    expect(sink.oks().some((m) => m.includes('log-scan-cooling-down'))).toBe(true)
+  })
+})

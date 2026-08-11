@@ -1141,6 +1141,44 @@ export interface ScanHealth {
   fail(): number
   /** Tarama tamamlandi. */
   succeed(): void
+  /**
+   * BU POLL'DA TARAMA ATLANMALI MI? `true` ise `eth_getLogs` HIC YAYILMAZ.
+   *
+   * ============ NEDEN VAR: OLCULDU, TAHMIN EDILMEDI ============
+   *
+   * Uretimde, 2026-08-11, canli uc noktaya karsi. Once tempolu olcum --
+   * bes saniyede BIR `eth_getLogs`, bir dakika boyunca, patlama degil:
+   *
+   *     XXXXXXXXXX..    2/12 gecti  (%17)
+   *
+   * Ayni anda `eth_call` ve `eth_blockNumber` 12/12 geciyordu. Yani sinir
+   * METODA gore agirlikli: getLogs butcesi tukenmisti, digerleri degil.
+   * Ve tuketen BIZDIK -- indexer zincir yuruyusunu yapiyor, bu izleyici de
+   * kendi taramasini. Runbook bu yarisi zaten kaydediyor ("indexer zincir
+   * yuruyusunun sahibidir"), ama karsi tedbir SABIT bir tayindi.
+   *
+   * Sabit tayin yetmez, cunku runbook'un kendi olcumu diyor ki: "butce BIZIM
+   * istek hizimizin bir fonksiyonu DEGIL, dolayisiyla secilebilecek bir
+   * 'yeterince yavas' sabiti yok". Secilemeyen bir sabite ayar yapmak yerine
+   * GOZLENENE tepki vermek gerekir: tarama hiz siniri yuzunden dustuyse,
+   * bir sonraki poll'da AYNI dolu kovaya AYNI istegi yollamak, indexer'i da
+   * ayni anda ac birakan israftir.
+   *
+   * ============ ALARMIN HIZI DEGISMEZ ============
+   *
+   * Bu YALNIZCA taramayi geciktirir. Seviyeyi belirleyen sey `classify` ve o
+   * `state`ten gelir (`currentTarget`, `pendingTarget`, `eta`) -- hepsi
+   * `eth_call`, hepsi bugun saglikli. `exposure` ise, bu dosyanin kendi
+   * NatSpec'inin dedigi gibi, "SEVIYEYE GIRMEZ, yalnizca mesaji
+   * zenginlestirir". Yani dusmanca bir teklif, tarama tamamen dursa bile
+   * AYNI poll'da yakalanir; eksilen tek sey risk altindaki tutarin sayisi --
+   * ve o zaten `exposure=UNMEASURED` diye DURUSTCE yaziliyor.
+   *
+   * Sayfa da susturulmaz: `fail()` sayaci bir soguma boyunca DEGISMEZ, yani
+   * `log-scan-failed` cikmissa cikmis kalir; yalnizca yeniden denemeler
+   * seyrelir.
+   */
+  shouldSkip(): boolean
 }
 
 /** Ust uste kac dusen poll'dan SONRA sayfa cikar. */
@@ -1156,15 +1194,41 @@ export const SCAN_FAILURES_BEFORE_PAGE = 2
  */
 export const DEFAULT_MAX_CHUNKS_PER_POLL = 1
 
+/**
+ * SOGUMA MERDIVENI, POLL CINSINDEN: 0, 0, 1, 3, 7, 15, 15, 15…
+ *
+ * Ilk IKI ariza soguma URETMEZ ve bu bilincli: gecici bir `-32005` sik ve
+ * zararsizdir, ve `SCAN_FAILURES_BEFORE_PAGE` da tam olarak ikinci arizada
+ * sayfa cikarir. Yani izleyici, sayfayi cikarana KADAR tam hizda dener --
+ * geri cekilme ancak "bu gecici degil" kanitlandiktan sonra baslar.
+ *
+ * Tavan 15 poll: 30 saniyelik varsayilan aralikta 7,5 dakika. Ustunde bir sey
+ * secmek, maruziyet rakamini gereksizce eskitirdi; altinda bir sey, tukenmis
+ * bir kovaya israrla vurmaya devam etmek olurdu.
+ */
+const SCAN_COOLDOWN_CAP_POLLS = 15
+
 export function createScanHealth(): ScanHealth {
   let consecutive = 0
+  let skipsLeft = 0
   return {
     fail(): number {
       consecutive += 1
+      // 2^(n-2) - 1: n=1 -> 0, n=2 -> 0(2^0-1), n=3 -> 1, n=4 -> 3, n=5 -> 7...
+      const ladder = consecutive < 2 ? 0 : 2 ** (consecutive - 2) - 1
+      skipsLeft = Math.min(SCAN_COOLDOWN_CAP_POLLS, ladder)
       return consecutive
     },
     succeed(): void {
       consecutive = 0
+      // BASARI SOGUMAYI DA BITIRIR. Kova doldu; bekletmeye devam etmek,
+      // maruziyet rakamini sebepsiz eskitmek olurdu.
+      skipsLeft = 0
+    },
+    shouldSkip(): boolean {
+      if (skipsLeft <= 0) return false
+      skipsLeft -= 1
+      return true
     },
   }
 }
@@ -1765,22 +1829,59 @@ export async function runWatcher(deps: WatcherDeps): Promise<void> {
     }
     if (deps.store !== undefined) scanOpts.store = deps.store
     if (deps.chunk !== undefined) scanOpts.chunk = deps.chunk
-    const scan = await scanFactoryLogs(deps.client, factory, deps.startBlock, scanOpts)
-    curves = scan.curves
-    deps.scanHealth?.succeed()
-    if (scan.caughtUp) {
-      history = scan.history
-    } else {
-      // BUTCE BITTI (bkz. C6). Liste EKSIK, ve eksik bir listeyi tam sayip
-      // maruziyet hesaplamak `knownCurves`in reddettigi seyin ta kendisi.
-      // `history` VERILMEZ: `classify` onu `undefined` gorup gecmis hakkinda
-      // hicbir iddiada bulunmaz.
+
+    /*
+     * ================ TUKENMIS BIR KOVAYA VURMAMAK ================
+     *
+     * Bkz. `ScanHealth.shouldSkip`. Tarama ust uste dustuyse, bir sonraki
+     * poll'da AYNI istegi AYNI dolu kovaya yollamak yalnizca bizi degil
+     * indexer'i da ac birakir -- ve olculdu: tempolu bir `eth_getLogs` bile
+     * 2/12 geciyordu, ayni anda `eth_call` 12/12 gecerken.
+     *
+     * ATLAMAK BIR BASARI DA BIR ARIZA DA DEGILDIR: `succeed()` de `fail()` de
+     * cagrilmaz, yani `log-scan-failed` sayfasi cikmissa CIKMIS KALIR ve
+     * sayac oldugu yerde durur. Susturulan sey uyari degil, tekrar denemenin
+     * SIKLIGI. Durum okumasi (`state`) ve `classify` bu poll'da da tam hizda
+     * calisti: dusmanca bir teklif yine ayni poll'da yakalanir.
+     */
+    const coolingDown = deps.scanHealth?.shouldSkip() === true
+    if (coolingDown) {
+      /*
+       * ATLAMAK BIR BASARI DA BIR ARIZA DA DEGILDIR: `succeed()` de `fail()`
+       * de cagrilmaz, yani `log-scan-failed` sayfasi cikmissa CIKMIS KALIR ve
+       * sayac oldugu yerde durur. Susturulan sey uyari degil, tekrar denemenin
+       * SIKLIGI.
+       *
+       * VE POLL BURADA BITMEZ. Bu blok `runWatcher`in govdesindedir; erken bir
+       * `return` alarmi da atlardi ve duzeltmeyi tam tersine cevirirdi.
+       * Asagidaki `classify` bu poll'da da calisir -- `curves` bos ve
+       * `history` `undefined` kalir, ki ikisi de "olculmedi" demektir,
+       * "sifir" degil.
+       */
       caughtUp = false
       emit(
         'ok',
-        'log-scan-deferred',
-        `log-scan-deferred: scanned through block ${scan.scannedThrough} of ${state.blockNumber} this poll and stopped at the per-poll budget of ${scanOpts.maxChunks} chunk(s). The indexer owns the chain walk; this watcher rations its own so the two do not exhaust the shared rate limit (measured: two concurrent walkers left the indexer completing ZERO ranges). Exposure is NOT measured and the governance history is INCOMPLETE until this catches up.`,
+        'log-scan-cooling-down',
+        `log-scan-cooling-down: the factory log scan is backing off after consecutive failures and did NOT run this poll; it will retry on a later one. THE ALARM IS UNAFFECTED -- the target and the pending target were read this poll as usual and classified as usual, because severity comes from contract state (eth_call) and not from logs. What is missing is the exposure figure and the governance history, and both are reported as unmeasured rather than as zero.`,
       )
+    } else {
+      const scan = await scanFactoryLogs(deps.client, factory, deps.startBlock, scanOpts)
+      curves = scan.curves
+      deps.scanHealth?.succeed()
+      if (scan.caughtUp) {
+        history = scan.history
+      } else {
+        // BUTCE BITTI (bkz. C6). Liste EKSIK, ve eksik bir listeyi tam sayip
+        // maruziyet hesaplamak `knownCurves`in reddettigi seyin ta kendisi.
+        // `history` VERILMEZ: `classify` onu `undefined` gorup gecmis hakkinda
+        // hicbir iddiada bulunmaz.
+        caughtUp = false
+        emit(
+        'ok',
+        'log-scan-deferred',
+          `log-scan-deferred: scanned through block ${scan.scannedThrough} of ${state.blockNumber} this poll and stopped at the per-poll budget of ${scanOpts.maxChunks} chunk(s). The indexer owns the chain walk; this watcher rations its own so the two do not exhaust the shared rate limit (measured: two concurrent walkers left the indexer completing ZERO ranges). Exposure is NOT measured and the governance history is INCOMPLETE until this catches up.`,
+        )
+      }
     }
   } catch (error) {
     scanOk = false
