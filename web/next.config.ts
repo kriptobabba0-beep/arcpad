@@ -1,6 +1,6 @@
 import { ARC_TESTNET_CHAIN_ID, getArcChain } from '@arcpad/shared/browser'
 import type { NextConfig } from 'next'
-import { ipfsGatewayOrigin } from './lib/ipfs'
+import { ipfsGatewayOrigins } from './lib/ipfs'
 
 /**
  * SECURITY HEADERS, AND A CSP THAT IS MEASURED RATHER THAN DECLARED.
@@ -52,20 +52,38 @@ const registryRpc = getArcChain(ARC_TESTNET_CHAIN_ID).rpcUrls.default.http[0] as
 
 const rpcOrigin = originOf(process.env.NEXT_PUBLIC_ARC_RPC_URL, registryRpc)
 /*
- * THE GATEWAY COMES FROM `lib/ipfs.ts`, THE SAME FUNCTION THE APP CALLS.
+ * THE GATEWAYS COME FROM `lib/ipfs.ts`, THE SAME FUNCTION THE APP CALLS.
  *
  * It used to be a second copy of the read plus a second copy of the default
  * here -- and the app's IMAGE path was a THIRD copy that read no env at all,
  * so a configured gateway opened `img-src` to one origin while every <img>
  * still pointed at ipfs.io. Every token image was then refused by this very
- * header. One function, one default, one origin.
+ * header. One function, one default, one list.
+ *
+ * ---------------------------------------------------------------------------
+ * `img-src` NO LONGER NAMES A GATEWAY, AND THAT IS THE POINT.
+ *
+ * Token artwork is fetched by `/api/ipfs/…` on the server and served from
+ * this origin, so the browser never talks to a gateway at all. Three things
+ * follow, and each was a real defect before:
+ *
+ *   - A gateway that labels a CID `application/octet-stream` can no longer
+ *     make Chrome discard the image (`ERR_BLOCKED_BY_ORB`, measured live).
+ *   - Changing `NEXT_PUBLIC_IPFS_GATEWAY` can no longer desynchronise this
+ *     header from where the images actually come from.
+ *   - No visitor's IP address is handed to a public gateway to load a page.
+ *
+ * `connect-src` still names them: nothing in the browser fetches a gateway
+ * today, but the value is what an operator would have to widen if anything
+ * ever did, and a header that quietly forbids what the code allows is the
+ * failure this whole file is a monument to.
  */
-const gatewayOrigin = ipfsGatewayOrigin()
+const gatewayOrigins = ipfsGatewayOrigins().join(' ')
 
 const csp = [
   "default-src 'self'",
-  `connect-src 'self' ${rpcOrigin} ${gatewayOrigin}`,
-  `img-src 'self' data: ${gatewayOrigin}`,
+  `connect-src 'self' ${rpcOrigin} ${gatewayOrigins}`,
+  "img-src 'self' data:",
   // The fonts are OURS (Task 6 self-hosts them). No `https:` here, and no
   // `fonts.gstatic.com`: a font request to a third party leaks every visitor's
   // IP to it on every page load.

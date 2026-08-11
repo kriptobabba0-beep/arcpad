@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { cx } from '@/components/ui/cx'
-import { ipfsPathPrefix } from '@/lib/ipfs'
+import { ipfsGatewayOrigins, IPFS_PROXY_PREFIX } from '@/lib/ipfs'
 
 /**
  * `next/image` KULLANILMIYOR, ve gerekcesi uc somut madde:
@@ -25,19 +25,28 @@ import { ipfsPathPrefix } from '@/lib/ipfs'
  */
 
 /**
- * TEK IZINLI GATEWAY. Bir liste degil bir deger: `ipfs://` bir host tasimaz,
- * dolayisiyla "kullanicinin verdigi gateway" diye bir sey yoktur ve olsaydi
- * acik bir yonlendirme yuzeyi olurdu.
+ * GORSELIN ISTENDIGI YER: KENDI ORIJINIMIZ.
  *
- * ARTIK BIR SABIT DEGIL, CUNKU SABIT OLMASI CANLI BIR KUSURDU. Burada
- * `'https://ipfs.io/ipfs/'` yaziyordu; `next.config.ts`in CSP'si ve
- * `lib/metadata.ts` ise `NEXT_PUBLIC_IPFS_GATEWAY`i OKUYORDU. Yani gateway'i
- * degistiren bir operatorde `img-src` yeni origin'e aciliyor, gorseller ise
- * hâlâ ipfs.io'dan isteniyordu: BUTUN TOKEN GORSELLERI kendi CSP'miz
- * tarafindan reddedilir. Cozum `web/lib/ipfs.ts`, tek kaynak.
+ * ONCE bir gateway'di ve iki kez kirildi. Ilki yapilandirma kaymasiydi: burada
+ * `'https://ipfs.io/ipfs/'` sabiti dururken CSP ve `lib/metadata.ts`
+ * `NEXT_PUBLIC_IPFS_GATEWAY`i okuyordu, yani gateway'i degistiren operatorde
+ * butun gorseller kendi CSP'miz tarafindan reddediliyordu. `web/lib/ipfs.ts`
+ * tek kaynak yapilarak cozuldu.
+ *
+ * IKINCISI TEK KAYNAKLA COZULMEZDI, cunku hata bizde degildi. Canli sunucuda
+ * gercek bir yukleme, gercek bir tarayicida:
+ *
+ *   GET https://ipfs.io/ipfs/QmWcPGQ…  =>  net::ERR_BLOCKED_BY_ORB
+ *
+ * Gateway CID'i adsiz bir dosya olarak `application/octet-stream` ile servis
+ * etti, Chrome da onu bir goruntu olarak kabul etmeyi REDDETTI. Bizim
+ * kodumuzda duzeltilecek hicbir sey yoktu: `onError` calisir ve gorsel yok
+ * olur. Cevabin BIZIM olmasi gerekiyordu -- `/api/ipfs/…` baytlara bakip
+ * tipi kendi soyler, ayni orijinden servis eder ve hicbir ziyaretcinin IP'si
+ * bir yabanciya gitmez.
  */
 export function ipfsGateway(): string {
-  return ipfsPathPrefix()
+  return IPFS_PROXY_PREFIX
 }
 
 /** FNV-1a. Adres olmayan bir tohum icin deterministik 8 nibble uretir. */
@@ -83,20 +92,43 @@ export function tokenGradient(address: string): TokenGradient {
 }
 
 /**
- * `ipfs://CID/yol` -> izinli gateway. `https:` gecer. BASKA HER SEY REDDEDILIR
- * ve `null` doner: `data:` ve `javascript:` bir <img>'de zararsiz gorunur ama
- * `uri` zincirden, yani bir yabancidan gelir ve bir gun `<img>` disinda bir
- * yere de verilebilir. Reddi kaynakta yapmak, ileride nereye verildiginden
- * bagimsiz olarak dogru kalir.
+ * `ipfs://CID/yol` -> `/api/ipfs/CID/yol`. BASKA HER SEY REDDEDILIR ve `null`
+ * doner: `data:` ve `javascript:` bir <img>'de zararsiz gorunur ama `uri`
+ * zincirden, yani bir yabancidan gelir ve bir gun `<img>` disinda bir yere de
+ * verilebilir. Reddi kaynakta yapmak, ileride nereye verildiginden bagimsiz
+ * olarak dogru kalir.
+ *
+ * BIR GATEWAY URL'I DE VEKILE YAZILIR. `lib/metadata.ts` `image` alaninda
+ * yapilandirilmis bir gateway'in kendi origin'ini kabul eder; o URL'i oldugu
+ * gibi vermek, ORB'nin zaten bir kez oldurdugu istegi tekrar yapmak olurdu.
+ * Ayni CID, ayni yol -- sadece bizim uzerimizden.
+ *
+ * BASKA BIR HTTPS ADRESI ARTIK `null`'dir. Once oldugu gibi donuyordu ve
+ * `img-src` yalnizca gateway'e acik oldugu icin tarayici zaten reddediyordu:
+ * gorunen sonuc ayni, ama once KIRIK bir gorsel cizilip sonra yedege
+ * duselerek. Kaynakta reddetmek ayni zamanda ucuncu bir siteye yapilan ve her
+ * ziyaretcinin IP'sini sizdiran istegi de ortadan kaldirir.
  */
 export function resolveArtworkSrc(uri: string | null | undefined): string | null {
   if (!uri) return null
   const value = uri.trim()
+
   if (value.startsWith('ipfs://')) {
     const path = value.slice('ipfs://'.length).replace(/^ipfs\//, '')
     return path ? `${ipfsGateway()}${path}` : null
   }
-  return value.startsWith('https://') ? value : null
+
+  if (!value.startsWith('https://')) return null
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    return null
+  }
+  if (!ipfsGatewayOrigins().includes(parsed.origin)) return null
+  if (!parsed.pathname.startsWith('/ipfs/')) return null
+  const path = parsed.pathname.slice('/ipfs/'.length)
+  return path ? `${ipfsGateway()}${path}` : null
 }
 
 export type TokenArtworkProps = {

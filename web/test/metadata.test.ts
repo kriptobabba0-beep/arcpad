@@ -56,14 +56,14 @@ describe('the allow-list decides BEFORE fetch is reachable', () => {
     // Without this, every case above would be satisfied by a resolver that
     // never fetches anything at all.
     const fetchSpy = countingFetch(jsonResponse({ description: 'hello' }))
-    expect(resolvableUrl(`ipfs://${CID}`)).toBe(`https://ipfs.io/ipfs/${CID}`)
+    expect(resolvableUrl(`ipfs://${CID}`)).toBe(`https://gateway.pinata.cloud/ipfs/${CID}`)
     await expect(resolveMetadata(`ipfs://${CID}`)).resolves.toEqual({ description: 'hello' })
     expect(fetchSpy).toHaveBeenCalledTimes(1)
   })
 
   it('an ipfs uri with a path keeps the path', () => {
     expect(resolvableUrl(`ipfs://${CID}/meta/token.json`)).toBe(
-      `https://ipfs.io/ipfs/${CID}/meta/token.json`,
+      `https://gateway.pinata.cloud/ipfs/${CID}/meta/token.json`,
     )
   })
 })
@@ -137,7 +137,7 @@ describe('the document is filtered, not trusted', () => {
   it('an ipfs image is kept and rewritten to the gateway', async () => {
     countingFetch(jsonResponse({ image: `ipfs://${CID}/art.png` }))
     const resolved = await resolveMetadata(`ipfs://${CID}`)
-    expect(resolved?.image).toBe(`https://ipfs.io/ipfs/${CID}/art.png`)
+    expect(resolved?.image).toBe(`https://gateway.pinata.cloud/ipfs/${CID}/art.png`)
   })
 
   it('unknown fields are dropped by construction', async () => {

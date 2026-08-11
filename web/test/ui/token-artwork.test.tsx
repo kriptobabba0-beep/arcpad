@@ -48,18 +48,36 @@ describe('resolveArtworkSrc', () => {
    * Onceki hal `\`${IPFS_GATEWAY}bafyfoo/image.png\`` ile karsilastiriyordu,
    * yani iddia OLCTUGU KODUN KENDISINDEN turetiliyordu: gateway ne olursa
    * olsun test yesildi ve sabit yanlis bir degere donse bile hicbir sey
-   * soylemezdi. Varsayilan burada ACIKCA yaziliyor.
+   * soylemezdi. Beklenen deger burada ACIKCA yaziliyor.
+   *
+   * VE ARTIK BEKLENEN DEGER BIR GATEWAY DEGIL. Canli sunucuda olculdu:
+   * gateway CID'i `application/octet-stream` ile servis edince Chrome gorseli
+   * ORB ile atiyor (`net::ERR_BLOCKED_BY_ORB`) ve kullanicinin az once
+   * yukledigi logo sessizce yok oluyor. Cevabin bizim orijinimizden gelmesi
+   * gerekiyordu; `/api/ipfs/…` baytlara bakip tipi kendisi soyler.
    */
-  it('ipfs:// varsayilan gateway’e cevrilir', () => {
-    expect(resolveArtworkSrc('ipfs://bafyfoo/image.png')).toBe(
-      'https://ipfs.io/ipfs/bafyfoo/image.png',
-    )
-    // ...ve bu, yapilandirilmis olanla AYNI fonksiyondur.
+  it('ipfs:// kendi vekilimize cevrilir', () => {
+    expect(resolveArtworkSrc('ipfs://bafyfoo/image.png')).toBe('/api/ipfs/bafyfoo/image.png')
+    // ...ve bu, bilesenin kullandigi AYNI onektir.
     expect(resolveArtworkSrc('ipfs://bafyfoo/image.png')).toBe(`${ipfsGateway()}bafyfoo/image.png`)
   })
 
-  it('https gecer', () => {
-    expect(resolveArtworkSrc('https://example.test/a.png')).toBe('https://example.test/a.png')
+  /**
+   * BIR GATEWAY URL'I VEKILE YAZILIR, YABANCI BIR HOST ISE REDDEDILIR.
+   *
+   * Once her `https:` adresi oldugu gibi geciyordu. Gecmesinin bir anlami
+   * yoktu: CSP `img-src` yalnizca gateway'e acikti, yani ucuncu bir hosttan
+   * gelen gorsel zaten tarayici tarafindan reddediliyordu -- ama once KIRIK
+   * bir `<img>` cizilip sonra yedege duselerek. Kaynakta reddetmek ayni
+   * zamanda her ziyaretcinin IP'sini o hosta sizdiran istegi de yok eder.
+   */
+  it('gateway url\'i vekile yazilir, yabanci host reddedilir', () => {
+    expect(resolveArtworkSrc('https://gateway.pinata.cloud/ipfs/bafyfoo/a.png')).toBe(
+      '/api/ipfs/bafyfoo/a.png',
+    )
+    expect(resolveArtworkSrc('https://example.test/a.png')).toBeNull()
+    // Dogru host, ama `/ipfs/` disinda bir yol: bu bir CID degil.
+    expect(resolveArtworkSrc('https://gateway.pinata.cloud/admin')).toBeNull()
   })
 
   it('http, data ve javascript REDDEDILIR', () => {
@@ -92,7 +110,7 @@ describe('<TokenArtwork>', () => {
 
     const img = screen.getByTestId('token-artwork').querySelector('img')
     expect(img).not.toBeNull()
-    expect(img).toHaveAttribute('src', 'https://ipfs.io/ipfs/bafyfoo/image.png')
+    expect(img).toHaveAttribute('src', '/api/ipfs/bafyfoo/image.png')
     expect(img).toHaveAttribute('loading', 'lazy')
     expect(img).toHaveAttribute('decoding', 'async')
     // Rastgele bir IPFS gateway'ine kendi URL'imizi sizdirmayiz.

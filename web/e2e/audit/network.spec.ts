@@ -1,5 +1,4 @@
 import { expect, type Page, test } from '@playwright/test'
-import { ipfsGatewayOrigin } from '../../lib/ipfs'
 import { auditRoutes } from './routes'
 
 /**
@@ -9,7 +8,9 @@ import { auditRoutes } from './routes'
  * on this origin can rewrite a transaction's `to` address between the quote
  * and the wallet prompt, and nothing on screen would look different. So the
  * rule is absolute: this origin loads nothing it does not serve, except the
- * configured RPC and the configured IPFS gateway.
+ * configured RPC. The IPFS gateway used to be a third exception and is not
+ * one any more — artwork is proxied through `/api/ipfs/…`, so no visitor's
+ * browser talks to a gateway at all.
  *
  * THE CSP IS MEASURED, NOT READ. `next.config.ts` declaring a policy proves
  * nothing -- a policy with a typo in a directive name is silently ignored by
@@ -59,18 +60,24 @@ function collect(page: Page): Seen {
   return { hosts, requests, cspViolations }
 }
 
+/**
+ * US AND THE RPC. NO GATEWAY.
+ *
+ * The gateway used to be in this set, and removing it is the assertion — not
+ * a relaxation of one. Artwork is now fetched by `/api/ipfs/…` on the server,
+ * so a browser on this site has no reason to contact a public IPFS gateway,
+ * and if one ever does, that is a visitor's IP address being handed to a
+ * third party on page load. This test is where we would find out.
+ */
 function allowedHosts(): Set<string> {
   const base = process.env.E2E_BASE_URL ?? ''
   const rpc = process.env.E2E_RPC_URL ?? ''
   expect(base, 'the global setup must publish E2E_BASE_URL').not.toBe('')
   expect(rpc, 'the global setup must publish E2E_RPC_URL').not.toBe('')
-  // The SAME resolver the app and the CSP use. A fourth copy of this default
-  // is what let the artwork point somewhere the CSP had stopped allowing.
-  const gateway = ipfsGatewayOrigin()
-  return new Set([new URL(base).host, new URL(rpc).host, new URL(gateway).host])
+  return new Set([new URL(base).host, new URL(rpc).host])
 }
 
-test('every request on every route goes to us, the RPC, or the gateway — and nowhere else', async ({
+test('every request on every route goes to us or the RPC — and nowhere else', async ({
   page,
 }) => {
   const seen = collect(page)

@@ -1,4 +1,4 @@
-import { ipfsGatewayOrigin } from './ipfs'
+import { ipfsGatewayOrigins } from './ipfs'
 import { sanitiseForDisplay } from '@arcpad/shared/browser'
 
 /**
@@ -42,31 +42,60 @@ export const DESCRIPTION_LIMIT = 256
 const IPFS_URI = /^ipfs:\/\/([A-Za-z0-9]{46,}|Qm[1-9A-HJ-NP-Za-km-z]{44})(\/[\w\-./%]*)?$/
 
 /**
- * Turns an acceptable `uri` into a URL to fetch, or `null`.
+ * Every URL worth trying for an acceptable `uri`, best first. Empty = no fetch.
  *
- * RETURNING NULL MEANS NO REQUEST IS MADE. That is the whole SSRF defence: the
+ * AN EMPTY LIST MEANS NO REQUEST IS MADE. That is the whole SSRF defence: the
  * decision happens before `fetch` is reachable, not inside an error handler
- * after the socket is already open.
+ * after the socket is already open. The HOSTS come from `ipfsGatewayOrigins()`
+ * and never from `uri`, so no input can steer this at an internal address.
+ *
+ * ONE URL WAS NOT ENOUGH, MEASURED IN PRODUCTION. `ipfs.io` — the origin this
+ * resolved to on the live deployment — answered nothing at all for twelve
+ * seconds, so `resolveMetadata` returned `null` for every token on the site
+ * and every card lost its description and its artwork at once. One gateway
+ * being down is not an outage we should have; the same CID is on the others.
  */
-export function resolvableUrl(uri: string): string | null {
+export function resolvableUrls(uri: string): readonly string[] {
   const trimmed = uri.trim()
-  if (trimmed === '') return null
+  if (trimmed === '') return []
 
   const ipfs = IPFS_URI.exec(trimmed)
   if (ipfs?.[1] !== undefined) {
-    return `${ipfsGatewayOrigin()}/ipfs/${ipfs[1]}${ipfs[2] ?? ''}`
+    const path = `${ipfs[1]}${ipfs[2] ?? ''}`
+    return ipfsGatewayOrigins().map((origin) => `${origin}/ipfs/${path}`)
   }
 
-  // The only other acceptable shape: an https URL on the gateway's OWN origin.
+  // The only other acceptable shape: an https URL on a CONFIGURED gateway's
+  // own origin. Its path is then retried across the others -- the document is
+  // content addressed, so the host in the string is a hint, not an identity.
   let parsed: URL
   try {
     parsed = new URL(trimmed)
   } catch {
-    return null
+    return []
   }
-  if (parsed.protocol !== 'https:') return null
-  if (parsed.origin !== ipfsGatewayOrigin()) return null
-  return parsed.toString()
+  if (parsed.protocol !== 'https:') return []
+  const origins = ipfsGatewayOrigins()
+  if (!origins.includes(parsed.origin)) return []
+  if (!parsed.pathname.startsWith('/ipfs/')) return [parsed.toString()]
+  return [
+    parsed.toString(),
+    ...origins
+      .filter((origin) => origin !== parsed.origin)
+      .map((origin) => `${origin}${parsed.pathname}${parsed.search}`),
+  ]
+}
+
+/**
+ * The FIRST URL worth trying, or `null`.
+ *
+ * Kept because `image` needs a single canonical value to hand to the browser,
+ * not a list — `TokenArtwork` turns whichever gateway URL it receives into a
+ * same-origin `/api/ipfs/…` request anyway, and that route does its own
+ * failover across the same gateways.
+ */
+export function resolvableUrl(uri: string): string | null {
+  return resolvableUrls(uri)[0] ?? null
 }
 
 /** Reads at most `limit` bytes, then stops. The header is never trusted. */
@@ -116,10 +145,24 @@ function link(value: unknown): string | undefined {
   }
 }
 
-export async function resolveMetadata(uri: string): Promise<ResolvedMetadata | null> {
-  const url = resolvableUrl(uri)
-  if (url === null) return null
+/**
+ * One gateway attempt, and the distinction the retry loop turns on.
+ *
+ * `unreachable` — nobody answered: a timeout, a refused connection, a 502.
+ *   Another gateway may well hold the document, so it is worth asking.
+ *
+ * `answered` — a gateway replied and we have its verdict. `body: null` means
+ *   it replied with something unusable (over the ceiling, an unreadable
+ *   stream). ASKING AGAIN IS POINTLESS: IPFS is content addressed, so every
+ *   gateway serves the same bytes for the same CID and the second answer
+ *   cannot differ from the first. Retrying it would multiply our requests to
+ *   the gateways we depend on for a result already known.
+ */
+type Attempt = { readonly kind: 'unreachable' } | { readonly kind: 'answered'; readonly body: string | null }
 
+const UNREACHABLE: Attempt = { kind: 'unreachable' }
+
+async function readDocument(url: string): Promise<Attempt> {
   let response: Response
   try {
     response = await fetch(url, {
@@ -129,11 +172,43 @@ export async function resolveMetadata(uri: string): Promise<ResolvedMetadata | n
       next: { revalidate: METADATA_REVALIDATE_SECONDS },
     })
   } catch {
-    return null
+    return UNREACHABLE
   }
-  if (!response.ok) return null
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => undefined)
+    return UNREACHABLE
+  }
+  try {
+    return { kind: 'answered', body: await readCapped(response, METADATA_BODY_LIMIT) }
+  } catch {
+    /*
+     * READING THE BODY MUST NOT THROW PAST THIS POINT. `getReader()` throws
+     * on a stream that is already locked or consumed, and this function is
+     * now called in a loop — one exception here would escape `resolveMetadata`
+     * and take down the render of a page whose only problem is a token with
+     * bad metadata. Same shape as the unhandled pool error that killed the
+     * indexer: a failure arriving outside the call it belongs to.
+     */
+    return { kind: 'answered', body: null }
+  }
+}
 
-  const raw = await readCapped(response, METADATA_BODY_LIMIT)
+export async function resolveMetadata(uri: string): Promise<ResolvedMetadata | null> {
+  /*
+   * SEQUENTIAL, NOT `Promise.any`. Racing every gateway would be faster on the
+   * unhappy path and would also mean four requests for every card on every
+   * page — the common case is that the FIRST one answers, and paying 4x for
+   * the rare case is how a launchpad gets itself rate-limited off the
+   * gateways it depends on. The 2 s per-attempt timeout bounds the tail.
+   */
+  let raw: string | null = null
+  for (const url of resolvableUrls(uri)) {
+    const attempt = await readDocument(url)
+    if (attempt.kind === 'answered') {
+      raw = attempt.body
+      break
+    }
+  }
   if (raw === null) return null
 
   let parsed: unknown
