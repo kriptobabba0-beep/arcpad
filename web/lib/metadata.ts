@@ -237,3 +237,78 @@ export async function resolveMetadata(uri: string): Promise<ResolvedMetadata | n
   // Unknown fields are dropped by construction: nothing above copies them.
   return Object.keys(resolved).length === 0 ? null : resolved
 }
+
+/**
+ * ===========================================================================
+ *  THE GRID NEVER SHOWED ARTWORK, AND NOTHING SAID SO.
+ * ===========================================================================
+ *
+ * `TokenCard` takes an `imageUrl` prop and `TokenGrid` rendered
+ * `<TokenCard overview={overview} />` -- without it. `TopTokensStrip` takes an
+ * `images` map and the page rendered `<TopTokensStrip tokens now />` --
+ * without it. So EVERY card on the home page drew its fallback gradient
+ * forever, no matter what a creator uploaded, and no test failed: the props
+ * are optional and `undefined` is a legal value meaning "no artwork".
+ *
+ * It stayed invisible because for a long time it was also TRUE: every launch
+ * on this deployment carried an empty `uri`, so there was nothing to draw. The
+ * first launch with a real pinned document (`LOCKED`, 2026-08-11) is what made
+ * the gap observable -- its picture appears on the token PAGE, which resolves
+ * metadata, and was missing from the grid, which did not.
+ *
+ * THE BUDGET IS THE INTERESTING PART. A grid is up to 48 cards and a gateway
+ * fetch was measured at 5.2 s; 48 of those in series would be a dead page, and
+ * even in parallel one slow gateway would hold the whole render. So:
+ *
+ *   - tokens with an empty `uri` cost NOTHING. `resolvableUrls('')` is empty,
+ *     so no request is made -- which is most of them today.
+ *   - the rest resolve CONCURRENTLY, each already bounded by
+ *     `METADATA_TIMEOUT_MS` per gateway attempt.
+ *   - and the whole batch races a wall-clock budget. Past it the page renders
+ *     with whatever arrived and gradients for the rest.
+ *
+ * A MISSED IMAGE IS NOT A LOST IMAGE. Next caches the fetch for
+ * `METADATA_REVALIDATE_SECONDS`, and the explore page re-renders every ten
+ * seconds via `LiveRefresh` -- so the first visitor after a cold cache may see
+ * a gradient, and the next render has the picture. That is the correct
+ * trade for a launchpad: never make someone wait on a stranger's gateway to
+ * see prices.
+ */
+export const ARTWORK_BATCH_BUDGET_MS = 2_500
+
+export async function resolveArtworkMap(
+  tokens: ReadonlyArray<{ readonly token: string; readonly uri?: string | null }>,
+  budgetMs: number = ARTWORK_BATCH_BUDGET_MS,
+): Promise<Readonly<Record<string, string | null>>> {
+  const out: Record<string, string | null> = {}
+
+  const pending = tokens.filter((t) => typeof t.uri === 'string' && t.uri.trim() !== '')
+  if (pending.length === 0) return out
+
+  /*
+   * DE-DUPLICATED BY URI, not by token. Two launches can legitimately point at
+   * the same document, and resolving it twice would double the cost of the
+   * exact case where cost matters.
+   */
+  const byUri = new Map<string, string[]>()
+  for (const t of pending) {
+    const uri = (t.uri as string).trim()
+    const bucket = byUri.get(uri)
+    if (bucket === undefined) byUri.set(uri, [t.token])
+    else bucket.push(t.token)
+  }
+
+  const work = Promise.all(
+    [...byUri.entries()].map(async ([uri, addresses]) => {
+      const meta = await resolveMetadata(uri)
+      const image = meta?.image ?? null
+      for (const address of addresses) out[address] = image
+    }),
+  )
+
+  // `Promise.race` against a timer: whatever has resolved by then is already
+  // written into `out`, because each task writes as it finishes rather than at
+  // the end. A late arrival simply misses this render.
+  await Promise.race([work, new Promise((resolve) => setTimeout(resolve, budgetMs))])
+  return out
+}

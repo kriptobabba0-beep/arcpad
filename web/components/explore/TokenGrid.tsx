@@ -20,12 +20,28 @@ export const GRID_CLASS =
   // ekranda daha cok launch demek -- bir launchpad'de taranan sey odur.
   'grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6'
 
-export function TokenGrid({ tokens, label }: { tokens: readonly TokenOverview[]; label: string }) {
+export function TokenGrid({
+  tokens,
+  label,
+  images,
+}: {
+  tokens: readonly TokenOverview[]
+  label: string
+  /**
+   * Token adresi -> cozulmus gorsel URL'i. VERILMEZSE HER KART GRADYAN CIZER.
+   *
+   * Bu prop bir sureligine YOKTU ve kimse fark etmedi: `TokenCard` zaten
+   * `imageUrl`i istege bagli aliyordu, `undefined` da "gorsel yok" demek
+   * oldugu icin hicbir test dusmedi. Sonuc, bir kullanicinin yukledigi
+   * gorselin token SAYFASINDA gorunup ANA IZGARADA hic gorunmemesiydi.
+   */
+  images?: Readonly<Record<string, string | null>>
+}) {
   return (
     <ul aria-label={label} className={cx(GRID_CLASS, 'list-none')}>
       {tokens.map((overview) => (
         <li key={overview.token} className="contents">
-          <TokenCard overview={overview} />
+          <TokenCard overview={overview} imageUrl={images?.[overview.token] ?? null} />
         </li>
       ))}
     </ul>

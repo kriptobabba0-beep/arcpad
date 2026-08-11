@@ -133,31 +133,48 @@ describe('topic0 kimlikleri', () => {
    * `graduate()` senaryosu ekler, `make fixtures` kosar, ve bu giris SILINIR
    * -- asagidaki ikinci test onu silmeye ZORLAR.
    */
-  const AWAITING_FIXTURE: Record<string, string> = {
-    graduated:
-      'Graduated -- `make fixtures` forge ister; bu izlek forge kosamaz ve zincirde ' +
-      'graduate() yalnizca hedefin kendisi tarafindan cagrilabilir (uretimde hedef sifir, ' +
-      'provada 0x…dEaD). Imza DERLENMIS ABI ile dogrulaniyor.',
-    // UCU DE AYNI TEK OLGUYA BAGLI: zincirde henuz HICBIR HAVUZ YOK. Havuz
-    // `ArcpadLocker.graduate()` icinde acilir, o da `graduationTarget`
-    // gerektirir, o da uretimde `0x0`. Ilk gercek mezuniyet
-    // 2026-08-11T23:01:51Z'de acilan pencerede olur; o gun bu uc giris de
-    // SILINIR ve asagidaki iki test onu ZORLAR.
-    poolSwap:
-      'PoolManager.Swap -- zincirde henuz hicbir arcpad havuzu acilmadi (graduationTarget = 0x0). ' +
-      'Imza `src/pool-events.generated.ts` uzerinden derlenmis ABI ile dogrulaniyor.',
-    poolInitialize: 'PoolManager.Initialize -- ayni sebep; havuz ancak graduate() ile acilir.',
-    poolFee:
-      'ArcpadHook.SwapFeeCollected -- ayni sebep; hook ucreti ancak bir havuz swap inde tahsil eder.',
-  }
+  /*
+   * ============ BU LISTE BOSALDI, VE BOSALTAN SEY BIR KOSUYDU ============
+   *
+   * 2026-08-11T23:05Z, Arc testnet, gercek yayinlar. Dortu de ayni tek olguya
+   * baglıydi: zincirde HENUZ HICBIR HAVUZ YOKTU, cunku havuz
+   * `ArcpadLocker.graduate()` icinde acilir, o da `graduationTarget` ister, o
+   * da uretimde `0x0`di. Tek kullanimlik yigin uzerindeki uc gunluk yonetisim
+   * penceresi 23:01:51Z'de acildi ve sira su sekilde yurudu:
+   *
+   *   applyGraduationTarget()   blok 56518983
+   *   launch()                  blok 56518990  token 0x94D3…e44a
+   *   tam curve alimi           blok 56519020
+   *   KEEPER'IN KENDI GECISI    blok 56519025  12,16 USDC  -> graduated
+   *   ilk havuz swap'i          blok 56519090  10000 birim, hook ucreti 95+30
+   *
+   * `graduated` ve `poolInitialize` dorduncu adimin makbuzundan,
+   * `poolSwap` ve `poolFee` besincisinden geldi. Ikisi de
+   * `contracts/fixtures/arc-live/` altinda ve asagidaki iki test artik
+   * DORDUNU DE gercek loglara karsi tutuyor -- muafiyetle degil.
+   *
+   * Bos birakilmasi bilincli: bir sonraki "henuz zincirde yok" olayi geldiginde
+   * buraya yazilir, ve yukaridaki iki test o girisi silmeye ZORLAR.
+   */
+  const AWAITING_FIXTURE: Record<string, string> = {}
 
   // IKINCI YON: her `TOPIC0` degeri en az bir gercek logda GORULUR. Yalnizca
   // birinci yon olsaydi, hic yayilmayan uydurma bir imza yesil kalirdi.
+  //
+  // DERIN TARAMA, VE BU BIR GEVSETME DEGIL DUZELTMEDIR. Once `fixtureNames()`
+  // kullaniyordu, yani YALNIZCA ust dizin -- oraya `make fixtures` yazar. Ama
+  // dort olayin (`graduated`, `poolInitialize`, `poolSwap`, `poolFee`) ilk
+  // gercek ornekleri bu depoya CANLI MAKBUZ olarak `arc-live/` altina geldi
+  // (2026-08-11 mezuniyet penceresi). Ust dizine bakan bir kapi, kanit
+  // geldikten SONRA da "hala yok" der ve muafiyetin silinmesini IMKANSIZ
+  // kilardi -- asagidaki kapi ise silinmesini ZORLUYOR. Ikisi ayni kumeye
+  // bakmadikca bu dosya kendi kendisiyle celisir.
+  //
+  // Alttaki 'tarama ic ice dizinlere de INER' testi bu taramanin gercekten
+  // asagi indigini AYRICA olcer, yani buradaki gecis bir varsayima degil
+  // olculmus bir erisime dayanir.
   it('her TOPIC0 degeri en az bir gercek logda gorulur', () => {
-    const seen = new Set<string>()
-    for (const name of fixtureNames()) {
-      for (const log of loadFixtureFile(name).logs) seen.add(log.topics[0]!)
-    }
+    const seen = allFixtureTopics()
     const missing = (Object.entries(TOPIC0) as [keyof typeof TOPIC0, string][])
       .filter(([kind, topic]) => !seen.has(topic) && AWAITING_FIXTURE[kind] === undefined)
       .map(([kind]) => kind)

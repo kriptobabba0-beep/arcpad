@@ -18,6 +18,7 @@ import { TokenGrid } from '@/components/explore/TokenGrid'
 import { TopTokensStrip } from '@/components/explore/TopTokensStrip'
 import { StaleNotice } from '@/components/read/StaleNotice'
 import { fold, type IndexerStatus, stalenessOf, type TokenOverview } from '@/components/read/types'
+import { resolveArtworkMap } from '@/lib/metadata'
 import { readTokenList } from '@/lib/read'
 
 /**
@@ -95,6 +96,23 @@ export default async function Home({
    */
   const now = Date.now()
 
+  /*
+   * THE ARTWORK, FOR BOTH SURFACES AT ONCE.
+   *
+   * `TokenGrid` and `TopTokensStrip` both accept an image map and neither was
+   * being given one, so every card on this page drew a gradient no matter what
+   * a creator had uploaded -- while the token PAGE, which resolves metadata
+   * itself, showed the same picture correctly. Optional props and a legal
+   * `undefined` meant nothing failed.
+   *
+   * ONE BATCH FOR BOTH LISTS: the strip's tokens are a subset of the grid's
+   * more often than not, and `resolveArtworkMap` de-duplicates by URI, so the
+   * two surfaces cost what one costs. The budget inside it keeps a slow
+   * gateway from holding this render -- a missed picture returns on the next
+   * `LiveRefresh` tick, once Next's fetch cache is warm.
+   */
+  const artwork = await resolveArtworkMap([...topTokens, ...(page?.rows ?? [])])
+
   return (
     <div className="flex flex-col gap-10">
       {/*
@@ -113,7 +131,7 @@ export default async function Home({
       */}
       {listStale === null ? null : <StaleNotice indexer={listStale} what="Prices and volumes" />}
 
-      <TopTokensStrip tokens={topTokens} now={now} />
+      <TopTokensStrip tokens={topTokens} images={artwork} now={now} />
 
       <section aria-labelledby="explore-heading" className="flex flex-col gap-4">
         {/*
@@ -142,7 +160,7 @@ export default async function Home({
           )
         ) : (
           <>
-            <TokenGrid tokens={page.rows} label="Launches" />
+            <TokenGrid tokens={page.rows} images={artwork} label="Launches" />
             {/*
               TOPLAM SAYILMAMISSA SAYFALAYICI CIZILMEZ. `total` `undefined`
               olabilir (okuma `withTotal` istememisse ya da sorgu duserse) ve
