@@ -145,6 +145,33 @@ ufw allow 80/tcp                                # and 443 once TLS exists
 
 The write-path rate limit is a **second** control, not a duplicate of the application's. Chat is already limited to 5 messages per 60 seconds per `(token, author)` inside the insert transaction — that is the correctness boundary and rotating IPs does not move it. The nginx limit exists because an _invalid_ post never reaches that check: the route verifies an ECDSA signature first, and signature recovery costs real CPU. Two controls, two threat models.
 
+**`/api/ipfs/` has its own location and a much larger burst, and that is measured rather than generous.** A cold explore page draws 48 cards; 48 concurrent image requests overran `location /`'s `burst=40` and three came back 429 — three tokens with no picture, on the first page a visitor sees. Raising the ceiling is safe exactly here because these are the cheapest requests on the box: the route answers from a local file in about 8 ms and sends `immutable`, so a browser asks for a CID once and never again. What it costs us upstream is bounded by the route's own single-flight, not by this number.
+
+---
+
+## 4b. Where artwork lives on disk
+
+`arcpad-web.service` carries `CacheDirectory=arcpad`, and it is **required, not an optimisation**. The unit runs with `ProtectSystem=strict`, so the filesystem is read-only; without this line `/api/ipfs/` cannot write, silently falls back to fetching from a public gateway on every single request, and the site returns to the behaviour that was measured on 2026-08-11:
+
+```
+six sequential requests for one 7 kB png, public gateway:
+  200 in 3.5s   200 in 5.2s   200 in 5.6s
+  404 in 12.2s  404 in 18.2s  404 in 24.0s
+```
+
+With the cache: the first request pays that once, every later one answers in **8–15 ms**, and 48 simultaneous requests make **one** upstream fetch.
+
+```bash
+systemctl show arcpad-web -p CacheDirectory --value    # must print: arcpad
+ls -ld /var/cache/arcpad                               # drwxr-x--- arcpad arcpad
+```
+
+Nothing in there ever goes stale — a CID *is* its bytes — so there is no expiry to configure and no invalidation to get wrong. If it ever needs emptying:
+
+```bash
+systemctl clean --what=cache arcpad-web
+```
+
 ---
 
 ## 5. TLS, and what its absence costs today — `TODO(owner) 8`

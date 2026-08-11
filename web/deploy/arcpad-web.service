@@ -62,6 +62,23 @@ RestartSec=5
 TimeoutStopSec=30
 MemoryAccounting=yes
 
+; WHERE TOKEN ARTWORK IS KEPT, and the only writable path this unit has.
+;
+; `ProtectSystem=strict` below makes the whole filesystem read-only, which is
+; correct and is also why this line is REQUIRED rather than a convenience:
+; without it `/api/ipfs/` cannot write, silently falls back to fetching from a
+; gateway every single time, and the site is back to the behaviour that was
+; measured failing -- half of six sequential requests returning 404 after up
+; to 24 seconds, and 48 requests per visitor on a cold explore page.
+;
+; systemd creates `/var/cache/arcpad` owned by `User=` and exports the path as
+; `$CACHE_DIRECTORY`, so the app finds it without a second copy of the path in
+; an env file. Content-addressed bytes never go stale, so nothing here needs
+; expiry -- and `systemctl clean --what=cache arcpad-web` empties it if it
+; ever needs emptying.
+CacheDirectory=arcpad
+CacheDirectoryMode=0750
+
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=yes
