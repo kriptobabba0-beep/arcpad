@@ -5,8 +5,8 @@ import { Money } from '@/components/ui/Money'
 import {
   bpsPercent,
   formatTok,
-  formatTokExact,
   type LaunchFacts,
+  smallSharePercent,
   supplySharePercent,
 } from './facts'
 import { displayName, type LaunchFields } from './fields'
@@ -97,16 +97,9 @@ export function TokenPreviewCard({ fields, facts }: TokenPreviewCardProps) {
           </span>
           {facts === null ? null : (
             <Note>
-              {supplySharePercent(facts.poolSeedTok, facts.totalSupplyTok)}% of the supply.{' '}
-              {/*
-                BIR LAUNCHPAD'DE ARZIN NEREYE GITTIGI TOPLAMDA %100 TUTMAK
-                ZORUNDADIR; tutmuyorsa sebebi YAZILI olmali. `N - S - D`
-                curve'de kalir ve hicbir zaman hicbir yere gitmez (spec §5.2'nin
-                kalici artigi). Tam deger kirpilmadan yazilir, cunku kirpilmis
-                uc sayi toplamda `N` etmez.
-              */}
-              A further {formatTokExact(facts.strandedTok)} stays on the curve for good: it is the
-              rounding remainder of the split and there is no path that moves it.
+              {supplySharePercent(facts.poolSeedTok, facts.totalSupplyTok)}% of the supply. The last{' '}
+              {smallSharePercent(facts.strandedTok, facts.totalSupplyTok)}% is a rounding remainder
+              and stays on the curve.
             </Note>
           )}
         </Row>

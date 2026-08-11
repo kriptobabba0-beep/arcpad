@@ -195,9 +195,25 @@ describe('<TokenPreviewCard>', () => {
     expect(row('Opening market cap').getByText('4.00')).toBeInTheDocument()
   })
 
-  it('kalici artik TAM degeriyle yazilir -- kirpilirsa toplam N etmez', () => {
+  /*
+   * KALICI ARTIK GORUNUR KALIR -- AMA YUZDE OLARAK.
+   *
+   * Onceden 20 haneli tam degeri yaziliyordu ve gerekcesi suydu: uc sayi
+   * toplamda `N` etmiyor, sebebi gorunmeli. Gerekce hala gecerli, TASIYICI
+   * degisti: bir kurucuya `13,988.816402609506057782` gostermek, gercekten
+   * onemli olan uc sayinin (toplam arz, curve'deki, havuzdaki) okunurlugunu
+   * dusuruyordu. Yuzde ayni olguyu bir bakista soyler.
+   *
+   * TOPLAMIN TUTTUGU IDDIASI KAYBOLMADI: `facts` suite'indeki
+   * "ARZIN TAMAMI TUTAR" testi `S + D + artik === N` esitligini olcuyor. Bu
+   * test EKRANI olcer, aritmetigi degil.
+   */
+  it('kalici artik YUZDE olarak yazilir, ve "0.00" diye kaybolmaz', () => {
     render(<TokenPreviewCard fields={EMPTY_FIELDS} facts={FACTS} />)
-    expect(row('Reserved for the pool').getByText(/13,988\.816402609506057782/)).toBeInTheDocument()
+    const pool = row('Reserved for the pool')
+    expect(pool.getByText(/rounding remainder/i)).toBeInTheDocument()
+    // Iki ondalik `0.00` verirdi -- yani "yok" derdi, oysa var.
+    expect(pool.getByText(/0\.0014%/)).toBeInTheDocument()
   })
 
   it('profil okunamadiginda sayilar "—" olur, kart YOK OLMAZ', () => {

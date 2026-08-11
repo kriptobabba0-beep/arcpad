@@ -180,6 +180,18 @@ export function supplySharePercent(part: bigint, total: bigint): string {
   return `${hundredths / 100n}.${(hundredths % 100n).toString().padStart(2, '0')}`
 }
 
+/**
+ * KUCUK BIR PAY, DORT ONDALIKLA: `0.0014`.
+ *
+ * `supplySharePercent` iki ondalik verir ve kalici artik icin `0.00` yazar --
+ * yani "yok" der, oysa var. Dort ondalik onu gorunur kilar, ve `bigint`
+ * uzerinde YUVARLAYARAK: kirpma `0.0013` verirdi ve dogrusu `0.0014`.
+ */
+export function smallSharePercent(part: bigint, total: bigint): string {
+  const scaled = (part * 2_000_000n + total) / (total * 2n) // 10^4 olcekli, yuvarlanmis
+  return `${scaled / 10_000n}.${(scaled % 10_000n).toString().padStart(4, '0')}`
+}
+
 /** `95n` -> `0.95`. Bps'i yuzdeye cevirmek iki ondalik demektir, daha az degil. */
 export function bpsPercent(bps: bigint): string {
   return `${bps / 100n}.${(bps % 100n).toString().padStart(2, '0')}`
