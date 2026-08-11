@@ -1,7 +1,7 @@
-import { formatUsdcCompact } from '@arcpad/shared/browser'
 import Link from 'next/link'
 import { TokenArtwork } from '@/components/layout/TokenArtwork'
 import type { TokenOverview } from '@/components/read/types'
+import { LiveNumber } from '@/components/ui/LiveNumber'
 import { Pill } from '@/components/ui/Pill'
 import { relativeAge, relativeAgeLabel } from '@/components/ui/relativeAge'
 import { GraduatedBadge } from './GraduatedBadge'
@@ -98,17 +98,17 @@ export function TokenCard({
         />
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute left-2 top-2 rounded-pill bg-black/65 px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-white/85 backdrop-blur-sm"
+          className="pointer-events-none absolute left-2 top-2 rounded-pill bg-black/70 px-2 py-0.5 text-[12px] font-semibold tabular-nums text-white/90 backdrop-blur-sm"
         >
           {age}
         </span>
         {overview.graduated ? <GraduatedBadge /> : null}
       </div>
 
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5 p-2.5">
+      <div className="flex min-w-0 flex-1 flex-col gap-2 p-3.5">
         <div className="flex min-w-0 items-baseline gap-1.5">
-          <span className="truncate text-[13px] font-medium">{overview.name}</span>
-          <span className="shrink-0 text-[12px] text-muted">${overview.symbol}</span>
+          <span className="truncate text-[15px] font-semibold">{overview.name}</span>
+          <span className="shrink-0 text-[13px] font-medium text-muted">${overview.symbol}</span>
         </div>
 
         {/*
@@ -119,10 +119,16 @@ export function TokenCard({
           sayfasindaki toplamlari da yaziyor, yani iki yer ayni sayiyi ayni
           bicimde gosterir.
         */}
+        {/*
+          ETIKET SOLUK DEGIL. `text-muted` bir yardimci metin rengidir ve bu
+          satirdaki iki parca da yardimci degil: `FDV` sayinin NE OLDUGUNU
+          soyler, sayi ise kartin en cok bakilan degeridir. Etiket artik
+          `text-text/70` ve `font-medium`; sayi bir punto buyuk ve `semibold`.
+        */}
         <div className="flex items-baseline justify-between gap-2">
-          <span className="text-[12px] text-muted">FDV</span>
-          <span className="text-[13px] font-medium tabular-nums">
-            {formatUsdcCompact(overview.marketCapWei)}
+          <span className="text-[12px] font-medium uppercase tracking-wide text-text/70">FDV</span>
+          <span className="text-[16px] font-semibold">
+            <LiveNumber value={overview.marketCapWei} format="usdc" />
           </span>
         </div>
 
@@ -130,8 +136,8 @@ export function TokenCard({
           <Pill tone="accent">Curve complete</Pill>
         ) : (
           <div className="flex flex-col gap-1">
-            <span className="text-[11px] text-muted">
-              <span className="tabular-nums text-text">{percent}%</span> to graduation
+            <span className="text-[13px] text-muted">
+              <span className="font-semibold tabular-nums text-text">{percent}%</span> to graduation
             </span>
             {/*
               Ilerleme cizgisi `aria-hidden`: ayni sayi bir ustteki metinde
@@ -139,7 +145,10 @@ export function TokenCard({
               duyururdu. Cizgi burada gorsel bir ozet, bagimsiz bir bilgi
               degil.
             */}
-            <span aria-hidden="true" className="block h-1 overflow-hidden rounded-pill bg-white/8">
+            <span
+              aria-hidden="true"
+              className="block h-1.5 overflow-hidden rounded-pill bg-white/10"
+            >
               <span
                 className="block h-full rounded-pill bg-accent"
                 style={{ width: `${Math.min(100, overview.progressPpm / 10_000)}%` }}

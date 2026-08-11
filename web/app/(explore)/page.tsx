@@ -4,16 +4,18 @@ import {
   ReadUnavailable,
 } from '@/components/explore/EmptyState'
 import { ExploreHero } from '@/components/explore/ExploreHero'
+import { LiveRefresh } from '@/components/explore/LiveRefresh'
 import { FilterBar } from '@/components/explore/FilterBar'
 import { NumberedPager } from '@/components/explore/NumberedPager'
 import {
   type ExploreSearchParams,
   PAGE_SIZE,
   parseExploreParams,
+  TOP_TOKENS_COUNT,
   tabQuery,
 } from '@/components/explore/params'
 import { TokenGrid } from '@/components/explore/TokenGrid'
-import { TOP_TOKENS_COUNT, TopTokensStrip } from '@/components/explore/TopTokensStrip'
+import { TopTokensStrip } from '@/components/explore/TopTokensStrip'
 import { StaleNotice } from '@/components/read/StaleNotice'
 import { fold, type IndexerStatus, stalenessOf, type TokenOverview } from '@/components/read/types'
 import { readTokenList } from '@/lib/read'
@@ -82,8 +84,26 @@ export default async function Home({
   const listStale: IndexerStatus | null = stalenessOf(list)
   const page = list.ok ? (list.stale ? list.staleData : list.data) : null
 
+  /*
+   * SUNUCUNUN SAATI, ISTEMCININ DEGIL.
+   *
+   * `TopTokensStrip` artik bir istemci bilesenidir (ok dugmeleri) ve icinde
+   * yas rozetleri var. `Date.now()`u orada cagirmak, SSR ile ilk istemci
+   * ciziminin FARKLI degerler uretmesi demektir -- React bunu bir hidrasyon
+   * uyusmazligi olarak bildirir ve rozet bir an yanlis gorunur. Zamani
+   * sunucudan bir prop olarak gecmek ikisini esitler.
+   */
+  const now = Date.now()
+
   return (
     <div className="flex flex-col gap-10">
+      {/*
+        Sayfa kullanici yenilemeden guncel kalir: `router.refresh()` sunucu
+        bileşenlerini yeniden calistirir, React sonucu mevcut agaca yamar, ve
+        degisen sayilar `LiveNumber`a yeni prop olarak gelip animasyonla akar.
+      */}
+      <LiveRefresh />
+
       <ExploreHero />
 
       {/*
@@ -93,7 +113,7 @@ export default async function Home({
       */}
       {listStale === null ? null : <StaleNotice indexer={listStale} what="Prices and volumes" />}
 
-      <TopTokensStrip tokens={topTokens} />
+      <TopTokensStrip tokens={topTokens} now={now} />
 
       <section aria-labelledby="explore-heading" className="flex flex-col gap-4">
         {/*
@@ -103,7 +123,7 @@ export default async function Home({
           parcasi olmasina ragmen ilgisiz iki oge gibi okunuyorlardi.
         */}
         <div className="flex flex-col gap-3">
-          <h2 id="explore-heading" className="font-serif text-2xl leading-none">
+          <h2 id="explore-heading" className="font-serif text-[28px] leading-none">
             All launches
           </h2>
           <FilterBar query={query} />

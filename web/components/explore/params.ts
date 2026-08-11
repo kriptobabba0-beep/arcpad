@@ -26,7 +26,12 @@ export const TABS = {
    * bir 1 USDC'lik alim, bir gunde 40.000 USDC donmus bir curve'un onune
    * gecer. Hacim, "ne kadar" sorusunu cevaplar.
    */
-  trending: { sort: 'volume', ageDays: null, label: 'Trending' },
+  trending: {
+    sort: 'volume',
+    ageDays: null,
+    label: 'Trending',
+    hint: 'Most traded in the last 24 hours, by volume in USDC.',
+  },
   /**
    * NEW = SON 7 GUN, YENIDEN ESKIYE.
    *
@@ -35,17 +40,35 @@ export const TABS = {
    * acilan iki launch arasindaki sira belirsiz olurdu -- ve olculdu, ardisik
    * bloklarin yarisi ayni timestamp'i tasiyor.
    */
-  new: { sort: 'newest', ageDays: 7, label: 'New' },
+  new: {
+    sort: 'newest',
+    ageDays: 7,
+    label: 'New',
+    hint: 'Launched in the last 7 days, newest first.',
+  },
   /** TOP = FDV, buyukten kucuge. */
-  top: { sort: 'marketCap', ageDays: null, label: 'Top' },
+  top: {
+    sort: 'marketCap',
+    ageDays: null,
+    label: 'Top',
+    hint: 'Largest fully diluted valuation first. FDV is the price on the curve times the whole 1,000,000,000 supply.',
+  },
   /**
    * NEAR GRADUATION = ILERLEME YUZDESI, YAKINDAN UZAGA.
    *
    * Tamamlanmislar SUZULMEZ: %100'e varmis bir curve, "graduation'a en yakin"
    * listesinin dogal olarak en ustundedir -- sirada bekleyen ilk adaydir.
    */
-  nearGraduation: { sort: 'nearGraduation', ageDays: null, label: 'Near graduation' },
-} as const satisfies Record<string, { sort: SortKey; ageDays: number | null; label: string }>
+  nearGraduation: {
+    sort: 'nearGraduation',
+    ageDays: null,
+    label: 'Near graduation',
+    hint: 'Closest to filling the curve first. A launch graduates when it has raised 12.161434 USDC, and its pool opens then.',
+  },
+} as const satisfies Record<
+  string,
+  { sort: SortKey; ageDays: number | null; label: string; hint: string }
+>
 
 export type TabKey = keyof typeof TABS
 
@@ -62,6 +85,21 @@ export const DEFAULT_TAB: TabKey = 'trending'
  * 3, 4 ve 6 sutuna TAM bolunur -- her kirilma noktasinda son satir dolu biter.
  */
 export const PAGE_SIZE = 48
+
+/**
+ * Top tokens seridindeki en fazla kart.
+ *
+ * BURADA, `TopTokensStrip.tsx`TE DEGIL -- ve bu bir duzen tercihi degil, bir
+ * HATA DUZELTMESI. Serit ok dugmeleri icin `'use client'` oldu, ve bir istemci
+ * modulunden sunucu bilesenine import edilen sabit DEGER olarak gelmez: React
+ * onu bir ISTEMCI REFERANSINA cevirir. `limit: TOP_TOKENS_COUNT` boylece bir
+ * nesne oldu, `Math.max(nesne, 1)` `NaN` verdi, ve Postgres `OFFSET`/`LIMIT`i
+ * bigint bekledigi icin sorgu "invalid input syntax for type bigint: NaN" ile
+ * dustu -- yani ANA SAYFANIN LISTESI TAMAMEN KAYBOLDU ve ekranda "okuma
+ * yapilamiyor" kutusu cizildi. Saf bir `.ts` modulunde durdugunda deger
+ * degerdir.
+ */
+export const TOP_TOKENS_COUNT = 16
 
 export type ExploreQuery = {
   readonly tab: TabKey
@@ -106,11 +144,10 @@ export function parseExploreParams(raw: ExploreSearchParams): ExploreQuery {
   return { tab, sort, ageDays, page }
 }
 
-/** Sekme seridindeki etiketler, URL sirasinda. */
-export const TAB_LABELS: ReadonlyArray<{ key: TabKey; label: string }> = TAB_KEYS.map((key) => ({
-  key,
-  label: TABS[key].label,
-}))
+/** Sekme seridindeki etiketler ve ipuclari, URL sirasinda. */
+export const TAB_LABELS: ReadonlyArray<{ key: TabKey; label: string; hint: string }> = TAB_KEYS.map(
+  (key) => ({ key, label: TABS[key].label, hint: TABS[key].hint }),
+)
 
 /**
  * Bir sekmenin adresi. SAYFA TASINMAZ ve bu bilincli: "Top"un 7. sayfasindan

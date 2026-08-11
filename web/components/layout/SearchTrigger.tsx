@@ -71,19 +71,23 @@ export function SearchTrigger({ renderDialog, className }: SearchTriggerProps) {
         aria-haspopup="dialog"
         aria-expanded={open}
         className={cx(
-          'group inline-flex h-10 items-center gap-2 rounded-input border border-border bg-surface-2',
-          'px-3 text-sm text-muted transition-colors duration-150',
+          // GENIS VE ORTADA. Referans arayuzde arama seridin ortasinda duran
+          // GENIS bir kutudur, sag kumeye yapisik dar bir dugme degil:
+          // `w-full max-w-[460px]` onu bir "arac" degil bir GIRIS ALANI gibi
+          // gosterir, ki tiklanacak sey odur.
+          'group inline-flex h-11 w-full max-w-[460px] items-center gap-2.5 rounded-pill border border-border bg-surface-2',
+          'px-4 text-[15px] text-muted transition-colors duration-150',
           'hover:border-white/20 hover:text-text',
           className,
         )}
       >
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <svg width="17" height="17" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <circle cx="7" cy="7" r="4.25" stroke="currentColor" strokeWidth="1.5" />
           <path d="m10.5 10.5 3 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
         </svg>
         <span className="hidden sm:inline">Search tokens</span>
         <kbd
-          className="ml-2 hidden rounded-[6px] border border-border bg-bg px-1.5 py-0.5 font-sans text-[11px] tabular-nums text-muted sm:inline"
+          className="ml-auto hidden rounded-[6px] border border-border bg-bg px-2 py-0.5 font-sans text-[12px] tabular-nums text-muted sm:inline"
           aria-hidden="true"
         >
           {modifier ?? ''}K

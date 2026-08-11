@@ -104,7 +104,12 @@ describe('listTokens -- numarali sayfa', () => {
 
   it('toplam sayim YAS PENCERESINE uyar', async () => {
     // Butun fikstur ayni gunde acildi; 1 gunluk pencere hepsini kapsar.
-    const inWindow = await listTokens(pool, { sort: 'newest', limit: 2, ageDays: 3650, withTotal: true })
+    const inWindow = await listTokens(pool, {
+      sort: 'newest',
+      limit: 2,
+      ageDays: 3650,
+      withTotal: true,
+    })
     expect(inWindow.total).toBe(COUNT)
   })
 

@@ -24,7 +24,15 @@ export function Header() {
 
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-bg/85 backdrop-blur-md">
-      <div className="mx-auto flex h-16 max-w-[1400px] items-center gap-2 px-4 sm:gap-3 sm:px-6">
+      {/*
+        UC BOLGE, VE ORTADAKI GERCEKTEN ORTALANMIS.
+        Arama onceden `ml-auto` ile sag kumeye yapisikti, yani "ortada"
+        degil "sagdan ucuncu" idi. Uc esit `flex-1` bolge kurmak, orta
+        bolgenin genisligini SOLDAKI ve SAGDAKI kumelerin genisliginden
+        BAGIMSIZ yapar -- cuzdan baglaninca dugme metni uzar ve `justify-center`
+        ile hizalanmis bir arama kutusu o anda sola kayardi.
+      */}
+      <div className="mx-auto flex h-[68px] max-w-[1500px] items-center gap-3 px-4 sm:px-6">
         <Link
           href="/"
           className="flex items-baseline gap-2 rounded-sm"
@@ -68,29 +76,35 @@ export function Header() {
           address at the header level. It is reached from the wallet chip, from
           a launch's creator, and from a holder row.
         */}
-        <nav aria-label="Primary" className="ml-3 hidden items-center gap-3 md:flex">
+        <nav aria-label="Primary" className="ml-2 hidden items-center gap-4 md:flex">
           <Link
             href="/"
-            className="rounded-sm px-1 text-sm text-muted transition-colors duration-150 hover:text-text"
+            className="rounded-sm px-1 text-[15px] text-muted transition-colors duration-150 hover:text-text"
           >
             Explore
           </Link>
           <Link
             href="/analytics"
-            className="rounded-sm px-1 text-sm text-muted transition-colors duration-150 hover:text-text"
+            className="rounded-sm px-1 text-[15px] text-muted transition-colors duration-150 hover:text-text"
           >
             Analytics
           </Link>
         </nav>
 
-        <div className="ml-auto flex items-center gap-2">
-          {/*
-            Tetikleyici ve ⌘K dinleyicisi `SearchTrigger`'da, icerik Task 9'un
-            `SearchDialog`'unda, ikisini birlestiren istemci siniri
-            `SearchBar`'da. Bolunmenin sebebi: kabuk, veritabanina ve
-            `verifyCanonical`'a bagli olan aramadan ONCE ayakta olmali.
-          */}
+        {/*
+          ORTA BOLGE. `flex-1` + `justify-center`: kutu, kendisinden solda ve
+          sagda ne kadar icerik olursa olsun SERIDIN ortasinda durur.
+
+          Tetikleyici ve ⌘K dinleyicisi `SearchTrigger`'da, icerik Task 9'un
+          `SearchDialog`'unda, ikisini birlestiren istemci siniri
+          `SearchBar`'da. Bolunmenin sebebi: kabuk, veritabanina ve
+          `verifyCanonical`'a bagli olan aramadan ONCE ayakta olmali.
+        */}
+        <div className="flex min-w-0 flex-1 justify-center px-2">
           <SearchBar />
+        </div>
+
+        <div className="flex items-center gap-2">
           {/*
             `aria-label` KOSULSUZ. Dar ekranda "Create" metni gizlenir ve
             geriye yalnizca `aria-hidden` bir `+` kalir -- yani baglantinin

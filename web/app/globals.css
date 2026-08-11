@@ -111,8 +111,48 @@
     color-scheme: dark;
   }
 
+  /*
+   * ============ ZEMIN: UC KATMAN, HICBIRI DIKKAT CEKMEZ ============
+   *
+   * Bir launchpad'de ekranin buyuk cogunlugu KARTLARLA dolar ve kartlarin
+   * her biri renkli bir gorsel tasir. Zemin bu yuzden SESSIZ olmak zorunda:
+   * desenli ya da parlak bir arkaplan, yuzlerce kucuk gorselle yarisir ve
+   * goz nereye bakacagini bilemez. Ama duz siyah da bir sey soylemez -- sayfa
+   * "yuklenmemis" gibi durur.
+   *
+   * Uc katman, hepsi `background-attachment: fixed` (kaydirirken zemin
+   * SABIT kalir, yani hareket eden tek sey icerik olur):
+   *
+   *   1. Ustte, ortadan asagi dogru sonen bir vurgu parlamasi. Marka rengi
+   *      YALNIZCA burada ve %4 opaklikta; daha fazlasi arayuzu bir tema
+   *      haline getirirdi.
+   *   2. Sol ustte cok genis, cok soluk ikinci bir parlama -- tek bir isik
+   *      kaynagi duz bir yuzeyi hacimli gosterir.
+   *   3. 32px'lik cok soluk bir izgara. Boyutu bilincli: kart araligiyla
+   *      (16px) uyumlu ve moire uretmeyecek kadar iri. `%1,8` opaklikta,
+   *      yani bakinca gorulmez ama olmadigi hemen anlasilir.
+   *
+   * HAREKET YOK. Animasyonlu bir arkaplan, sayfanin kendisi hareket ederken
+   * (sayilar akiyor, kartlar yeniden siralaniyor) ikinci bir hareket kaynagi
+   * olurdu ve `prefers-reduced-motion` icin ayri bir dal gerektirirdi.
+   */
   body {
     background-color: var(--color-bg);
+    background-image:
+      radial-gradient(
+        1200px 600px at 50% -10%,
+        color-mix(in oklab, var(--color-accent) 4%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(900px 700px at 8% 0%, rgb(255 255 255 / 3%), transparent 65%),
+      linear-gradient(rgb(255 255 255 / 1.8%) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(255 255 255 / 1.8%) 1px, transparent 1px);
+    background-size:
+      100% 100%,
+      100% 100%,
+      32px 32px,
+      32px 32px;
+    background-attachment: fixed;
     color: var(--color-text);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;

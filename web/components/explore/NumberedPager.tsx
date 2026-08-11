@@ -21,6 +21,12 @@ import { pageNumbers } from './pageNumbers'
  *
  * `KeysetPager` SILINMEDI: token sayfasindaki islem ve tutucu listeleri onu
  * kullaniyor ve orada dogru olan odur.
+ *
+ * `scroll={false}` HER BAGLANTIDA. Next varsayilan olarak gezinmeden sonra
+ * sayfayi basa kaydirir; burada gitmek istenen yer sayfanin basi DEGIL, ayni
+ * izgaranin bir sonraki sayfasidir. Kaydirma acik kalsaydi 3. sayfaya basan
+ * biri hero'ya firlar ve baktigi izgarayi bulmak icin her seferinde asagi
+ * kaydirmak zorunda kalirdi.
  */
 
 export function NumberedPager({
@@ -63,12 +69,17 @@ export function NumberedPager({
   return (
     <nav aria-label={label} className="flex flex-wrap items-center justify-center gap-1.5 pt-4">
       {current > 1 ? (
-        <Link href={href(current - 1)} className={buttonClassName({ size: 'sm' })} rel="prev">
+        <Link
+          href={href(current - 1)}
+          scroll={false}
+          className={buttonClassName({ size: 'md' })}
+          rel="prev"
+        >
           Prev
         </Link>
       ) : (
         <span
-          className={buttonClassName({ size: 'sm', className: 'opacity-40' })}
+          className={buttonClassName({ size: 'md', className: 'opacity-40' })}
           aria-hidden="true"
         >
           Prev
@@ -81,7 +92,7 @@ export function NumberedPager({
           <span
             key={`gap-${i}`}
             aria-hidden="true"
-            className="px-1 text-[13px] text-muted select-none"
+            className="px-1.5 text-[15px] text-muted select-none"
           >
             …
           </span>
@@ -90,7 +101,7 @@ export function NumberedPager({
             key={n}
             aria-current="page"
             className={cx(
-              buttonClassName({ size: 'sm' }),
+              buttonClassName({ size: 'md', className: 'min-w-[44px]' }),
               'pointer-events-none border-white/25 bg-surface font-semibold text-text',
             )}
           >
@@ -100,7 +111,8 @@ export function NumberedPager({
           <Link
             key={n}
             href={href(n)}
-            className={buttonClassName({ size: 'sm', className: 'tabular-nums' })}
+            scroll={false}
+            className={buttonClassName({ size: 'md', className: 'tabular-nums min-w-[44px]' })}
             aria-label={`Page ${n}`}
           >
             {n}
@@ -109,12 +121,17 @@ export function NumberedPager({
       )}
 
       {current < pageCount ? (
-        <Link href={href(current + 1)} className={buttonClassName({ size: 'sm' })} rel="next">
+        <Link
+          href={href(current + 1)}
+          scroll={false}
+          className={buttonClassName({ size: 'md' })}
+          rel="next"
+        >
           Next
         </Link>
       ) : (
         <span
-          className={buttonClassName({ size: 'sm', className: 'opacity-40' })}
+          className={buttonClassName({ size: 'md', className: 'opacity-40' })}
           aria-hidden="true"
         >
           Next

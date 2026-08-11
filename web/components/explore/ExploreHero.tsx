@@ -25,9 +25,9 @@ import { buttonClassName } from '@/components/ui/Button'
 export function ExploreHero() {
   return (
     <section className="flex flex-wrap items-end justify-between gap-4 border-b border-border pb-6">
-      <div className="flex max-w-[52ch] flex-col gap-2">
-        <h1 className="font-serif text-3xl leading-none">Launch a token on Arc</h1>
-        <p className="text-[13px] leading-relaxed text-muted">
+      <div className="flex max-w-[56ch] flex-col gap-3">
+        <h1 className="font-serif text-[40px] leading-[1.05]">Launch a token on Arc</h1>
+        <p className="text-[15px] leading-relaxed text-muted">
           Every launch gets the same fixed supply and the same bonding curve. Creating one is free —
           you pay gas, and nothing else. Trading fees are{' '}
           <span className="text-text">0.95% protocol + 0.30% creator</span>, and the creator share

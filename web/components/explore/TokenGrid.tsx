@@ -18,7 +18,7 @@ export const GRID_CLASS =
   // karti ~240px'e cekiyor, ki referans arayuzlerin (pools.trade,
   // ponsfamily.com) izgara adimi da bu civarda. Daha dar bir kart demek, ilk
   // ekranda daha cok launch demek -- bir launchpad'de taranan sey odur.
-  'grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6'
+  'grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6'
 
 export function TokenGrid({ tokens, label }: { tokens: readonly TokenOverview[]; label: string }) {
   return (
