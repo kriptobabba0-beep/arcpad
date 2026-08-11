@@ -4,6 +4,7 @@ import { METADATA_LIMITS, parseUsdcAmount } from '@arcpad/shared/browser'
 import { useCallback, useId, useState } from 'react'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
+import { Money } from '@/components/ui/Money'
 import { getWebConfig } from '@/lib/addresses'
 import { useArcNetwork } from '@/hooks/useArcNetwork'
 import { ByteCounter } from './ByteCounter'
@@ -208,6 +209,31 @@ export function LaunchForm({ facts, pinningConfigured, driver }: LaunchFormProps
               There is no cap on a creator&apos;s first buy: nothing in the contract limits it, so
               nothing here can promise one.
             </p>
+            {/*
+              TAVANSIZ ILE SESSIZ AYNI SEY DEGIL.
+
+              Ustteki cumle dogru ve kalir: kontratta tavan yok, arayuzun
+              uyduracagi bir tavan yalan olurdu. Ama tavani olmayan bir kutuya
+              1000 yazan biri 1000 harcayacagini SANIR -- ve harcamaz:
+              `buyExactQuoteIn` kalan rezervin tamamini satar, ucreti o kisilmis
+              anapara uzerinden alir ve GERI KALANI AYNI ISLEMDE iade eder
+              (`BondingCurve._settleBuy`; iade duserse islem komple geri doner,
+              yani "iade edemedik ama tuttuk" hali yok).
+
+              Kullanicinin bunu ISLEMI IMZALAMADAN once bilmesi gerekir. Sayi
+              `graduationRaiseWei` DEGIL: o curve'e giren tutardir, bu ise
+              gonderilen tutardir ve aradaki fark ucrettir (95 + 30 bps).
+            */}
+            {facts === null ? null : (
+              <p data-testid="refund-note" className="mt-1 text-[13px] leading-snug text-muted">
+                The whole curve costs{' '}
+                <span className="font-medium text-text">
+                  <Money native={facts.fullCurveBudgetWei} rounding="up" unit />
+                </span>
+                . Send more than that and the extra comes straight back in the same transaction —
+                the curve sells what is left and refunds the rest.
+              </p>
+            )}
           </div>
 
           <Input

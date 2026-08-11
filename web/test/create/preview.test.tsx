@@ -1,4 +1,4 @@
-import type { CurveProfile } from '@arcpad/shared/browser'
+import { correctedNetQuoteIn, type CurveProfile } from '@arcpad/shared/browser'
 import { render, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import {
@@ -55,6 +55,41 @@ describe('launchFactsFrom -- sekiz satirin sayilari', () => {
   it('ARZIN TAMAMI TUTAR: S + D + artik = N, ve artik curve’de kalir', () => {
     expect(FACTS.saleSupplyTok + FACTS.poolSeedTok + FACTS.strandedTok).toBe(TOTAL_SUPPLY_TOK)
     expect(formatTokExact(FACTS.strandedTok)).toBe('13,988.816402609506057782')
+  })
+
+  /*
+   * CURVE'UN TAMAMINI DOLDURAN BUTCE, `graduationRaiseWei` DEGIL.
+   *
+   * Aradaki fark ucrettir: `buyExactQuoteIn` `msg.value`yu once ucretlere
+   * ayirir (95 + 30 bps), geri kalani curve'e verir. Ikisini karistirmak,
+   * ekranda "bu kadar gonderirsen curve dolar" derken curve'un DOLMADIGI bir
+   * sayi gostermek olurdu.
+   */
+  it('tam curve butcesi raise`in USTUNDEDIR', () => {
+    expect(FACTS.fullCurveBudgetWei).toBeGreaterThan(FACTS.graduationRaiseWei)
+    expect(FACTS.fullCurveBudgetWei).toBe(12_315_375_563_605_446_791n)
+  })
+
+  /*
+   * BUTCE GERCEKTEN DOLDURUR -- VE BIRAZ YUKARIDAN ALIR.
+   *
+   * Olculdu: butcenin net'i 12,163333 USDC, gereken 12,161433. Yani ~0,0019
+   * USDC fazla. Sebep `correctedNetQuoteIn`in DUZELTMESI: ucret, kapali
+   * formulun varsaydigi tam 125 bps'ten biraz az cikiyor, dolayisiyla net
+   * beklenenden buyuk oluyor.
+   *
+   * BU YON DOGRU YON. Bir hair EKSIK bir sayi ekranda "bunu gonder, curve
+   * dolar" der ve DOLDURMAZ -- kullanici curve'u kapattigini sanip
+   * kapatmamis olur. Bir hair FAZLA olan sayi ise zaten iade edilir. Test bu
+   * yuzden "esit" degil "kapsar ve makul yakinlikta" iddia eder.
+   */
+  it('butce curve`i KAPSAR, ve yalnizca binde birkac fazladan', () => {
+    const { net } = correctedNetQuoteIn(FACTS.fullCurveBudgetWei, 95n, 30n)
+    expect(net).toBeGreaterThanOrEqual(FACTS.graduationRaiseWei)
+    // Fazlalik raise'in binde birinden kucuk olmali; aksi halde ekrandaki
+    // sayi gereksiz yere buyuktur ve kullaniciyi fazla gondermeye iter.
+    const excess = net - FACTS.graduationRaiseWei
+    expect(excess * 1000n).toBeLessThan(FACTS.graduationRaiseWei)
   })
 
   it('ucretler `BondingCurve`in `constant`lari: 0,95% + 0,30%', () => {

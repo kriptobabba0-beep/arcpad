@@ -1,4 +1,5 @@
 import {
+  correctedNetQuoteIn,
   type CurveProfile,
   graduationRaise,
   marketCap,
@@ -60,6 +61,23 @@ export type LaunchFacts = {
    * about liquidity that nothing verified.
    */
   readonly graduationArmed: boolean
+  /**
+   * CURVE'UN TAMAMINI DOLDURAN BUTCE -- `graduationRaiseWei` DEGIL.
+   *
+   * Ikisi farkli sayilardir ve farki ucrettir: `graduationRaiseWei` CURVE'e
+   * giren tutardir, bu ise kullanicinin GONDERDIGI tutardir.
+   * `buyExactQuoteIn` `msg.value`yu once ucretlere ayirir (95 + 30 bps), geri
+   * kalani curve'e verir. Yani curve'u doldurmak icin raise'den %1,25 fazlasi
+   * gonderilmeli.
+   *
+   * NEDEN EKRANDA. "Buy after launch" alaninin tavani yok ve olmamali (spec:
+   * kontratta tavan yok, arayuzun uyduracagi tavan yalan olurdu). Ama
+   * TAVANSIZ ile SESSIZ ayni sey degil: 1000 USDC yazan biri 1000 harcayacagini
+   * sanir. Kontrat kalan rezervi satip GERI KALANI AYNI ISLEMDE iade eder
+   * (`BondingCurve._settleBuy`in `refund` dali; iade duserse islem komple
+   * geri doner). Bu sayi, kullanicinin bunu ONCEDEN bilmesini saglar.
+   */
+  readonly fullCurveBudgetWei: bigint
 }
 
 /** The zero address — `graduationTarget` before governance arms it. */
@@ -83,7 +101,26 @@ export function launchFactsFrom(profile: CurveProfile, graduationTarget: string)
     // Case-insensitive: the chain answers checksummed, and a `!==` against a
     // lowercase literal would report every unset factory as armed.
     graduationArmed: graduationTarget.toLowerCase() !== UNSET_TARGET,
+    fullCurveBudgetWei: fullCurveBudget(graduationRaise(s, v, t)),
   }
+}
+
+/**
+ * Ucretleri de kapsayan en kucuk butce.
+ *
+ * `correctedNetQuoteIn` ile DOGRULANIR, formulle birakılmaz: ucret bolmesi
+ * asagi yuvarlar, yani kapali formul bir wei eksik kalabilir ve o bir wei
+ * "curve dolmadi" demektir. Dongu en fazla birkac adim doner.
+ */
+function fullCurveBudget(raise: bigint): bigint {
+  const BPS = 10_000n
+  const FEES = PROTOCOL_FEE_BPS + CREATOR_FEE_BPS
+  let budget = (raise * BPS + (BPS - FEES) - 1n) / (BPS - FEES)
+  for (let i = 0; i < 8; i += 1) {
+    if (correctedNetQuoteIn(budget, PROTOCOL_FEE_BPS, CREATOR_FEE_BPS).net >= raise) break
+    budget += 1n
+  }
+  return budget
 }
 
 const TOK_SCALE = 10n ** 18n
