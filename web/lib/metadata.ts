@@ -1,4 +1,5 @@
 import { ipfsGatewayOrigins } from './ipfs'
+import { readCached, writeCached } from './ipfsCache'
 import { sanitiseForDisplay } from '@arcpad/shared/browser'
 
 /**
@@ -193,6 +194,20 @@ async function readDocument(url: string): Promise<Attempt> {
   }
 }
 
+/**
+ * The disk key for a metadata document, or `null` if it is not content addressed.
+ *
+ * ONLY `ipfs://<cid>[/path]` IS CACHED FOREVER, and the distinction matters:
+ * a CID names its own bytes, so the answer can never change. The other
+ * acceptable shape -- an https URL on a gateway -- is a LOCATION, and a
+ * location's contents can. Caching that one permanently would be a promise we
+ * have no right to make.
+ */
+function immutableKey(uri: string): string | null {
+  const match = IPFS_URI.exec(uri.trim())
+  return match?.[1] === undefined ? null : `${match[1]}${match[2] ?? ''}`
+}
+
 export async function resolveMetadata(uri: string): Promise<ResolvedMetadata | null> {
   /*
    * SEQUENTIAL, NOT `Promise.any`. Racing every gateway would be faster on the
@@ -201,12 +216,45 @@ export async function resolveMetadata(uri: string): Promise<ResolvedMetadata | n
    * the rare case is how a launchpad gets itself rate-limited off the
    * gateways it depends on. The 2 s per-attempt timeout bounds the tail.
    */
+  /*
+   * ============ OUR OWN DISK FIRST, AND FOREVER ============
+   *
+   * Next's fetch cache held this for `METADATA_REVALIDATE_SECONDS` and that
+   * number is simply WRONG for content-addressed data: it expires something
+   * that cannot go stale. MEASURED CONSEQUENCE on the live box -- the artwork
+   * on the home page appeared, vanished five minutes later for exactly one
+   * render, and came back. Intermittent, which reads as broken more than
+   * absent does.
+   *
+   * A CID's document is fetched ONCE in the lifetime of the deployment, and
+   * the entry survives restarts. Everything else in this function -- the
+   * allow-list, the timeouts, the byte ceiling, the validation -- is unchanged
+   * and still runs on the way in; the cache holds the RAW text, so a document
+   * is never trusted just because it is local.
+   */
+  const key = immutableKey(uri)
   let raw: string | null = null
-  for (const url of resolvableUrls(uri)) {
-    const attempt = await readDocument(url)
-    if (attempt.kind === 'answered') {
-      raw = attempt.body
-      break
+
+  if (key !== null) {
+    const hit = await readCached(key)
+    if (hit !== null) raw = new TextDecoder('utf-8').decode(hit.bytes)
+  }
+
+  if (raw === null) {
+    for (const url of resolvableUrls(uri)) {
+      const attempt = await readDocument(url)
+      if (attempt.kind === 'answered') {
+        raw = attempt.body
+        break
+      }
+    }
+    // Only a document we actually fetched is worth storing, and only when it
+    // is addressed by content.
+    if (raw !== null && key !== null) {
+      await writeCached(key, {
+        bytes: new TextEncoder().encode(raw),
+        type: 'application/json',
+      })
     }
   }
   if (raw === null) return null

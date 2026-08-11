@@ -1,4 +1,8 @@
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ipfsGatewayOrigin } from '../lib/ipfs'
 import {
   METADATA_BODY_LIMIT,
   METADATA_REVALIDATE_SECONDS,
@@ -183,5 +187,85 @@ describe('caching', () => {
     const init = fetchSpy.mock.calls[0]?.[1] as { next?: { revalidate?: number } } | undefined
     expect(init?.next?.revalidate).toBe(METADATA_REVALIDATE_SECONDS)
     expect(METADATA_REVALIDATE_SECONDS).toBe(300)
+  })
+})
+
+/**
+ * ============================================================================
+ *  A CID CANNOT GO STALE, SO IT MUST NOT BE EXPIRED
+ * ============================================================================
+ *
+ * MEASURED ON THE LIVE BOX. The artwork appeared on the home page, vanished
+ * five minutes later for exactly one render, and came back. The five minutes
+ * was `METADATA_REVALIDATE_SECONDS`: Next's fetch cache expired a document
+ * that CANNOT CHANGE, the re-fetch cost 5.2 s against a public gateway, and
+ * the page's own budget gave up first. Intermittent artwork reads as broken
+ * more than missing artwork does.
+ */
+describe('the metadata document is cached by content, not by clock', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'arcpad-meta-'))
+    vi.stubEnv('ARCPAD_IPFS_CACHE_DIR', dir)
+  })
+  afterEach(async () => {
+    vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  const DOC = { description: 'hello', image: `ipfs://${CID}` }
+
+  it('a second resolve of the same CID makes NO request', async () => {
+    let calls = 0
+    vi.stubGlobal('fetch', async () => {
+      calls += 1
+      return new Response(JSON.stringify(DOC), { status: 200 })
+    })
+
+    const first = await resolveMetadata(`ipfs://${CID}`)
+    expect(first?.description).toBe('hello')
+    expect(calls).toBe(1)
+
+    const second = await resolveMetadata(`ipfs://${CID}`)
+    expect(second).toEqual(first)
+    // THE ASSERTION: not "fewer requests", ZERO. One fetch in the lifetime of
+    // the deployment, and the entry survives a restart because it is on disk.
+    expect(calls, 'a CID fetched once is never fetched again').toBe(1)
+  })
+
+  it('the cached document still goes through validation', async () => {
+    // The cache holds the RAW text, so a document is never trusted merely
+    // because it is local. Poison the file and the allow-list must still bite.
+    vi.stubGlobal('fetch', async () =>
+      new Response(JSON.stringify({ description: 'ok', image: 'http://evil.test/x.png' }), {
+        status: 200,
+      }),
+    )
+    const fresh = await resolveMetadata(`ipfs://${CID}`)
+    expect(fresh?.image, 'an http image is refused on the way in').toBeUndefined()
+
+    vi.stubGlobal('fetch', async () => {
+      throw new Error('no network')
+    })
+    const cached = await resolveMetadata(`ipfs://${CID}`)
+    expect(cached?.description).toBe('ok')
+    expect(cached?.image, 'and refused again on the way out of the cache').toBeUndefined()
+  })
+
+  it('a gateway URL is NOT cached forever -- a location is not an identity', async () => {
+    const gatewayUrl = `${ipfsGatewayOrigin()}/ipfs/${CID}`
+    let calls = 0
+    vi.stubGlobal('fetch', async () => {
+      calls += 1
+      return new Response(JSON.stringify(DOC), { status: 200 })
+    })
+
+    await resolveMetadata(gatewayUrl)
+    await resolveMetadata(gatewayUrl)
+    // Two fetches, deliberately: an https URL names a PLACE, and what a place
+    // serves can change. Only `ipfs://<cid>` names its own bytes.
+    expect(calls).toBe(2)
   })
 })

@@ -53,12 +53,24 @@ export function cacheDir(): string | null {
   return join(systemd, 'ipfs')
 }
 
-/** The four types `/api/metadata` accepts, and the extension each is stored under. */
+/**
+ * The four image types `/api/metadata` accepts, plus the metadata document
+ * itself -- and the extension each is stored under.
+ *
+ * THE JSON BELONGS HERE FOR THE SAME REASON THE PNG DOES. A metadata document
+ * is addressed by its CID, so its bytes can never change either. Next's fetch
+ * cache was holding it for 300 seconds, and that number is simply WRONG for
+ * content-addressed data: it expires something that cannot go stale, and the
+ * re-fetch costs 5.2 s against a public gateway. Measured consequence -- the
+ * artwork on the home page appeared, vanished five minutes later for one
+ * render, and came back. Intermittent, which is worse than absent.
+ */
 const EXTENSIONS: Readonly<Record<string, string>> = {
   'image/png': 'png',
   'image/jpeg': 'jpg',
   'image/gif': 'gif',
   'image/webp': 'webp',
+  'application/json': 'json',
 }
 
 const TYPES_BY_EXTENSION: Readonly<Record<string, string>> = Object.fromEntries(
