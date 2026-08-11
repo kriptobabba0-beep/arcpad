@@ -1,7 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { getDeployment, putDeployment } from '../src/deployment'
 import { snapshot } from '../src/snapshot'
-import { withTransaction } from '../src/pool'
+import { createPool, withTransaction } from '../src/pool'
 import { MAX_SEQ } from '../src/seq'
 import { pool, resetSchema } from './setup'
 import { DEPLOYMENT } from './fixtures'
@@ -111,5 +111,50 @@ describe('snapshot', () => {
     }).catch((error: unknown) => {
       expect((error as Error).message).toBe('rollback')
     })
+  })
+})
+
+/**
+ * ==========================================================================
+ *  BOSTAKI BIR ISTEMCININ HATASI SURECI OLDURMEZ.
+ * ==========================================================================
+ *
+ * `pg`de bir istemci BOSTAYKEN hata alirsa `Pool` bir `'error'` olayi yayar.
+ * Node'da dinleyicisi olmayan bir `'error'` olayi YAKALANMAMIS ISTISNADIR --
+ * surec aninda olur, ve hicbir `try/catch` bunu goremez cunku hata bir
+ * cagrinin icinden degil, ISLEM YOKKEN gelir.
+ *
+ * URETIMDE OLCULDU (2026-08-11 06:35 UTC): Postgres'in rutin bir yeniden
+ * baslatmasi butun baglantilari kopardi ("terminating connection due to
+ * administrator command") ve indexer BES KEZ cokup yeniden basladi. Bir
+ * veritabani yeniden baslatmasi rutin bir olaydir; uygulamanin ona olumle
+ * cevap vermesi bir arizadir.
+ *
+ * Test olayi ELLE yayar: gercek bir Postgres yeniden baslatmasini bir birim
+ * testinde uretmek mumkun degil, ama yayilan olay AYNI olaydir ve olduren
+ * sey de tam olarak oydu.
+ */
+describe('createPool -- bostaki istemci hatasi', () => {
+  it('havuz `error` olayini DINLER, yani yayilmasi sureci oldurmez', async () => {
+    const url = process.env['DATABASE_URL']
+    if (url === undefined) throw new Error('unreachable: setup asserts this')
+    const p = createPool(url)
+    try {
+      // Dinleyici VAR MI: `pg` bir tane bagladiysa sayi sifirdan buyuktur.
+      // Sifir olsaydi asagidaki `emit` sureci oldururdu.
+      expect(p.listenerCount('error')).toBeGreaterThan(0)
+
+      // Ve gercekten yayilinca FIRLATMAZ. Dinleyici olmasaydi bu satir
+      // testi degil SURECI dusururdu.
+      expect(() =>
+        p.emit('error', new Error('terminating connection due to administrator command')),
+      ).not.toThrow()
+
+      // Havuz hala kullanilabilir: bozuk istemci atilir, yenisi acilir.
+      const { rows } = await p.query<{ ok: number }>('SELECT 1 AS ok')
+      expect(rows[0]?.ok).toBe(1)
+    } finally {
+      await p.end()
+    }
   })
 })

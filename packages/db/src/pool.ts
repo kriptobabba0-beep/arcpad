@@ -25,7 +25,47 @@ export interface Queryable {
  * bunu calistirarak sabitler.
  */
 export function createPool(url: string): Pool {
-  return new pg.Pool({ connectionString: url })
+  const pool = new pg.Pool({ connectionString: url })
+
+  /*
+   * ==========================================================================
+   *  BOSTAKI BIR ISTEMCININ HATASI SURECI OLDURMEZ -- VE ONCEDEN OLDURUYORDU.
+   * ==========================================================================
+   *
+   * `pg` bunu belgesinde SART kosuyor: havuzdaki bir istemci BOSTAYKEN hata
+   * alirsa `Pool` bir `'error'` olayi yayar, ve Node'da dinleyicisi olmayan
+   * bir `'error'` olayi YAKALANMAMIS ISTISNADIR -- surec aninda olur. Hicbir
+   * `try/catch` bunu goremez, cunku hata bir cagrinin icinden degil, ISLEM
+   * YOKKEN gelir.
+   *
+   * URETIMDE OLCULDU (2026-08-11 06:35 UTC): Postgres'in rutin bir yeniden
+   * baslatmasi (gece otomatik guvenlik guncellemesi) butun baglantilari
+   * kopardi --
+   *
+   *     error: terminating connection due to administrator command
+   *     Unhandled 'error' event ... on BoundPool instance
+   *
+   * -- ve indexer bes kez cokup yeniden basladi. Bir veritabani yeniden
+   * baslatmasi RUTIN bir olaydir; ona uygulama katmaninin olumle cevap
+   * vermesi bir arizadir.
+   *
+   * DOGRU DAVRANIS SURDURMEKTIR, KAPATMAK DEGIL. `Pool` bozuk istemciyi
+   * kendisi atar ve bir sonraki sorguda yenisini acar; yapilmasi gereken tek
+   * sey olayi DUYMAK ve gorunur kilmak. Sorgunun kendisi zaten hata verir ve
+   * cagiran taraf onu kendi yolunda ele alir (indexer'in `isTransient`i bunu
+   * gecici sayar ve yeniden dener).
+   *
+   * BU SATIR HER TUKETICIYE AYNI ANDA GECERLIDIR -- indexer, keeper'lar ve web
+   * hepsi buradan havuz aliyor. Her birinde ayri ayri hatirlanmasi gereken bir
+   * sey olsaydi, biri unutulurdu.
+   */
+  pool.on('error', (error) => {
+    // Tek satir, sebebiyle. Her boşta kalan istemci icin ayri bir yigin izi
+    // basmak, gercek bir kesintide loglari kullanilmaz hale getirir.
+    console.error(`[db] idle client error (the pool will replace it): ${error.message}`)
+  })
+
+  return pool
 }
 
 export type { Pool, PoolClient }
