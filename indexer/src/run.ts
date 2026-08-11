@@ -1066,6 +1066,35 @@ export async function sleepWithLiveness(
   pool: Pool,
   totalMs: number,
   sleep: (ms: number) => Promise<void>,
+  /**
+   * ============ "GERIDE DEGILIM" DIYEN BIR OLCU, GERIDEYKEN ============
+   *
+   * OLCULDU, uretimde, 2026-08-11:
+   *
+   *     db last_block   56512126
+   *     db head_block   56512126      -> `behind` = 0
+   *     GERCEK zincir basi 56512307   -> GERCEK gecikme 181 blok (~94 sn)
+   *     updated_at      9 saniye once
+   *
+   * Yani sagligi okuyan herkes -- runbook, operator, ben bu oturum boyunca --
+   * "behind 0, taze yazma" goruyordu, indexer bir buçuk dakika geride
+   * takilmisken. Sayi YALAN SOYLEMIYORDU, DONMUSTU: `head_block` yalnizca bir
+   * aralik BASARIYLA yazildiginda tazelenir, dolayisiyla `head_block -
+   * last_block` son basarili anin farkidir. Getirilen aralik basa kadar
+   * ulasmissa o fark 0'dir ve indexer o andan sonra ne kadar takilirsa
+   * takilsin 0 KALIR.
+   *
+   * Bir saglik gostergesinin en kotu cinsi budur: ariza gosteremeyen bir
+   * gosterge. Ve `noteAlive` bunu daha da kotulestiriyordu -- geri cekilme
+   * uykusunda `updated_at`i tazeleyerek "canli" diyordu, tam da tek gorunur
+   * ariza belirtisi olan sessizligi silerek.
+   *
+   * Bas, geri cekilirken de okunur. `eth_blockNumber` LOG butcesinden
+   * harcamaz: ayni dakikada `eth_getLogs` 2/12 gecerken bu 12/12 geciyordu.
+   * Ve `noteHead` IMLECI ILERLETMEZ -- yalnizca "basi burada gordum" der,
+   * yani fark gorunur hale gelir. Verilmezse davranis eskisi gibidir.
+   */
+  observeHead?: () => Promise<bigint>,
 ): Promise<void> {
   /**
    * CANLILIK YAZMASI GERI CEKILMEYI OLDUREMEZ.
@@ -1079,8 +1108,32 @@ export async function sleepWithLiveness(
    * Yutulmasi da sessiz degil: veritabani gercekten kapaliysa `runOnce` bir
    * sonraki denemede zaten kendi hatasini verir, ve o hata TESHIS EDICIDIR.
    */
+  /*
+   * BAS BU UYKUDA BIR KEZ OKUNUR, HER ATISTA DEGIL.
+   *
+   * Bir 30 saniyelik geri cekilme dort canlilik atisi eder; her atista bas
+   * okumak, tikanmis bir saglayiciya dort kat istek yollamak olurdu -- yani
+   * geri cekilmenin SEBEBINI beslemek. Bir tazeleme bu turun gecikmesini
+   * gostermeye yeter, ki amac da odur.
+   */
+  let headRead = observeHead === undefined
   const beat = async (): Promise<void> => {
     try {
+      if (!headRead) {
+        headRead = true
+        try {
+          // `noteHead` `updated_at`i de tazeler, yani bas yazilabildiginde
+          // `noteAlive`a gerek kalmaz.
+          await noteHead(pool, await (observeHead as () => Promise<bigint>)())
+          return
+        } catch {
+          /*
+           * Bas okunamadi ya da yazilamadi; canlilik YINE DE soylenir.
+           * Canlilik ile gecikme ayri iddialardir ve birincisini ikincisinin
+           * arizasi yuzunden kaybetmek, dogru bir sayiyi susturmak olurdu.
+           */
+        }
+      }
       await noteAlive(pool)
     } catch {
       /* bkz. yukarisi */
@@ -1156,6 +1209,21 @@ export async function runWithRetry(
   let attempts = 0
   let rateLimited = 0
 
+  /*
+   * GERI CEKILME UYKUSUNDA BASI OKUYAN FONKSIYON.
+   *
+   * `runOnce`in KENDI yolunu kullanir -- `options.head` varsa o (testler onu
+   * baglar), yoksa `finalizedHeadVia`. Ikinci bir bas okuma yolu acmak, iki
+   * farkli blok etiketi kullanip iki farkli "bas" tanimina sahip olmak
+   * demekti; bu depoda ayni sinifta bir hata zaten olculdu.
+   *
+   * PACER PAYLASILIR: yeni bir tane yaratmak, saglayiciya karsi hizi bolmek
+   * yerine IKIYE KATLAMAK olurdu.
+   */
+  const headPacer = options.pacer ?? createPacer({ minIntervalMs: config.minRequestIntervalMs })
+  const observeHead = (): Promise<bigint> =>
+    options.head?.(client) ?? finalizedHeadVia(client, headPacer)
+
 
   for (;;) {
     try {
@@ -1202,7 +1270,29 @@ export async function runWithRetry(
       // UYURKEN DE CANLIYIZ, VE BUNU SOYLEMEK ZORUNDAYIZ. Duz bir
       // `await sleep(delayMs)` idi; o sessizlik okuma katmanina "surec durmus"
       // dedirtiyordu (bkz. `LIVENESS_BEAT_MS`).
-      await sleepWithLiveness(pool, delayMs, sleep)
+      /*
+       * ============ GERI CEKILIRKEN BASI DA OKU -- AMA SADECE BURADA ========
+       *
+       * Bkz. `sleepWithLiveness`in NatSpec'i: uretimde `behind`, 181 blokluk
+       * (94 saniyelik) gercek bir gecikmede 0 gosteriyordu.
+       *
+       * YALNIZCA HIZ SINIRI DALINDA, ve bu daraltma bir testin ortaya
+       * cikardigi gercek bir kusuru kapatiyor. Ilk yazilisinda bas HER gecici
+       * hatada okunuyordu, ve `eth_getBlockByNumber('finalized')` bos donerek
+       * dongunun DONDUGU testte bu okuma AYNI dusen cagriyi tekrar yapip
+       * hatanin kendi butcesini tuketti. Yani "olcu ekleyeyim" derken olculen
+       * seyi degistiriyordum.
+       *
+       * Daralttiktan sonra dogru olan da bu: `maxAttempts` DIGER gecici
+       * hatalari sekiz denemede sinirlar, yani orada bayatlik saniyeler
+       * surer. Ust siniri OLMAYAN tek dal hiz siniridir -- dakikalarca
+       * takilabilen, ve olculen arizanin ta kendisi olan dal.
+       *
+       * Maliyet: geri cekilme TURU basina bir `eth_getBlockByNumber`. LOG
+       * butcesinden harcamaz -- ki tukenen tam olarak odur: ayni dakikada
+       * `eth_getLogs` 2/12 gecerken blok okumalari 12/12 geciyordu.
+       */
+      await sleepWithLiveness(pool, delayMs, sleep, limited ? observeHead : undefined)
     }
   }
 }

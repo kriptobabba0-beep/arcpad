@@ -1106,3 +1106,116 @@ function withoutClock(dump: Record<string, unknown[]>): Record<string, unknown[]
   }
   return out
 }
+
+/**
+ * ============================================================================
+ *  ARIZA GOSTEREMEYEN BIR SAGLIK GOSTERGESI -- URETIMDE OLCULDU
+ * ============================================================================
+ *
+ * 2026-08-11, canli kutuda, ayni saniyede okundu:
+ *
+ *     db last_block   56512126
+ *     db head_block   56512126     ->  `behind` = 0
+ *     GERCEK zincir basi 56512307  ->  GERCEK gecikme 181 blok (~94 saniye)
+ *     updated_at      9 saniye once
+ *
+ * Yani sagligi okuyan herkes "behind 0, taze yazma" goruyordu, indexer bir
+ * bucuk dakika geride TAKILMISKEN. Sayi yalan soylemiyordu, DONMUSTU:
+ * `head_block` yalnizca bir aralik BASARIYLA yazildiginda tazelenir. Getirilen
+ * aralik basa kadar ulastiysa fark 0 olur, ve indexer o andan sonra ne kadar
+ * takilirsa takilsin 0 KALIR.
+ *
+ * Ve `noteAlive` bunu KOTULESTIRIYORDU: geri cekilme uykusunda `updated_at`i
+ * tazeleyerek "canliyim" diyor, tam da tek gorunur ariza belirtisi olan
+ * sessizligi siliyordu. Iki dogru duzeltme birlestiginde bir yalan uretti.
+ */
+describe('gecikme, indexer TAKILIYKEN de gorunur', () => {
+  beforeEach(async () => {
+    await resetSchema()
+    await seedDeployment()
+  })
+
+  it('geri cekilme uykusunda bas TAZELENIR -- `behind` donmaz', async () => {
+
+    // Imleci ilerlet: bir tur basariyla tamamlansin.
+    await runWithRetry(pool, new ChainNode(logs), LIVE_DEPLOYMENT, CONFIG, {
+      sleep: async () => {},
+    })
+    const settled = await getCursor(pool)
+    expect(settled?.lastBlock).toBe(LAST)
+
+    // Zincir 500 blok ilerledi, ama `eth_getLogs` artik hep reddediliyor --
+    // olculen durumun ta kendisi: log butcesi tukenmis, blok numarasi degil.
+    const AHEAD = LAST + 500n
+    let logCalls = 0
+    const starved: RpcClient = {
+      request: async (args) => {
+        if (args.method === 'eth_getLogs') {
+          logCalls += 1
+          throw new Error('rate limit exceeded')
+        }
+        return new ChainNode(logs).request(args)
+      },
+    }
+
+    let slept = 0
+    const run = runWithRetry(pool, starved, LIVE_DEPLOYMENT, CONFIG, {
+      head: async () => AHEAD,
+      sleep: async () => {
+        slept += 1
+        // Uc geri cekilmeden sonra kes: hiz siniri dalinin ust siniri YOKTUR
+        // (bilerek), yani bu dongu kendiliginden bitmez.
+        if (slept >= 3) throw new Error('STOP')
+      },
+    })
+    await expect(run).rejects.toThrow('STOP')
+
+    const row = await pool.query<{ last_block: string; head_block: string }>(
+      'SELECT last_block, head_block FROM sync_state WHERE id = 1',
+    )
+    const lastBlock = BigInt(row.rows[0]!.last_block)
+    const headBlock = BigInt(row.rows[0]!.head_block)
+
+    // IMLEC ILERLEMEDI -- geri cekilirken ilerleme iddia etmek, duzeltilen
+    // yalanin yerine baskasini koymak olurdu.
+    expect(lastBlock).toBe(LAST)
+    // AMA BAS TAZELENDI, dolayisiyla gecikme GORUNUR.
+    expect(headBlock).toBe(AHEAD)
+    expect(headBlock - lastBlock).toBe(500n)
+    expect(logCalls, 'takilan sey log taramasiydi, bas okumasi degil').toBeGreaterThan(0)
+  })
+
+  it('bas OKUNAMAZSA canlilik yine de yazilir -- iki iddia ayridir', async () => {
+    await runWithRetry(pool, new ChainNode(logs), LIVE_DEPLOYMENT, CONFIG, {
+      sleep: async () => {},
+    })
+    await pool.query("UPDATE sync_state SET updated_at = now() - interval '5 minutes' WHERE id = 1")
+
+    const dead: RpcClient = {
+      request: async (args) => {
+        if (args.method === 'eth_getLogs') throw new Error('rate limit exceeded')
+        return new ChainNode(logs).request(args)
+      },
+    }
+
+    let slept = 0
+    const run = runWithRetry(pool, dead, LIVE_DEPLOYMENT, CONFIG, {
+      // RPC tamamen kapali: bas da okunamiyor.
+      head: async () => {
+        throw new Error('rate limit exceeded')
+      },
+      sleep: async () => {
+        slept += 1
+        if (slept >= 2) throw new Error('STOP')
+      },
+    })
+    await expect(run).rejects.toThrow('STOP')
+
+    const { rows } = await pool.query<{ age: string }>(
+      "SELECT extract(epoch from age(now(), updated_at))::int AS age FROM sync_state WHERE id = 1",
+    )
+    // Basi kaybetmek CANLILIGI da kaybettirmemeli: dogru bir sayiyi, baska
+    // bir sayinin arizasi yuzunden susturmak olurdu.
+    expect(Number(rows[0]!.age)).toBeLessThan(60)
+  })
+})
