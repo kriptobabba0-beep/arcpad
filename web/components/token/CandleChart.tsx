@@ -45,12 +45,15 @@ export function CandleChart({
   candles,
   metric,
   currentWei,
+  bucketSeconds = 3_600,
   emptyLabel = 'No trades yet.',
 }: {
   candles: readonly CandleRow[]
   metric: ChartMetric
   /** Su ANKI deger -- kesikli cizgi ve sagdaki etiket bunu gosterir. */
   currentWei: bigint
+  /** Kova boyutu -- tarih ekseninin BICIMINI belirler, verisini degil. */
+  bucketSeconds?: number
   emptyLabel?: string
 }) {
   if (candles.length === 0) {
@@ -266,7 +269,7 @@ export function CandleChart({
 
         {/* TARIH EKSENI -- en fazla alti etiket, esit araliklarla. */}
         <g transform={`translate(0, ${H - 6})`}>
-          {dateTicks(candles).map((tick) => (
+          {dateTicks(candles, bucketSeconds).map((tick) => (
             <text
               key={`d-${tick.index}`}
               x={originX + tick.index * slot + body / 2}
@@ -290,17 +293,42 @@ export function CandleChart({
  * uretmesi mumkun olurdu -- React bunu bir hidrasyon uyusmazligi olarak
  * bildirir. Bu depoda ayni kural bir eslint kuraliyla zorlaniyor.
  */
-function dateTicks(candles: readonly CandleRow[]): Array<{ index: number; text: string }> {
+function dateTicks(
+  candles: readonly CandleRow[],
+  bucketSeconds: number,
+): Array<{ index: number; text: string }> {
   const want = Math.min(6, candles.length)
   if (want === 0) return []
   const step = Math.max(1, Math.floor(candles.length / want))
+
+  /*
+   * ============ ETIKET, KOVA BOYUTUNA GORE ============
+   *
+   * OLCULDU, DAGITTIKTAN SONRA: alti saatlik kovalarda eksen
+   * "Aug 8  Aug 8  Aug 9  Aug 9  Aug 10  Aug 10" yaziyordu -- her gun iki kez,
+   * ve hangi etiketin hangi mumu gosterdigi belirsiz. Gun adi, gunden KISA
+   * kovalar icin yeterli bir etiket degil.
+   *
+   * Bir gunden kisa kovalarda saat de yazilir; gunluk ve ustunde yalnizca
+   * tarih. Ve ardisik AYNI etiketler elenir: ayni metni iki kez yazmak, ekseni
+   * daha yogun degil daha okunmaz yapar.
+   */
+  const sameDay = bucketSeconds < 86_400
+  const format = (d: Date): string =>
+    sameDay
+      ? d.toLocaleString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          hour: 'numeric',
+          timeZone: 'UTC',
+        })
+      : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+
   const out: Array<{ index: number; text: string }> = []
   for (let i = 0; i < candles.length; i += step) {
-    const d = candles[i]!.bucket
-    out.push({
-      index: i,
-      text: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' }),
-    })
+    const text = format(candles[i]!.bucket)
+    if (out[out.length - 1]?.text === text) continue
+    out.push({ index: i, text })
   }
   return out
 }

@@ -283,6 +283,7 @@ async function IndexedToken({
                   ? overview.marketCapWei
                   : overview.priceWeiPerTok * 1_000_000_000n
               }
+              bucketSeconds={timeframeSeconds(tf)}
             />
           </section>
 
