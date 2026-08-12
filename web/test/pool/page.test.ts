@@ -70,32 +70,59 @@ describe('the venue choice is made in ONE component, rendered by BOTH branches',
   })
 })
 
-describe('the chart choice is made in ONE component, rendered by BOTH branches', () => {
-  it('the page renders TokenPriceChart twice and CurveChart never', () => {
-    expect(uses('TokenPriceChart')).toHaveLength(2)
+describe('the chart: two branches, and the difference is DECLARED', () => {
+  /*
+   * ============ BURADA IKI DAL BILEREK AYRISIR ============
+   *
+   * Bu blok once "iki dal AYNI grafigi cizer" diyordu ve o kural, bir dalda
+   * duzeltilip otekinde unutulan degisikliklere karsi yazilmisti. Kural hala
+   * gecerli -- ama grafik degistiginde bu testin sordugu soru da degisti.
+   *
+   * Indexlenmis dal MUM cizer, cunku mumlar ISLEM GECMISINDEN gelir.
+   * Zincirden cizilen dal, TANIMI GEREGI, o gecmise sahip degildir: indexer
+   * dustugu icin oradadir. Ona bos bir mum grafigi cizdirmek, "hic islem
+   * olmamis" demek olurdu -- oysa dogru cumle "islemleri okuyamiyoruz"dur, ve
+   * bu dal zaten bunu bir uyari kutusunda soyluyor. Bu yuzden orada bagli
+   * egri (`TokenPriceChart`) cizilir: o, PROFILDEN turer ve gecmis istemez.
+   *
+   * Yani ayrisma bir kayma degil bir KARAR, ve bu test onu KARAR olarak
+   * tutuyor: her iki dal da grafigini cizmek ZORUNDA, ve hangisinin hangisi
+   * oldugu burada YAZILI. Biri silinirse test duser.
+   */
+  it('indexlenmis dal MUM, zincir dali EGRI cizer -- ve ikisi de cizer', () => {
+    expect(uses('CandleChart'), 'the indexed branch lost its candles').toHaveLength(1)
+    expect(uses('TokenPriceChart'), 'the chain-drawn branch lost its curve').toHaveLength(1)
+    // Eski bilesenler geri gelmemeli: ikisi de ayni isi iki farkli bicimde
+    // yapardi ve hangisinin cizildigi sayfaya gore degisirdi.
     expect(uses('CurveChart')).toHaveLength(0)
     expect(uses('PriceHistoryChart')).toHaveLength(0)
   })
 
-  it('both call sites pass the lifecycle -- without it the chart cannot switch', () => {
+  it('mum grafigi SU ANKI degeri alir -- yoksa kesikli cizgi grafigin disinda kalir', () => {
+    /*
+     * `currentWei` gecilmezse kesikli cizgi ve sagdaki etiket cizilemez;
+     * kullanici fiyati GRAFIKTE GORMEDEN islem yapar. Bileşen o degeri olcege
+     * de katiyor, yani eksik gecilmesi yalnizca bir suslemeyi degil, olcegin
+     * dogrulugunu da bozardi.
+     */
+    for (const use of uses('CandleChart')) {
+      expect(use, `a CandleChart without currentWei: ${use}`).toMatch(/currentWei=\{/)
+      expect(use, `a CandleChart without a metric: ${use}`).toMatch(/metric=\{/)
+    }
+  })
+
+  it('egri grafigi hala yasam dongusunu alir -- onsuz mekani secemez', () => {
     for (const use of uses('TokenPriceChart')) {
       expect(use, `a TokenPriceChart without a lifecycle: ${use}`).toMatch(/lifecycle=\{/)
     }
   })
 
-  it('the indexed branch passes the trades, and the venue is NOT a prop', () => {
+  it('MEKAN BIR PROP DEGIL -- satirin uzerinde geliyor', () => {
     /*
-     * THIS ASSERTION USED TO DEMAND A SECOND PROP, and the change is the point.
-     *
-     * It read: "`trades` without `graduatedSeq` draws pool rows on the bonding
-     * curve's own axis, which is a visual lie". True at the time -- the venue
-     * was a prop, and a prop is a thing a call site can forget. `listTrades`
-     * now selects `source`, so the venue travels ON the row and the only thing
-     * this branch still has to pass is the rows themselves. The two call sites
-     * still differ: the chain-drawn branch has no trade history at all.
+     * Bir sure mekan `graduatedSeq` prop'uyla tasindi ve iki hop'tan birinde
+     * unutulabiliyordu. `listTrades` artik `source` seciyor: her satir kendi
+     * mekanini soyluyor, yani hicbir cagri yeri onu unutamaz.
      */
-    const indexed = uses('TokenPriceChart').filter((use) => /trades=\{/.test(use))
-    expect(indexed).toHaveLength(1)
     expect(
       PAGE,
       'the venue is back to being a prop -- see components/token/venue.ts for why it is not',
@@ -103,33 +130,41 @@ describe('the chart choice is made in ONE component, rendered by BOTH branches',
   })
 })
 
-describe('the trade list can tell the two venues apart', () => {
-  it('TableTabs is handed the TRADES -- the venue rides on the rows', () => {
+describe('islem ve holder tablolari', () => {
+  const use = (): string =>
+    PAGE.slice(PAGE.indexOf('<ActivityTabs'), PAGE.indexOf('/>', PAGE.indexOf('<ActivityTabs')))
+
+  it('sayfa satirlari VE TOPLAMLARI verir -- toplam olmadan numarali sayfa uydurulur', () => {
     /*
-     * The old shape of this test demanded `graduatedSeq: overview.graduatedSeq`
-     * in the overview literal, because the seam was a value the page had to
-     * remember to pass down two hops. It is not passed any more and must not
-     * be: `trades.source` is on every row. What remains load-bearing is that
-     * the page hands over the trade page at all.
+     * `NumberedPager` toplam olmadan HIC cizilmez: numara listesi toplamdan
+     * turer ve uydurulmus bir "3 sayfa" kullaniciyi olmayan bir sayfaya
+     * goturur. Sayfa bu yuzden dort seyi birden gecmek zorunda.
      */
-    const use = PAGE.slice(
-      PAGE.indexOf('<TableTabs'),
-      PAGE.indexOf('</div>', PAGE.indexOf('<TableTabs')),
-    )
-    expect(use).toMatch(/trades=\{trades\}/)
-    expect(use).not.toMatch(/graduatedSeq/)
+    expect(use()).toMatch(/trades=\{/)
+    expect(use()).toMatch(/holders=\{/)
+    expect(use()).toMatch(/tradeCount=\{/)
+    expect(use()).toMatch(/holderCount=\{/)
+    expect(use()).toMatch(/page=\{/)
+    expect(use()).toMatch(/pageSize=\{/)
   })
 
-  it('and it still gets the three fields it already had', () => {
-    const use = PAGE.slice(
-      PAGE.indexOf('<TableTabs'),
-      PAGE.indexOf('</div>', PAGE.indexOf('<TableTabs')),
-    )
-    for (const field of ['curve:', 'launchCreator:', 'symbol:']) {
-      expect(use, `TableTabs lost ${field}`).toContain(field)
+  it('curve, creator ve sembol GECER -- likidite satiri ve rozetler bunlara bagli', () => {
+    /*
+     * Holder tablosu curve'un KENDISINI de listeler ("Liquidity" rozetiyle):
+     * curve'de duran arz gercekten oradadir ve gizlemek, ilk on cuzdanin
+     * payini oldugundan buyuk gosterirdi. Rozet ancak curve adresi bilinirse
+     * cizilebilir -- creator rozeti de oyle.
+     */
+    for (const field of ['curve=', 'creator=', 'symbol=']) {
+      expect(use(), `ActivityTabs lost ${field}`).toContain(field)
     }
-    expect(use).toMatch(/loadMoreTrades=\{/)
-    expect(use).toMatch(/loadMoreHolders=\{/)
+  })
+
+  it('ESKI TABLO GERI GELMEDI', () => {
+    // `TableTabs` istemci tarafli ve "daha fazla yukle" ile calisiyordu;
+    // numarali sayfa sunucu tarafli. Ikisinin ayni sayfada bulunmasi, iki
+    // farkli sayfalama garantisinin ayni ekranda karismasi demek olurdu.
+    expect(uses('TableTabs')).toHaveLength(0)
   })
 })
 
@@ -137,7 +172,8 @@ describe('ANTI-VACUITY: the scan really reads this page', () => {
   it('the matcher finds components that are certainly there', () => {
     // If `uses()` were broken every assertion above would pass by finding
     // nothing, which is the shape of a gate that measures itself.
-    expect(uses('StatRow').length).toBeGreaterThanOrEqual(2)
+    expect(uses('TokenStatStrip').length).toBeGreaterThanOrEqual(2)
+    expect(uses('TokenIdentity').length).toBeGreaterThanOrEqual(2)
     expect(uses('LifecycleNotice').length).toBe(2)
     expect(PAGE).toContain('resolveLifecycle')
   })

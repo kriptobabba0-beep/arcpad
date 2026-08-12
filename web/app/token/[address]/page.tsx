@@ -4,14 +4,16 @@ import { verifyCanonical } from '@/lib/canonical'
 import { resolveMetadata } from '@/lib/metadata'
 import {
   CHAT_PAGE_SIZE,
+  readCandles,
   readChat,
-  readHolders,
+  readHolderPage,
   readTokenOverview,
-  readTrades,
+  readTradePage,
+  readVolumeSplit,
   TABLE_PAGE_SIZE,
   valueOf,
 } from '@/lib/read'
-import { loadMoreChat, loadMoreHolders, loadMoreTrades } from './actions'
+import { loadMoreChat } from './actions'
 import {
   asHex,
   type Canonicity,
@@ -25,7 +27,19 @@ import { LaunchFacts } from '@/components/token/LaunchFacts'
 import { LifecycleNotice } from '@/components/token/LifecycleNotice'
 import { ProgressToGraduation } from '@/components/token/ProgressToGraduation'
 import { StatRow, statsFromOverview } from '@/components/token/StatRow'
-import { TableTabs } from '@/components/token/TableTabs'
+import { ActivityTabs, tabOf } from '@/components/token/ActivityTabs'
+import { CandleChart, CandleSummary, type ChartMetric } from '@/components/token/CandleChart'
+import {
+  MetricPicker,
+  TimeframePicker,
+  timeframeKey,
+  timeframeSeconds,
+} from '@/components/token/ChartControls'
+import { IdentityBadge, TokenIdentity } from '@/components/token/TokenIdentity'
+import { TokenInfo } from '@/components/token/TokenInfo'
+import { TokenStatStrip } from '@/components/token/TokenStatStrip'
+import { VolumePanel } from '@/components/token/VolumePanel'
+import { TOTAL_SUPPLY_TOK } from '@/components/create/facts'
 import { AboutPanel, TokenHeader } from '@/components/token/TokenHeader'
 import { TradeSurface } from '@/components/token/TradeSurface'
 import { ChatPanel } from '@/components/token/ChatPanel'
@@ -52,8 +66,20 @@ import { StaleNotice } from '@/components/read/StaleNotice'
  * `<NotALaunch>` yalnizca adresi alan bir bilesendir -- ismi cizmek bir hata
  * degil bir IMKANSIZLIKTIR.
  */
-export default async function TokenPage({ params }: { params: Promise<{ address: string }> }) {
+export default async function TokenPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ address: string }>
+  /*
+   * SAYFANIN DURUMU ADRESTE. Zaman dilimi, olcu, sekme ve sayfa numarasi
+   * `searchParams`tan gelir -- yani her gorunum PAYLASILABILIR ve tarayicinin
+   * geri dugmesi calisir. Bu deponun `FilterBar`da yazili kurali.
+   */
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
   const { address } = await params
+  const search = await searchParams
 
   if (!isAddress(address, { strict: false })) notFound()
   const token = address.toLowerCase() as HexAddress
@@ -98,79 +124,207 @@ export default async function TokenPage({ params }: { params: Promise<{ address:
   return (
     <>
       {lagging === null ? null : <StaleNotice indexer={lagging} what="This page" />}
-      <IndexedToken overview={overview} />
+      <IndexedToken overview={overview} search={search} />
     </>
   )
 }
 
-async function IndexedToken({ overview }: { overview: TokenOverview }) {
-  const [metadata, trades, holders, chat, identified] = await Promise.all([
-    resolveMetadata(overview.uri),
-    readTrades(asHex(overview.token), { cursor: null, limit: TABLE_PAGE_SIZE }),
-    readHolders(asHex(overview.token), { cursor: null, limit: TABLE_PAGE_SIZE }),
-    // CHAT AYRI BIR OKUMA, ve `Promise.all`in AYRI bir dali: bir tanesinin
-    // dusmesi otekileri karartmaz -- `guard` her birini kendi
-    // `ReadResult`ine sariyor, yani burada reddedilen bir promise yok.
-    readChat(asHex(overview.token), { cursor: null, limit: CHAT_PAGE_SIZE }),
-    // PROFIL FACTORY'DEN, ve dusmesi sayfayi dusurmez: al-sat paneli o zaman
-    // cizilmez, geri kalan her sey cizilir. Uydurulmus bir yedek KONMAZ --
-    // testnet ile uretim yalnizca `V`de ve tam 1000 kat ayrisir.
-    // THE NAME IS KEPT NOW, NOT DISCARDED. `getCurveProfile()` has always
-    // returned `{ name, profile }` -- the triple read off the factory and the
-    // profile it hashes to -- and this call threw the name away. The money-chip
-    // ladder is chosen by it (testnet $1/$5/$10, production $25/$100/$500),
-    // because the two profiles differ in `V` by exactly 1000.
-    getCurveProfile().then(
-      (found) => found,
-      (error: unknown) => {
-        console.error(
-          'curve profile unavailable; the token page draws without a trade panel',
-          error,
-        )
-        return null
-      },
-    ),
-  ])
-  // Every other consumer on this page wants the triple, unchanged.
-  const profile = identified?.profile ?? null
+/** `?x=a&x=b` -> ilk deger. Bir dizi burada bir hata degil, yalnizca fazlalik. */
+function one(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value
+}
+
+async function IndexedToken({
+  overview,
+  search,
+}: {
+  overview: TokenOverview
+  search: Record<string, string | string[] | undefined>
+}) {
   /*
-   * `overview.graduated` GECILIYOR, VE GECILMEDIGI SURECE `graduated` DALI
-   * HICBIR SAYFADA URETILEMIYORDU.
+   * ============ SAYFANIN DURUMU, ADRESTEN OKUNUR ============
    *
-   * Satir bu alani zaten tasiyordu (`packages/db/src/queries.ts`, `graduated`
-   * + `graduatedSeq` + `graduationTargetAddr` + iki odeme miktari) ve burasi
-   * yalnizca `complete`i okuyordu. Sonuc: mezun olan ilk token, arkasinda canli
-   * bir havuzla, sonsuza kadar "Curve complete" olarak cizilecekti. Bileşenin
-   * kendi testi elle kurulmus bir nesne ile "Graduated"i goruyordu, yani YESIL
-   * kaliyordu -- eksik `loadMore*` prop'lariyla ve `CurveChart`'in hic cizilmeyen
-   * gerceklesen katmaniyla AYNI kusur, ucuncu kez.
-   *
-   * `resolveLifecycle`in imzasi bu yuzden degisti: `graduated` artik ZORUNLU,
-   * dolayisiyla bu satiri yeniden unutmak derlenmez.
+   * Dordu de DOGRULANARAK okunur: bir kullanici `?tf=banana` yazabilir ve o
+   * durumda sayfa DUSMEZ, varsayilana doner. `timeframeKey` ve `tabOf` bu
+   * dogrulamayi kendi dosyalarinda tasiyor -- burada tekrarlamak, ayni kurali
+   * iki yerde tutmak olurdu.
    */
+  const tf = timeframeKey(one(search['tf']))
+  const metric: ChartMetric = one(search['metric']) === 'price' ? 'price' : 'fdv'
+  const tab = tabOf(one(search['tab']))
+  const pageParam = Number(one(search['p']) ?? '1')
+  const page = Number.isInteger(pageParam) && pageParam >= 1 ? Math.min(pageParam, 10_000) : 1
+
+  const [metadata, candles, split24h, splitWindow, tradePage, holderPage, identified] =
+    await Promise.all([
+      resolveMetadata(overview.uri),
+      readCandles(asHex(overview.token), { bucketSeconds: timeframeSeconds(tf), limit: 120 }),
+      /*
+       * ISTATISTIK SERIDI HER ZAMAN 24 SAAT OKUR -- baslik "24H volume" diyor
+       * ve o baslik zaman dilimi secimiyle DEGISMEZ. Ikisini ayni okumadan
+       * beslemek, "24H" yazip bes dakikalik hacmi gosteren bir hucre uretirdi.
+       */
+      readVolumeSplit(asHex(overview.token), { sinceSeconds: 86_400 }),
+      // HACIM PANELI ise SECILEN dilimi okur, cunku o secim tam yaninda duruyor.
+      readVolumeSplit(asHex(overview.token), { sinceSeconds: timeframeSeconds(tf) }),
+      readTradePage(asHex(overview.token), { page, pageSize: TABLE_PAGE_SIZE }),
+      readHolderPage(asHex(overview.token), { page, pageSize: TABLE_PAGE_SIZE }),
+      // PROFIL FACTORY'DEN, ve dusmesi sayfayi dusurmez: al-sat paneli o zaman
+      // cizilmez, geri kalan her sey cizilir. Uydurulmus bir yedek KONMAZ --
+      // testnet ile uretim yalnizca `V`de ve tam 1000 kat ayrisir.
+      getCurveProfile().then(
+        (found) => found,
+        (error: unknown) => {
+          console.error(
+            'curve profile unavailable; the token page draws without a trade panel',
+            error,
+          )
+          return null
+        },
+      ),
+    ])
+
   const lifecycle = resolveLifecycle({
     complete: overview.complete,
     graduated: overview.graduated,
   })
-  const stats = statsFromOverview(overview)
 
-  const saleSupply = profile?.saleSupply ?? 793_100_000n * 10n ** 18n
-  const soldTok = saleSupply - overview.realTokenReservesTok
-  const percent = (Math.round(overview.progressPpm / 1_000) / 10).toFixed(1)
+  const candleRows = valueOf(candles) ?? []
+  const windowSplit = valueOf(splitWindow) ?? EMPTY_SPLIT
+  const daySplit = valueOf(split24h) ?? EMPTY_SPLIT
+  const trades = valueOf(tradePage)
+  const holders = valueOf(holderPage)
+
+  /*
+   * DEGISIM, MUMLARIN EN ESKISINDEN BUGUNE. YETERLI GECMIS YOKSA `null` --
+   * ve sifir DEGIL: tek islemli bir token icin "%0.0" yazmak "degismedi"
+   * demek olurdu, oysa karsilastirilacak bir sey yok. Bu ayrim bu depoda
+   * `StatRow` icin zaten yaziliydi.
+   */
+  const firstCandle = candleRows[0]
+  const changePercent =
+    firstCandle === undefined || firstCandle.openWei === 0n
+      ? null
+      : Number(((overview.marketCapWei - firstCandle.openWei) * 1_000n) / firstCandle.openWei) / 10
+
+  const sellShare =
+    daySplit.volumeWei === 0n
+      ? null
+      : Number((daySplit.sellVolumeWei * 1_000n) / daySplit.volumeWei) / 10
+
+  /** Grafik kontrollerinin KORUYACAGI parametreler -- sekme ve sayfa haric. */
+  const chartParams: Record<string, string | undefined> = {
+    metric,
+    tf,
+    ...(tab === 'activity' ? {} : { tab }),
+  }
+  /** Sekme baglantilarinin koruyacagi parametreler. */
+  const tableQuery: Record<string, string> = { tf, metric }
 
   return (
-    <div className="flex flex-col gap-6">
-      <TokenHeader overview={overview} imageUrl={metadata?.image ?? null} />
+    <div className="flex flex-col gap-8">
+      <TokenIdentity
+        name={overview.name}
+        symbol={overview.symbol}
+        token={asHex(overview.token)}
+        imageUrl={metadata?.image ?? null}
+        badges={
+          <>
+            {lifecycle.kind === 'graduated' ? (
+              <IdentityBadge tone="accent">Graduated</IdentityBadge>
+            ) : lifecycle.kind === 'complete' ? (
+              <IdentityBadge tone="warn">Curve complete</IdentityBadge>
+            ) : (
+              <IdentityBadge tone="accent">On the curve</IdentityBadge>
+            )}
+          </>
+        }
+      />
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="flex flex-col gap-6">
-          <StatRow stats={stats} />
+      <TokenStatStrip
+        marketCapWei={overview.marketCapWei}
+        changePercent={changePercent}
+        priceWeiPerToken={overview.priceWeiPerTok}
+        volume24hWei={overview.volume24hWei}
+        sellSharePercent={sellShare}
+        liquidityWei={overview.realQuoteReservesWei}
+        holderCount={overview.holderCount}
+      />
 
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="flex min-w-0 flex-col gap-8">
+          <section className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <CandleSummary candle={candleRows[candleRows.length - 1]} />
+              <div className="flex items-center gap-2">
+                <MetricPicker active={metric} params={chartParams} />
+                <TimeframePicker active={tf} params={chartParams} />
+              </div>
+            </div>
+            <CandleChart
+              candles={candleRows}
+              metric={metric}
+              /*
+                KESIKLI CIZGI SU ANKI DEGERI GOSTERIR ve olcunun BIRIMINDE
+                olmak zorundadir. Fiyat, market cap'in 1e9'da biri; grafigin
+                ekseni market cap ile olcekli oldugu icin fiyat modunda deger
+                geri carpilir. Carpmasaydik cizgi grafigin disina duserdi.
+              */
+              currentWei={
+                metric === 'fdv'
+                  ? overview.marketCapWei
+                  : overview.priceWeiPerTok * 1_000_000_000n
+              }
+            />
+          </section>
+
+          <VolumePanel split={windowSplit} timeframe={tf} params={chartParams} />
+
+          <ActivityTabs
+            tab={tab}
+            trades={trades?.rows ?? []}
+            holders={holders?.rows ?? []}
+            holderCount={holders?.total ?? overview.holderCount ?? 0}
+            tradeCount={trades?.total ?? 0}
+            symbol={overview.symbol}
+            curve={overview.curve}
+            creator={overview.launchCreator}
+            page={page}
+            pageSize={TABLE_PAGE_SIZE}
+            basePath={`/token/${overview.token}`}
+            query={tableQuery}
+            totalSupplyTok={TOTAL_SUPPLY_TOK}
+            priceWeiPerToken={overview.priceWeiPerTok}
+          />
+
+          <TokenInfo
+            creator={overview.launchCreator}
+            token={overview.token}
+            {...(metadata?.x === undefined ? {} : { x: metadata.x })}
+            {...(metadata?.telegram === undefined ? {} : { telegram: metadata.telegram })}
+            {...(metadata?.description === undefined ? {} : { description: metadata.description })}
+          />
+        </div>
+
+        {/*
+          SAG RAY YAPISKAN. Kullanici islem listesinde asagi kayarken al-sat
+          paneli ekranda kalir; referans tasarimin davranisi da budur ve sebebi
+          basit: bu sayfada asagi kaydirmanin amaci KARAR VERMEKTIR, ve karar
+          verildiginde eylem elin altinda olmalidir.
+        */}
+        <div className="flex flex-col gap-6 lg:sticky lg:top-6 lg:self-start">
+          <TradeSurface
+            token={asHex(overview.token)}
+            curve={asHex(overview.curve)}
+            lifecycle={lifecycle}
+            profile={identified}
+            symbol={overview.symbol}
+          />
           {lifecycle.kind === 'trading' ? (
             <ProgressToGraduation
               ppm={overview.progressPpm}
-              raisedWei={stats.raisedWei}
-              targetWei={stats.targetWei}
+              raisedWei={overview.realQuoteReservesWei}
+              targetWei={overview.graduationRaiseWei}
             />
           ) : (
             /*
@@ -182,147 +336,35 @@ async function IndexedToken({ overview }: { overview: TokenOverview }) {
             <LifecycleNotice lifecycle={lifecycle} curve={asHex(overview.curve)} />
           )}
 
-          {/*
-            `trades` GECILIYOR, ve gecilmedigi surece bu grafigin GERCEKLESEN
-            KATMANI HIC CIZILMEDI. `CurveChart`'in `trades` prop'u opsiyonel
-            ve varsayilani `[]`, yani `realisedSeries([])` bos donuyor,
-            `realised.length > 1` yanlis kaliyor ve `curve-realised` yolu
-            hicbir sayfada DOM'a girmiyordu -- bileşenin testleri ise prop'u
-            kendileri veriyordu. Bu, ayni dosyadaki eksik `loadMore*`
-            prop'lariyla AYNI kusur ve yine ancak tarayicida gorundu.
-
-            MEKAN ICIN AYRI BIR PROP GECILMIYOR: mezuniyet sonrasi satirlar bu
-            grafigin EKSENINDE cizilemez (eksen "curve'de satilan token"dir,
-            havuz satirinin rezervi ise havuzun ima edilen rezervidir) ve
-            elenmeleri artik satirin kendi `source` alanindan geliyor. Bir sure
-            bu ayrim `graduatedSeq` prop'uyla tasindi -- ve iki hop'tan birinde
-            unutulabiliyordu. `TokenPriceChart` mezun bir token icin ZAMAN
-            eksenli, iki mekanli grafige gecer.
-          */}
-          <TokenPriceChart
-            lifecycle={lifecycle}
-            profile={
-              profile ?? {
-                virtualTokenReserves: 1_073_000_000n * 10n ** 18n,
-                virtualQuoteReserves: 4_292n * 10n ** 15n,
-                saleSupply,
-              }
-            }
-            soldTok={soldTok}
-            currentPriceWei={stats.priceWeiPerToken}
-            trades={valueOf(trades)?.rows ?? []}
-            symbol={overview.symbol}
-            progressPercent={percent}
-          />
-
-          {/*
-            Iki okuma AYRI: bir tabin okumasi dusse otekinin tabi calismaya
-            devam eder. Tek bir `Promise.all` reddi ikisini birden karartirdi.
-
-            ==================================================================
-             `loadMore*` IKI PROP, VE YOKLUKLARI EKRANDA HICBIR IZ BIRAKMIYORDU.
-            ==================================================================
-
-            Bu iki satir gelene kadar sayfa EN COK 25 islem ve 25 holder
-            gosterebiliyordu. Eksik olan bir dugme degildi: `useKeysetRows`
-            `loadMore` olmadan `canLoadMore: false` doner ve `LoadMoreFooter`
-            hicbir sey cizmez -- DOGRU davranis, cunku hicbir sey yapmayan bir
-            dugme olmayandan kotudur. Sonuc, dort bin islemi olan bir token ile
-            yirmi bes islemi olanin AYNI gorunmesiydi; ekranda "devami var"
-            diyen tek bir piksel yoktu. `readTrades` bu sure boyunca gercek bir
-            `nextCursor` donduruyordu, kimsenin gecmedigi bir prop'a.
-
-            `.bind` sunucu eylemini token'a BAGLAR, yani istemcinin gonderdigi
-            tek sey imlectir. Adres yine de eylemin icinde dogrulanir: bir
-            sunucu eylemi acik bir uc noktadir.
-          */}
-          <TableTabs
-            trades={trades}
-            holders={holders}
-            loadMoreTrades={loadMoreTrades.bind(null, overview.token)}
-            loadMoreHolders={loadMoreHolders.bind(null, overview.token)}
-            overview={{
-              curve: overview.curve,
-              launchCreator: overview.launchCreator,
-              symbol: overview.symbol,
-              // THE VENUE IS NOT IN HERE, AND THAT IS THE POINT. It used to be
-              // (`graduatedSeq`), because `listTrades` did not select `source`;
-              // it does now, so every row states its own venue and no call site
-              // can forget to pass it.
-            }}
-          />
-        </div>
-
-        <div className="flex flex-col gap-6">
-          {/*
-            AL-SAT PANELI, ve 375px'te GRAFIKTEN ONCE.
-            `order-first lg:order-none`: telefonda niyet islem yapmaktir, masaustunde
-            sag kolon zaten ilk ekranda gorunur.
-
-            BU BAGLANTI FAZ 4'UN EN BUYUK BOSLUGUYDU. `TradePanel` 12. gorevde
-            yazildi, 645 birim testinin bir kismi onu olcuyor ve HICBIR SAYFA
-            ONU CIZMIYORDU -- bir bilesenin testi, o bilesenin ULASILABILIR
-            oldugunu soylemez. Tarayici acilmadan gorunmedi.
-          */}
-          <TradeSurface
-            token={asHex(overview.token)}
-            curve={asHex(overview.curve)}
-            lifecycle={lifecycle}
-            profile={identified}
-            symbol={overview.symbol}
-          />
-          {/*
-            `TradeSurface` REPLACED A DIRECT `<TradePanel>` HERE, AND THE
-            REPLACEMENT IS THE POINT.
-
-            A graduated token cannot be traded on its curve -- all three
-            entrypoints revert `CurveComplete()` -- and `TradePanel` correctly
-            renders nothing for it. So before this line existed, the FIRST token
-            to graduate would have had a live Uniswap v4 pool and NO way for any
-            wallet to reach it: v4 gives an EOA no swap entrypoint and Arc has no
-            Universal Router. The choice of venue now lives in one component that
-            BOTH page branches render, so it cannot be made on one and forgotten
-            on the other -- which is the defect this file already records three
-            times.
-
-            `profile === null` no longer hides the panel: the pool panel does not
-            use the curve profile, and losing the only trading surface because an
-            unrelated read failed would be a new instance of the same class.
-          */}
-          {/*
-            SAG KOLONDA CHAT -- spec §7.1'in yerlesimi ("sağ chat").
-
-            `loadMoreChat` GECILIYOR, ve gecilmedigi surece panel EN COK 20
-            mesaj gosterebilirdi: `useKeysetRows` `loadMore` olmadan
-            `canLoadMore: false` doner ve `LoadMoreFooter` HICBIR SEY cizmez.
-            Bu dosya ayni kusuru `loadMoreTrades`/`loadMoreHolders` icin
-            zaten bir kez kaydetti -- "eksik bir prop, ekranda hicbir iz
-            birakmaz" -- ve ayni tuzagin yeni bir ornegini eklememek icin
-            satir yazildigi anda gecirildi.
-
-            `symbol` bos kutunun ve yazma kutusunun metnine giriyor: "Holders
-            of SMOKE can start the conversation" cumlesi, jenerik bir
-            "No messages" den kullaniciya ne yapmasi gerektigini soyleyen tek
-            farktir.
-          */}
           <ChatPanel
             token={asHex(overview.token)}
             symbol={overview.symbol}
-            chat={chat}
+            chat={await readChat(asHex(overview.token), { cursor: null, limit: CHAT_PAGE_SIZE })}
             loadMore={loadMoreChat.bind(null, overview.token)}
           />
-          <AboutPanel
-            {...(metadata?.description === undefined ? {} : { description: metadata.description })}
-            {...(metadata === null
-              ? {}
-              : { links: { x: metadata.x, telegram: metadata.telegram } })}
-          />
-          <LaunchFacts overview={overview} canonicity="canonical" />
         </div>
       </div>
     </div>
   )
 }
+
+/**
+ * Okuma dustugunde hacim paneli SIFIR gosterir.
+ *
+ * Burada sifir DOGRU olandir, `null` degil: panel bir PENCERE hakkinda konusur
+ * ve "bu pencerede olculebilen hacim yok" ile "hic islem olmadi" ekranda ayni
+ * seyi soyler. Istatistik seridindeki `volume24hWei` ise ayri bir alandir ve
+ * orada `null` "bilmiyoruz" demeye devam eder.
+ */
+const EMPTY_SPLIT = {
+  volumeWei: 0n,
+  buys: 0,
+  sells: 0,
+  buyers: 0,
+  sellers: 0,
+  buyVolumeWei: 0n,
+  sellVolumeWei: 0n,
+} as const
 
 /**
  * ZINCIRDEN CIZILEN DAL, ARTIK GERCEKTEN ZINCIRDEN.
@@ -420,26 +462,36 @@ function ChainDrawnLaunch({
 
   return (
     <div className="flex flex-col gap-6" data-testid="chain-drawn-launch">
-      <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h1 className="font-serif text-3xl leading-none">{chain.name}</h1>
-        <p className="text-sm uppercase tracking-[0.08em] text-muted">{chain.symbol}</p>
-        <CanonicalBadge status={canonicity} />
-      </header>
+      {/*
+        AYNI KIMLIK BILESENI, ayni sebeple: iki dal ayni sayfadir, yalnizca
+        VERI KAYNAGI farklidir. Ayri bir baslik yazmak, bir gun birini
+        degistirip otekini unutmanin yoluydu -- bu dosya o kusuru zaten alti
+        kez kaydediyor.
+      */}
+      <TokenIdentity
+        name={chain.name}
+        symbol={chain.symbol}
+        token={chain.token}
+        badges={<CanonicalBadge status={canonicity} />}
+      />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="order-last flex flex-col gap-6 lg:order-none">
-          <StatRow
-            stats={{
-              marketCapWei: chain.marketCapWei,
-              priceWeiPerToken: chain.priceWeiPerTok,
-              raisedWei: chain.realQuoteReserves,
-              targetWei: chain.graduationRaiseWei,
-              // INDEXER OLCUMLERI. `null` -> "—", ve SIFIR DEGIL: bir sayfanin
-              // "0 holder" demesi ile "bilmiyoruz" demesi ayni sey degildir.
-              volume24hWei: null,
-              athMarketCapWei: null,
-              holderCount: null,
-            }}
+          {/*
+            AYNI SERIT. INDEXER OLCUMLERI `null` GECER ve SIFIR DEGIL: bir
+            sayfanin "0 holder" demesi ile "bilmiyoruz" demesi ayni sey
+            degildir, ve bu dal tam olarak indexer'in dustugu daldir.
+            `changePercent` de `null`: degisim mumlardan hesaplanir, mumlar
+            indexer'dan gelir, yani burada olculemez.
+          */}
+          <TokenStatStrip
+            marketCapWei={chain.marketCapWei}
+            changePercent={null}
+            priceWeiPerToken={chain.priceWeiPerTok}
+            volume24hWei={null}
+            sellSharePercent={null}
+            liquidityWei={chain.realQuoteReserves}
+            holderCount={null}
           />
 
           {lifecycle.kind === 'trading' ? (

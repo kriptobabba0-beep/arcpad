@@ -31,6 +31,12 @@ import {
   listPositionsByHolder,
   listProtocolDaily,
   listTokens,
+  listCandles,
+  countTrades,
+  countHolders,
+  type CandleRow,
+  getVolumeSplit,
+  type VolumeSplit,
   listTrades,
   listTradesByTrader,
   parseChatCursor,
@@ -587,5 +593,87 @@ export async function readTraderTrades(
       value: { rows, nextCursor: nextCursorFrom(rows, params.limit, (r) => r.eventSeq) },
       indexer,
     }
+  })
+}
+
+/**
+ * ============================================================================
+ *  MUMLAR VE HACIM AYRIMI -- ISLEM SAYFASININ GRAFIGI
+ * ============================================================================
+ *
+ * Ikisi de `guard` icinden gecer, yani veritabani dustugunde sayfa CIZILIR ve
+ * yalnizca grafik ile cubuk yerine bir bosluk kalir. Bu dosyadaki her okuma
+ * icin gecerli olan kural: bir okumanin dusmesi otekileri karartmaz.
+ */
+/**
+ * Satir tipleri BURADAN da disari verilir.
+ *
+ * Bir bilesenin `@arcpad/db`den tip, `@/lib/read`ten fonksiyon almasi, ayni
+ * seyin iki kaynagi demektir; sunucu bilesenleri okuma katmanini tek kapidan
+ * gorur.
+ */
+export type { CandleRow, VolumeSplit }
+
+/**
+ * NUMARALI SAYFA ICIN: bir sayfalik islem + TOPLAM sayi.
+ *
+ * `readTrades` imlecli surumu korur (yukleme dugmesi olan yuzeyler onu
+ * kullanir); bu, token sayfasinin numarali sayfalari icin OFFSET'li olanidir.
+ * Ikisi ayri fonksiyon cunku ayri GARANTILER veriyorlar ve tek bir fonksiyonun
+ * icinde bir bayrakla secilseydi, cagiran hangisini aldigini bilmezdi.
+ */
+export async function readTradePage(
+  token: string,
+  options: { page: number; pageSize: number },
+): Promise<ReadResult<{ rows: TradeRow[]; total: number }>> {
+  return guard(async () => {
+    const pool = getPool()
+    const [rows, total] = await Promise.all([
+      listTrades(pool, token as `0x${string}`, {
+        limit: options.pageSize,
+        offset: (options.page - 1) * options.pageSize,
+      }),
+      countTrades(pool, token as `0x${string}`),
+    ])
+    return { value: { rows, total }, indexer: await getIndexerStatus(pool) }
+  })
+}
+
+export async function readHolderPage(
+  token: string,
+  options: { page: number; pageSize: number },
+): Promise<ReadResult<{ rows: HolderRow[]; total: number }>> {
+  return guard(async () => {
+    const pool = getPool()
+    const [rows, total] = await Promise.all([
+      listHolders(pool, token as `0x${string}`, {
+        limit: options.pageSize,
+        offset: (options.page - 1) * options.pageSize,
+      }),
+      countHolders(pool, token as `0x${string}`),
+    ])
+    return { value: { rows, total }, indexer: await getIndexerStatus(pool) }
+  })
+}
+
+export async function readCandles(
+  token: string,
+  options: { bucketSeconds: number; limit?: number },
+): Promise<ReadResult<CandleRow[]>> {
+  return guard(async () => {
+    const pool = getPool()
+    const rows = await listCandles(pool, token as `0x${string}`, options)
+    return { value: rows, indexer: await getIndexerStatus(pool) }
+  })
+}
+
+export async function readVolumeSplit(
+  token: string,
+  options: { sinceSeconds?: number } = {},
+): Promise<ReadResult<VolumeSplit>> {
+  return guard(async () => {
+    const pool = getPool()
+    const value = await getVolumeSplit(pool, token as `0x${string}`, options)
+    return { value, indexer: await getIndexerStatus(pool) }
   })
 }

@@ -139,7 +139,12 @@ async function renderTokenPage(chat: ReadResult<Page<ChatMessageRow>>) {
   vi.mocked(read.readChat).mockResolvedValue(chat)
 
   const tree = await resolveServerTree(
-    await TokenPage({ params: Promise.resolve({ address: TOKEN }) }),
+    await TokenPage({
+      params: Promise.resolve({ address: TOKEN }),
+      // SAYFANIN DURUMU ADRESTE (zaman dilimi, olcu, sekme, sayfa). Bos bir
+      // nesne "varsayilanlar" demektir ve sayfa tam olarak oyle davranmalidir.
+      searchParams: Promise.resolve({}),
+    }),
   )
   return renderWithProviders(tree as ReactElement)
 }

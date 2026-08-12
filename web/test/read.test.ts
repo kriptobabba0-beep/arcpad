@@ -297,14 +297,23 @@ describe('readHolders -- the keyset that was hard-coded to null', () => {
     })
 
     const holders = calls.find((c) => c.text.includes('FROM holders'))
-    // $1 token, $2 balance, $3 holder, $4 limit. THIS is the assertion the
-    // hard-coded `nextCursor: null` would have passed happily: without it, a
-    // page-two request silently re-served page one.
+    /*
+     * $1 token, $2 balance, $3 holder, $4 limit, $5 offset. THIS is the
+     * assertion the hard-coded `nextCursor: null` would have passed happily:
+     * without it, a page-two request silently re-served page one.
+     *
+     * $5 GELDI CUNKU AYNI SORGU IKI SAYFALAMAYA HIZMET EDIYOR. Token sayfasi
+     * numarali sayfa cizer (1 2 3 …) ve numarali sayfa OFFSET'siz dogru
+     * yapilamaz; imlecli yol ise oldugu gibi duruyor. Ikisi ayni anda
+     * verilemez -- `listHolders` reddeder -- yani bu satirdaki `0`, "imlec
+     * kullaniliyor, atlanacak satir yok" demektir.
+     */
     expect(holders?.params).toEqual([
       '0x00000000000000000000000000000000000000aa',
       '500',
       '0x00000000000000000000000000000000000000a2',
       3,
+      0,
     ])
   })
 

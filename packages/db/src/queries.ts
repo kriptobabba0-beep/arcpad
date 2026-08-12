@@ -964,10 +964,34 @@ export interface TradeRow {
 export async function listTrades(
   db: Queryable,
   token: Address,
-  options: { cursor?: Cursor; limit?: number } = {},
+  options: { cursor?: Cursor; limit?: number; offset?: number } = {},
 ): Promise<TradeRow[]> {
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
   const cursor = options.cursor ?? null
+  /*
+   * ============ NUMARALI SAYFA ICIN OFFSET -- VE BURADA TAM DOGRU ============
+   *
+   * `ListTokensOptions.offset` bu deponun bu konudaki uzun notunu tasiyor:
+   * offset CANLI bir siralama anahtarinda satir tekrarlatir ya da atlatir.
+   * BURADA O BEDEL YOKTUR: siralama `event_seq DESC` ve `event_seq` bir daha
+   * DEGISMEZ -- yeni islemler listenin BASINA eklenir, ortasina degil. Yani
+   * araya giren bir alim, ikinci sayfayi bir satir kaydirir ve o kadar; bir
+   * satiri iki kez gostermez.
+   *
+   * `cursor` ile birlikte verilemez, ayni sebeple: ikisi ayni soruyu iki
+   * farkli garantiyle cevaplar ve sessizce birini secmek, cagiranin hangi
+   * garantiyi aldigini bilmemesi demektir.
+   */
+  const offset = options.offset ?? null
+  if (cursor !== null && offset !== null) {
+    throw new TypeError(
+      'listTrades: `cursor` and `offset` are different pagination guarantees and cannot be ' +
+        'combined. Pick one.',
+    )
+  }
+  if (offset !== null && (!Number.isInteger(offset) || offset < 0)) {
+    throw new RangeError(`listTrades: offset must be a non-negative integer, got ${offset}`)
+  }
   const { rows } = await db.query<{
     event_seq: string
     tx_hash: string
@@ -998,8 +1022,8 @@ export async function listTrades(
             t.trader = creator_at(t.token, t.event_seq) AS is_dev
        FROM trades t
       WHERE t.token = $1 AND ($2::bigint IS NULL OR t.event_seq < $2)
-      ORDER BY t.event_seq DESC LIMIT $3`,
-    [lower(token), cursor === null ? null : cursor.toString(), limit],
+      ORDER BY t.event_seq DESC LIMIT $3 OFFSET $4`,
+    [lower(token), cursor === null ? null : cursor.toString(), limit, offset ?? 0],
   )
   return rows.map((r) => ({
     eventSeq: BigInt(r.event_seq),
@@ -1097,10 +1121,24 @@ export function parseHolderCursor(value: string | null | undefined): HolderCurso
 export async function listHolders(
   db: Queryable,
   token: Address,
-  options: { after?: HolderCursor | null; limit?: number } = {},
+  options: { after?: HolderCursor | null; limit?: number; offset?: number } = {},
 ): Promise<HolderRow[]> {
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 200)
   const after = options.after ?? null
+  /*
+   * OFFSET, VE BURADA BEDELI GERCEKTIR -- `listTrades`ten farkli olarak.
+   * Siralama `balance_tok DESC` ve bir bakiye HER ISLEMDE degisir, yani iki
+   * sayfa arasinda bir alim listeyi kaydirabilir. Numarali sayfa yine de
+   * isteniyor cunku urun onu istiyor; secim ACIKCA burada yaziyor ki bir
+   * sonraki okuyucu bunu bir kusur sanmasin.
+   */
+  const offset = options.offset ?? null
+  if (after !== null && offset !== null) {
+    throw new TypeError('listHolders: `after` and `offset` cannot be combined. Pick one.')
+  }
+  if (offset !== null && (!Number.isInteger(offset) || offset < 0)) {
+    throw new RangeError(`listHolders: offset must be a non-negative integer, got ${offset}`)
+  }
   // KARISIK YONLU SIRA, SATIR-DEGERI KARSILASTIRMASIYLA YAZILAMAZ:
   // `(balance_tok, holder) < ($2,$3)` yalnizca IKI anahtar da DESC olsaydi
   // dogru olurdu. Yon `DESC, ASC` oldugu icin sart ACIKCA yazilir. Esitlik
@@ -1113,12 +1151,13 @@ export async function listHolders(
         AND ($2::numeric IS NULL
              OR h.balance_tok < $2::numeric
              OR (h.balance_tok = $2::numeric AND h.holder > $3::text))
-      ORDER BY h.balance_tok DESC, h.holder ASC LIMIT $4`,
+      ORDER BY h.balance_tok DESC, h.holder ASC LIMIT $4 OFFSET $5`,
     [
       lower(token),
       after === null ? null : after.balanceTok.toString(),
       after === null ? null : after.holder,
       limit,
+      offset ?? 0,
     ],
   )
   return rows.map((r) => ({ holder: r.holder, balanceTok: BigInt(r.balance_tok) }))
@@ -1805,4 +1844,220 @@ export async function getCreatorEarnings(
     },
     indexer: await getIndexerStatus(db),
   }
+}
+
+/**
+ * ============================================================================
+ *  MUMLAR -- VE EKSEN, BASLIKTAKI SAYIYLA AYNI IFADEDEN GELIR
+ * ============================================================================
+ *
+ * Grafik FDV cizer, ve FDV `token_overview.market_cap_wei` ile AYNI ifadeden
+ * turetilir: `mulDiv(Vq, N, Vt)`, taban. Bu bir uslup tercihi degil: bir
+ * grafigin son mumu ile sayfanin ustundeki rakam farkli formullerden gelseydi,
+ * ikisi bir gun ayrisirdi ve hangisinin dogru oldugunu kimse bilemezdi.
+ * Formul `migrations/007_views.sql:46`da, burada aynen tekrarlanir ve
+ * `test/candles.test.ts` ikisinin AYNI satir icin ayni sayiyi verdigini
+ * gercek veriyle tutar.
+ *
+ * HER ISLEM KENDI ANINDAKI REZERVLERI TASIR (`Trade` olayi dordunu de yayar),
+ * yani mumlar zincire tekrar sorulmadan kurulur. Bir "fiyat yeniden oynatma"
+ * gerekmez ve bu, gecmisi yeniden hesaplamanin sessizce kayacagi tek yeri
+ * kapatir.
+ *
+ * KOVA SINIRI `floor(epoch / n) * n`: sabit, UTC'ye dayali ve sunucunun saat
+ * diliminden BAGIMSIZ. `date_trunc('hour', ...)` yalnizca saatlik icin
+ * calisirdi; bes dakikalik ve alti saatlik dilimler ayni ifadeyle cikar.
+ */
+export interface CandleRow {
+  /** Kovanin BASLANGICI, UTC. */
+  bucket: Date
+  openWei: bigint
+  highWei: bigint
+  lowWei: bigint
+  closeWei: bigint
+  /** Kovadaki toplam quote hacmi (ucretler HARIC -- `quote_amount_wei`). */
+  volumeWei: bigint
+  trades: number
+}
+
+export async function listCandles(
+  db: Queryable,
+  token: Address,
+  options: { bucketSeconds: number; limit?: number } = { bucketSeconds: 3_600 },
+): Promise<CandleRow[]> {
+  /*
+   * KOVA SANIYESI BIR SAYIDIR VE DOGRUDAN SQL'E GIRMEZ. Parametre olarak
+   * gecer ve once tam sayiya zorlanir: bu deger arayuzden gelen bir zaman
+   * dilimi secimidir, yani DISARIDAN gelir.
+   */
+  const bucket = Math.max(1, Math.floor(options.bucketSeconds))
+  const limit = Math.min(Math.max(options.limit ?? 200, 1), 1_000)
+
+  const { rows } = await db.query<{
+    bucket: Date
+    open_wei: string
+    high_wei: string
+    low_wei: string
+    close_wei: string
+    volume_wei: string
+    trades: string
+  }>(
+    `WITH marked AS (
+       SELECT
+         to_timestamp(floor(extract(epoch FROM t.block_time) / $2::bigint) * $2::bigint) AS bucket,
+         t.event_seq,
+         div(t.virtual_quote_reserves_wei * d.total_supply_tok, t.virtual_token_reserves_tok)
+           AS mcap_wei,
+         t.quote_amount_wei
+       FROM trades t
+       CROSS JOIN deployment d
+       WHERE t.token = $1
+     )
+     SELECT
+       bucket,
+       -- ACILIS VE KAPANIS SIRAYA GORE, min/max DEGIL. event_seq zincir
+       -- sirasidir; block_time ayni blokta ESITTIR ve ona gore siralamak
+       -- ayni kovadaki iki islemi rastgele sirada birakirdi.
+       (array_agg(mcap_wei ORDER BY event_seq ASC))[1]::text  AS open_wei,
+       max(mcap_wei)::text                                     AS high_wei,
+       min(mcap_wei)::text                                     AS low_wei,
+       (array_agg(mcap_wei ORDER BY event_seq DESC))[1]::text AS close_wei,
+       coalesce(sum(quote_amount_wei), 0)::text                AS volume_wei,
+       count(*)::text                                          AS trades
+     FROM marked
+     GROUP BY bucket
+     ORDER BY bucket DESC
+     LIMIT $3`,
+    [token.toLowerCase(), String(bucket), limit],
+  )
+
+  // EN ESKIDEN YENIYE dondurulur. Sorgu DESC siralar cunku `LIMIT` en SON
+  // mumlari almalidir; bir grafik ise soldan saga cizer.
+  return rows
+    .map((row) => ({
+      bucket: row.bucket,
+      openWei: BigInt(row.open_wei),
+      highWei: BigInt(row.high_wei),
+      lowWei: BigInt(row.low_wei),
+      closeWei: BigInt(row.close_wei),
+      volumeWei: BigInt(row.volume_wei),
+      trades: Number(row.trades),
+    }))
+    .reverse()
+}
+
+/**
+ * ============================================================================
+ *  HACMIN ALIS/SATIS AYRIMI
+ * ============================================================================
+ *
+ * Bir pencerede: toplam hacim, kac alis ve kac satis, KAC AYRI CUZDAN, ve her
+ * yonun tutari. Ekrandaki yesil/kirmizi cubuk ile altindaki iki satir bunun
+ * TEK bir okumadan gelir -- iki ayri sorgu, aralarinda yeni bir islem
+ * gerceklesirse toplamlari tutmayan bir ekran uretirdi.
+ *
+ * `count(DISTINCT trader)` YONE GORE ayri sayilir ve toplamlari
+ * `count(DISTINCT trader)`e ESIT DEGILDIR: hem alip hem satan bir cuzdan iki
+ * tarafta da sayilir. Ekranda da oyle sunulur ("73 alan", "99 satan"), cunku
+ * soru "kac kisi vardi" degil "her yonde kac cuzdan vardi"dir.
+ */
+export interface VolumeSplit {
+  volumeWei: bigint
+  buys: number
+  sells: number
+  buyers: number
+  sellers: number
+  buyVolumeWei: bigint
+  sellVolumeWei: bigint
+}
+
+export async function getVolumeSplit(
+  db: Queryable,
+  token: Address,
+  options: { sinceSeconds?: number } = {},
+): Promise<VolumeSplit> {
+  /*
+   * `sinceSeconds` VERILMEZSE BUTUN GECMIS. `undefined` ile `0` ayni sey
+   * degildir: sifir "son sifir saniye", yani bos bir pencere olurdu ve ekran
+   * sessizce her yerde sifir gosterirdi.
+   */
+  const since = options.sinceSeconds === undefined ? null : Math.max(1, Math.floor(options.sinceSeconds))
+
+  const { rows } = await db.query<{
+    volume_wei: string
+    buys: string
+    sells: string
+    buyers: string
+    sellers: string
+    buy_volume_wei: string
+    sell_volume_wei: string
+  }>(
+    `SELECT
+       coalesce(sum(quote_amount_wei), 0)::text                              AS volume_wei,
+       count(*) FILTER (WHERE is_buy)::text                                  AS buys,
+       count(*) FILTER (WHERE NOT is_buy)::text                              AS sells,
+       count(DISTINCT trader) FILTER (WHERE is_buy)::text                    AS buyers,
+       count(DISTINCT trader) FILTER (WHERE NOT is_buy)::text                AS sellers,
+       coalesce(sum(quote_amount_wei) FILTER (WHERE is_buy), 0)::text        AS buy_volume_wei,
+       coalesce(sum(quote_amount_wei) FILTER (WHERE NOT is_buy), 0)::text    AS sell_volume_wei
+     FROM trades
+     WHERE token = $1
+       AND ($2::bigint IS NULL OR block_time >= now() - make_interval(secs => $2::bigint))`,
+    [token.toLowerCase(), since],
+  )
+
+  const row = rows[0]
+  // Toplamsiz bir tablo bile TEK satir dondurur (aggregate), ama savunma ucuz.
+  if (row === undefined) {
+    return {
+      volumeWei: 0n,
+      buys: 0,
+      sells: 0,
+      buyers: 0,
+      sellers: 0,
+      buyVolumeWei: 0n,
+      sellVolumeWei: 0n,
+    }
+  }
+  return {
+    volumeWei: BigInt(row.volume_wei),
+    buys: Number(row.buys),
+    sells: Number(row.sells),
+    buyers: Number(row.buyers),
+    sellers: Number(row.sellers),
+    buyVolumeWei: BigInt(row.buy_volume_wei),
+    sellVolumeWei: BigInt(row.sell_volume_wei),
+  }
+}
+
+/**
+ * Bir token'in TOPLAM islem sayisi -- numarali sayfalama icin.
+ *
+ * AYRI BIR FONKSIYON, `listTrades`in icine gomulu bir `withTotal` DEGIL.
+ * Sebep `token_stats.trade_count`: sayim zaten bir yerde tutuluyor ve bu
+ * fonksiyon once ORAYA bakar. Listeyi doneni bir `COUNT(*)` yapmaya zorlamak,
+ * her sayfa cizimine gereksiz bir tam tarama eklerdi -- oysa numarali sayfa
+ * toplami YALNIZCA sayfa listesini cizmek icin ister.
+ *
+ * `token_stats` satiri yoksa (hic islem gormemis token) sayim `0`dir ve bu
+ * `null` DEGILDIR: "hic islem yok" bilinen bir cevaptir.
+ */
+export async function countTrades(db: Queryable, token: Address): Promise<number> {
+  const { rows } = await db.query<{ n: string }>(
+    'SELECT coalesce(trade_count, 0)::text AS n FROM token_stats WHERE token = $1',
+    [lower(token)],
+  )
+  return rows[0] === undefined ? 0 : Number(rows[0].n)
+}
+
+/** Bir token'in holder sayisi. Curve'un KENDISI haric -- `token_overview` ile ayni kural. */
+export async function countHolders(db: Queryable, token: Address): Promise<number> {
+  const { rows } = await db.query<{ n: string }>(
+    `SELECT count(*)::text AS n
+       FROM holders h
+       JOIN launches l ON l.token = h.token
+      WHERE h.token = $1 AND h.balance_tok > 0 AND h.holder <> l.curve`,
+    [lower(token)],
+  )
+  return rows[0] === undefined ? 0 : Number(rows[0].n)
 }
