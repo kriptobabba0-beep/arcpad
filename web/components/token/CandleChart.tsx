@@ -29,6 +29,15 @@ const VOL_H = 64
 const PAD_R = 64 // sag fiyat ekseni
 const PAD_B = 26 // tarih ekseni
 const GAP = 2 // mumlar arasi bosluk, piksel
+/**
+ * BIR MUMUN AZAMI GENISLIGI.
+ *
+ * OLCULDU, ILK DAGITIMDA: dort islemi olan bir token'in mumlarinin hepsi ayni
+ * saate dustu, yani grafikte TEK mum vardi ve `plotW / 1` onu 936 birim
+ * genisliginde yapti -- ekranda dev bir yesil dikdortgen. Bir mum bir OLAYDIR;
+ * genisligi kac tane oldugundan bagimsiz olmali.
+ */
+const MAX_SLOT = 18
 
 export type ChartMetric = 'fdv' | 'price'
 
@@ -83,8 +92,17 @@ export function CandleChart({
 
   const plotH = H - VOL_H - PAD_B
   const plotW = W - PAD_R
-  const slot = plotW / candles.length
+  /*
+   * SLOT TAVANLI, VE MUMLAR SAGA YASLI.
+   *
+   * Az sayida mum varken bosluk SOLDA kalir, cunku bir fiyat grafiginde en
+   * YENI mum saga oturur -- kesikli "su an" cizgisi de oradadir. Ortalamak ya
+   * da sola yaslamak, yeni gelen her mumun butun grafigi kaydirmasi demek
+   * olurdu.
+   */
+  const slot = Math.min(plotW / candles.length, MAX_SLOT)
   const body = Math.max(1, slot - GAP)
+  const originX = plotW - slot * candles.length
 
   /** Wei -> y pikseli. `bigint` olcekleme, yalnizca sonuc `number`. */
   const y = (wei: bigint): number => {
@@ -149,7 +167,7 @@ export function CandleChart({
 
         {/* MUMLAR */}
         {candles.map((c, i) => {
-          const x = i * slot
+          const x = originX + i * slot
           const up = c.closeWei >= c.openWei
           const colour = up ? 'text-[#4ade80]' : 'text-[#f87171]'
           const yHigh = y(c.highWei)
@@ -178,7 +196,7 @@ export function CandleChart({
         {/* HACIM CUBUKLARI -- mumlarin ALTINDA, ayni x izgarasinda. */}
         <g transform={`translate(0, ${plotH + 8})`}>
           {candles.map((c, i) => {
-            const x = i * slot
+            const x = originX + i * slot
             const up = c.closeWei >= c.openWei
             const top = volY(c.volumeWei)
             return (
@@ -227,7 +245,12 @@ export function CandleChart({
           </text>
         ))}
 
-        <g transform={`translate(${plotW + 4}, ${currentY - 9})`}>
+        {/*
+          ETIKET CIZIM ALANININ ICINDE TUTULUR. Su anki deger araligin en
+          ustundeyse `currentY` sifira yaklasir ve etiket yukaridan KIRPILIR --
+          ilk dagitimda tam olarak bu oldu ve rakam yariya kesildi.
+        */}
+        <g transform={`translate(${plotW + 4}, ${Math.min(Math.max(currentY - 9, 0), plotH - 18)})`}>
           <rect width={PAD_R - 8} height={18} rx={3} className="fill-[#f87171]" />
           <text
             x={(PAD_R - 8) / 2}
@@ -246,7 +269,7 @@ export function CandleChart({
           {dateTicks(candles).map((tick) => (
             <text
               key={`d-${tick.index}`}
-              x={tick.index * slot + body / 2}
+              x={originX + tick.index * slot + body / 2}
               textAnchor="middle"
               className="fill-muted text-[11px]"
             >
