@@ -6,6 +6,7 @@ import {
   type CurveState,
   type FeeBps,
   formatTokenAmount,
+  formatUsdcAmount,
   launchTokenAbi,
   planBuyExactQuoteIn,
   priceWeiPerToken,
@@ -33,7 +34,7 @@ import { spendableFrom } from './gas'
 import type { Lifecycle } from './lifecycle'
 import { SpendableMaxButton } from './SpendableMaxButton'
 import { QuoteBreakdown } from './QuoteBreakdown'
-import { DEFAULT_SLIP_BPS, SlippageControl } from './SlippageControl'
+import { DEFAULT_SLIP_BPS, SlippageRow } from './SlippageRow'
 import {
   type AmountChip,
   amountChipsFor,
@@ -51,6 +52,7 @@ import {
   type TradeTab,
 } from './tradeModel'
 import { BuyUnitToggle, TradeSideTabs } from './TradeTabs'
+import { AmountCard, AssetRow, DetailsSection, SummaryRow } from './TradeCard'
 import { useApproval } from './useApproval'
 import { useCurveState } from './useCurveState'
 import { useGasReserve } from './useGasReserve'
@@ -98,6 +100,15 @@ export type QuoteReport = {
 
 export type TradeFormProps = {
   readonly symbol: string
+  /**
+   * TOKEN ADRESI VE GORSELI -- tutar kutusundaki hap icin.
+   *
+   * `TokenArtwork` gorsel yoksa ADRESTEN deterministik bir gradyan uretir,
+   * yani adres olmadan hap ya bos ya da rastgele olurdu. Ikisi de bir
+   * launchpad'de "hangi tokeni aliyorum" sorusunu bulanik birakir.
+   */
+  readonly token: string
+  readonly imageUrl?: string | null | undefined
   readonly state: CurveState
   readonly profile: CurveProfile
   /** Hangi merdiven. `getCurveProfile()` fabrikanin immutable'larindan kimliklendirir. */
@@ -129,6 +140,8 @@ export type TradeFormProps = {
 
 export function TradeForm({
   symbol,
+  token,
+  imageUrl,
   state,
   profile,
   profileName,
@@ -157,6 +170,12 @@ export function TradeForm({
   const [tab, setTab] = useState<TradeTab>(initialTab)
   const [text, setText] = useState('')
   const [slipBps, setSlipBps] = useState(DEFAULT_SLIP_BPS)
+  /*
+   * "AUTO" YALNIZCA BIR ROZET: kullanicinin bu degeri SECMEDIGINI soyler,
+   * piyasaya gore degisen bir sey oldugunu DEGIL. Uydurulmus bir "akilli
+   * slipaj", olcmedigimiz bir zekayi kullaniciya satmak olurdu.
+   */
+  const [slipAuto, setSlipAuto] = useState(true)
 
   const parsed = parseAmount(text)
   const requested = parsed.ok ? parsed.value : null
@@ -273,6 +292,32 @@ export function TradeForm({
   }, [button.intent, onApprove, onConnect, onSubmit, onSwitch, plan])
 
   const unit = tab === 'spend' ? 'USDC' : symbol
+  /*
+   * KARSIT TUTAR: "su kadar yazarsan su kadar alirsin".
+   *
+   * Planlayicidan gelir, yeniden hesaplanmaz -- ekranda gorunen sayi ile
+   * zincire giden argumanin AYNI hesaptan cikmasi, bu panelin butun
+   * guvenligi. Plan yoksa satir da yoktur: uydurulmus bir karsit tutar,
+   * kullanicinin gordugu tek sayinin yanlis olmasi demek olurdu.
+   */
+  const converseText =
+    tab === 'sell'
+      ? null
+      : plan === null
+        ? /*
+           * ALAN BOSKEN DE CIZILIR, VE BU BIR AYRINTI DEGIL.
+           *
+           * Ilk yazilisinda karsit satir yalnizca bir plan varken cikiyordu --
+           * yani bos bir alanda cevirme kontrolu YOKTU ve kullanici token
+           * cinsinden yazma moduna HIC gecemiyordu. Bir kontrolun varligi,
+           * kullanicinin onceden bir sey yazmis olmasina bagli olamaz.
+           */
+          tab === 'spend'
+          ? `0 ${symbol}`
+          : '0.00'
+        : tab === 'spend'
+          ? `${formatTokenAmount(plan.tokens)} ${symbol}`
+          : formatUsdcAmount(plan.value, { rounding: 'up' })
   const label =
     tab === 'spend' ? 'Amount to spend' : tab === 'receive' ? 'Tokens to buy' : 'Tokens to sell'
 
@@ -300,110 +345,179 @@ export function TradeForm({
         }}
       />
 
-      {/*
-        VARSAYILAN SEKMENIN GEREKCESI EKRANDA YAZILI. Kullanici neden
-        "Spend USDC"nin varsayilan oldugunu bilmezse, rezervin tepesinde
-        revert eden otekine gecmesi icin bir sebebi olur.
-      */}
-      {tab === 'spend' ? (
-        <p className="text-[12px] leading-snug text-muted" data-testid="tab-rationale">
-          Spending a budget cannot fail on a stale quote: at the top of the curve the budget is
-          clamped and the remainder is refunded.
-        </p>
-      ) : null}
-
       <div
         role="tabpanel"
         id={`trade-panel-${tab}`}
         aria-labelledby={`trade-tab-${tab}`}
         className="flex flex-col gap-3"
       >
-        <div className="flex items-end gap-2">
-          <div className="min-w-0 flex-1">
-            <AmountInput
-              large
-              label={label}
-              unit={unit}
-              value={text}
-              onChange={setText}
-              {...(parsed.ok || parsed.reason === null ? {} : { error: parsed.reason })}
+        {/*
+          ============ TUTAR KUTUSU: BASLIK, SAYI, TOKEN HAPI ============
+
+          Baslik "Buy SYMBOL" / "Sell SYMBOL" -- yani kullanicinin ne yaptigi,
+          bir kez ve acikca. Hapta gorsel VE ticker birlikte durur: "neyi
+          aliyorum" sorusunun cevabi okunmadan anlasilsin diye.
+
+          BIRIM HAPI KALDIRILDI. Tutarin yaninda ikinci bir secim kontrolu
+          (USDC / token) vardi; kaldirildi ve yerine karsit tutarin yanindaki
+          ⇅ geldi -- referans tasarimin da yaptigi bu. Iki giris noktasi
+          (`buyExactQuoteIn` / `buyExactTokensOut`) DURUYOR; degisen sey
+          onlara ulasma yolu.
+        */}
+        <AmountCard
+          title={tab === 'sell' ? `Sell ${symbol}` : `Buy ${symbol}`}
+          token={token}
+          symbol={symbol}
+          imageUrl={imageUrl ?? null}
+          converse={
+            converseText === null ? undefined : (
+              <button
+                type="button"
+                onClick={() => {
+                  setTab(tab === 'spend' ? 'receive' : 'spend')
+                  setText('')
+                }}
+                className="inline-flex items-center gap-1.5 transition-colors hover:text-text"
+                data-testid="flip-unit"
+                aria-label={
+                  tab === 'spend'
+                    ? `Enter an amount of ${symbol} instead`
+                    : 'Enter an amount of USDC instead'
+                }
+              >
+                <span aria-hidden="true">⇅</span>
+                {converseText}
+              </button>
+            )
+          }
+        >
+          <AmountInput
+            large
+            hideLabel
+            label={label}
+            unit={unit}
+            value={text}
+            onChange={setText}
+            {...(parsed.ok || parsed.reason === null ? {} : { error: parsed.reason })}
+          />
+        </AmountCard>
+
+        {/*
+          NEYLE ODENIYOR. Tek bir varlik var ve o USDC -- ama satir yine de
+          duruyor, cunku Arc'ta cevap SASIRTICI: gaz varligi USDC'nin KENDISI,
+          yani "ETH lazim mi" sorusunun cevabi hayir ve bunun yazili olmasi
+          gerekiyor.
+        */}
+        <AssetRow label={tab === 'sell' ? 'Receive' : 'Pay with'} />
+
+        {/*
+          IKI SATIR, SADE. Ayrintilar (ucretler, fiyat etkisi, en kotu durum)
+          `Details`in altinda -- hepsi ayni anda gorunurse kullanici hicbirini
+          okumaz.
+        */}
+        {plan === null ? null : (
+          <div className="flex flex-col gap-2">
+            <SummaryRow
+              label="You receive"
+              testId="you-receive"
+              value={
+                tab === 'sell' ? (
+                  <>
+                    ~ <Money native={plan.curveAmount - plan.protocolFee - plan.creatorFee} rounding="down" unit />
+                  </>
+                ) : (
+                  `~ ${formatTokenAmount(plan.tokens)} ${symbol}`
+                )
+              }
             />
+            {tab === 'sell' ? null : (
+              <SummaryRow
+                label="You pay"
+                testId="you-pay"
+                value={
+                  <>
+                    ~ <Money native={plan.value} rounding="up" unit />
+                  </>
+                }
+              />
+            )}
           </div>
-          {/*
-            BIRIM HAPI, TUTARIN YANINDA -- referans tasarimdaki yeri de burasi.
-            Satista cizilmez: satisin tek giris noktasi var, yani secilecek bir
-            sey yok ve bos bir secim kontrolu kullaniciyi olmayan bir karara
-            davet ederdi.
-          */}
-          <BuyUnitToggle
-            tab={tab}
-            symbol={symbol}
-            onChange={(next) => {
-              setTab(next)
-              setText('')
-            }}
-          />
-        </div>
+        )}
 
         {/*
-          MONEY CHIPS. The user picks dollars on EVERY tab; the resolution into
-          the field's own unit already happened in `amountChipsFor`, through the
-          planner for this tab's entrypoint.
+          UYARILAR AYRINTI DEGILDIR ve `Details`in ALTINA GIRMEZ. Bir emrin
+          kirpildigini ya da simulasyonun revert ettigini gormek icin bir
+          bolumu acmak gerekseydi, kimse gormezdi.
         */}
-        <AmountChips chips={chips} onPick={(chip: AmountChip) => setText(fieldText(chip.fill))} />
-
-        <div className="flex items-center justify-between gap-2">
-          {/*
-            TEK BIR USDC FIGURU. Ayni fonun iki gorunumunu (18 ondalikli
-            native, 6 ondalikli ERC-20) iki satir olarak yazmak, 1e12'lik bir
-            hatanin gorunmez oldugu tek yerdir -- `<Money>` bu yuzden native
-            alir ve tek bir figur cizer.
-          */}
-          <p className="text-[12px] text-muted">
-            Balance <Money native={usdcBalance} rounding="down" unit />
-            {tokenBalance !== null && tab !== 'spend' ? (
-              <span className="ml-2 tabular-nums">
-                · {formatTokenAmount(tokenBalance)} {symbol}
-              </span>
-            ) : null}
-          </p>
-          <SpendableMaxButton
-            spendable={shortcutBase}
-            reason={gasReason}
-            onPick={(picked: bigint) => setText(fieldText(picked))}
-          />
-        </div>
-
-        {/*
-          GAZ PAYI SESSIZ DEGIL. Arc'ta gaz harcanan varligin kendisiyle
-          odenir; MAX'in bakiyeden kucuk olmasinin sebebi soylenmezse
-          kullanici bunu bir hata sanar.
-        */}
-        {tab === 'spend' && spendable !== null && spendable < usdcBalance ? (
-          <p className="text-[12px] text-muted" data-testid="gas-reserve-note">
-            MAX leaves <Money native={usdcBalance - spendable} rounding="up" unit /> for gas. On Arc
-            the gas asset is USDC too.
-          </p>
-        ) : null}
-
         {clamp?.notice !== undefined && clamp.notice !== null ? (
           <p role="status" className="text-[12px] text-negative" data-testid="clamp-notice">
             {clamp.notice} Your order was reduced to that.
           </p>
         ) : null}
 
-        <SlippageControl value={slipBps} onChange={setSlipBps} />
+        <DetailsSection>
+          <div className="flex items-center justify-between gap-2">
+            {/*
+              TEK BIR USDC FIGURU. Ayni fonun iki gorunumunu (18 ondalikli
+              native, 6 ondalikli ERC-20) iki satir olarak yazmak, 1e12'lik bir
+              hatanin gorunmez oldugu tek yerdir.
+            */}
+            <p className="text-[12px] text-muted">
+              Balance <Money native={usdcBalance} rounding="down" unit />
+              {tokenBalance !== null && tab !== 'spend' ? (
+                <span className="ml-2 tabular-nums">
+                  · {formatTokenAmount(tokenBalance)} {symbol}
+                </span>
+              ) : null}
+            </p>
+            <SpendableMaxButton
+              spendable={shortcutBase}
+              reason={gasReason}
+              onPick={(picked: bigint) => setText(fieldText(picked))}
+            />
+          </div>
 
-        {plan !== null && priceBefore !== null ? (
-          <QuoteBreakdown
-            plan={plan}
-            state={state}
-            fees={fees}
-            symbol={symbol}
-            slipBps={slipBps}
-            priceBeforeWei={priceBefore}
-          />
-        ) : null}
+          <AmountChips chips={chips} onPick={(chip: AmountChip) => setText(fieldText(chip.fill))} />
+
+          {/*
+            GAZ PAYI SESSIZ DEGIL. Arc'ta gaz harcanan varligin kendisiyle
+            odenir; MAX'in bakiyeden kucuk olmasinin sebebi soylenmezse
+            kullanici bunu bir hata sanar.
+          */}
+          {tab === 'spend' && spendable !== null && spendable < usdcBalance ? (
+            <p className="text-[12px] text-muted" data-testid="gas-reserve-note">
+              MAX leaves <Money native={usdcBalance - spendable} rounding="up" unit /> for gas. On
+              Arc the gas asset is USDC too.
+            </p>
+          ) : null}
+
+          {tab === 'spend' ? (
+            <p className="text-[12px] leading-snug text-muted" data-testid="tab-rationale">
+              Spending a budget cannot fail on a stale quote: at the top of the curve the budget is
+              clamped and the remainder is refunded.
+            </p>
+          ) : null}
+
+          {plan !== null && priceBefore !== null ? (
+            <QuoteBreakdown
+              plan={plan}
+              state={state}
+              fees={fees}
+              symbol={symbol}
+              slipBps={slipBps}
+              priceBeforeWei={priceBefore}
+            />
+          ) : null}
+        </DetailsSection>
+
+        <SlippageRow
+          value={slipBps}
+          auto={slipAuto}
+          onChange={(bps, auto) => {
+            setSlipBps(bps)
+            setSlipAuto(auto)
+          }}
+        />
 
         {tab === 'sell' && amount !== null && amount > 0n ? (
           <ApproveStep
@@ -560,10 +674,13 @@ export type TradePanelProps = {
    */
   readonly profileName: ProfileName
   readonly symbol: string
+  /** Tutar kutusundaki hapin gorseli. Yoksa adresten gradyan cizilir. */
+  readonly imageUrl?: string | null | undefined
 }
 
 export function TradePanel({
   token,
+  imageUrl,
   curve,
   lifecycle,
   profile,
@@ -712,6 +829,8 @@ export function TradePanel({
   return (
     <TradeForm
       symbol={symbol}
+      token={token}
+      imageUrl={imageUrl}
       state={state}
       profile={profile}
       profileName={profileName}

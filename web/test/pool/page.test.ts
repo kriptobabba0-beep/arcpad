@@ -90,7 +90,14 @@ describe('the chart: two branches, and the difference is DECLARED', () => {
    * oldugu burada YAZILI. Biri silinirse test duser.
    */
   it('indexlenmis dal MUM, zincir dali EGRI cizer -- ve ikisi de cizer', () => {
-    expect(uses('CandleChart'), 'the indexed branch lost its candles').toHaveLength(1)
+    /*
+     * MUMLAR ARTIK BIR SARMALAYICIDAN GECER (`InteractiveChart`): tekerlekle
+     * yakinlastirma ve surukleme ISTEMCI durumu ister, ama CIZIM sunucuda
+     * kalir -- sarmalayici yalnizca gorunen DILIMI tutar. Kapi bu yuzden
+     * sarmalayiciyi sayar; `CandleChart`i dogrudan cizen bir sayfa, sunucuda
+     * cizim kazanimini korur ama etkilesimi kaybederdi.
+     */
+    expect(uses('InteractiveChart'), 'the indexed branch lost its candles').toHaveLength(1)
     expect(uses('TokenPriceChart'), 'the chain-drawn branch lost its curve').toHaveLength(1)
     // Eski bilesenler geri gelmemeli: ikisi de ayni isi iki farkli bicimde
     // yapardi ve hangisinin cizildigi sayfaya gore degisirdi.
@@ -105,9 +112,12 @@ describe('the chart: two branches, and the difference is DECLARED', () => {
      * de katiyor, yani eksik gecilmesi yalnizca bir suslemeyi degil, olcegin
      * dogrulugunu da bozardi.
      */
-    for (const use of uses('CandleChart')) {
-      expect(use, `a CandleChart without currentWei: ${use}`).toMatch(/currentWei=\{/)
-      expect(use, `a CandleChart without a metric: ${use}`).toMatch(/metric=\{/)
+    for (const use of uses('InteractiveChart')) {
+      expect(use, `a chart without currentWei: ${use}`).toMatch(/currentWei=\{/)
+      expect(use, `a chart without a metric: ${use}`).toMatch(/metric=\{/)
+      // Kova boyutu tarih ekseninin BICIMINI belirler; gecilmezse alti
+      // saatlik kovalar gun adiyla etiketlenir ve eksen tekrar eder.
+      expect(use, `a chart without bucketSeconds: ${use}`).toMatch(/bucketSeconds=\{/)
     }
   })
 

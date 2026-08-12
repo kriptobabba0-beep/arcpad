@@ -39,6 +39,9 @@ import {
 
 const DEFAULTS: TradeFormProps = {
   symbol: 'DIFF',
+  // Tutar kutusundaki hap adresten deterministik bir gradyan uretir; adres
+  // olmadan hap ya bos ya rastgele olurdu.
+  token: '0x00000000000000000000000000000000000000aa',
   state: FRESH,
   profile: TESTNET_PROFILE,
   profileName: 'testnet',
@@ -94,14 +97,15 @@ function setup(overrides: Partial<TradeFormProps> = {}) {
      */
     goBuySpend: async (u: ReturnType<typeof userEvent.setup>) => {
       await u.click(q.getByRole('tab', { name: /^Buy$/ }))
-      const toggle = q.queryByTestId('buy-unit-toggle')
-      // Hap "su an hangi birimdesin"i yazar; token yaziyorsa USDC'ye gec.
-      if (toggle !== null && !/USDC/.test(toggle.textContent ?? '')) await u.click(toggle)
+      // Karsit satir "su an yazmadigin birimi" gosterir: token yaziyorsa
+      // USDC modundayiz, USDC yaziyorsa token modundayiz.
+      const flip = q.queryByTestId('flip-unit')
+      if (flip !== null && !/[A-Z]{2,}/.test(flip.textContent ?? '')) await u.click(flip)
     },
     goBuyReceive: async (u: ReturnType<typeof userEvent.setup>) => {
       await u.click(q.getByRole('tab', { name: /^Buy$/ }))
-      const toggle = q.getByTestId('buy-unit-toggle')
-      if (/USDC/.test(toggle.textContent ?? '')) await u.click(toggle)
+      const flip = q.getByTestId('flip-unit')
+      if (/[A-Z]{2,}/.test(flip.textContent ?? '')) await u.click(flip)
     },
   }
 }
@@ -170,9 +174,17 @@ describe('each tab reaches its own entrypoint', () => {
     // Niyet: alim. Panel bir launchpad'de acilir ve orada varsayilan niyet
     // almaktir; satis, elinde bir sey olan birinin arayacagi seydir.
     expect(t.tab(/^Buy$/)).toHaveAttribute('aria-selected', 'true')
-    // Birim: USDC, yani `buyExactQuoteIn`. Bu, rezervin tepesinde revert
-    // ETMEYEN tek alim yolu -- butce kirpilir, kalan ayni islemde iade edilir.
-    expect(t.q.getByTestId('buy-unit-toggle').textContent).toMatch(/USDC/)
+    /*
+     * Birim: USDC, yani `buyExactQuoteIn`. Bu, rezervin tepesinde revert
+     * ETMEYEN tek alim yolu -- butce kirpilir, kalan ayni islemde iade edilir.
+     *
+     * Karsit satir "yazmadigin birimi" gosterir, yani USDC modundayken orada
+     * TOKEN yazar. Tutar kutusunun kendi son eki de USDC'dir.
+     */
+    expect(t.q.getByTestId('flip-unit').textContent).toMatch(/DIFF/)
+    expect(t.q.getByTestId('amount-card').textContent).toMatch(/USDC/)
+    // Gerekce artik `Details`in altinda -- panelde her sey ayni anda
+    // gorunurse kullanici hicbirini okumaz. Ama SILINMEDI.
     expect(t.q.getByTestId('tab-rationale').textContent).toMatch(
       /clamped and the remainder is refunded/i,
     )

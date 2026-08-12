@@ -37,7 +37,7 @@ import {
   type PoolTab,
   residualAllowance,
 } from './poolPlan'
-import { DEFAULT_SLIP_BPS, SlippageControl } from './SlippageControl'
+import { DEFAULT_SLIP_BPS, SlippageRow } from './SlippageRow'
 import { parseAmount, type ApprovalState, type TradePhase } from './tradeModel'
 import { useApproval } from './useApproval'
 import { usePoolQuote, type PoolQuoteState } from './usePoolQuote'
@@ -219,6 +219,8 @@ export function PoolTradeForm({
   const [tab, setTab] = useState<PoolTab>(initialTab)
   const [text, setText] = useState('')
   const [slipBps, setSlipBps] = useState(DEFAULT_SLIP_BPS)
+  // "Auto" yalnizca bir rozet: bu degeri kullanicinin SECMEDIGINI soyler.
+  const [slipAuto, setSlipAuto] = useState(true)
 
   const parsed = parseAmount(text)
   const amount = parsed.ok ? parsed.value : null
@@ -386,7 +388,14 @@ export function PoolTradeForm({
           </p>
         ) : null}
 
-        <SlippageControl value={slipBps} onChange={setSlipBps} />
+        <SlippageRow
+          value={slipBps}
+          auto={slipAuto}
+          onChange={(bps, auto) => {
+            setSlipBps(bps)
+            setSlipAuto(auto)
+          }}
+        />
 
         <PoolQuoteLine quote={quote} tab={tab} plan={plan} symbol={symbol} />
 

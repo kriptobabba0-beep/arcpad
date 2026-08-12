@@ -297,9 +297,24 @@ function dateTicks(
   candles: readonly CandleRow[],
   bucketSeconds: number,
 ): Array<{ index: number; text: string }> {
-  const want = Math.min(6, candles.length)
-  if (want === 0) return []
-  const step = Math.max(1, Math.floor(candles.length / want))
+  if (candles.length === 0) return []
+
+  /*
+   * ============ KAC ETIKET SIGAR: GENISLIKTEN, SAYIDAN DEGIL ============
+   *
+   * OLCULDU, DAGITTIKTAN SONRA: "Aug 8, 2 AM" gibi bir etiket ~70 birim yer
+   * kaplar ve alti tanesi 936 birimlik eksende UST USTE BINIYORDU. Sabit bir
+   * "en fazla alti" kurali yanlis soruyu cevapliyor -- dogru soru "bu metin
+   * bu eksende kac kez YAN YANA sigar".
+   *
+   * Saatli etiketler gunluklerden genistir, dolayisiyla tavan da bicime gore
+   * degisir. Sayi degil GENISLIK sayilir.
+   */
+  const sameDay = bucketSeconds < 86_400
+  const labelWidth = sameDay ? 78 : 52
+  const fits = Math.max(2, Math.floor((W - PAD_R) / labelWidth))
+  const want = Math.min(fits, candles.length)
+  const step = Math.max(1, Math.ceil(candles.length / want))
 
   /*
    * ============ ETIKET, KOVA BOYUTUNA GORE ============
@@ -313,7 +328,6 @@ function dateTicks(
    * tarih. Ve ardisik AYNI etiketler elenir: ayni metni iki kez yazmak, ekseni
    * daha yogun degil daha okunmaz yapar.
    */
-  const sameDay = bucketSeconds < 86_400
   const format = (d: Date): string =>
     sameDay
       ? d.toLocaleString('en-US', {

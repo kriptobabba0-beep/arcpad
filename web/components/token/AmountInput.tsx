@@ -20,6 +20,14 @@ export type AmountInputProps = {
    * kutuyu tasirdi.
    */
   readonly large?: boolean
+  /**
+   * ETIKETI GIZLE (ekran okuyucuda KALIR).
+   *
+   * Tutar kutusunun kendi basligi var ("Buy SYMBOL"); alanin ustunde ikinci
+   * bir etiket ayni seyi iki kez soylerdi. `sr-only` ile gizlenir, SILINMEZ:
+   * bir ekran okuyucu icin alanin ne oldugu hala soylenmeli.
+   */
+  readonly hideLabel?: boolean
 }
 
 /**
@@ -43,10 +51,12 @@ export function AmountInput({
   hint,
   disabled = false,
   large = false,
+  hideLabel = false,
 }: AmountInputProps) {
   return (
     <Input
       label={label}
+      hideLabel={hideLabel}
       value={value}
       onChange={(event) => onChange(event.target.value)}
       inputMode="decimal"

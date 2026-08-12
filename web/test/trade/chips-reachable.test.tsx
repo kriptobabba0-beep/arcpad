@@ -124,7 +124,7 @@ describe('the money chips are reachable from the connected panel', () => {
     expect(screen.getByTestId('max-button')).toBeDisabled()
     // IKI KONTROL: once niyet, sonra birim. Bkz. `TradeTabs.tsx`.
     await user.click(screen.getByRole('tab', { name: /^Buy$/ }))
-    await user.click(screen.getByTestId('buy-unit-toggle'))
+    await user.click(screen.getByTestId('flip-unit'))
     expect(screen.queryByTestId('amount-chips')).toBeNull()
   })
 

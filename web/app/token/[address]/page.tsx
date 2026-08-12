@@ -24,12 +24,11 @@ import {
 } from '@/components/read/types'
 import { CanonicalBadge, NotALaunch } from '@/components/token/CanonicalBadge'
 import { TokenPriceChart } from '@/components/token/PriceHistoryChart'
-import { LaunchFacts } from '@/components/token/LaunchFacts'
 import { LifecycleNotice } from '@/components/token/LifecycleNotice'
 import { ProgressToGraduation } from '@/components/token/ProgressToGraduation'
-import { StatRow, statsFromOverview } from '@/components/token/StatRow'
 import { ActivityTabs, tabOf } from '@/components/token/ActivityTabs'
-import { CandleChart, CandleSummary, type ChartMetric } from '@/components/token/CandleChart'
+import { CandleSummary, type ChartMetric } from '@/components/token/CandleChart'
+import { InteractiveChart } from '@/components/token/InteractiveChart'
 import {
   MetricPicker,
   TimeframePicker,
@@ -41,7 +40,6 @@ import { TokenInfo } from '@/components/token/TokenInfo'
 import { TokenStatStrip } from '@/components/token/TokenStatStrip'
 import { VolumePanel } from '@/components/token/VolumePanel'
 import { TOTAL_SUPPLY_TOK } from '@/components/create/facts'
-import { AboutPanel, TokenHeader } from '@/components/token/TokenHeader'
 import { TradeSurface } from '@/components/token/TradeSurface'
 import { ChatPanel } from '@/components/token/ChatPanel'
 import { resolveLifecycle } from '@/components/token/lifecycle'
@@ -269,7 +267,7 @@ async function IndexedToken({
                 <TimeframePicker active={tf} params={chartParams} />
               </div>
             </div>
-            <CandleChart
+            <InteractiveChart
               candles={candleRows}
               metric={metric}
               /*

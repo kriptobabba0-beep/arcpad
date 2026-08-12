@@ -326,7 +326,15 @@ describe('slippage and the deadline are visible, and the deadline follows the ch
     await t.user.type(t.field(), '1')
     // 17 tokens minus 1% -> the floor that goes on chain.
     expect(t.q.getByTestId('pool-quote-bound').textContent).toContain('16.830000')
-    await t.user.click(t.q.getByTestId('slippage-300'))
+    /*
+     * SLIPAJ ARTIK TEK SATIR: uc hap ve bir "Custom" kutusu yerine
+     * "Auto 1% ✎". Degistirmek icin kalem acilir ve deger yazilir -- yani
+     * kullanicinin yaptigi sey degil, ona ULASMA yolu degisti. Iddia ayni:
+     * toleransi genisletmek zincire giden TABANI dusurur.
+     */
+    await t.user.click(t.q.getByTestId('slippage-edit'))
+    await t.user.clear(t.q.getByLabelText(/max slippage, percent/i))
+    await t.user.type(t.q.getByLabelText(/max slippage, percent/i), '3')
     expect(t.q.getByTestId('pool-quote-bound').textContent).toContain('16.490000')
   })
 
