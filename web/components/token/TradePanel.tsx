@@ -321,6 +321,7 @@ export function TradeForm({
         <div className="flex items-end gap-2">
           <div className="min-w-0 flex-1">
             <AmountInput
+              large
               label={label}
               unit={unit}
               value={text}

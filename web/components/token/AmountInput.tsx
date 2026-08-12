@@ -11,6 +11,15 @@ export type AmountInputProps = {
   readonly error?: string | undefined
   readonly hint?: ReactNode
   readonly disabled?: boolean
+  /**
+   * TUTARI BUYUK YAZ.
+   *
+   * Islem panelinde girilen sayi EKRANDAKI EN ONEMLI SEYDIR ve referans
+   * tasarim onu baslik boyutunda yazar. Bu bir opsiyon, cunku ayni bilesen
+   * `/create`teki dar alanlarda da kullaniliyor ve orada bir baslik boyutu
+   * kutuyu tasirdi.
+   */
+  readonly large?: boolean
 }
 
 /**
@@ -33,6 +42,7 @@ export function AmountInput({
   error,
   hint,
   disabled = false,
+  large = false,
 }: AmountInputProps) {
   return (
     <Input
@@ -45,6 +55,7 @@ export function AmountInput({
       placeholder="0.0"
       disabled={disabled}
       suffix={unit}
+      {...(large ? { className: 'text-[30px] font-medium leading-none' } : {})}
       {...(error === undefined ? {} : { error })}
       {...(hint === undefined ? {} : { hint })}
     />
