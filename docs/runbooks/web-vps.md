@@ -109,8 +109,19 @@ mv /etc/arcpad/web.env.new /etc/arcpad/web.env
 chown root:arcpad /etc/arcpad/web.env && chmod 0640 /etc/arcpad/web.env
 
 set -a; . /etc/arcpad/web.env; set +a
-pnpm --filter @arcpad/web release-gate      # §6 -- not just `build`
-systemctl restart arcpad-web.service
+# `&&`, NOT A NEW LINE. See "a failed build must not reach systemd" below --
+# this is the difference between a deploy that stops and a site that is down.
+pnpm --filter @arcpad/web release-gate \
+  && systemctl restart arcpad-web.service
+```
+
+**A failed build must not reach `systemctl`.** Measured on this box, 2026-08-11: a build failed, the restart ran anyway, `next start` found a half-written `.next` and exited immediately, and `Restart=always` did that **146 times in four minutes** — with the site returning nothing the whole while. Nothing here was wrong except the order of two commands typed on separate lines.
+
+`Restart=always` is still right: the common cause of an exit is a transient one, and a web server that stays dead after a blip is worse. What is wrong is handing it a build that cannot start. The `&&` is the whole fix, and it belongs in the runbook rather than in someone's memory. To confirm afterwards:
+
+```bash
+systemctl show arcpad-web -p NRestarts --value   # should not be climbing
+journalctl -u arcpad-web --since '5 min ago' | grep -c 'Scheduled restart'
 ```
 
 `pnpm addressbook --env-only` derives the router by CREATE2 from `routerInitcodeHash` rather than copying a field, so a book that has been edited by hand produces a different address here and the mismatch is visible before it ships.
