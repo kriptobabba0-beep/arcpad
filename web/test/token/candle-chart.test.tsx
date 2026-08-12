@@ -54,7 +54,13 @@ describe('CandleChart geometry', () => {
     expect(width, 'a single candle stretched across the chart').toBeLessThanOrEqual(16)
   })
 
-  it('EN YENI MUM SAGA OTURUR -- kesikli "su an" cizgisi de oradadir', () => {
+  it('MUMLAR EKSENI DOLDURUR -- az sayidayken sagda kumelenmez', () => {
+    /*
+     * ILK DUZELTME SLOTU SINIRLIYORDU ve sonucu ikinci dagitimda goruldu:
+     * sekiz mum sagda 144 birimlik bir kumeye sikisti, eksenin yedide altisi
+     * bos kaldi. Slot artik yayilir, GOVDE sinirlanir -- iki ayri problem,
+     * iki ayri cozum.
+     */
     const rows = [
       candle({ bucket: new Date('2026-08-11T00:00:00Z') }),
       candle({ bucket: new Date('2026-08-11T01:00:00Z') }),
@@ -64,10 +70,9 @@ describe('CandleChart geometry', () => {
     )
     const xs = bodies(container).map((r) => Number(r.getAttribute('x')))
     expect(xs).toHaveLength(2)
-    // Sagdaki mum, cizim alaninin sag kenarina (936) bir slot mesafesinde.
-    expect(Math.max(...xs)).toBeGreaterThan(900)
-    // Ve bosluk SOLDA: yeni gelen bir mum butun grafigi kaydirmaz.
-    expect(Math.min(...xs)).toBeGreaterThan(880)
+    // Biri solda, biri sagda: eksen bastan sona kullanilir.
+    expect(Math.min(...xs)).toBeLessThan(250)
+    expect(Math.max(...xs)).toBeGreaterThan(600)
   })
 
   it('FIYAT ETIKETI CIZIM ALANINI TASMAZ -- deger tavandayken bile', () => {

@@ -37,7 +37,7 @@ const GAP = 2 // mumlar arasi bosluk, piksel
  * genisliginde yapti -- ekranda dev bir yesil dikdortgen. Bir mum bir OLAYDIR;
  * genisligi kac tane oldugundan bagimsiz olmali.
  */
-const MAX_SLOT = 18
+const MAX_BODY = 16
 
 export type ChartMetric = 'fdv' | 'price'
 
@@ -96,16 +96,26 @@ export function CandleChart({
   const plotH = H - VOL_H - PAD_B
   const plotW = W - PAD_R
   /*
-   * SLOT TAVANLI, VE MUMLAR SAGA YASLI.
+   * ============ SLOT YAYILIR, GOVDE SINIRLANIR ============
    *
-   * Az sayida mum varken bosluk SOLDA kalir, cunku bir fiyat grafiginde en
-   * YENI mum saga oturur -- kesikli "su an" cizgisi de oradadir. Ortalamak ya
-   * da sola yaslamak, yeni gelen her mumun butun grafigi kaydirmasi demek
-   * olurdu.
+   * Mumlar ekseni TAM olarak doldurur (slot = genislik / adet), ama GOVDE
+   * `MAX_BODY` ile sinirlidir ve slotun ortasina cizilir.
+   *
+   * Ikisi ayri problemi cozuyor ve ilk yazilista biri otekini bozdu:
+   *
+   *   - Govde sinirsiz olsaydi, tek mumlu bir token'da o mum 936 birim
+   *     genisliginde bir dikdortgen olurdu (olculdu, ilk dagitimda).
+   *   - Slot sinirli olsaydi -- ilk duzeltmede oyleydi -- sekiz mum sagda
+   *     144 birimlik bir kumeye sikisir ve eksenin yedide altisi bos kalirdi
+   *     (bu da olculdu, ikinci dagitimda).
+   *
+   * Slotun yayilmasi zaman orantisini BOZMAZ: kovalar sureklidir (bkz.
+   * `fillCandleGaps`), yani esit araliklarla yerlestirmek zaten dogru olan.
    */
-  const slot = Math.min(plotW / candles.length, MAX_SLOT)
-  const body = Math.max(1, slot - GAP)
-  const originX = plotW - slot * candles.length
+  const slot = plotW / candles.length
+  const body = Math.max(1, Math.min(slot - GAP, MAX_BODY))
+  /** Govde slotun ORTASINDA: fitil ile govde ayni eksende olsun. */
+  const inset = (slot - body) / 2
 
   /** Wei -> y pikseli. `bigint` olcekleme, yalnizca sonuc `number`. */
   const y = (wei: bigint): number => {
@@ -170,7 +180,7 @@ export function CandleChart({
 
         {/* MUMLAR */}
         {candles.map((c, i) => {
-          const x = originX + i * slot
+          const x = i * slot + inset
           const up = c.closeWei >= c.openWei
           const colour = up ? 'text-[#4ade80]' : 'text-[#f87171]'
           const yHigh = y(c.highWei)
@@ -199,7 +209,7 @@ export function CandleChart({
         {/* HACIM CUBUKLARI -- mumlarin ALTINDA, ayni x izgarasinda. */}
         <g transform={`translate(0, ${plotH + 8})`}>
           {candles.map((c, i) => {
-            const x = originX + i * slot
+            const x = i * slot + inset
             const up = c.closeWei >= c.openWei
             const top = volY(c.volumeWei)
             return (
@@ -272,7 +282,7 @@ export function CandleChart({
           {dateTicks(candles, bucketSeconds).map((tick) => (
             <text
               key={`d-${tick.index}`}
-              x={originX + tick.index * slot + body / 2}
+              x={tick.index * slot + slot / 2}
               textAnchor="middle"
               className="fill-muted text-[11px]"
             >
