@@ -184,3 +184,77 @@ describe('fillCandleGaps', () => {
     expect(filled[filled.length - 1]!.bucket.toISOString()).toBe('2026-08-11T00:00:00.000Z')
   })
 })
+
+/**
+ * ============================================================================
+ *  BIR MUMUN ACILISI, BIR ONCEKININ KAPANISIDIR
+ * ============================================================================
+ *
+ * OLCULDU, GERCEK ISLEMLERLE (LOCKED, 2026-08-12): her kovada tek islem
+ * oldugunda `listCandles`in acilisi ile kapanisi ayni degeri veriyordu -- o
+ * islemden SONRAKI market cap -- yani her mum sifir yukseklikte bir DOJI
+ * cikiyordu. Fiyat 4.00'dan 5.53'e gitmisti ve grafikte bunu gosteren tek bir
+ * govde yoktu.
+ *
+ * Bir mumun acilisi "bu kovadaki ilk islem" DEGILDIR: fiyat kova sinirinda
+ * kaybolmaz, kaldigi yerden devam eder. "Yesil mum = fiyat bu kovada yukseldi"
+ * ifadesi ancak boyle dogru olur.
+ */
+describe('mum zinciri', () => {
+  const HOUR = 3_600
+  const at = (iso: string): Date => new Date(iso)
+
+  /** Tek islemli kova: `listCandles` acilis = kapanis dondurur. */
+  const single = (iso: string, mcap: bigint): CandleRow => ({
+    bucket: at(iso),
+    openWei: mcap,
+    highWei: mcap,
+    lowWei: mcap,
+    closeWei: mcap,
+    volumeWei: 10n ** 18n,
+    trades: 1,
+  })
+
+  it('ACILIS bir onceki KAPANIS olur -- tek islemli kovalar govde kazanir', () => {
+    const filled = fillCandleGaps(
+      [single('2026-08-11T00:00:00Z', 100n), single('2026-08-11T01:00:00Z', 150n)],
+      HOUR,
+      at('2026-08-11T01:00:00Z'),
+    )
+    expect(filled).toHaveLength(2)
+    // Ilk mum kendi acilisini korur -- oncesinde bir fiyat yok.
+    expect(filled[0]!.openWei).toBe(100n)
+    // Ikincisi 100'den acilir ve 150'de kapanir: GOVDESI VAR.
+    expect(filled[1]!.openWei).toBe(100n)
+    expect(filled[1]!.closeWei).toBe(150n)
+    expect(filled[1]!.closeWei).toBeGreaterThan(filled[1]!.openWei)
+  })
+
+  it('YUKSEK VE DUSUK yeni acilisi KAPSAR -- fitil govdeyi kesmez', () => {
+    // Dusen bir mum: 200'den acilir, 150'de kapanir. Kovanin kendi ucu
+    // degerleri 150'ydi; acilis onun USTUNDE ve yuksek genisletilmeli.
+    const filled = fillCandleGaps(
+      [single('2026-08-11T00:00:00Z', 200n), single('2026-08-11T01:00:00Z', 150n)],
+      HOUR,
+      at('2026-08-11T01:00:00Z'),
+    )
+    const second = filled[1]!
+    expect(second.openWei).toBe(200n)
+    expect(second.highWei).toBeGreaterThanOrEqual(second.openWei)
+    expect(second.lowWei).toBeLessThanOrEqual(second.closeWei)
+    // Ve mum GERCEKTEN dusen: kirmizi govde cizilecek.
+    expect(second.closeWei).toBeLessThan(second.openWei)
+  })
+
+  it('DOLDURULMUS kovalar duz KALIR -- zincirleme onlari bozmaz', () => {
+    const filled = fillCandleGaps(
+      [single('2026-08-11T00:00:00Z', 100n), single('2026-08-11T03:00:00Z', 100n)],
+      HOUR,
+      at('2026-08-11T03:00:00Z'),
+    )
+    // Aradaki iki kovada islem yok: acilis = kapanis = 100, hacim sifir.
+    expect(filled[1]!.openWei).toBe(100n)
+    expect(filled[1]!.closeWei).toBe(100n)
+    expect(filled[1]!.volumeWei).toBe(0n)
+  })
+})

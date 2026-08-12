@@ -729,10 +729,39 @@ export function fillCandleGaps(
   }
 
   /*
+   * ============ ACILIS, BIR ONCEKININ KAPANISIDIR ============
+   *
+   * OLCULDU, GERCEK ISLEMLERLE: her kovada TEK islem oldugunda `listCandles`in
+   * acilisi ile kapanisi AYNI degeri veriyor (o islemden sonraki market cap),
+   * yani her mum sifir yukseklikte bir DOJI cikiyor ve grafikte yalnizca
+   * ince cizgiler goruluyordu. Fiyat 4.00'dan 5.53'e gitmisti ve grafikte
+   * bunu gosteren TEK BIR govde yoktu.
+   *
+   * Cunku bir mumun acilisi "bu kovadaki ilk islem" degildir: bir onceki
+   * kovanin KAPANISIDIR. Fiyat kovalar arasinda bir yere kaybolmaz; kova
+   * sinirinda kaldigi yerden devam eder. Butun borsalar mumu boyle kurar ve
+   * "yesil mum = fiyat bu kovada yukseldi" ifadesi ancak boyle dogru olur.
+   *
+   * YUKSEK VE DUSUK DE GENISLETILIR: yeni acilis, kovanin kendi ucu
+   * degerlerinin disinda kalabilir ve o durumda fitil govdeyi kapsamaz --
+   * yani mum, kendi icinde tutarsiz cizilirdi.
+   */
+  const chained = out.map((candle, index) => {
+    if (index === 0) return candle
+    const openWei = out[index - 1]!.closeWei
+    return {
+      ...candle,
+      openWei,
+      highWei: candle.highWei > openWei ? candle.highWei : openWei,
+      lowWei: candle.lowWei < openWei ? candle.lowWei : openWei,
+    }
+  })
+
+  /*
    * TAVAN: bir grafikte 4000 mum cizmek ne okunur ne ucuzdur. En YENI olanlar
    * tutulur -- bir fiyat grafiginde onemli olan sagdir.
    */
-  return out.length > 240 ? out.slice(out.length - 240) : out
+  return chained.length > 240 ? chained.slice(chained.length - 240) : chained
 }
 
 function flat(bucket: Date, closeWei: bigint): CandleRow {
