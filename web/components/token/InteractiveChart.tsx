@@ -43,8 +43,17 @@ export function InteractiveChart({
   bucketSeconds: number
 }) {
   const total = candles.length
-  /** En az bu kadar mum gorunur -- daha azi bir grafik degil bir cubuk olur. */
-  const MIN_SPAN = 8
+  /**
+   * En az bu kadar mum gorunur.
+   *
+   * SEKIZDI VE COK YUKSEKTI: yedi mumu olan bir token'da yakinlastirma HIC
+   * calismiyordu, cunku asgari pencere zaten butun seriden genisti. Tarayicida
+   * olculdu -- tekerlek donuyor, ekranda hicbir sey degismiyor.
+   *
+   * Uc: bir grafigin okunabilecegi en dar pencere. Ikiden azi bir grafik
+   * degil, iki cubuk olur.
+   */
+  const MIN_SPAN = 3
 
   const [span, setSpan] = useState(total)
   const [end, setEnd] = useState(total)

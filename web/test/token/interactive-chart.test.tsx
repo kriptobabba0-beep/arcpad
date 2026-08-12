@@ -78,12 +78,28 @@ describe('InteractiveChart', () => {
   })
 
   it('BIR MUMUN ALTINA INMEZ -- bir cubuk grafik degildir', () => {
+    /*
+     * TABAN SEKIZDI VE COK YUKSEKTI: yedi mumu olan bir token'da yakinlastirma
+     * HIC calismiyordu, cunku asgari pencere butun seriden genisti. Tarayicida
+     * olculdu -- tekerlek donuyor, ekranda hicbir sey degismiyor. Uc, bir
+     * grafigin okunabilecegi en dar pencere.
+     */
     const { container } = render(
       <InteractiveChart candles={series(40)} metric="fdv" currentWei={CURRENT} bucketSeconds={300} />,
     )
     const box = screen.getByTestId('interactive-chart')
-    for (let i = 0; i < 20; i += 1) fireEvent.wheel(box, { deltaY: -120, clientX: 500 })
-    expect(bodyCount(container)).toBeGreaterThanOrEqual(8)
+    for (let i = 0; i < 30; i += 1) fireEvent.wheel(box, { deltaY: -120, clientX: 500 })
+    expect(bodyCount(container)).toBeGreaterThanOrEqual(3)
+  })
+
+  it('AZ MUMLU BIR TOKENDA DA YAKINLASTIRILIR', () => {
+    // Yedi mum: eski tabanla (8) bu grafik yakinlastirilamiyordu.
+    const { container } = render(
+      <InteractiveChart candles={series(7)} metric="fdv" currentWei={CURRENT} bucketSeconds={300} />,
+    )
+    const box = screen.getByTestId('interactive-chart')
+    fireEvent.wheel(box, { deltaY: -120, clientX: 500 })
+    expect(bodyCount(container)).toBeLessThan(7)
   })
 
   it('UZAKLASTIRMA TOPLAMI ASAMAZ -- olmayan mum cizilmez', () => {
