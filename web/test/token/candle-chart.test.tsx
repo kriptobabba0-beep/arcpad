@@ -1,6 +1,7 @@
 import { render } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { CandleChart } from '@/components/token/CandleChart'
+import { fillCandleGaps } from '@/lib/read'
 import type { CandleRow } from '@/lib/read'
 
 /**
@@ -124,5 +125,62 @@ describe('CandleChart geometry', () => {
     // Ilk yazilisinda iki dal AYNI biciimlendiriciyi cagiriyordu, yani secim
     // ekranda hicbir sey yapmiyordu.
     expect(fdvLabel).not.toBe(priceLabel)
+  })
+})
+
+/**
+ * ============================================================================
+ *  BOS KOVALAR -- ZAMAN EKSENININ DOGRU SOYLEMESI
+ * ============================================================================
+ *
+ * `listCandles` yalnizca islem olan kovalari doner. Doldurmadan cizilen bir
+ * eksende yan yana duran iki mum uc gun arayla olabilir; grafik "az once islem
+ * gordu" der, oysa token uc gundur sessizdir.
+ *
+ * DOLDURMA BIR TAHMIN DEGIL: bonding curve'de fiyat yalnizca alim/satimla
+ * hareket eder, dolayisiyla islem olmayan bir saatte fiyat GERCEKTEN
+ * degismemistir. Ayni doldurma bir hisse grafiginde bir varsayim olurdu.
+ */
+describe('fillCandleGaps', () => {
+  const HOUR = 3_600
+  const at = (iso: string): Date => new Date(iso)
+
+  it('aradaki bos saatler DUZ mumlarla doldurulur', () => {
+    const rows = [
+      candle({ bucket: at('2026-08-11T00:00:00Z'), closeWei: 10n }),
+      candle({ bucket: at('2026-08-11T03:00:00Z'), openWei: 10n, closeWei: 20n }),
+    ]
+    const filled = fillCandleGaps(rows, HOUR, at('2026-08-11T03:00:00Z'))
+
+    expect(filled).toHaveLength(4)
+    // 01:00 ve 02:00 -- islem yok, fiyat degismedi.
+    expect(filled[1]!.openWei).toBe(10n)
+    expect(filled[1]!.closeWei).toBe(10n)
+    expect(filled[1]!.highWei).toBe(10n)
+    expect(filled[1]!.lowWei).toBe(10n)
+    expect(filled[1]!.volumeWei).toBe(0n)
+    expect(filled[1]!.trades, 'a filled bucket must not claim trades').toBe(0)
+  })
+
+  it('EKSEN SIMDIYE KADAR UZAR -- son islemde bitmez', () => {
+    // Uc gundur islem gormeyen bir token, son islemde biten bir eksenle
+    // "az once islem gordu" gibi gorunurdu.
+    const rows = [candle({ bucket: at('2026-08-11T00:00:00Z'), closeWei: 10n })]
+    const filled = fillCandleGaps(rows, HOUR, at('2026-08-11T05:30:00Z'))
+    expect(filled.length).toBeGreaterThan(1)
+    expect(filled[filled.length - 1]!.bucket.toISOString()).toBe('2026-08-11T05:00:00.000Z')
+    expect(filled[filled.length - 1]!.closeWei).toBe(10n)
+  })
+
+  it('BOS GIRDI BOS KALIR -- sifir dolu bir eksen uydurulmaz', () => {
+    expect(fillCandleGaps([], HOUR, at('2026-08-11T05:00:00Z'))).toEqual([])
+  })
+
+  it('TAVAN VAR ve EN YENILER tutulur', () => {
+    const rows = [candle({ bucket: at('2026-01-01T00:00:00Z'), closeWei: 7n })]
+    const filled = fillCandleGaps(rows, HOUR, at('2026-08-11T00:00:00Z'))
+    expect(filled.length).toBeLessThanOrEqual(240)
+    // Sag kenar korunur: bir fiyat grafiginde onemli olan en yeni mumdur.
+    expect(filled[filled.length - 1]!.bucket.toISOString()).toBe('2026-08-11T00:00:00.000Z')
   })
 })

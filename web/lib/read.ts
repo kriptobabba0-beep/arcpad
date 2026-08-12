@@ -677,3 +677,72 @@ export async function readVolumeSplit(
     return { value, indexer: await getIndexerStatus(pool) }
   })
 }
+
+/**
+ * ============================================================================
+ *  BOS KOVALARI DOLDUR -- CUNKU BIR EGRIDE FIYAT ANCAK ISLEMLE DEGISIR
+ * ============================================================================
+ *
+ * `listCandles` yalnizca ISLEM OLAN kovalari doner. Bir grafikte bu, saatlerin
+ * atlanmasi ve zaman ekseninin yalan soylemesi demektir: yan yana duran iki
+ * mum uc gun arayla olabilir.
+ *
+ * Aradaki kovalar DUZ cizilir (acilis = yuksek = dusuk = kapanis = bir onceki
+ * kapanis, hacim sifir) ve bu bir tahmin DEGIL bir OLGUDUR: bonding curve'de
+ * fiyat yalnizca `buy`/`sell` ile hareket eder, dolayisiyla islem olmayan bir
+ * saatte fiyat GERCEKTEN degismemistir. Bir hisse grafiginde ayni doldurma
+ * bir varsayim olurdu; burada degil.
+ *
+ * SONA KADAR DOLDURULUR (`until`), cunku eksenin sagi "simdi"dir ve kesikli
+ * "su an" cizgisi orada durur. Son islemde biten bir eksen, uc gundur islem
+ * gormeyen bir token'i "az once islem gordu" gibi gosterirdi.
+ */
+export function fillCandleGaps(
+  candles: readonly CandleRow[],
+  bucketSeconds: number,
+  until: Date,
+): CandleRow[] {
+  if (candles.length === 0) return []
+  const step = Math.max(1, Math.floor(bucketSeconds)) * 1_000
+  const out: CandleRow[] = []
+  const lastBucket = Math.floor(until.getTime() / step) * step
+
+  for (const candle of candles) {
+    const previous = out[out.length - 1]
+    if (previous !== undefined) {
+      for (
+        let t = previous.bucket.getTime() + step;
+        t < candle.bucket.getTime();
+        t += step
+      ) {
+        out.push(flat(new Date(t), previous.closeWei))
+      }
+    }
+    out.push(candle)
+  }
+
+  const tail = out[out.length - 1]
+  if (tail !== undefined) {
+    for (let t = tail.bucket.getTime() + step; t <= lastBucket; t += step) {
+      out.push(flat(new Date(t), tail.closeWei))
+    }
+  }
+
+  /*
+   * TAVAN: bir grafikte 4000 mum cizmek ne okunur ne ucuzdur. En YENI olanlar
+   * tutulur -- bir fiyat grafiginde onemli olan sagdir.
+   */
+  return out.length > 240 ? out.slice(out.length - 240) : out
+}
+
+function flat(bucket: Date, closeWei: bigint): CandleRow {
+  return {
+    bucket,
+    openWei: closeWei,
+    highWei: closeWei,
+    lowWei: closeWei,
+    closeWei,
+    volumeWei: 0n,
+    trades: 0,
+  }
+}
