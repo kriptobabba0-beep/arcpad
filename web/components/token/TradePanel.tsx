@@ -21,7 +21,6 @@ import { FailureNotice, readFailure } from '@/components/errors'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Money } from '@/components/ui/Money'
-import { Tabs } from '@/components/ui/Tabs'
 import { useArcNetwork } from '@/hooks/useArcNetwork'
 import { useUsdcBalance } from '@/hooks/useUsdcBalance'
 import { getWebConfig } from '@/lib/addresses'
@@ -48,11 +47,10 @@ import {
   quoteFor,
   shortcutBaseFor,
   type SimulationVerdict,
-  TAB_LABEL,
   type TradePhase,
   type TradeTab,
-  TRADE_TABS,
 } from './tradeModel'
+import { BuyUnitToggle, TradeSideTabs } from './TradeTabs'
 import { useApproval } from './useApproval'
 import { useCurveState } from './useCurveState'
 import { useGasReserve } from './useGasReserve'
@@ -280,17 +278,26 @@ export function TradeForm({
 
   return (
     <Card className="flex flex-col gap-3 px-4 py-4" data-testid="trade-panel">
-      <Tabs
-        items={TRADE_TABS.map((id) => ({ id, label: TAB_LABEL[id] }))}
-        value={tab}
+      {/*
+        ============ IKI KONTROL, UC DURUM ============
+
+        Model uc durumlu kaldi (`spend` / `receive` / `sell`) -- ucu de
+        zincirde AYRI giris noktalari ve birini kaldirmak bir yetenegi
+        kaldirmak olurdu. Degisen sey SORULARIN SIRASI: once niyet (aliyor
+        musun, satiyor musun), sonra -- ve yalnizca alimda -- birim.
+
+        Uc sekmeli serit kullaniciya once bir MEKANIK sorusu soruyordu:
+        "hangi giris noktasi?". Kimse bir launchpad'e o soruyu cevaplamaya
+        gelmez.
+      */}
+      <TradeSideTabs
+        tab={tab}
         onChange={(next) => {
-          setTab(next as TradeTab)
+          setTab(next)
           // Birimi degisen bir alanda eski METNI birakmak, "1.5" yazan bir
           // USDC tutarini 1,5 TOKEN'e cevirir ve kullanici bunu fark etmez.
           setText('')
         }}
-        label="Trade action"
-        idBase="trade"
       />
 
       {/*
@@ -311,13 +318,31 @@ export function TradeForm({
         aria-labelledby={`trade-tab-${tab}`}
         className="flex flex-col gap-3"
       >
-        <AmountInput
-          label={label}
-          unit={unit}
-          value={text}
-          onChange={setText}
-          {...(parsed.ok || parsed.reason === null ? {} : { error: parsed.reason })}
-        />
+        <div className="flex items-end gap-2">
+          <div className="min-w-0 flex-1">
+            <AmountInput
+              label={label}
+              unit={unit}
+              value={text}
+              onChange={setText}
+              {...(parsed.ok || parsed.reason === null ? {} : { error: parsed.reason })}
+            />
+          </div>
+          {/*
+            BIRIM HAPI, TUTARIN YANINDA -- referans tasarimdaki yeri de burasi.
+            Satista cizilmez: satisin tek giris noktasi var, yani secilecek bir
+            sey yok ve bos bir secim kontrolu kullaniciyi olmayan bir karara
+            davet ederdi.
+          */}
+          <BuyUnitToggle
+            tab={tab}
+            symbol={symbol}
+            onChange={(next) => {
+              setTab(next)
+              setText('')
+            }}
+          />
+        </div>
 
         {/*
           MONEY CHIPS. The user picks dollars on EVERY tab; the resolution into

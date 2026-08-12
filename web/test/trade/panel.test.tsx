@@ -83,6 +83,26 @@ function setup(overrides: Partial<TradeFormProps> = {}) {
     button: () => q.getByTestId('trade-submit'),
     field: () => q.getByRole('textbox', { name: /amount|tokens/i }),
     tab: (name: RegExp) => q.getByRole('tab', { name }),
+    /*
+     * ============ UC DURUM, IKI KONTROL ============
+     *
+     * Panel artik once NIYETI soruyor (Buy / Sell), sonra -- yalnizca alimda
+     * -- BIRIMI (USDC / token). Model uc durumlu kaldi; degisen sey sunum.
+     * Testler bu yuzden yardimcidan gecer: iddialar (hangi giris noktasina
+     * gidiliyor, alan temizleniyor mu, hangi cip hangi sayiyi dolduruyor)
+     * AYNEN duruyor, yalnizca onlara ULASMA yolu degisti.
+     */
+    goBuySpend: async (u: ReturnType<typeof userEvent.setup>) => {
+      await u.click(q.getByRole('tab', { name: /^Buy$/ }))
+      const toggle = q.queryByTestId('buy-unit-toggle')
+      // Hap "su an hangi birimdesin"i yazar; token yaziyorsa USDC'ye gec.
+      if (toggle !== null && !/USDC/.test(toggle.textContent ?? '')) await u.click(toggle)
+    },
+    goBuyReceive: async (u: ReturnType<typeof userEvent.setup>) => {
+      await u.click(q.getByRole('tab', { name: /^Buy$/ }))
+      const toggle = q.getByTestId('buy-unit-toggle')
+      if (/USDC/.test(toggle.textContent ?? '')) await u.click(toggle)
+    },
   }
 }
 
@@ -113,7 +133,7 @@ describe('each tab reaches its own entrypoint', () => {
 
   it('Receive tokens sends buyExactTokensOut with a fee-inclusive cap', async () => {
     const t = setup()
-    await t.user.click(t.tab(/Receive tokens/))
+    await t.goBuyReceive(t.user)
     await t.user.type(t.field(), '1000000')
     await t.user.click(t.button())
 
@@ -141,13 +161,18 @@ describe('each tab reaches its own entrypoint', () => {
     const t = setup()
     await t.user.type(t.field(), '1.5')
     expect(t.field()).toHaveValue('1.5')
-    await t.user.click(t.tab(/Receive tokens/))
+    await t.goBuyReceive(t.user)
     expect(t.field()).toHaveValue('')
   })
 
-  it('defaults to Spend USDC and says WHY on screen', () => {
+  it('ALIM VARSAYILAN, birim USDC, ve SEBEBI ekranda yazili', () => {
     const t = setup()
-    expect(t.tab(/Spend USDC/)).toHaveAttribute('aria-selected', 'true')
+    // Niyet: alim. Panel bir launchpad'de acilir ve orada varsayilan niyet
+    // almaktir; satis, elinde bir sey olan birinin arayacagi seydir.
+    expect(t.tab(/^Buy$/)).toHaveAttribute('aria-selected', 'true')
+    // Birim: USDC, yani `buyExactQuoteIn`. Bu, rezervin tepesinde revert
+    // ETMEYEN tek alim yolu -- butce kirpilir, kalan ayni islemde iade edilir.
+    expect(t.q.getByTestId('buy-unit-toggle').textContent).toMatch(/USDC/)
     expect(t.q.getByTestId('tab-rationale').textContent).toMatch(
       /clamped and the remainder is refunded/i,
     )
@@ -165,7 +190,7 @@ describe('the Receive tokens clamp', () => {
       spendable: 1_000n * ONE_USDC,
       usdcBalance: 1_000n * ONE_USDC,
     })
-    await t.user.click(t.tab(/Receive tokens/))
+    await t.goBuyReceive(t.user)
     await t.user.type(t.field(), '999999999')
 
     expect(t.q.getByTestId('clamp-notice').textContent).toContain(
@@ -582,7 +607,7 @@ describe('the money chips', () => {
 
   it('Receive tokens: $100 fills TOKENS, not the number 100', async () => {
     const t = setup(PRODUCTION)
-    await t.user.click(t.tab(/Receive tokens/))
+    await t.goBuyReceive(t.user)
     await t.user.click(t.q.getByTestId('chip-100'))
 
     // THE UNIT MUTANT. Writing `100` into a token field would ask for one
@@ -646,7 +671,7 @@ describe('the money chips', () => {
     await t.user.click(t.q.getByTestId('chip-25'))
     const spend = (t.field() as HTMLInputElement).value
 
-    await t.user.click(t.tab(/Receive tokens/))
+    await t.goBuyReceive(t.user)
     await t.user.click(t.q.getByTestId('chip-25'))
     const receive = (t.field() as HTMLInputElement).value
 
@@ -699,7 +724,7 @@ describe('the money chips', () => {
   it('draws no row when the gas estimate failed, on either buy tab', async () => {
     const t = setup({ ...PRODUCTION, spendable: null, gasReason: 'no estimate' })
     expect(t.q.queryByTestId('amount-chips')).toBeNull()
-    await t.user.click(t.tab(/Receive tokens/))
+    await t.goBuyReceive(t.user)
     expect(t.q.queryByTestId('amount-chips')).toBeNull()
   })
 })
