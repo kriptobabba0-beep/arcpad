@@ -41,6 +41,7 @@ export function ActivityTabs({
   query,
   totalSupplyTok,
   priceWeiPerToken,
+  now,
 }: {
   tab: ActivityTab
   trades: readonly TradeRow[]
@@ -57,6 +58,14 @@ export function ActivityTabs({
   query: Readonly<Record<string, string>>
   totalSupplyTok: bigint
   priceWeiPerToken: bigint
+  /**
+   * Istek ani -- SAYFADAN gelir, burada olculmez.
+   *
+   * `new Date()` bu bileşenin icinde cagrilsaydi sunucu ile istemci iki
+   * farkli an olcerdi. Sayfa zaten bir `now` tasiyor (mum bosluklarini
+   * doldurmak icin) ve tek bir an, sayfanin her yerinde ayni cevabi verir.
+   */
+  now: Date
 }) {
   const total = tab === 'activity' ? tradeCount : holderCount
 
@@ -71,18 +80,25 @@ export function ActivityTabs({
         <TabLink
           href={hrefFor(basePath, query, 'holders')}
           active={tab === 'holders'}
-          // Sayi ETIKETIN ICINDE: "13,000 holders" tek bir sey soyler,
-          // "Holders (13,000)" iki sey soyler ve ikincisi daha yavas okunur.
+          /*
+            Sayi ETIKETIN ICINDE: "13,000 holders" tek bir sey soyler,
+            "Holders (13,000)" iki sey soyler ve ikincisi daha yavas okunur.
+
+            TEKIL DE YAZILIR. Canli sayfada "1 holders" goruldu; kucuk bir sey
+            ama yeni bir token'in sayfasinda HER ZAMAN gorunen sey odur --
+            yani urunun ilk izlenimi, yanlis yazilmis bir cumle oluyordu.
+          */
           label={
             <>
-              <LiveNumber value={BigInt(holderCount)} format="count" /> holders
+              <LiveNumber value={BigInt(holderCount)} format="count" />{' '}
+              {holderCount === 1 ? 'holder' : 'holders'}
             </>
           }
         />
       </nav>
 
       {tab === 'activity' ? (
-        <TradeTable rows={trades} symbol={symbol} />
+        <TradeTable rows={trades} symbol={symbol} now={now} />
       ) : (
         <HolderTable
           rows={holders}
@@ -164,7 +180,16 @@ function TabLink({
  * ZAMAN ve NE YONDE oldugunu, sonra NE KADAR oldugunu, en son KIM oldugunu
  * sorar. Adres en saga konur cunku en genis ve en az okunan alandir.
  */
-function TradeTable({ rows, symbol }: { rows: readonly TradeRow[]; symbol: string }) {
+function TradeTable({
+  rows,
+  symbol,
+  now,
+}: {
+  rows: readonly TradeRow[]
+  symbol: string
+  /** Istek ani. Tarihin YAZILIP yazilmayacagini bu belirler. */
+  now: Date
+}) {
   if (rows.length === 0) {
     return (
       <p className="rounded-card border border-border bg-surface px-5 py-6 text-[13px] text-muted">
@@ -188,7 +213,7 @@ function TradeTable({ rows, symbol }: { rows: readonly TradeRow[]; symbol: strin
         <tbody>
           {rows.map((row) => (
             <tr key={row.eventSeq.toString()} className="border-t border-border">
-              <Td className="text-muted tabular-nums">{clockTime(row.blockTime)}</Td>
+              <Td className="text-muted tabular-nums">{clockTime(row.blockTime, now)}</Td>
               <Td>
                 <span className={row.isBuy ? 'text-[#4ade80]' : 'text-[#f87171]'}>
                   {row.isBuy ? 'Buy' : 'Sell'}
@@ -347,13 +372,43 @@ function Dot({ seed }: { seed: string }) {
   )
 }
 
-/** `3:25 AM`. Locale ACIKCA verilir -- SSR ile istemcinin ayni metni uretmesi icin. */
-function clockTime(at: Date): string {
-  return at.toLocaleTimeString('en-US', {
+/**
+ * `3:25 AM` bugunse, `12 Aug 3:25 AM` degilse.
+ *
+ * ============ TARIHSIZ BIR SAAT YALAN SOYLER ============
+ *
+ * OLCULDU, ve beni de yanaltti: bu tabloda "2:56 AM" yazan bir islem 35 saat
+ * onceydi. Sadece saati okuyan biri onu BUGUN sanir -- ve o kisi, ustteki
+ * "24H volume $0.00" ile alttaki dolu islem listesini yan yana gorup urunde
+ * bir hata oldugu sonucuna varir. Oysa ikisi de dogruydu; eksik olan tek sey
+ * gunun kendisiydi.
+ *
+ * Tarih YALNIZCA gerektiginde yazilir: bugunku islemlerin hepsine tarih
+ * koymak, canli bir sayfada her satiri ayni ve gereksiz bir metinle
+ * uzatirdi.
+ *
+ * Bu bir SUNUCU bileseni, yani `now` istek anindadir ve istemcide yeniden
+ * hesaplanmaz -- hidrasyon uyusmazligi olamaz. Locale ve saat dilimi ACIKCA
+ * verilir; kutunun yereline birakilan bir tarih, sunucu ile tarayicinin
+ * farkli metinler uretmesi demektir.
+ */
+function clockTime(at: Date, now: Date): string {
+  const time = at.toLocaleTimeString('en-US', {
     hour: 'numeric',
     minute: '2-digit',
     timeZone: 'UTC',
   })
+  const sameDay =
+    at.getUTCFullYear() === now.getUTCFullYear() &&
+    at.getUTCMonth() === now.getUTCMonth() &&
+    at.getUTCDate() === now.getUTCDate()
+  if (sameDay) return time
+  const day = at.toLocaleDateString('en-US', {
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'UTC',
+  })
+  return `${day} ${time}`
 }
 
 /** `22.1K`, `250.7K`, `41` -- token miktarlari icin kisa bicim. */

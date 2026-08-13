@@ -717,10 +717,35 @@ export function fillCandleGaps(
     out.push(candle)
   }
 
+  /*
+   * ============ SESSIZLIK, VERIYI EKRANDAN ITEMEZ ============
+   *
+   * Kuyruk dolgusu grafigin sag kenarini SIMDIYE tasir; bu bir incelik, ve
+   * hareketli bir tokende yalnizca birkac kova eder.
+   *
+   * SESSIZ BIR TOKENDE AYNI INCELIK VERIYI YOK EDIYORDU. Olculdu, uretimde:
+   * 35 saat once islem gormus bir tokende 5 dakikalik kovalarla kuyruk 429
+   * bos kova uretiyor, 240'lik tavan EN YENILERI tuttugu icin gercek
+   * mumlarin HEPSI kirpiliyor ve grafik dumduz bir cizgi oluyordu. Kullanici
+   * "grafik hala bozuk" derken gordugu seylerden biri buydu.
+   *
+   * Ayni kullanicinin daha once bildirdigi ikinci kusur da buraya bakiyor:
+   * "sekiz mum grafigin yedide birine sikismis". Kuyrugu tavana kadar
+   * doldurmak, 16 gercek mumu 240 kovalik bir seridin %6'sina sikistirirdi --
+   * yani veri kirpilmasa bile OKUNAMAZDI.
+   *
+   * KURAL: kuyruk, gercek seridin ucte birini gecemez. Boylece mumlar
+   * genisligin en az dortte ucunu tutar, ve "o gunden beri bir sey olmadi"
+   * bilgisi kisa bir duz parcayla yine de soylenir. Hareketli bir tokende bu
+   * sinir zaten hic devreye girmez.
+   */
   const tail = out[out.length - 1]
   if (tail !== undefined) {
-    for (let t = tail.bucket.getTime() + step; t <= lastBucket; t += step) {
+    const maxTail = Math.max(1, Math.floor(out.length / 3))
+    let filled = 0
+    for (let t = tail.bucket.getTime() + step; t <= lastBucket && filled < maxTail; t += step) {
       out.push(flat(new Date(t), tail.closeWei))
+      filled += 1
     }
   }
 

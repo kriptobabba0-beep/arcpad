@@ -196,7 +196,15 @@ async function IndexedToken({
    * degil bir olgudur. Doldurmadan cizilen bir eksende yan yana iki mum uc gun
    * arayla olabilir ve zaman ekseni yalan soyler.
    */
-  const candleRows = fillCandleGaps(valueOf(candles) ?? [], timeframeSeconds(tf), new Date())
+  /*
+   * ISTEK ANI BIR KEZ OLCULUR ve sayfanin her yerine ayni deger gider.
+   *
+   * Iki ayri `new Date()`, mum bosluklarinin doldurulduğu an ile islem
+   * tablosunun "bugun mu" dedigi ani birbirinden AYIRIRDI -- gece yarisina
+   * denk gelen bir istekte tablo bir gun, grafik baska bir gun gosterirdi.
+   */
+  const now = new Date()
+  const candleRows = fillCandleGaps(valueOf(candles) ?? [], timeframeSeconds(tf), now)
   const windowSplit = valueOf(splitWindow) ?? EMPTY_SPLIT
   const daySplit = valueOf(split24h) ?? EMPTY_SPLIT
   const trades = valueOf(tradePage)
@@ -214,10 +222,25 @@ async function IndexedToken({
       ? null
       : Number(((overview.marketCapWei - firstCandle.openWei) * 1_000n) / firstCandle.openWei) / 10
 
+  /*
+   * ============ AYNI SAYI, IKI YERDE, AYNI TURETIM ============
+   *
+   * OLCULDU, canli sayfada: serit "42.9% sells" derken hemen altindaki hacim
+   * paneli ayni pencere icin "43.0% sells" diyordu. Ikisi de dogruydu ve
+   * ikisi de yanlisti -- serit SATIS tarafini bolup KIRPIYOR, panel ise ALIS
+   * tarafini bolup 100'den cikariyordu. Kirpma iki farkli yone dustugu icin
+   * fark 0.1 puanda kaliyor, yani kimse "hangisi bozuk" diye soramiyor; ama
+   * ayni sayfada ayni sayinin iki degeri, guvenilirligi tam olarak boyle
+   * asindirir.
+   *
+   * Turetim TEK: alis binde birligi kirpilir, satis onun tumleyenidir --
+   * `VolumePanel`in yaptigi da budur. Boylece iki sayi ayni girdiden ayni
+   * cikti verir, ve cubugun iki parcasi da her zaman 100 eder.
+   */
   const sellShare =
     daySplit.volumeWei === 0n
       ? null
-      : Number((daySplit.sellVolumeWei * 1_000n) / daySplit.volumeWei) / 10
+      : 100 - Number((daySplit.buyVolumeWei * 1_000n) / daySplit.volumeWei) / 10
 
   /** Grafik kontrollerinin KORUYACAGI parametreler -- sekme ve sayfa haric. */
   const chartParams: Record<string, string | undefined> = {
@@ -287,6 +310,7 @@ async function IndexedToken({
             symbol={overview.symbol}
             curve={overview.curve}
             creator={overview.launchCreator}
+            now={now}
             page={page}
             pageSize={TABLE_PAGE_SIZE}
             basePath={`/token/${overview.token}`}
