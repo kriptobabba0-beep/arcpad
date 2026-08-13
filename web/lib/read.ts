@@ -680,96 +680,48 @@ export async function readVolumeSplit(
 
 /**
  * ============================================================================
- *  BOS KOVALARI DOLDUR -- CUNKU BIR EGRIDE FIYAT ANCAK ISLEMLE DEGISIR
+ *  MUMLARI ZINCIRLE -- VE BOSLUGU DOLDURMA
  * ============================================================================
  *
- * `listCandles` yalnizca ISLEM OLAN kovalari doner. Bir grafikte bu, saatlerin
- * atlanmasi ve zaman ekseninin yalan soylemesi demektir: yan yana duran iki
- * mum uc gun arayla olabilir.
+ * `listCandles` yalnizca ISLEM OLAN kovalari doner. Bu fonksiyon eskiden
+ * aradaki bos kovalari duz mumlarla doldurup diziyi `now`a kadar uzatiyordu;
+ * elle yazilmis SVG grafik icin bu ZORUNLUYDU, cunku o grafik x eksenini
+ * SUREKLI bir zaman ekseni olarak ciziyordu ve doldurulmayan bir aralik
+ * gorsel olarak yalan soylerdi.
  *
- * Aradaki kovalar DUZ cizilir (acilis = yuksek = dusuk = kapanis = bir onceki
- * kapanis, hacim sifir) ve bu bir tahmin DEGIL bir OLGUDUR: bonding curve'de
- * fiyat yalnizca `buy`/`sell` ile hareket eder, dolayisiyla islem olmayan bir
- * saatte fiyat GERCEKTEN degismemistir. Bir hisse grafiginde ayni doldurma
- * bir varsayim olurdu; burada degil.
+ * ============ ARTIK DOLDURULMUYOR, VE SEBEBI KUTUPHANE ============
  *
- * SONA KADAR DOLDURULUR (`until`), cunku eksenin sagi "simdi"dir ve kesikli
- * "su an" cizgisi orada durur. Son islemde biten bir eksen, uc gundur islem
- * gormeyen bir token'i "az once islem gordu" gibi gosterirdi.
+ * `lightweight-charts` zamani surekli bir eksen olarak DEGIL, sirali bir
+ * NOKTA DIZISI olarak cizer: her mum esit genislikte bir yuva alir ve kendi
+ * zaman damgasiyla etiketlenir. Yani bos zamanin genislik kaplamasi icin bir
+ * sebep yok -- ve kaplamasi olculmus bir zarardi:
+ *
+ *   OLCULDU, canli sayfada: dun 40 dakika, bugun 2 dakika islem gormus bir
+ *   token, 5 dakikalik kovalarda 240 noktanin 235'ini ARADAKI SESSIZLIGE
+ *   ayiriyordu. Bes gercek mum en saga sikismis bir cizgi halindeydi ve
+ *   kullanicinin "mum grafigi hala berbat" dedigi sey buydu.
+ *
+ * Bir egride fiyat ancak islemle hareket eder, yani atlanan zamanda fiyat
+ * GERCEKTEN sabittir -- o bilgiyi tasimak icin 235 kova cizmeye gerek yok;
+ * eksendeki tarih etiketleri zaten soyluyor.
+ *
+ * ============ ACILIS, BIR ONCEKININ KAPANISIDIR ============
+ *
+ * Zincirleme KALIYOR ve asil is odur. `listCandles` tek islemli bir kovada
+ * acilis ile kapanis olarak AYNI degeri verir (islemden sonraki market cap),
+ * yani zincirlenmeyen her mum sifir yukseklikte bir DOJI cikar. Olculdu:
+ * fiyat 4.00'dan 5.53'e gitmisti ve grafikte bunu gosteren TEK BIR govde
+ * yoktu.
+ *
+ * Fitil de genisletilir: yeni acilis kovanin kendi uc degerlerinin disinda
+ * kalabilir ve o durumda govde fitili tasardi.
  */
-export function fillCandleGaps(
-  candles: readonly CandleRow[],
-  bucketSeconds: number,
-  until: Date,
-): CandleRow[] {
+export function chainCandles(candles: readonly CandleRow[]): CandleRow[] {
   if (candles.length === 0) return []
-  const step = Math.max(1, Math.floor(bucketSeconds)) * 1_000
-  const out: CandleRow[] = []
-  const lastBucket = Math.floor(until.getTime() / step) * step
 
-  for (const candle of candles) {
-    const previous = out[out.length - 1]
-    if (previous !== undefined) {
-      for (let t = previous.bucket.getTime() + step; t < candle.bucket.getTime(); t += step) {
-        out.push(flat(new Date(t), previous.closeWei))
-      }
-    }
-    out.push(candle)
-  }
-
-  /*
-   * ============ SESSIZLIK, VERIYI EKRANDAN ITEMEZ ============
-   *
-   * Kuyruk dolgusu grafigin sag kenarini SIMDIYE tasir; bu bir incelik, ve
-   * hareketli bir tokende yalnizca birkac kova eder.
-   *
-   * SESSIZ BIR TOKENDE AYNI INCELIK VERIYI YOK EDIYORDU. Olculdu, uretimde:
-   * 35 saat once islem gormus bir tokende 5 dakikalik kovalarla kuyruk 429
-   * bos kova uretiyor, 240'lik tavan EN YENILERI tuttugu icin gercek
-   * mumlarin HEPSI kirpiliyor ve grafik dumduz bir cizgi oluyordu. Kullanici
-   * "grafik hala bozuk" derken gordugu seylerden biri buydu.
-   *
-   * Ayni kullanicinin daha once bildirdigi ikinci kusur da buraya bakiyor:
-   * "sekiz mum grafigin yedide birine sikismis". Kuyrugu tavana kadar
-   * doldurmak, 16 gercek mumu 240 kovalik bir seridin %6'sina sikistirirdi --
-   * yani veri kirpilmasa bile OKUNAMAZDI.
-   *
-   * KURAL: kuyruk, gercek seridin ucte birini gecemez. Boylece mumlar
-   * genisligin en az dortte ucunu tutar, ve "o gunden beri bir sey olmadi"
-   * bilgisi kisa bir duz parcayla yine de soylenir. Hareketli bir tokende bu
-   * sinir zaten hic devreye girmez.
-   */
-  const tail = out[out.length - 1]
-  if (tail !== undefined) {
-    const maxTail = Math.max(1, Math.floor(out.length / 3))
-    let filled = 0
-    for (let t = tail.bucket.getTime() + step; t <= lastBucket && filled < maxTail; t += step) {
-      out.push(flat(new Date(t), tail.closeWei))
-      filled += 1
-    }
-  }
-
-  /*
-   * ============ ACILIS, BIR ONCEKININ KAPANISIDIR ============
-   *
-   * OLCULDU, GERCEK ISLEMLERLE: her kovada TEK islem oldugunda `listCandles`in
-   * acilisi ile kapanisi AYNI degeri veriyor (o islemden sonraki market cap),
-   * yani her mum sifir yukseklikte bir DOJI cikiyor ve grafikte yalnizca
-   * ince cizgiler goruluyordu. Fiyat 4.00'dan 5.53'e gitmisti ve grafikte
-   * bunu gosteren TEK BIR govde yoktu.
-   *
-   * Cunku bir mumun acilisi "bu kovadaki ilk islem" degildir: bir onceki
-   * kovanin KAPANISIDIR. Fiyat kovalar arasinda bir yere kaybolmaz; kova
-   * sinirinda kaldigi yerden devam eder. Butun borsalar mumu boyle kurar ve
-   * "yesil mum = fiyat bu kovada yukseldi" ifadesi ancak boyle dogru olur.
-   *
-   * YUKSEK VE DUSUK DE GENISLETILIR: yeni acilis, kovanin kendi ucu
-   * degerlerinin disinda kalabilir ve o durumda fitil govdeyi kapsamaz --
-   * yani mum, kendi icinde tutarsiz cizilirdi.
-   */
-  const chained = out.map((candle, index) => {
-    if (index === 0) return candle
-    const openWei = out[index - 1]!.closeWei
+  const chained = candles.map((candle, index) => {
+    if (index === 0) return { ...candle }
+    const openWei = candles[index - 1]!.closeWei
     return {
       ...candle,
       openWei,
@@ -779,20 +731,8 @@ export function fillCandleGaps(
   })
 
   /*
-   * TAVAN: bir grafikte 4000 mum cizmek ne okunur ne ucuzdur. En YENI olanlar
-   * tutulur -- bir fiyat grafiginde onemli olan sagdir.
+   * TAVAN: bir grafikte binlerce mum ne okunur ne ucuzdur. En YENILER tutulur
+   * -- bir fiyat grafiginde onemli olan sagdir.
    */
   return chained.length > 240 ? chained.slice(chained.length - 240) : chained
-}
-
-function flat(bucket: Date, closeWei: bigint): CandleRow {
-  return {
-    bucket,
-    openWei: closeWei,
-    highWei: closeWei,
-    lowWei: closeWei,
-    closeWei,
-    volumeWei: 0n,
-    trades: 0,
-  }
 }

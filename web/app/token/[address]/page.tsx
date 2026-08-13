@@ -4,7 +4,7 @@ import { verifyCanonical } from '@/lib/canonical'
 import { resolveMetadata } from '@/lib/metadata'
 import {
   CHAT_PAGE_SIZE,
-  fillCandleGaps,
+  chainCandles,
   readCandles,
   readChat,
   readHolderPage,
@@ -190,21 +190,14 @@ async function IndexedToken({
   })
 
   /*
-   * BOS KOVALAR DUZ CIZILIR VE EKSEN "SIMDI"YE KADAR UZAR. Bkz.
-   * `fillCandleGaps`: bir egride fiyat ancak islemle hareket eder, yani islem
-   * olmayan bir saatte fiyat GERCEKTEN degismemistir -- doldurma bir tahmin
-   * degil bir olgudur. Doldurmadan cizilen bir eksende yan yana iki mum uc gun
-   * arayla olabilir ve zaman ekseni yalan soyler.
-   */
-  /*
-   * ISTEK ANI BIR KEZ OLCULUR ve sayfanin her yerine ayni deger gider.
-   *
-   * Iki ayri `new Date()`, mum bosluklarinin doldurulduğu an ile islem
-   * tablosunun "bugun mu" dedigi ani birbirinden AYIRIRDI -- gece yarisina
-   * denk gelen bir istekte tablo bir gun, grafik baska bir gun gosterirdi.
+   * MUMLARIN ACILISI ZINCIRLENIR. Bkz. `chainCandles`: bir mumun acilisi BIR ONCEKININ KAPANISIDIR. Zincirlenmezse
+   * tek islemli her kova sifir yukseklikte bir doji cikar. Bosluk DOLDURULMAZ
+   * -- `lightweight-charts` noktalari sirayla cizer ve bos zamanin genislik
+   * kaplamasi, gercek mumlari ekranin bir kosesine sikistirmaktan baska bir
+   * sey yapmiyordu.
    */
   const now = new Date()
-  const candleRows = fillCandleGaps(valueOf(candles) ?? [], timeframeSeconds(tf), now)
+  const candleRows = chainCandles(valueOf(candles) ?? [])
   const windowSplit = valueOf(splitWindow) ?? EMPTY_SPLIT
   const daySplit = valueOf(split24h) ?? EMPTY_SPLIT
   const trades = valueOf(tradePage)
