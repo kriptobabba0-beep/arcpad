@@ -592,11 +592,26 @@ describe('adres defteri', () => {
   // olan her token'in kilitli oldugu" bir dagitimi tarif eder. "Simdilik
   // null" tam olarak smoke ciftinin sessiz delik oldugu yoldur.
   describe('router', () => {
-    const LIVE_ROUTER = '0x6D9f42706C7E7bF3D2Ad3123ca7397DA6F0bB7cd'
+    /*
+     * IKI AYRI SABIT, VE AYRIMI DENETIM ACTI (2026-08-13).
+     *
+     * Onceki hal TEK bir `LIVE_ROUTER` tutuyordu ve onu HEM sentetik
+     * fixture'da HEM canli defterde kullaniyordu. Ikisi ayni sey DEGIL:
+     * fixture ayristirıcinin sekil kontrolu icin uydurulmus bir kayittir,
+     * canli defter ise zincirde duran adrestir. Router yeniden dagitildiginda
+     * (hook degistigi icin -- `hook` router'in `immutable` constructor
+     * argumani) tek sabit ikisini birden hareket ettirmeye calisti ve
+     * cakisti.
+     *
+     * Ayri tutmak sadece bu kosuyu duzeltmiyor: fixture'in canli adresi
+     * IZLEMEK ZORUNDA OLMADIGINI da soyluyor.
+     */
+    const FIXTURE_ROUTER = '0x6D9f42706C7E7bF3D2Ad3123ca7397DA6F0bB7cd'
+    const LIVE_ROUTER = '0x7496950E09260E1Aa7d8785EdC46F7E87d25eb30'
 
     it('loads the router and its initcode hash from the fixture', () => {
       const b = book()
-      expect(b.arcpadRouter).toBe(LIVE_ROUTER)
+      expect(b.arcpadRouter).toBe(FIXTURE_ROUTER)
       expect(b.routerInitcodeHash).toBe(
         '0x7881b11cfa16440a113a1311bc091f041764f4a0d8b240ec03a91bb5d78af8eb',
       )

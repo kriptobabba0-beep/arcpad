@@ -150,7 +150,7 @@ describe('loadGraduatorConfig', () => {
     expect(config.overridden).toBe(false)
     // Uretim defteri: locker VE fabrika, ve tarama fabrikanin blogundan.
     expect(config.factory).toBe('0x5CA156f1809aB784655410d0f4B0704d2b306B47')
-    expect(config.locker).toBe('0x0e7771091a3471Dc12CbfE38836BaDC7bf5a98E8')
+    expect(config.locker).toBe('0xaEE2DA2D21B92AfCAccF9DAD3d72254eE1630158')
     expect(config.startBlock).toBe(55_870_261n)
   })
 
@@ -466,7 +466,7 @@ describe('fileQuarantineStore', () => {
     const reasons: string[] = []
     const other = fileQuarantineStore(
       path,
-      { ...identity, locker: '0x0e7771091a3471Dc12CbfE38836BaDC7bf5a98E8' as Address },
+      { ...identity, locker: '0xaEE2DA2D21B92AfCAccF9DAD3d72254eE1630158' as Address },
       { onReset: (reason) => reasons.push(reason) },
     )
     expect(other.isHeld(CURVE, 1_500)).toBe(false)

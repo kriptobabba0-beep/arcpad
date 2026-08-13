@@ -53,7 +53,7 @@ describe('identifying the curve profile', () => {
 
 describe('reading the profile from the factory', () => {
   const UNSET = '0x0000000000000000000000000000000000000000'
-  const LOCKER = '0x0e7771091a3471Dc12CbfE38836BaDC7bf5a98E8'
+  const LOCKER = '0xaEE2DA2D21B92AfCAccF9DAD3d72254eE1630158'
 
   it('returns the identified profile and the graduation target from ONE multicall', async () => {
     const calls: unknown[][] = []

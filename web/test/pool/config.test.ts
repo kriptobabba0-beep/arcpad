@@ -65,16 +65,16 @@ const ROUTER_SALT = keccak256(toBytes('arcpad.ArcpadRouter.v1'))
  *
  *   code at 0x6D9f4270…            6679 runtime bytes
  *   router.poolManager()           0x617321A877e024C870516CD599A581dCDCa6c09b
- *   router.hook()                  0xd95198Cd806B736C8EcEcfFC23976b59F565e0cC
+ *   router.hook()                  0x89AfefCbD64c9Ae84e74698C96Dcba087c40e0cc
  *
  * Both answers equal the address book's `poolManager` / `arcpadHook`, which is
  * the only executable proof that the configured router is wired to the pool
  * this app talks about.
  */
 const LIVE = {
-  router: '0x6D9f42706C7E7bF3D2Ad3123ca7397DA6F0bB7cd',
+  router: '0x7496950E09260E1Aa7d8785EdC46F7E87d25eb30',
   poolManager: '0x617321A877e024C870516CD599A581dCDCa6c09b',
-  hook: '0xd95198Cd806B736C8EcEcfFC23976b59F565e0cC',
+  hook: '0x89AfefCbD64c9Ae84e74698C96Dcba087c40e0cc',
   runtimeBytes: 6679,
 } as const
 

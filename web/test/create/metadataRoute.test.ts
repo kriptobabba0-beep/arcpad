@@ -26,6 +26,21 @@ function form(fields: Record<string, string>, image?: Blob, filename = 'a.png'):
   return new Request('http://localhost/api/metadata', { method: 'POST', body })
 }
 
+/**
+ * GERCEK PNG SIHIRLI BAYTLARI.
+ *
+ * Fixture eskiden `new Blob(['png'], { type: 'image/png' })` idi -- yani
+ * ICERIK "png" HARFLERIYDI ve tur yalnizca BASLIKTA yaziyordu. Rota o basligi
+ * okudugu surece test geciyordu; denetimde rota BAYTLARA cevrildi ve fixture
+ * dustu. Dusmesi DOGRU: eski hali, "istemcinin soyledigi tur" ile "dosyanin
+ * gercekten oldugu tur" arasindaki farki hic olcmuyordu.
+ */
+function pngBlob(): Blob {
+  const bytes = new Uint8Array(32)
+  bytes.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  return new Blob([bytes], { type: 'image/png' })
+}
+
 describe('readPinningConfig', () => {
   it('iki degerden biri eksikse YAPILANDIRILMAMIS', () => {
     expect(readPinningConfig({})).toBeNull()
@@ -114,15 +129,20 @@ describe('POST /api/metadata', () => {
     })
     vi.stubGlobal('fetch', fetchMock)
 
-    const response = await POST(
-      form({ name: 'Diffusion', symbol: 'DIFF' }, new Blob(['png'], { type: 'image/png' })),
-    )
+    const response = await POST(form({ name: 'Diffusion', symbol: 'DIFF' }, pngBlob()))
     expect(response.status).toBe(200)
     expect(await response.json()).toEqual({ uri: `ipfs://${CID}`, image: `ipfs://${CID}` })
 
     // SIRA BAGLAYICI: once gorsel, sonra JSON -- JSON'un `image` alani
     // gorselin CID'ini tasimak zorunda oldugu icin ters sira mumkun degil.
-    expect(bodies[0]).toBe('png')
+    //
+    // ILK GOVDE GORSELIN KENDISIDIR. Fixture artik GERCEK PNG imzasi tasiyor;
+    // eskiden govde "png" HARFLERIYDI ve tur yalnizca BASLIKTA yaziyordu --
+    // yani test, rota istemcinin sozune baktigi surece geciyordu.
+    //
+    // `0x89` baytı metin olarak okundugunda kayboluyor (U+FFFD), bu yuzden
+    // imzanin ASCII yarisi (`PNG`) aranir; JSON govdesi onu tasimaz.
+    expect(bodies[0], 'ilk yuklenen sey gorsel degil').toContain('PNG')
     expect(JSON.parse(bodies[1] ?? '{}')).toEqual({
       name: 'Diffusion',
       symbol: 'DIFF',

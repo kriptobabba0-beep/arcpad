@@ -157,7 +157,7 @@ describe('<TokenPreviewCard>', () => {
   })
 
   it('hedef SILAHLIYKEN: kilit soylenir, ve "bize dahil" acikca yazilir', () => {
-    const armed = launchFactsFrom(TESTNET, '0x0e7771091a3471Dc12CbfE38836BaDC7bf5a98E8')
+    const armed = launchFactsFrom(TESTNET, '0xaEE2DA2D21B92AfCAccF9DAD3d72254eE1630158')
     render(<TokenPreviewCard fields={EMPTY_FIELDS} facts={armed} />)
     const liquidity = row('Liquidity')
     expect(liquidity.getByText(/permanently/i)).toBeInTheDocument()

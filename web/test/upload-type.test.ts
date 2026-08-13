@@ -17,10 +17,19 @@ import { IMAGE_MAGIC_BYTES, imageTypeOf, ALLOWED_IMAGE_TYPES } from '@/lib/image
  * bir arizadir.
  */
 
-const png = (n = 16) => { const b = new Uint8Array(n); b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]); return b }
+const png = (n = 16) => {
+  const b = new Uint8Array(n)
+  b.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  return b
+}
 const jpeg = () => new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0])
 const gif = () => new Uint8Array([0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0, 0])
-const webp = () => { const b = new Uint8Array(16); b.set([0x52,0x49,0x46,0x46], 0); b.set([0x57,0x45,0x42,0x50], 8); return b }
+const webp = () => {
+  const b = new Uint8Array(16)
+  b.set([0x52, 0x49, 0x46, 0x46], 0)
+  b.set([0x57, 0x45, 0x42, 0x50], 8)
+  return b
+}
 const text = (s: string) => new TextEncoder().encode(s)
 
 describe('imageTypeOf', () => {
@@ -77,13 +86,20 @@ describe('yukleme ile sunum ayrismaz', () => {
   it('her iki rota da `lib/imageBytes` kullanir, kendi kopyasini degil', async () => {
     const [upload, serve] = await Promise.all([
       import('node:fs/promises').then((fs) => fs.readFile('app/api/metadata/route.ts', 'utf8')),
-      import('node:fs/promises').then((fs) => fs.readFile('app/api/ipfs/[...path]/route.ts', 'utf8')),
+      import('node:fs/promises').then((fs) =>
+        fs.readFile('app/api/ipfs/[...path]/route.ts', 'utf8'),
+      ),
     ])
-    for (const [name, src] of [['metadata', upload], ['ipfs', serve]] as const) {
+    for (const [name, src] of [
+      ['metadata', upload],
+      ['ipfs', serve],
+    ] as const) {
       expect(src, `${name} rotasi imageTypeOf'u ithal etmiyor`).toMatch(
         /import\s*\{[^}]*imageTypeOf[^}]*\}\s*from\s*'@\/lib\/imageBytes'/,
       )
-      expect(src, `${name} rotasi kendi sihirli sayilarini tasiyor`).not.toMatch(/0x89.*0x50.*0x4e/s)
+      expect(src, `${name} rotasi kendi sihirli sayilarini tasiyor`).not.toMatch(
+        /0x89.*0x50.*0x4e/s,
+      )
     }
   })
 })

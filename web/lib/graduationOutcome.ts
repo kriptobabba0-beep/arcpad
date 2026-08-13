@@ -139,6 +139,34 @@ export const GRADUATION_COPY: Readonly<Record<string, Entry>> = {
     remedy: 'Nothing you can change will help. Please report this.',
     retryable: false,
   },
+  /*
+   * DENETIM (2026-08-13) BU IKISINI EKLEDI. Ikisi de kullanicinin
+   * duzeltebilecegi bir sey DEGIL, ama sessiz kalmalari daha kotu olurdu:
+   * bir mezuniyet butonu hicbir metin uretmeden basarisiz olurdu.
+   */
+  CurveTokenMismatch: {
+    code: 'not-canonical',
+    tone: 'error',
+    title: 'That curve does not belong to this token.',
+    body: 'The graduation target checks that the token points back at the curve it was asked to graduate. It does not. A page showing this for a real launch would mean the address it read is not the one the token was deployed with.',
+    remedy: 'Do not send anything to this address. Please report this.',
+    retryable: false,
+  },
+  /*
+   * BU HATA BIR CONSTRUCTOR HATASIDIR ve `graduate()` cagiran bir kullanici
+   * onu ASLA GOREMEZ -- kontrat sifir bagimlilikla var olmayi reddeder, yani
+   * boyle bir kontrat hic dagitilmamistir. Yine de metni var, cunku kapi
+   * ABI'nin TASIYABILECEGI her adi ister ve "goremezsin" demek, bir gun
+   * gorulurse metinsiz kalmaktan iyidir.
+   */
+  ZeroDependency: {
+    code: 'rejected',
+    tone: 'error',
+    title: 'The pool layer was deployed wrong.',
+    body: 'A graduation contract refuses to exist with a zero factory, escrow, hook or pool manager, so this cannot come from a contract that is actually deployed. Seeing it means the address this page called is not what it claims to be.',
+    remedy: 'Do not send anything to this address. Please report this.',
+    retryable: false,
+  },
 
   // ---- genuinely broken; retrying cannot fix it --------------------------
   GraduationPayoutFailed: {

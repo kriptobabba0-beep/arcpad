@@ -234,7 +234,7 @@ describe('THE TRAP: a graduation error must not be reported as impossible', () =
 })
 
 describe('the four-way decision, and the one state that may not offer an action', () => {
-  const TARGET = '0x0e7771091a3471Dc12CbfE38836BaDC7bf5a98E8'
+  const TARGET = '0xaEE2DA2D21B92AfCAccF9DAD3d72254eE1630158'
   const ZERO = '0x0000000000000000000000000000000000000000'
 
   it('target 0x0 -> unarmed, and unarmed carries NO target to send to', () => {

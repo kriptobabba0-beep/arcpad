@@ -55,6 +55,12 @@ export const CURVE_GRADUATION_ERROR_NAMES = [
  */
 export const LOCKER_ERROR_ABI = [
   { type: 'error', name: 'CurveNotFromFactory', inputs: [] },
+  // DENETIM (2026-08-13): verilen curve, token'in BAGLI oldugu curve degil.
+  // Sahte bir curve kanonik havuzu odeme yapilmadan aciyordu; bkz.
+  // `ArcpadLocker`in ayni adli hatasi.
+  { type: 'error', name: 'CurveTokenMismatch', inputs: [] },
+  // Kurulum bagimliligi sifir -- deploy aninda reddedilir.
+  { type: 'error', name: 'ZeroDependency', inputs: [] },
   { type: 'error', name: 'NotPoolManager', inputs: [] },
   { type: 'error', name: 'PoolPriceMismatch', inputs: [] },
   { type: 'error', name: 'PositionNotSeeded', inputs: [] },

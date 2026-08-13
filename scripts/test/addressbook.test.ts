@@ -22,8 +22,8 @@ import { REPO_ROOT } from '../../packages/shared/src/profiles'
 const CHAIN_ESCROW = getAddress('0xeed4431ead3e27f16d97f677a9c4c1a963df8dc6')
 const CHAIN_ESCROW_INITCODE = '0xd99a4f910483ee8e40e4898fee5ef732462b55888427cd00c89697b0bff435e8'
 
-const CHAIN_ROUTER = getAddress('0x6d9f42706c7e7bf3d2ad3123ca7397da6f0bb7cd')
-const CHAIN_ROUTER_INITCODE = '0x7881b11cfa16440a113a1311bc091f041764f4a0d8b240ec03a91bb5d78af8eb'
+const CHAIN_ROUTER = getAddress('0x7496950e09260e1aa7d8785edc46f7e87d25eb30')
+const CHAIN_ROUTER_INITCODE = '0x171fbf38f4cc2fd50ccb9ccea85bd2e56e503c1d37a4ad059cdb0febf87a7e9b'
 
 const previousBook = (over: Record<string, unknown> = {}) => ({
   feeEscrow: CHAIN_ESCROW,
