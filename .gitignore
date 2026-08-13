@@ -69,3 +69,12 @@ __pycache__/
 
 # Browser artefacts from the playwright MCP server
 .playwright-mcp/
+
+# Calisma sirasinda alinan ekran goruntuleri ve ajan dizinleri.
+# Bunlar bir kez bakilip atilan seyler; depoya girerlerse klonu sisirir ve
+# hicbir incelemede okunmazlar.
+*.png
+semboller/
+.agents/
+.claude/
+skills-lock.json
