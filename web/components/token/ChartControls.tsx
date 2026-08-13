@@ -98,6 +98,41 @@ export function TimeframePicker({
 }
 
 /**
+ * MUM / CIZGI.
+ *
+ * Iki sekil AYNI VERIYI okur; secim yalnizca o verinin nasil cizildigidir.
+ * Mum dort sayi (acilis/yuksek/dusuk/kapanis) gosterir ve islem goren bir
+ * tokende dogru secimdir; cizgi TEK sayi (kapanis) gosterir ve az islemli bir
+ * tokende daha okunakli, cunku orada mumlarin coğu tek islemliktir ve grafik
+ * bir dizi ince cubuga donusur.
+ *
+ * Secim ADRESTE tutulur (`?shape=line`), bir istemci durumunda degil: baglanti
+ * paylasilabilir olmali ve `LiveRefresh`in on saniyelik yenilemesi secimi
+ * silmemeli.
+ */
+export function ShapePicker({
+  active,
+  params,
+}: {
+  active: 'candles' | 'line'
+  params: Readonly<Record<string, string | undefined>>
+}) {
+  const other = active === 'candles' ? 'line' : 'candles'
+  return (
+    <Link
+      href={hrefWith(params, { shape: other })}
+      scroll={false}
+      aria-label={`Switch to ${other === 'line' ? 'line' : 'candlestick'} chart`}
+      className="inline-flex shrink-0 items-center gap-1.5 rounded-input border border-border bg-surface-2 px-2.5 py-1.5 text-[12px] leading-none text-text transition-colors duration-150 hover:border-white/20"
+      data-testid="shape-picker"
+    >
+      <span aria-hidden="true">{active === 'candles' ? '▦' : '∿'}</span>
+      {active === 'candles' ? 'Candles' : 'Line'}
+    </Link>
+  )
+}
+
+/**
  * FDV / Fiyat.
  *
  * IKISININ MUMLARI AYNI SEKILDEDIR ve bu bir tesaduf degil: fiyat, market

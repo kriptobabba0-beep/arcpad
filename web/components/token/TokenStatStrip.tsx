@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { formatPriceWeiPerToken, formatUsdcCompact } from '@arcpad/shared/browser'
+import { LiveNumber } from '@/components/ui/LiveNumber'
 
 /**
  * ============================================================================
@@ -13,6 +13,12 @@ import { formatPriceWeiPerToken, formatUsdcCompact } from '@arcpad/shared/browse
  * AYIRICI `border-l`, BOSLUK DEGIL. Bes sayiyi yalnizca bosluklarla ayirmak,
  * dar ekranda ikisinin birbirine yapismasi demektir; cizgi hangi sayinin
  * hangi baslikla gittigini her genislikte belli eder.
+ *
+ * BES SAYININ BESI DE SAYARAK DEGISIR (`LiveNumber`). Bu serit `LiveRefresh`
+ * ile on saniyede bir yenilenir ve bir islem gectiginde FDV, fiyat, hacim,
+ * likidite ve holder sayisi AYNI ANDA siçrardi. Sayarak gecmek, degisenin
+ * hangisi oldugunu ve hangi yone gittigini gorunur kilar -- ve bu sayfada
+ * "az once ne oldu" sorusunun tek cevabi odur.
  *
  * BILINMEYEN BIR DEGER "—" YAZAR, SIFIR YAZMAZ. Bir sayfanin "0 holder"
  * demesi ile "bilmiyoruz" demesi ayni sey degildir, ve indexer dustugunde
@@ -45,7 +51,9 @@ export function TokenStatStrip({
       className="grid grid-cols-2 gap-y-5 sm:grid-cols-3 lg:grid-cols-5"
     >
       <Cell label="FDV">
-        <Value>{formatUsdcCompact(marketCapWei)}</Value>
+        <Value>
+          <LiveNumber value={marketCapWei} format="usdc" />
+        </Value>
         {changePercent === null ? null : <Change percent={changePercent} />}
       </Cell>
 
@@ -54,11 +62,11 @@ export function TokenStatStrip({
           {/*
             FIYAT KISALTILMAZ ve sifir dizisi SIKISTIRILIR: bir memecoin'in
             fiyati 0.00000452 olabilir ve iki ondalikli bir hucre hicbir sey
-            soylemez. `formatPriceWeiPerToken` bu deponun sifir-alt-simge
-            bicimini (0.0(7)5878) zaten tasiyor -- ikinci bir bicim yazmak,
-            ayni sayinin iki sayfada iki turlu gorunmesi demek olurdu.
+            soylemez. `price` bicimi bu deponun sifir-alt-simge gosterimini
+            (0.0(7)5878) tasiyor -- ikinci bir bicim yazmak, ayni sayinin iki
+            sayfada iki turlu gorunmesi demek olurdu.
           */}
-          ${formatPriceWeiPerToken(priceWeiPerToken)}
+          <LiveNumber value={priceWeiPerToken} format="price" />
         </Value>
       </Cell>
 
@@ -67,18 +75,21 @@ export function TokenStatStrip({
           {volume24hWei === null ? (
             <span className="text-muted">&mdash;</span>
           ) : (
-            formatUsdcCompact(volume24hWei)
+            <LiveNumber value={volume24hWei} format="usdc" />
           )}
         </Value>
         {sellSharePercent === null ? null : (
           <span className="text-[12px] text-negative">
-            {sellSharePercent.toFixed(1)}% sells
+            <LiveNumber value={BigInt(Math.round(sellSharePercent * 10))} format="percent1" />{' '}
+            sells
           </span>
         )}
       </Cell>
 
       <Cell label="Liquidity" divider>
-        <Value>{formatUsdcCompact(liquidityWei)}</Value>
+        <Value>
+          <LiveNumber value={liquidityWei} format="usdc" />
+        </Value>
       </Cell>
 
       <Cell label="Holders" divider>
@@ -86,7 +97,7 @@ export function TokenStatStrip({
           {holderCount === null ? (
             <span className="text-muted">&mdash;</span>
           ) : (
-            holderCount.toLocaleString('en-US')
+            <LiveNumber value={BigInt(holderCount)} format="count" />
           )}
         </Value>
       </Cell>
@@ -135,7 +146,9 @@ function Change({ percent }: { percent: number }) {
       className={`text-[12px] tabular-nums ${down ? 'text-negative' : 'text-accent'}`}
       data-testid="stat-change"
     >
-      <span aria-hidden="true">{down ? '▾' : '▴'}</span> {Math.abs(percent).toFixed(1)}%
+      <span aria-hidden="true">{down ? '▾' : '▴'}</span>{' '}
+      {/* ISARETLI gecilir; bkz. `percent1`. Ok isareti tasir, metin tasimaz. */}
+      <LiveNumber value={BigInt(Math.round(percent * 10))} format="percent1" />
     </span>
   )
 }

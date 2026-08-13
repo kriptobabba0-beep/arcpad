@@ -117,7 +117,7 @@ describe('each tab reaches its own router entrypoint', () => {
     const plan = t.onSubmit.mock.calls[0]?.[0] as PoolPlan
     expect(plan.action).toBe('buyExactOut')
     expect(plan.args[1]).toBe(17n * 10n ** 18n)
-    expect(plan.args[2]).toBe(1_010_000n)
+    expect(plan.args[2]).toBe(1_025_000n)
   })
 
   it('Sell sends sellExactIn with a USDC floor', async () => {
@@ -129,7 +129,7 @@ describe('each tab reaches its own router entrypoint', () => {
     const plan = t.onSubmit.mock.calls[0]?.[0] as PoolPlan
     expect(plan.action).toBe('sellExactIn')
     expect(plan.args[1]).toBe(500n * 10n ** 18n)
-    expect(plan.args[2]).toBe(990_000n)
+    expect(plan.args[2]).toBe(975_000n)
   })
 
   it('the SELL quote line reads the OUTPUT leg, in USDC', async () => {
@@ -141,7 +141,7 @@ describe('each tab reaches its own router entrypoint', () => {
     await t.user.click(t.tab(/^Sell$/))
     await t.user.type(t.field(), '500')
     expect(t.q.getByTestId('pool-quote-amount').textContent).toBe('1.000000 USDC')
-    expect(t.q.getByTestId('pool-quote-bound').textContent).toBe('0.990000 USDC')
+    expect(t.q.getByTestId('pool-quote-bound').textContent).toBe('0.975000 USDC')
   })
 
   it('the RECEIVE quote line reads the INPUT leg, in USDC', async () => {
@@ -149,7 +149,7 @@ describe('each tab reaches its own router entrypoint', () => {
     await t.user.click(t.tab(/Receive tokens/))
     await t.user.type(t.field(), '17')
     expect(t.q.getByTestId('pool-quote-amount').textContent).toBe('1.000000 USDC')
-    expect(t.q.getByTestId('pool-quote-bound').textContent).toBe('1.010000 USDC')
+    expect(t.q.getByTestId('pool-quote-bound').textContent).toBe('1.025000 USDC')
   })
 
   it('the SPEND quote line reads the OUTPUT leg, in TOKENS', async () => {
@@ -237,9 +237,9 @@ describe('approvals are new to this product, and the panel says so up front', ()
     })
     await t.user.click(t.tab(/Receive tokens/))
     await t.user.type(t.field(), '17')
-    expect(t.q.getByTestId('approve-step-1').textContent).toContain('1.010000 USDC')
+    expect(t.q.getByTestId('approve-step-1').textContent).toContain('1.025000 USDC')
     const residual = t.q.getByTestId('approve-residual')
-    expect(residual.textContent).toContain('0.010000 USDC')
+    expect(residual.textContent).toContain('0.025000 USDC')
     expect(residual.textContent).toMatch(/stay approved/i)
   })
 
@@ -322,10 +322,10 @@ describe('what the panel shows when there is no pool -- which is every token tod
 describe('slippage and the deadline are visible, and the deadline follows the chain', () => {
   it('the default tolerance is drawn and it moves the bound', async () => {
     const t = setup()
-    expect(t.q.getByTestId('slippage-value').textContent).toBe('1%')
+    expect(t.q.getByTestId('slippage-value').textContent).toBe('2.5%')
     await t.user.type(t.field(), '1')
     // 17 tokens minus 1% -> the floor that goes on chain.
-    expect(t.q.getByTestId('pool-quote-bound').textContent).toContain('16.830000')
+    expect(t.q.getByTestId('pool-quote-bound').textContent).toContain('16.575000')
     /*
      * SLIPAJ ARTIK TEK SATIR: uc hap ve bir "Custom" kutusu yerine
      * "Auto 1% ✎". Degistirmek icin kalem acilir ve deger yazilir -- yani

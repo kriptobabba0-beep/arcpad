@@ -37,18 +37,44 @@ export function Address({
   label,
   className,
 }: AddressProps) {
-  const [copied, setCopied] = useState(false)
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
 
   useEffect(() => () => clearTimeout(timer.current), [])
 
   const onCopy = useCallback(() => {
-    void navigator.clipboard?.writeText(value).then(() => {
-      setCopied(true)
+    /*
+     * ============ `navigator.clipboard` GUVENLI BAGLAM ISTER ============
+     *
+     * OLCULDU: canli sitede kopyalama butonu HICBIR SEY yapmiyordu ve hicbir
+     * hata da vermiyordu. Sebep TLS: `navigator.clipboard` yalnizca guvenli
+     * bir baglamda (HTTPS ya da localhost) TANIMLIDIR, ve site duz HTTP'de
+     * duruyor. Eski kod `navigator.clipboard?.writeText(...)` yaziyordu --
+     * `?.` kisa devre yapip `undefined` donduruyor, `.then` hic calismiyor,
+     * kullanici bir sey olmadigini goruyor. Sessiz basarisizligin ders
+     * kitabi ornegi.
+     *
+     * Yedek yol `document.execCommand('copy')`: kullanimdan kaldirildi ama
+     * HER tarayicida calisiyor ve guvenli baglam ISTEMIYOR. TLS geldiginde
+     * ust dal devreye girer ve bu dal hic kullanilmaz.
+     */
+    const done = (ok: boolean): void => {
+      setState(ok ? 'copied' : 'failed')
       clearTimeout(timer.current)
-      timer.current = setTimeout(() => setCopied(false), 1600)
-    })
+      timer.current = setTimeout(() => setState('idle'), 1600)
+    }
+
+    if (navigator.clipboard !== undefined && window.isSecureContext) {
+      void navigator.clipboard.writeText(value).then(
+        () => done(true),
+        () => done(fallbackCopy(value)),
+      )
+      return
+    }
+    done(fallbackCopy(value))
   }, [value])
+
+  const copied = state === 'copied'
 
   const shown = shorten ? shortenAddress(value) : value
 
@@ -71,9 +97,21 @@ export function Address({
           onClick={onCopy}
           className="rounded-sm text-muted transition-colors duration-150 hover:text-text"
           aria-label={label ? `Copy ${label.toLowerCase()}` : 'Copy address'}
+          data-testid="copy-address"
         >
           <CopyGlyph copied={copied} />
         </button>
+      ) : null}
+
+      {/*
+        BASARISIZLIK SESSIZ KALMAZ. Kopyalama iki yolla da olmadiysa
+        kullanici bunu OGRENMELI -- eski hal hicbir sey soylemiyordu ve bir
+        kullanici butonun bozuk mu yoksa kendisinin mi kacirdigini bilemezdi.
+      */}
+      {state === 'failed' ? (
+        <span role="status" className="text-[11px] text-negative">
+          copy failed
+        </span>
       ) : null}
 
       {explorer ? (
@@ -140,4 +178,35 @@ function ExternalGlyph() {
       />
     </svg>
   )
+}
+
+/**
+ * Guvenli baglam olmadan kopyalama.
+ *
+ * Gizli bir `<textarea>`, secim, `execCommand('copy')`. Uc ayrinti
+ * load-bearing:
+ *   - `position: fixed` + `opacity: 0`: sayfa iOS'ta kutuya KAYMASIN.
+ *   - `readOnly`: mobilde klavye acilmasin.
+ *   - `document.body`e eklenir, cunku `execCommand` gorunur bir agac ister.
+ *
+ * Basarisizsa `false` doner ve cagiran bunu KULLANICIYA soyler -- sessizce
+ * yutmak, bu fonksiyonun var olma sebebi olan kusurun ta kendisi.
+ */
+function fallbackCopy(value: string): boolean {
+  try {
+    const area = document.createElement('textarea')
+    area.value = value
+    area.setAttribute('readonly', '')
+    area.style.position = 'fixed'
+    area.style.top = '0'
+    area.style.left = '0'
+    area.style.opacity = '0'
+    document.body.append(area)
+    area.select()
+    const ok = document.execCommand('copy')
+    area.remove()
+    return ok
+  } catch {
+    return false
+  }
 }

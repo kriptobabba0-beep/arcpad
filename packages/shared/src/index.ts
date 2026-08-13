@@ -132,6 +132,8 @@ export {
   erc20ToNative,
   formatPriceWeiPerToken,
   formatTokenAmount,
+  formatTokenCompact,
+  formatUsdcQuote,
   formatUsdc,
   formatUsdcAmount,
   formatUsdcCompact,

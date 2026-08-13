@@ -20,7 +20,7 @@ import {
   FEES,
   FRESH,
   ONE_USDC,
-  ONE_USDC_MIN_TOKENS,
+  ONE_USDC_MIN_TOKENS_AUTO,
   ONE_USDC_TOKENS,
   TESTNET_PROFILE,
   TRADER,
@@ -131,7 +131,7 @@ describe('each tab reaches its own entrypoint', () => {
     // o giris noktasinin ilk argumani token miktaridir ve `value` bir UST
     // SINIRDIR, butce degil.
     expect(plan.action).toBe('buyExactQuoteIn')
-    expect(plan.args).toEqual([ONE_USDC_MIN_TOKENS])
+    expect(plan.args).toEqual([ONE_USDC_MIN_TOKENS_AUTO])
     expect(plan.value).toBe(ONE_USDC)
   })
 
@@ -179,10 +179,16 @@ describe('each tab reaches its own entrypoint', () => {
      * ETMEYEN tek alim yolu -- butce kirpilir, kalan ayni islemde iade edilir.
      *
      * Karsit satir "yazmadigin birimi" gosterir, yani USDC modundayken orada
-     * TOKEN yazar. Tutar kutusunun kendi son eki de USDC'dir.
+     * TOKEN yazar.
+     *
+     * BIRIM ARTIK KUTUNUN ICINDE BIR SON EK DEGIL. Buyuk tutar alaninda son
+     * ek, uzun bir sayi yazildiginda onu kesiyordu; yerine bir `$` onegi
+     * geldi ve odenen varligin tam adi `Pay with` satirinda duruyor. Kapi bu
+     * yuzden IKISINI birden sayiyor: kutuda isaret, satirda ad.
      */
     expect(t.q.getByTestId('flip-unit').textContent).toMatch(/DIFF/)
-    expect(t.q.getByTestId('amount-card').textContent).toMatch(/USDC/)
+    expect(t.q.getByTestId('amount-card').textContent).toMatch(/\$/)
+    expect(t.q.getByText('Pay with').parentElement?.textContent).toMatch(/USDC/)
     // Gerekce artik `Details`in altinda -- panelde her sey ayni anda
     // gorunurse kullanici hicbirini okumaz. Ama SILINMEDI.
     expect(t.q.getByTestId('tab-rationale').textContent).toMatch(

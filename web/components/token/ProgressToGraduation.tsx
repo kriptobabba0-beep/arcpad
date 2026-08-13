@@ -1,4 +1,5 @@
 import { Money } from '@/components/ui/Money'
+import { LiveNumber } from '@/components/ui/LiveNumber'
 
 /**
  * PAYI DA PAYDASI DA YAZILI.
@@ -24,13 +25,18 @@ export function ProgressToGraduation({
   raisedWei: bigint
   targetWei: bigint
 }) {
-  const percent = (Math.round(ppm / 1_000) / 10).toFixed(1)
+  /*
+   * ONDA BIR YUZDE, BIR TAM SAYI OLARAK. `LiveNumber` aritmetigi `bigint`
+   * uzerinde yapar. `ppm` MILYONDA BIR: yuzde `ppm / 10 000`, onda bir yuzde
+   * ise `ppm / 1 000` (`ppm=253000` -> `253` -> `25.3%`).
+   */
+  const tenths = BigInt(Math.round(ppm / 1_000))
 
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between gap-3">
         <p className="text-sm">
-          <span className="tabular-nums font-medium">{percent}%</span>{' '}
+          <LiveNumber value={tenths} format="percent1" className="font-medium" />{' '}
           <span className="text-muted">to graduation</span>
         </p>
         <p className="text-[13px] text-muted">
@@ -48,7 +54,7 @@ export function ProgressToGraduation({
         role="progressbar"
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuenow={Number(percent)}
+        aria-valuenow={Number(tenths) / 10}
         aria-label="Progress to graduation"
         className="h-1.5 overflow-hidden rounded-pill bg-white/8"
       >

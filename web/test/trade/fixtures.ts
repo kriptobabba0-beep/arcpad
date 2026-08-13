@@ -88,8 +88,19 @@ export const ONE_USDC_PROTOCOL_FEE = 9_382_716_049_382_717n
 export const ONE_USDC_CREATOR_FEE = 2_962_962_962_962_963n
 /** `floor((net-1)·T/(V+net-1))`. `packages/shared/test/curve.test.ts`'te sabit. */
 export const ONE_USDC_TOKENS = 200_723_953_120_761_740_526_324_105n
-/** `floor(tokens × 9900 / 10_000)`, %1 slipaj. */
+/** `floor(tokens × 9900 / 10_000)`, %1 slipaj -- model testinin ACIKCA gectigi. */
 export const ONE_USDC_MIN_TOKENS = 198_716_713_589_554_123_121_060_863n
+/**
+ * `floor(tokens × 9750 / 10_000)`, %2.5 slipaj -- panelin VARSAYILANI
+ * (`DEFAULT_SLIP_BPS`).
+ *
+ * IKISI AYRI SABIT, ve olmasi gereken de bu: model testi toleransi acikca
+ * gecer (bir formul dogrulanir), panel testi ise HICBIR SEY gecmez ve
+ * varsayilanin ne oldugunu olcer. Tek sabit olsaydi varsayilan degistiginde
+ * formul testi de sessizce yeni degere uyarlanir, yani varsayilani koruyan
+ * kapi kalmazdi.
+ */
+export const ONE_USDC_MIN_TOKENS_AUTO = 195_705_854_292_742_697_013_166_002n
 
 /** `CLIMBED`'in fiyati. Elle turetildi: `mulDiv(vQ, 1e18, vT)`. */
 export const CLIMBED_PRICE_WEI = 6_052_733_351n

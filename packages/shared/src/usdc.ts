@@ -294,3 +294,75 @@ export function formatUsdc(native: bigint, opts?: { maxFractionDigits?: number }
   const asNumber = Number(whole) + Number(fraction) / Number(NATIVE_SCALE)
   return formatterFor(maxFractionDigits).format(asNumber)
 }
+
+/**
+ * ============================================================================
+ *  KISA TOKEN MIKTARI: `11.00M`, `20.0K`, `848.57M`, `654`
+ * ============================================================================
+ *
+ * `formatTokenAmount` ALTI ONDALIK yazar ve bir BAKIYE icin dogrudur -- bir
+ * kullanici tam olarak neye sahip oldugunu gorebilmeli. Bir KOTA satirinda
+ * ("su kadar alacaksin") ayni bicim gorsel kirlilik uretiyor:
+ *
+ *     ~ 11,000,000.000000 LOCKED     <- alti sifir hicbir sey soylemiyor
+ *     ~ 20,000.000000 LOCKED
+ *
+ * Bu fonksiyon ayni sayilari `11.00M` ve `20.0K` yazar. Kayip ondalik bilincli:
+ * bir kota ZATEN yaklasiktir (satirin basinda `~` var) ve zincire giden sey bu
+ * metin degil `minTokensOut` argumanidir. TAM deger islem tablosunda durur.
+ *
+ * DORT ANLAMLI BASAMAK, `formatUsdcCompact` ile AYNI kural: kolon genisligi
+ * launch ne kadar buyurse buyusun sabit kalir.
+ *
+ * BINDEN KUCUKLER TAM SAYI: `654`, `41`. Ondalik eklemek onlari bir OLCUM gibi
+ * gosterirdi; bir token adedi bir sayimdir.
+ */
+export function formatTokenCompact(tok: bigint): string {
+  if (tok < 0n) throw new RangeError('formatTokenCompact: token amount cannot be negative')
+  const whole = tok / NATIVE_SCALE
+  for (const { suffix, threshold } of COMPACT_UNITS) {
+    if (whole < threshold) continue
+    /*
+     * DORT ANLAMLI BASAMAK -- `formatUsdcCompact` ile AYNI kural.
+     *
+     * Mantis [1, 1000) araliginda yasar; noktanin solunda kac basamak varsa
+     * sagina o kadar az dusulur (1.235M / 11.00M / 111.0M). Ikinci bir kural
+     * yazmak, ayni sayfada bir tutarin ve bir token adedinin farkli
+     * cozunurlukte gorunmesi demek olurdu.
+     */
+    const mantissa = whole / threshold
+    const decimals = mantissa < 10n ? 3 : mantissa < 100n ? 2 : 1
+    const scaled = (whole * 10n ** BigInt(decimals)) / threshold
+    return `${renderFixed(scaled, decimals)}${suffix}`
+  }
+  /*
+   * BINDEN AZI KISALTILMAZ. `999` -> `0.99K` bir sayiyi okunmaz yapardi, ve
+   * bir tokenden azi (`0.5`) `0.0K` olarak SIFIR gorunurdu -- kullanicinin
+   * elinde duran seyi yok saymak.
+   */
+  if (whole > 0n) return whole.toLocaleString('en-US')
+  return formatTokenAmount(tok)
+}
+
+/**
+ * KOTA SATIRLARI ICIN USDC: gereksiz sifirlar YOK.
+ *
+ * `formatUsdcAmount(..., { maxFractionDigits: 6 })` bir BAKIYE icin dogrudur.
+ * Bir "You pay" satirinda ise `5,000.000000 USDC` uretiyor ve o alti sifir
+ * hicbir sey soylemiyor -- kullanicinin sordugu sey "ne kadar odeyecegim",
+ * cevabi "bes bin".
+ *
+ * ONDALIK, BUYUKLUGE GORE: bir dolarin altinda alti basamak (0.002569 gercek
+ * bir tutardir), ustunde iki (5,000.00). Sondaki sifirlar atilir, yani
+ * `5,000` ve `0.25` cikar -- ama `5,000.5` de `5,000.50` degil `5,000.5`
+ * olur, cunku bu bir fiyat etiketi degil bir miktar.
+ *
+ * YUVARLAMA YONU CAGIRANDA KALIR: "odeyeceksin" YUKARI, "alacaksin" ASAGI.
+ * Bu deponun en eski kurali ve bir kisayol icin bozulmaz.
+ */
+export function formatUsdcQuote(native: bigint, rounding: Rounding): string {
+  if (native < 0n) throw new RangeError('formatUsdcQuote: amount cannot be negative')
+  const decimals = native < NATIVE_SCALE ? 6 : 2
+  const text = formatUsdcAmount(native, { rounding, maxFractionDigits: decimals })
+  return text.includes('.') ? text.replace(/0+$/, '').replace(/\.$/, '') : text
+}

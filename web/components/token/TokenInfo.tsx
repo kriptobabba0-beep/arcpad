@@ -34,7 +34,12 @@ export function TokenInfo({
 
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
         <Field label="Launched by">
-          <Address value={creator} />
+          {/*
+            KOPYALANABILIR. Bir launchpad'de "bu adresi tanıyor muyum" sorusu
+            bir arama gerektirir ve arama kopyalamayla baslar; kisaltilmis bir
+            adresi elle yazmak hata uretir.
+          */}
+          <Address value={creator} copy label="Creator address" />
         </Field>
 
         <Field label="X account">
@@ -60,7 +65,7 @@ export function TokenInfo({
         </Field>
 
         <Field label="Contract address">
-          <Address value={token} copy />
+          <Address value={token} copy label="Contract address" />
         </Field>
       </div>
 

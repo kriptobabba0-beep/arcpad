@@ -27,10 +27,14 @@ import { TokenPriceChart } from '@/components/token/PriceHistoryChart'
 import { LifecycleNotice } from '@/components/token/LifecycleNotice'
 import { ProgressToGraduation } from '@/components/token/ProgressToGraduation'
 import { ActivityTabs, tabOf } from '@/components/token/ActivityTabs'
-import { CandleSummary, type ChartMetric } from '@/components/token/CandleChart'
-import { InteractiveChart } from '@/components/token/InteractiveChart'
+import {
+  PriceChart,
+  type ChartMetric,
+  type ChartShape,
+} from '@/components/token/PriceChart'
 import {
   MetricPicker,
+  ShapePicker,
   TimeframePicker,
   timeframeKey,
   timeframeSeconds,
@@ -150,6 +154,7 @@ async function IndexedToken({
    */
   const tf = timeframeKey(one(search['tf']))
   const metric: ChartMetric = one(search['metric']) === 'price' ? 'price' : 'fdv'
+  const shape: ChartShape = one(search['shape']) === 'line' ? 'line' : 'candles'
   const tab = tabOf(one(search['tab']))
   const pageParam = Number(one(search['p']) ?? '1')
   const page = Number.isInteger(pageParam) && pageParam >= 1 ? Math.min(pageParam, 10_000) : 1
@@ -222,10 +227,11 @@ async function IndexedToken({
   const chartParams: Record<string, string | undefined> = {
     metric,
     tf,
+    ...(shape === 'candles' ? {} : { shape }),
     ...(tab === 'activity' ? {} : { tab }),
   }
   /** Sekme baglantilarinin koruyacagi parametreler. */
-  const tableQuery: Record<string, string> = { tf, metric }
+  const tableQuery: Record<string, string> = { tf, metric, shape }
 
   return (
     <div className="flex flex-col gap-8">
@@ -239,7 +245,9 @@ async function IndexedToken({
             {lifecycle.kind === 'graduated' ? (
               <IdentityBadge tone="accent">Graduated</IdentityBadge>
             ) : lifecycle.kind === 'complete' ? (
-              <IdentityBadge tone="warn">Curve complete</IdentityBadge>
+              // MAVI, KIRMIZI DEGIL: satis arzinin tukenmesi bir ariza degil
+              // bir asama -- bkz. `IdentityBadge`in `blue` tonu.
+              <IdentityBadge tone="blue">Curve complete</IdentityBadge>
             ) : (
               <IdentityBadge tone="accent">On the curve</IdentityBadge>
             )}
@@ -259,31 +267,18 @@ async function IndexedToken({
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex min-w-0 flex-col gap-8">
-          <section className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <CandleSummary candle={candleRows[candleRows.length - 1]} />
+          <PriceChart
+            candles={candleRows}
+            metric={metric}
+            shape={shape}
+            controls={
               <div className="flex items-center gap-2">
+                <ShapePicker active={shape} params={chartParams} />
                 <MetricPicker active={metric} params={chartParams} />
                 <TimeframePicker active={tf} params={chartParams} />
               </div>
-            </div>
-            <InteractiveChart
-              candles={candleRows}
-              metric={metric}
-              /*
-                KESIKLI CIZGI SU ANKI DEGERI GOSTERIR ve olcunun BIRIMINDE
-                olmak zorundadir. Fiyat, market cap'in 1e9'da biri; grafigin
-                ekseni market cap ile olcekli oldugu icin fiyat modunda deger
-                geri carpilir. Carpmasaydik cizgi grafigin disina duserdi.
-              */
-              currentWei={
-                metric === 'fdv'
-                  ? overview.marketCapWei
-                  : overview.priceWeiPerTok * 1_000_000_000n
-              }
-              bucketSeconds={timeframeSeconds(tf)}
-            />
-          </section>
+            }
+          />
 
           <VolumePanel split={windowSplit} timeframe={tf} params={chartParams} />
 

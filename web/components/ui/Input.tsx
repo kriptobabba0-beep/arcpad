@@ -12,6 +12,15 @@ export type InputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'id'> & {
   /** Sag ic kenardaki birim/kisayol (`USDC`, `MAX`). */
   suffix?: ReactNode
   /**
+   * CERCEVESIZ: kutu, kenarlik ve zemin YOK.
+   *
+   * Islem panelindeki tutar alani icin. Orada alanin KENDISI zaten bir
+   * yuzeyin (`AmountCard`) icinde duruyor ve ikinci bir cerceve, sayiyi dar
+   * bir kutuya hapsedip uzun bir rakamin kesilmesine yol aciyordu. Referans
+   * tasarimda da sayi dogrudan kartin uzerinde durur.
+   */
+  bare?: boolean
+  /**
    * Sol ic kenardaki sabit parca (`x.com/`, `t.me/`).
    *
    * KULLANICIYA TAM URL YAZDIRMAK GEREKSIZ BIR IS. Sabit kismi ekranda
@@ -36,6 +45,7 @@ export function Input({
   error,
   suffix,
   prefix,
+  bare = false,
   className,
   ...rest
 }: InputProps) {
@@ -55,17 +65,22 @@ export function Input({
 
       <div
         className={cx(
-          'flex items-center gap-2 rounded-input border bg-surface-2 px-3',
-          'transition-colors duration-150 focus-within:border-white/25',
-          error ? 'border-negative/60' : 'border-border',
+          'flex items-center gap-2',
+          bare
+            ? 'min-w-0'
+            : cx(
+                'rounded-input border bg-surface-2 px-3',
+                'transition-colors duration-150 focus-within:border-white/25',
+                error ? 'border-negative/60' : 'border-border',
+              ),
         )}
       >
         {prefix ? <span className="shrink-0 select-none text-sm text-muted">{prefix}</span> : null}
         <input
           id={id}
           className={cx(
-            'h-10 min-w-0 flex-1 bg-transparent text-sm text-text outline-none',
-            'placeholder:text-muted',
+            'min-w-0 flex-1 bg-transparent text-text outline-none placeholder:text-muted',
+            bare ? '' : 'h-10 text-sm',
             className,
           )}
           {...(describedBy ? { 'aria-describedby': describedBy } : {})}

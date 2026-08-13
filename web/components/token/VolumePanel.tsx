@@ -1,4 +1,4 @@
-import { formatUsdcCompact } from '@arcpad/shared/browser'
+import { LiveNumber } from '@/components/ui/LiveNumber'
 import type { VolumeSplit } from '@/lib/read'
 import { TimeframePicker, type TimeframeKey } from './ChartControls'
 
@@ -45,7 +45,7 @@ export function VolumePanel({
       </div>
 
       <p className="text-[26px] font-medium leading-none tabular-nums" data-testid="volume-total">
-        {formatUsdcCompact(total)}
+        <LiveNumber value={total} format="usdc" />
       </p>
 
       {/*
@@ -112,7 +112,7 @@ function Side({
   return (
     <div className={`flex flex-col gap-1 ${align === 'right' ? 'items-end text-right' : ''}`}>
       <span className={`text-[13px] font-medium tabular-nums ${colour}`}>
-        {count.toLocaleString('en-US')} {word}
+        <LiveNumber value={BigInt(count)} format="count" /> {word}
       </span>
       <span className="flex items-center gap-1.5 text-[12px] text-muted tabular-nums">
         {/*
@@ -122,17 +122,17 @@ function Side({
         */}
         <span aria-hidden="true">&#128100;</span>
         <span className="sr-only">wallets:</span>
-        {wallets.toLocaleString('en-US')}
+        <LiveNumber value={BigInt(wallets)} format="count" />
         <span aria-hidden="true" className="text-white/20">
           ·
         </span>
-        {formatUsdcCompact(valueWei)}
+        <LiveNumber value={valueWei} format="usdc" />
         {percent === null ? null : (
           <>
             <span aria-hidden="true" className="text-white/20">
               ·
             </span>
-            {percent.toFixed(1)}%
+            <LiveNumber value={BigInt(Math.round(percent * 10))} format="percent1" />
           </>
         )}
       </span>

@@ -78,13 +78,22 @@ export function IdentityBadge({
   tone = 'info',
   children,
 }: {
-  tone?: 'info' | 'accent' | 'warn'
+  tone?: 'info' | 'accent' | 'warn' | 'blue'
   children: React.ReactNode
 }) {
   const palette = {
     info: 'border-white/12 bg-white/6 text-muted',
     accent: 'border-accent/30 bg-accent/12 text-accent',
     warn: 'border-negative/30 bg-negative/12 text-negative',
+    /*
+     * MAVI: "curve complete" bir ARIZA DEGIL, bir ASAMA.
+     *
+     * Kirmiziydi ve yanlis seyi soyluyordu: kirmizi bu arayuzde "bir sey
+     * ters gitti" demek (reddedilen islem, satis yonu, dar slipaj uyarisi).
+     * Satis arzinin tukenmesi ise bir launch'in BASARISI. Mavi notrdur ve
+     * "durum degisti" der.
+     */
+    blue: 'border-[#3adcff]/30 bg-[#3adcff]/12 text-[#3adcff]',
   }[tone]
 
   return (

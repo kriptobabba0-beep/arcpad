@@ -1,6 +1,10 @@
 'use client'
 
-import { formatUsdcCompact } from '@arcpad/shared/browser'
+import {
+  formatPriceWeiPerToken,
+  formatTokenCompact,
+  formatUsdcCompact,
+} from '@arcpad/shared/browser'
 import { useEffect, useRef, useState } from 'react'
 import { cx } from './cx'
 
@@ -50,6 +54,34 @@ const FORMATS = {
   usdc: (value: bigint) => formatUsdcCompact(value),
   /** `1,234` -- gruplanmis tam sayi. Locale ACIKCA `en-US` (kok eslint kurali). */
   count: (value: bigint) => value.toLocaleString('en-US'),
+  /**
+   * `$0.0(7)5878` -- token basina fiyat, KISALTILMADAN.
+   *
+   * Bir memecoin'in fiyati 0.00000452 olabilir ve `usdc` bicimi onu `$0.00`
+   * yapardi. Sifir-alt-simge gosterimi bu deponun tek fiyat bicimidir.
+   */
+  price: (value: bigint) => `$${formatPriceWeiPerToken(value)}`,
+  /**
+   * `11.00M` -- token adedi. Para DEGIL, bu yuzden `$` yok.
+   */
+  token: (value: bigint) => formatTokenCompact(value),
+  /**
+   * `12.3%` -- ONDA BIR YUZDE tasiyan bir tam sayi bekler (`123` -> `12.3%`).
+   *
+   * Yuzde bir kesirdir ve bu bileşenin aritmetigi tamamen `bigint`; kesri
+   * ondaliga tasiyip burada geri bolmek, ara degerleri `number`a cevirmeden
+   * animasyon yapmanin tek yolu. Cagiran taraf `Math.round(p * 10)` gecer.
+   *
+   * ISARET BASILMAZ, AMA DEGERDE TASINIR. Cagiran taraf yonu bir okla
+   * (▴/▾) gosterir, yani metinde ayrica bir eksi olsaydi ayni sey iki kez
+   * yazilmis olurdu. Buna ragmen `value` ISARETLI gecirilmeli: `-5%`ten
+   * `-3%`e giden bir token YUKSELMISTIR, ama buyuklukler (5 -> 3) DUSER.
+   * Mutlak deger gecilseydi yon rengi tam TERSINI gosterirdi.
+   */
+  percent1: (value: bigint) => {
+    const abs = value < 0n ? -value : value
+    return `${abs / 10n}.${abs % 10n}%`
+  },
 } as const
 
 export type LiveNumberFormat = keyof typeof FORMATS
@@ -74,11 +106,23 @@ export function LiveNumber({
   const [shown, setShown] = useState(value)
   const [direction, setDirection] = useState<'up' | 'down' | null>(null)
   const previous = useRef(value)
+  /*
+   * ANIMASYON EKRANDAKI DEGERDEN BASLAR, SON HEDEFTEN DEGIL.
+   *
+   * Bir sayi 650 ms'lik gecis bitmeden yeniden degisebilir -- kullanici bir
+   * tutar yaziyorsa (1 -> 10 -> 100) ya da art arda iki islem gectiyse. Baslangic
+   * olarak son HEDEFI alsaydik, yarim kalmis gecis once o hedefe SICRAR sonra
+   * yeniden sayardi; yani en cok hareket eden sayilar en cok sicrayanlar
+   * olurdu. `shownRef` o an cizili olani tutar ve gecis kesintisiz surer.
+   */
+  const shownRef = useRef(value)
   const timer = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  shownRef.current = shown
+
   useEffect(() => {
-    const from = previous.current
-    if (from === value) return
+    const from = shownRef.current
+    if (previous.current === value) return
     previous.current = value
 
     setDirection(value > from ? 'up' : 'down')
@@ -86,6 +130,7 @@ export function LiveNumber({
     const reduced =
       typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
     if (reduced) {
+      shownRef.current = value
       setShown(value)
       return
     }
@@ -95,13 +140,16 @@ export function LiveNumber({
     timer.current = setInterval(() => {
       step += 1
       if (step >= STEPS) {
+        shownRef.current = value
         setShown(value)
         if (timer.current !== null) clearInterval(timer.current)
         timer.current = null
         return
       }
       // TAMAMEN `bigint`: bir `number`a ugramak wei olceginde yuvarlardi.
-      setShown(from + ((value - from) * BigInt(step)) / BigInt(STEPS))
+      const next = from + ((value - from) * BigInt(step)) / BigInt(STEPS)
+      shownRef.current = next
+      setShown(next)
     }, DURATION_MS / STEPS)
 
     return () => {

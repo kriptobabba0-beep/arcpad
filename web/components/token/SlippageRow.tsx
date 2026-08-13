@@ -27,7 +27,15 @@ import { formatSlipBps } from './tradeModel'
  * sikligi degil, zincire giden `minTokensOut` / `maxQuoteIn` / `minQuoteOut`
  * argumanidir.
  */
-export const DEFAULT_SLIP_BPS = 100
+/**
+ * VARSAYILAN %2.5.
+ *
+ * %1'di. Bir bonding curve'de fiyat HER islemle hareket eder ve rezervler iki
+ * saniyede bir yenilenir; %1, kullanicinin gordugu kotayla imzaladigi an
+ * arasinda gecen birkac blokta bile dar kalip islemi gereksiz yere
+ * reddettiriyor. Referans tasarimin varsayilani da %2.5.
+ */
+export const DEFAULT_SLIP_BPS = 250
 /** Uzerinde uyarilir. Planlayicinin ust siniri ayrica `10_000`. */
 export const HIGH_SLIP_BPS = 500
 
@@ -87,11 +95,34 @@ export function SlippageRow({
           </span>
         ) : (
           <span className="inline-flex items-center gap-2">
+            {/*
+              ============ AUTO'YA DONUS YOLU HEP EKRANDA ============
+
+              Onceki hal: `auto` iken bir rozet, degilse HICBIR SEY. Yani
+              kalemle bir sayi girildikten sonra Auto'ya donmenin bir yolu
+              YOKTU -- kullanici sayfayi yenilemek zorunda kaliyordu. Bir
+              modun cikisi, girisi kadar gorunur olmali.
+
+              Auto'dayken bir ETIKET (basilacak bir sey yok, zaten oradasin),
+              degilken bir DUGME.
+            */}
             {auto ? (
-              <span className="rounded-pill bg-white/8 px-2 py-0.5 text-[11px] leading-none text-muted">
+              <span
+                className="rounded-pill bg-white/8 px-2 py-0.5 text-[11px] leading-none text-muted"
+                data-testid="slippage-auto-badge"
+              >
                 Auto
               </span>
-            ) : null}
+            ) : (
+              <button
+                type="button"
+                onClick={() => onChange(DEFAULT_SLIP_BPS, true)}
+                className="rounded-pill border border-border px-2 py-0.5 text-[11px] leading-none text-muted transition-colors hover:border-white/25 hover:text-text"
+                data-testid="slippage-auto-reset"
+              >
+                Auto
+              </button>
+            )}
             <span className="text-[13px] tabular-nums" data-testid="slippage-value">
               {formatSlipBps(value)}
             </span>

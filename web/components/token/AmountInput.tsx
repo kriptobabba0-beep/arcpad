@@ -28,6 +28,8 @@ export type AmountInputProps = {
    * bir ekran okuyucu icin alanin ne oldugu hala soylenmeli.
    */
   readonly hideLabel?: boolean
+  /** Tutarin onunde duran sabit isaret -- alimda `$`. */
+  readonly prefix?: string
 }
 
 /**
@@ -52,6 +54,7 @@ export function AmountInput({
   disabled = false,
   large = false,
   hideLabel = false,
+  prefix,
 }: AmountInputProps) {
   return (
     <Input
@@ -64,8 +67,30 @@ export function AmountInput({
       spellCheck={false}
       placeholder="0.0"
       disabled={disabled}
-      suffix={unit}
-      {...(large ? { className: 'text-[30px] font-medium leading-none' } : {})}
+      {...(large ? { bare: true } : { suffix: unit })}
+      {...(prefix === undefined ? {} : { prefix })}
+      {...(large
+        ? {
+            /*
+              ============ TUTAR ALANI KESILMEZ ============
+
+              OLCULDU: dort basamaktan uzun bir sayi yaziliyor ve gorunen kismi
+              kesiliyordu -- kullanici ne yazdigini goremiyor. Iki sebebi vardi
+              ve ikisi de duzeltildi:
+
+                - Alan, yanindaki birim eki ve token hapiyla ayni satirda
+                  SIKISIYORDU. `w-full min-w-0` ile artik satirin tamamini
+                  alir; hap `shrink-0` ile kendi genisliginde kalir.
+                - 30px'te "5000000" bu genislige sigmiyor. Boyut `text-[26px]`
+                  ve `sm:text-[30px]`: dar ekranda daha kucuk, genis ekranda
+                  referansin boyutu.
+
+              `truncate` KONMAZ: bir tutar alaninda kirpma, kullanicinin
+              yazdigi seyi GIZLEMEK demektir. Sigmiyorsa kucultulur.
+            */
+            className: 'w-full min-w-0 text-[26px] font-medium leading-none sm:text-[30px]',
+          }
+        : {})}
       {...(error === undefined ? {} : { error })}
       {...(hint === undefined ? {} : { hint })}
     />

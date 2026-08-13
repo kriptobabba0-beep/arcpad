@@ -41,6 +41,18 @@ function uses(tag: string): string[] {
   return [...PAGE.matchAll(new RegExp(`<${tag}\\b[\\s\\S]*?/>`, 'g'))].map((m) => m[0])
 }
 
+/**
+ * COCUKLU bir elemani yakalar (`<Tag ...>metin</Tag>`).
+ *
+ * `uses` yalnizca kendi kendini kapatan etiketleri gorur ve rozetler oyle
+ * degil: icerikleri var. Ayri bir yardimci, cunku burada aciklik dogruluk
+ * demek -- `uses('IdentityBadge')` sessizce BOS DONER ve onun uzerine kurulu
+ * bir kapi hicbir sey olcmeden GECERDI.
+ */
+function wraps(tag: string): string[] {
+  return [...PAGE.matchAll(new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?</${tag}>`, 'g'))].map((m) => m[0])
+}
+
 describe('the venue choice is made in ONE component, rendered by BOTH branches', () => {
   it('the page renders TradeSurface twice and TradePanel never', () => {
     /*
@@ -91,33 +103,36 @@ describe('the chart: two branches, and the difference is DECLARED', () => {
    */
   it('indexlenmis dal MUM, zincir dali EGRI cizer -- ve ikisi de cizer', () => {
     /*
-     * MUMLAR ARTIK BIR SARMALAYICIDAN GECER (`InteractiveChart`): tekerlekle
-     * yakinlastirma ve surukleme ISTEMCI durumu ister, ama CIZIM sunucuda
-     * kalir -- sarmalayici yalnizca gorunen DILIMI tutar. Kapi bu yuzden
-     * sarmalayiciyi sayar; `CandleChart`i dogrudan cizen bir sayfa, sunucuda
-     * cizim kazanimini korur ama etkilesimi kaybederdi.
+     * MUMLARI ARTIK `PriceChart` CIZER -- TradingView'in `lightweight-charts`
+     * kutuphanesiyle. Elle yazilmis SVG surumler (`CandleChart`,
+     * `InteractiveChart`) silindi: her biri ayri ayri duzeltildikten sonra
+     * bile yakinlastirma, kaydirma ve imlecin altindaki degeri okuma gibi
+     * seyleri kendi basimiza yazmaya devam ediyorduk.
      */
-    expect(uses('InteractiveChart'), 'the indexed branch lost its candles').toHaveLength(1)
+    expect(uses('PriceChart'), 'the indexed branch lost its candles').toHaveLength(1)
     expect(uses('TokenPriceChart'), 'the chain-drawn branch lost its curve').toHaveLength(1)
     // Eski bilesenler geri gelmemeli: ikisi de ayni isi iki farkli bicimde
     // yapardi ve hangisinin cizildigi sayfaya gore degisirdi.
     expect(uses('CurveChart')).toHaveLength(0)
     expect(uses('PriceHistoryChart')).toHaveLength(0)
+    expect(uses('CandleChart'), 'the hand-rolled SVG chart came back').toHaveLength(0)
+    expect(uses('InteractiveChart'), 'the hand-rolled SVG chart came back').toHaveLength(0)
   })
 
-  it('mum grafigi SU ANKI degeri alir -- yoksa kesikli cizgi grafigin disinda kalir', () => {
+  it('mum grafigi olcuyu ve sekli alir -- ikisi de ADRESTEN gelir', () => {
     /*
-     * `currentWei` gecilmezse kesikli cizgi ve sagdaki etiket cizilemez;
-     * kullanici fiyati GRAFIKTE GORMEDEN islem yapar. Bileşen o degeri olcege
-     * de katiyor, yani eksik gecilmesi yalnizca bir suslemeyi degil, olcegin
-     * dogrulugunu da bozardi.
+     * `metric` gecilmezse eksen market cap yerine fiyati (ya da tersini)
+     * okuyabilir ve basliktaki OHLCV ile grafik AYRI SEYLER soylerdi.
+     * `shape` gecilmezse `?shape=line` baglantisi sessizce hicbir sey yapmaz:
+     * kullanicinin tikladigi dugme adres cubugunu degistirir ama grafik ayni
+     * kalir -- bozuk oldugu belli olmayan turden bir kusur.
      */
-    for (const use of uses('InteractiveChart')) {
-      expect(use, `a chart without currentWei: ${use}`).toMatch(/currentWei=\{/)
+    for (const use of uses('PriceChart')) {
       expect(use, `a chart without a metric: ${use}`).toMatch(/metric=\{/)
-      // Kova boyutu tarih ekseninin BICIMINI belirler; gecilmezse alti
-      // saatlik kovalar gun adiyla etiketlenir ve eksen tekrar eder.
-      expect(use, `a chart without bucketSeconds: ${use}`).toMatch(/bucketSeconds=\{/)
+      expect(use, `a chart without a shape: ${use}`).toMatch(/shape=\{/)
+      // Seciciler grafigin BASLIGINDA durur; gecilmezlerse zaman araligini
+      // degistirmenin bir yolu kalmaz.
+      expect(use, `a chart without its controls: ${use}`).toMatch(/controls=\{/)
     }
   })
 
@@ -193,5 +208,33 @@ describe('ANTI-VACUITY: the scan really reads this page', () => {
     // And `graduated` is passed at both -- the field whose absence made the
     // whole graduated branch unreachable once already.
     expect([...PAGE.matchAll(/graduated:/g)].length).toBeGreaterThanOrEqual(2)
+  })
+})
+
+/**
+ * ============================================================================
+ *  ROZET RENGI BIR ANLAM TASIR
+ * ============================================================================
+ *
+ * Kullanicinin bildirdigi kusur: "Curve complete" rozeti KIRMIZIYDI. Kirmizi
+ * bu urunde tek bir sey soyler -- bir sey ters gitti. Oysa egrinin dolmasi
+ * bir BASARI: token satis hedefine ulasmis ve havuza gecmeyi bekliyor.
+ *
+ * Kapi kaynak metnini okur, cizimi degil: renk bir SUNUM ayrintisi olsaydi
+ * burada test edilmezdi, ama bu renk bir DURUM bildiriyor ve yanlisi
+ * kullaniciyi paniklendiriyordu.
+ */
+describe('yasam dongusu rozetleri', () => {
+  it('"Curve complete" MAVI, "Graduated" ACCENT -- ikisi de uyari degil', () => {
+    const badges = wraps('IdentityBadge')
+    const complete = badges.find((b) => b.includes('Curve complete'))
+    const graduated = badges.find((b) => b.includes('Graduated'))
+
+    expect(complete, 'the Curve complete badge disappeared').toBeDefined()
+    expect(complete, 'a success state drawn as a warning').toMatch(/tone="blue"/)
+    expect(complete).not.toMatch(/tone="warn"/)
+
+    expect(graduated, 'the Graduated badge disappeared').toBeDefined()
+    expect(graduated).toMatch(/tone="accent"/)
   })
 })

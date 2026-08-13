@@ -1,5 +1,7 @@
 import Link from 'next/link'
+import type { ReactNode } from 'react'
 import { formatTokenAmount, formatUsdcCompact } from '@arcpad/shared/browser'
+import { LiveNumber } from '@/components/ui/LiveNumber'
 import type { HolderRow, TradeRow } from '@/components/read/types'
 import { Address } from '@/components/ui/Address'
 import { NumberedPager } from '@/components/explore/NumberedPager'
@@ -71,7 +73,11 @@ export function ActivityTabs({
           active={tab === 'holders'}
           // Sayi ETIKETIN ICINDE: "13,000 holders" tek bir sey soyler,
           // "Holders (13,000)" iki sey soyler ve ikincisi daha yavas okunur.
-          label={`${holderCount.toLocaleString('en-US')} holders`}
+          label={
+            <>
+              <LiveNumber value={BigInt(holderCount)} format="count" /> holders
+            </>
+          }
         />
       </nav>
 
@@ -120,7 +126,20 @@ function hrefFor(
   return `${basePath}?${params.toString()}`
 }
 
-function TabLink({ href, active, label }: { href: string; active: boolean; label: string }) {
+function TabLink({
+  href,
+  active,
+  label,
+}: {
+  href: string
+  active: boolean
+  /*
+    `ReactNode`, `string` DEGIL: holder sekmesinin etiketi bir SAYI tasiyor
+    ve o sayi `LiveNumber` ile sayarak degisiyor. Dize olsaydi sayfanin geri
+    kalaninda animasyonlu olan bir deger yalnizca burada sicrardi.
+  */
+  label: ReactNode
+}) {
   return (
     <Link
       href={href}

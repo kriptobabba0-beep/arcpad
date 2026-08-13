@@ -6,7 +6,8 @@ import {
   type CurveState,
   type FeeBps,
   formatTokenAmount,
-  formatUsdcAmount,
+  formatTokenCompact,
+  formatUsdcQuote,
   launchTokenAbi,
   planBuyExactQuoteIn,
   priceWeiPerToken,
@@ -316,8 +317,8 @@ export function TradeForm({
           ? `0 ${symbol}`
           : '0.00'
         : tab === 'spend'
-          ? `${formatTokenAmount(plan.tokens)} ${symbol}`
-          : formatUsdcAmount(plan.value, { rounding: 'up' })
+          ? `${formatTokenCompact(plan.tokens)} ${symbol}`
+          : formatUsdcQuote(plan.value, 'up')
   const label =
     tab === 'spend' ? 'Amount to spend' : tab === 'receive' ? 'Tokens to buy' : 'Tokens to sell'
 
@@ -396,6 +397,20 @@ export function TradeForm({
             hideLabel
             label={label}
             unit={unit}
+            /*
+              ============ BUYUK ALANDA BIRIM BIR ONEKTIR ============
+
+              Kucuk alanda birim bir SON EK'tir (`suffix`), ama buyuk alanda
+              son ek 30px'lik sayinin sagina yapisir ve tam da uzun bir tutar
+              yazildiginda onu disari iter -- kullanicinin sikayeti buydu.
+
+              Alimda onek `$` olur: sayinin birimi USDC ve `$` bunu TEK
+              karakterde soyler. Satista/token alimda onek YOKTUR, cunku
+              birim tokenin kendisi ve onu sagdaki hap zaten gorselle ve
+              ticker'la soyluyor. Odenen varlik ayrica `Pay with` satirinda
+              tam adiyla yazili.
+            */
+            {...(tab === 'spend' ? { prefix: '$' } : {})}
             value={text}
             onChange={setText}
             {...(parsed.ok || parsed.reason === null ? {} : { error: parsed.reason })}
@@ -422,11 +437,16 @@ export function TradeForm({
               testId="you-receive"
               value={
                 tab === 'sell' ? (
-                  <>
-                    ~ <Money native={plan.curveAmount - plan.protocolFee - plan.creatorFee} rounding="down" unit />
-                  </>
+                  /*
+                    KOTA SATIRLARINDA `formatUsdcQuote`: `5,000.000000` yerine
+                    `5,000`. Alti ondalik bir BAKIYE icin dogrudur (tam olarak
+                    neye sahipsin), bir kotada gorsel kirlilik -- ve satirin
+                    basinda zaten `~` var.
+                  */
+                  `~ ${formatUsdcQuote(plan.curveAmount - plan.protocolFee - plan.creatorFee, 'down')} USDC`
                 ) : (
-                  `~ ${formatTokenAmount(plan.tokens)} ${symbol}`
+                  // `11,000,000.000000 LOCKED` -> `11.00M LOCKED`.
+                  `~ ${formatTokenCompact(plan.tokens)} ${symbol}`
                 )
               }
             />
@@ -434,11 +454,7 @@ export function TradeForm({
               <SummaryRow
                 label="You pay"
                 testId="you-pay"
-                value={
-                  <>
-                    ~ <Money native={plan.value} rounding="up" unit />
-                  </>
-                }
+                value={`~ ${formatUsdcQuote(plan.value, 'up')} USDC`}
               />
             )}
           </div>

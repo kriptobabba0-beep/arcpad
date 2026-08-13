@@ -3,8 +3,10 @@ import {
   erc20ToNative,
   formatPriceWeiPerToken,
   formatTokenAmount,
+  formatTokenCompact,
   formatUsdc,
   formatUsdcCompact,
+  formatUsdcQuote,
   nativeToErc20,
   parseUsdcAmount,
   USDC_VIEW_SCALE,
@@ -186,5 +188,92 @@ describe('formatPriceWeiPerToken', () => {
 
   it('prints zero as zero', () => {
     expect(formatPriceWeiPerToken(0n)).toBe('0')
+  })
+})
+
+/**
+ * ============================================================================
+ *  KOTA SATIRLARININ BICIMI -- KULLANICININ SAYDIGI SIFIRLAR
+ * ============================================================================
+ *
+ * Bildirilen iki kusur ayni koktendi: alim panelinin ozet satirlari BAKIYE
+ * bicimini kullaniyordu. Bir bakiyede alti ondalik DOGRUDUR -- "tam olarak
+ * neye sahibim" sorusunun cevabi budur ve yuvarlamak yalan olurdu. Ama bir
+ * KOTA yaklasik bir sayidir; satirin basinda zaten `~` durur ve
+ * `~ 11,000,000.000000 LOCKED` okuyan kimse o alti sifirdan bir sey ogrenmez.
+ */
+describe('formatTokenCompact', () => {
+  const TOK = 10n ** 18n
+
+  it('MILYONLARI `M`, BINLERI `K` yapar -- bildirilen iki ornek', () => {
+    expect(formatTokenCompact(11_000_000n * TOK)).toBe('11.00M')
+    expect(formatTokenCompact(20_000n * TOK)).toBe('20.00K')
+  })
+
+  it('DORT ANLAMLI BASAMAK -- `formatUsdcCompact` ile AYNI kural', () => {
+    /*
+     * Ikinci bir kural yazilsaydi ayni sayfada bir tutar ve bir token adedi
+     * farkli cozunurlukte gorunurdu. Nokta soldan sagi izler.
+     *
+     * YUVARLAMA ASAGI: bu sayi bir KOTA (`You receive ~ X`) ve yukari
+     * yuvarlamak, kullaniciya alamayacagi bir adedi vaat etmek olurdu.
+     */
+    expect(formatTokenCompact(1_234_567n * TOK)).toBe('1.234M')
+    expect(formatTokenCompact(11_000_000n * TOK)).toBe('11.00M')
+    expect(formatTokenCompact(111_000_000n * TOK)).toBe('111.0M')
+    expect(formatUsdcCompact(1_234_567n * 10n ** 18n)).toBe('$1.234M')
+  })
+
+  it('BINDEN AZI KISALTILMAZ -- `999` -> `0.99K` okunmaz olurdu', () => {
+    expect(formatTokenCompact(999n * TOK)).toBe('999')
+    // Milyar da kisalir; bir memecoin arzi buraya kolayca ulasir.
+    expect(formatTokenCompact(2_500_000_000n * TOK)).toBe('2.500B')
+  })
+
+  it('BIR TOKENDEN AZI KISALTILMAZ -- orada her basamak anlamli', () => {
+    /*
+     * `0.5` tokeni `0.0K` yapmak, kullanicinin elindeki seyi SIFIR gostermek
+     * olurdu. Tam sayi kismi sifirsa tam bicime dusulur.
+     */
+    expect(formatTokenCompact(TOK / 2n)).toContain('0.5')
+  })
+
+  it('NEGATIF BIR TOKEN ADEDI YOKTUR -- sessizce bicimlenmez, ATAR', () => {
+    expect(() => formatTokenCompact(-1n)).toThrow(RangeError)
+  })
+})
+
+describe('formatUsdcQuote', () => {
+  const USDC = 10n ** 18n
+
+  it('KOTADA IKI ONDALIK, ve gereksiz sifirlar ATILIR', () => {
+    // Bildirilen kusur: `~ 5,000.000000 USDC`.
+    expect(formatUsdcQuote(5_000n * USDC, 'up')).toBe('5,000')
+    expect(formatUsdcQuote(1_500_000_000_000_000_000n, 'up')).toBe('1.5')
+    expect(formatUsdcQuote(1_250_000_000_000_000_000n, 'up')).toBe('1.25')
+  })
+
+  it('BIR USDC`DEN AZI ALTI ONDALIK TASIR -- yoksa kucuk kota `0` gorunurdu', () => {
+    /*
+     * Iki ondalik bir esik degil bir OLCEK secimi: 0.004 USDC`lik bir satis
+     * `0.00` yazsaydi kullanici hicbir sey almadigini sanirdi. USDC zaten alti
+     * ondalikli; kuculdukce cozunurluk artar.
+     */
+    expect(formatUsdcQuote(4_000_000_000_000_000n, 'down')).toBe('0.004')
+    expect(formatUsdcQuote(0n, 'down')).toBe('0')
+  })
+
+  it('YUVARLAMA YONU CAGIRANIN -- odenen YUKARI, alinan ASAGI', () => {
+    /*
+     * Ikisini ayni yone yuvarlamak, kullanicinin lehine gorunen ama tutmayan
+     * bir sayi uretir. `You pay` yukari, `You receive` asagi.
+     */
+    const awkward = 1_234_567_800_000_000_000n
+    expect(formatUsdcQuote(awkward, 'up')).toBe('1.24')
+    expect(formatUsdcQuote(awkward, 'down')).toBe('1.23')
+  })
+
+  it('NEGATIF BIR KOTA YOKTUR -- ATAR', () => {
+    expect(() => formatUsdcQuote(-1n, 'up')).toThrow(RangeError)
   })
 })
