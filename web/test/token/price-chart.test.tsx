@@ -35,12 +35,14 @@ const addSeries = vi.fn<(kind: string, options?: Record<string, unknown>) => unk
 }))
 const removeSeries = vi.fn()
 const subscribeCrosshairMove = vi.fn()
+const fitContent = vi.fn()
 
 vi.mock('lightweight-charts', () => ({
   createChart: vi.fn(() => ({
     addSeries,
     removeSeries,
     subscribeCrosshairMove,
+    timeScale: () => ({ fitContent }),
     remove: vi.fn(),
   })),
   // Seri turleri kimlik olarak ayirt edilsin diye birer isaretci.
@@ -163,6 +165,51 @@ describe('<PriceChart>', () => {
     // konusmali, yoksa iki sayi arasinda bir milyar kat fark gorunur.
     rerender(<PriceChart candles={rows} metric="price" shape="candles" />)
     expect(screen.getByTestId('candle-summary')).not.toHaveTextContent('C $7.00')
+  })
+
+  it('ICERIGE SIGDIRIR -- kutuphane cubuk genisligini SABIT tutar', () => {
+    /*
+     * `lightweight-charts` icerige gore yaymaz: on uc mum, genislik ne olursa
+     * olsun sagda dar bir seride durur. Kullanicinin "mumlar bir kosede
+     * sikismis" sikayeti, mum VERISI duzeldikten sonra bile bu yuzden devam
+     * etti.
+     */
+    render(<PriceChart candles={[candle(0, USDC, USDC)]} metric="fdv" shape="candles" />)
+    expect(fitContent).toHaveBeenCalled()
+  })
+
+  it('AMA HER YENILEMEDE SIFIRLAMAZ -- yoksa zoom on saniyede bir kaybolur', () => {
+    /*
+     * `LiveRefresh` sunucu bilesenlerini on saniyede bir yeniden calistiriyor.
+     * Her veri degisiminde sigdirmak, kullanicinin yakinlastirmasini surekli
+     * geri alirdi. Yeni bir islem dizinin SONUNU degistirir; gorus alani
+     * yalnizca dizinin BASI degisince sifirlanir.
+     */
+    const first = candle(0, USDC, 2n * USDC)
+    const { rerender } = render(<PriceChart candles={[first]} metric="fdv" shape="candles" />)
+    const afterMount = fitContent.mock.calls.length
+
+    rerender(
+      <PriceChart
+        candles={[first, candle(5, 2n * USDC, 3n * USDC)]}
+        metric="fdv"
+        shape="candles"
+      />,
+    )
+    rerender(
+      <PriceChart
+        candles={[first, candle(5, 2n * USDC, 4n * USDC)]}
+        metric="fdv"
+        shape="candles"
+      />,
+    )
+    expect(fitContent.mock.calls.length, 'the zoom was reset by a refresh').toBe(afterMount)
+
+    // Zaman araligi degisince (5M -> 1H) dizinin BASI degisir: yeniden sigdirilir.
+    rerender(
+      <PriceChart candles={[candle(60, 5n * USDC, 6n * USDC)]} metric="fdv" shape="candles" />,
+    )
+    expect(fitContent.mock.calls.length).toBeGreaterThan(afterMount)
   })
 
   it('KONTROLLER BASLIGIN ICINDE cizilir', () => {

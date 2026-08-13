@@ -93,6 +93,23 @@ export function PriceChart({
    * kapanis (closure) hep guncel veriyi gorur.
    */
   const rowsRef = useRef(new Map<number, CandleRow>())
+  /*
+   * GORUS ALANINI NE ZAMAN SIFIRLAMALI.
+   *
+   * `lightweight-charts` cubuk genisligini SABIT tutar ve icerige gore
+   * yaymaz: on uc mum, genisligi ne olursa olsun sagda dar bir seride durur.
+   * Olculdu -- ve "mumlar grafigin bir kosesine sikismis" sikayeti, mum
+   * verisi duzeldikten SONRA bile bu yuzden devam etti. Care
+   * `timeScale().fitContent()`.
+   *
+   * AMA HER YENILEMEDE DEGIL. `LiveRefresh` on saniyede bir yeni veri
+   * getiriyor; her seferinde sigdirmak, kullanicinin yakinlastirmasini on
+   * saniyede bir SIFIRLARDI. Bu yuzden yalnizca dizinin BASI degistiginde
+   * sigdirilir: zaman araligi degistiginde (5M -> 1H) ya da grafik ilk kez
+   * dolduğunda olan sey budur; bir islem eklenmesi ise dizinin SONUNU
+   * degistirir ve gorusa dokunulmaz.
+   */
+  const fittedFrom = useRef<number | null>(null)
   const [hoverTime, setHoverTime] = useState<number | null>(null)
   const [ready, setReady] = useState(false)
 
@@ -255,6 +272,12 @@ export function PriceChart({
         color: c.closeWei >= c.openWei ? 'rgba(74,222,128,0.35)' : 'rgba(248,113,113,0.35)',
       })),
     )
+
+    const firstTime = rows[0]?.time ?? null
+    if (firstTime !== fittedFrom.current) {
+      fittedFrom.current = firstTime
+      chartRef.current?.timeScale().fitContent()
+    }
   }, [candles, metric, shape, ready])
 
   /*
