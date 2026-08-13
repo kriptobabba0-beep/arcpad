@@ -950,8 +950,15 @@ contract SurfaceTest is Test {
     ///      girmesiyle AYNI kararla pinlenir: uyeligi biz degil DERLEYICI
     ///      seciyor, ve disari propagate oluyorlar.
     function test_arcpadLockerExposesExactlyTheseErrors() public view {
-        string[] memory expected = new string[](15);
+        string[] memory expected = new string[](17);
+        // Kurulum bagimliliklari sifir olamaz (denetim 2026-08-13).
+        expected[16] = "ZeroDependency()";
         expected[0] = "CurveNotFromFactory()";
+        // DENETIM (2026-08-13): verilen curve, token'in BAGLI oldugu curve
+        // degilse reddedilir. Onceki halde bu kontrol YOKTU ve sahte bir curve
+        // kanonik havuzu odeme yapilmadan aciyordu -- gercek mezuniyeti
+        // KALICI olarak imkansiz kilarak.
+        expected[15] = "CurveTokenMismatch()";
         expected[1] = "NotPoolManager()";
         expected[2] = "PoolPriceMismatch()";
         expected[3] = "PositionNotSeeded()";
@@ -989,7 +996,7 @@ contract SurfaceTest is Test {
     ///      -- kume "eksik" gorunmezdi cunku her cagri bir sey yapardi.
     ///      `methodIdentifiers` bu ikisini HIC gormez; bu sayim tek koruyucu.
     function test_arcpadLockerAbiCensus() public view {
-        _assertEntryCensus("ArcpadLocker", 5, 15, 1, 1, 1, 0);
+        _assertEntryCensus("ArcpadLocker", 5, 17, 1, 1, 1, 0);
     }
 
     /// @notice Locker'in HICBIR dis fonksiyonu isaretli tamsayi PARAMETRESI
@@ -1057,7 +1064,11 @@ contract SurfaceTest is Test {
     }
 
     function test_arcpadHookExposesExactlyTheseErrors() public view {
-        string[] memory expected = new string[](12);
+        string[] memory expected = new string[](14);
+        expected[13] = "ZeroDependency()";
+        // DENETIM (2026-08-13) IKINCI KATMANI: hedef tarafi yeniden yanlis
+        // yazilsa bile, odemesini yapmamis bir curve'un havuzu ACILAMAZ.
+        expected[12] = "CurveNotGraduated()";
         expected[0] = "NotGraduationTarget()";
         expected[1] = "PriceIsNotTheCurveClosingPrice()";
         expected[2] = "QuoteLegMissing()";
@@ -1092,7 +1103,7 @@ contract SurfaceTest is Test {
     ///      `receive` eklemek, hook'a duz native gonderiminin BASARMASI
     ///      demekti -- ve hook'un cikis yolu yoktur.
     function test_arcpadHookAbiCensus() public view {
-        _assertEntryCensus("ArcpadHook", 16, 12, 2, 1, 0, 0);
+        _assertEntryCensus("ArcpadHook", 16, 14, 2, 1, 0, 0);
     }
 
     // ---------------------------------------------------------------

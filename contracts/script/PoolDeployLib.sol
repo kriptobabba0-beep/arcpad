@@ -125,16 +125,30 @@ library PoolDeployLib {
     address internal constant ARC_FACTORY = 0x5CA156f1809aB784655410d0f4B0704d2b306B47;
 
     /// @notice Kaynaktan degil, ARAMA SONUCUNDAN gelen tek sabit.
-    /// @dev `forge script PredictPool` ile madenlendi: `HookMiner.find`in
-    ///      0'dan yukari taradigi ILK gecerli tuz 13'tur. Kucuk olmasi bir
-    ///      sey ifade etmez -- alt 14 bit icin arama uzayi 16.384'te birdir,
-    ///      yani beklenen deneme sayisi ~16.384 degil, gecerli adres
-    ///      YOGUNLUGU 1/16.384 oldugu icin ilk isabetin 13'te gelmesi
-    ///      tamamen olagandir.
-    bytes32 internal constant ARC_HOOK_SALT = bytes32(uint256(13));
-    address internal constant ARC_HOOK = 0xd95198Cd806B736C8EcEcfFC23976b59F565e0cC;
+    /// @dev `forge script PredictPool` ile madenlendi. Alt 14 bit icin gecerli
+    ///      adres yogunlugu 1/16.384'tur, yani tuzun buyuklugu hicbir sey ifade
+    ///      etmez.
+    ///
+    /// @dev YENIDEN MADENLENDI (2026-08-13 denetimi). Onceki uclu
+    ///      (salt 13, hook `0xd951…e0cC`, locker `0x0e77…98E8`) ARTIK
+    ///      GECERSIZDIR: denetim hem hook'a hem locker'a birer koruma ekledi,
+    ///      bytecode degisti, ve V4'te hook'un IZINLERI ADRESIN ALT 14 BITINDE
+    ///      yasadigi icin eski tuz artik `0x20CC` ile biten bir adres uretmez.
+    ///      Yani duzeltme, adresleri de zorunlu olarak hareket ettirdi.
+    ///
+    ///      ESKI LOCKER TESTNET'TE DEPLOY EDILMIS DURUMDA ve factory'de
+    ///      BEKLEYEN bir oneriydi (`0x0e77…98E8`, pencere 15-18 Agustos).
+    ///      O ONERI INDIRILMEMELIDIR -- indirilirse acikli locker silahlanir.
+    ///      Yerine bu dosyadaki YENI locker onerilir; oneri uzerine yazmak
+    ///      mumkundur ve sureyi bastan baslatir.
+    ///
+    ///      HICBIR SEY MEZUN OLMADIGI ICIN (graduationTarget hala sifir,
+    ///      olculdu) adres degisiminin bir bedeli yoktur: eski hook'un adresi
+    ///      hicbir `PoolKey`e girmemistir.
+    bytes32 internal constant ARC_HOOK_SALT = bytes32(uint256(0x1273));
+    address internal constant ARC_HOOK = 0x89AfefCbD64c9Ae84e74698C96Dcba087c40e0cc;
     address internal constant ARC_POOL_MANAGER = 0x617321A877e024C870516CD599A581dCDCa6c09b;
-    address internal constant ARC_LOCKER = 0x0e7771091a3471Dc12CbfE38836BaDC7bf5a98E8;
+    address internal constant ARC_LOCKER = 0xaEE2DA2D21B92AfCAccF9DAD3d72254eE1630158;
 
     /// @notice `ArcpadHook` creation code'unun hash'i, ARGUMANSIZ.
     /// @dev BU PIN, YAYINLANAN BYTECODE ILE SINANAN BYTECODE'UN AYNI
@@ -145,7 +159,7 @@ library PoolDeployLib {
     ///      IKI artifact'i vardir (`ArcpadHook.json` 800 ve
     ///      `ArcpadHook.v4core.json` 44444444) ve initcode'lari FARKLIDIR.
     bytes32 internal constant ARC_HOOK_CREATION_CODE_HASH =
-        0x25a4e548d3b176f9150b6c5cef57098b1893d5b54c93e8fe0262e3305d78ffea;
+        0x73025527d44fa3eee512ba9f5f6d44bb446ca2ef5e0c1138e638015ea8793c43;
 
     function predict(bytes32 salt, bytes memory initcode) internal pure returns (address) {
         return DeployLib.predict(salt, initcode);

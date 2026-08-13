@@ -189,9 +189,15 @@ systemctl clean --what=cache arcpad-web
 
 **There is no domain, so there is no certificate, so the site is served over plain HTTP.** That is a staging posture. What it costs, specifically:
 
+- **An active network attacker can rewrite the JavaScript, and that is a complete fund-theft path with no contract bug involved.** This is the one that matters and it was missing from this list. Anyone between the visitor and this box — a hostile Wi-Fi access point, an ISP, a BGP hijack, a compromised upstream — can modify the page in flight. The modified page asks the wallet to sign a *different* transaction: a `minTokensOut` of zero, a different recipient, a different token address entirely. The wallet shows what the page asked for, the user approves what they believe they requested, and the money is gone. Every other item below is an inconvenience; this one is the reason TLS is a **mainnet blocker**, not a polish item.
 - **WalletConnect refuses non-secure origins outright.** Any visitor not using an injected browser extension cannot connect at all.
 - Wallets that do connect show a warning — on a page whose entire purpose is asking people to sign transactions that move money.
+- **`navigator.clipboard` does not exist outside a secure context**, so every copy button silently did nothing. Measured live: `window.isSecureContext === false`. There is a `document.execCommand` fallback now (`components/ui/Address.tsx`) and it works, but it exists only because of this — it is a symptom, not a fix.
 - Every read and every posted chat signature crosses the network in clear text. The signature is not a credential and replay is stopped by the `nonce_hex` unique constraint, so this leaks activity rather than control. It is still not something to invite the public into.
+
+**Testnet tokens have no monetary value, so the risk today is theoretical. It stops being theoretical the moment one real dollar is reachable through this origin.**
+
+`scripts/enable-tls.sh <domain>` does the whole thing once a domain's A record points here: certbot, the redirect, the renewal timer, and a verification pass. It deliberately does **not** turn on HSTS — see below.
 
 The proxy config carries the TLS block, commented, with the redirect and the certbot command. Uncomment after `certbot --nginx -d <domain>`.
 

@@ -966,3 +966,204 @@ contract ArcpadLockerTest is Test {
         revert("PoolSeeded yayilmadi");
     }
 }
+
+/// @dev SAHTE CURVE -- uc okuma uyesi gercek curve'u AYNALAR, `graduate()` ise
+///      HICBIR SEY ODEMEZ. Locker'in eskiden dogrulamadigi sey tam olarak buydu.
+contract SpoofCurve {
+    address public immutable token;
+    address public immutable mirror;
+    uint256 public immutable baseOut;
+    uint256 public immutable quoteOut;
+
+    constructor(address token_, address mirror_, uint256 baseOut_, uint256 quoteOut_) {
+        token = token_;
+        mirror = mirror_;
+        baseOut = baseOut_;
+        quoteOut = quoteOut_;
+    }
+
+    function virtualQuoteReserves() external view returns (uint256) {
+        return BondingCurve(payable(mirror)).virtualQuoteReserves();
+    }
+
+    function virtualTokenReserves() external view returns (uint256) {
+        return BondingCurve(payable(mirror)).virtualTokenReserves();
+    }
+
+    function complete() external pure returns (bool) {
+        return true;
+    }
+
+    function graduated() external pure returns (bool) {
+        return false;
+    }
+
+    function poolSeedSupply() external view returns (uint256) {
+        return baseOut;
+    }
+
+    /// Odeme YOK. Eskiden donen sayilar locker icin yeterliydi.
+    function graduate() external view returns (uint256, uint256) {
+        return (baseOut, quoteOut);
+    }
+}
+
+/// ============================================================================
+///  KANONIK HAVUZ, ODEME YAPILMADAN ACILAMAZ -- IKI BAGIMSIZ KATMAN
+/// ============================================================================
+///
+/// BULUNAN ACIK (denetim, PoC ile kanitlandi): `ArcpadLocker.graduate(curve)`
+/// `curve` ile `token` arasindaki bagi dogrulamiyordu. Tek kanoniklik kontrolu
+/// `feeScheduleOf(token) != 0`di ve `token` GUVENILMEYEN curve'den okunuyordu --
+/// yani gercek bir token bildiren sahte bir curve kontrolu geciyor,
+/// `curve.graduate()` hicbir sey odemeden istedigi sayilari donduruyor ve locker
+/// KANONIK havuzu saldirganin sectigi toz likiditeyle aciyordu.
+///
+/// Etkisi hirsizlik degil, DAHA KOTUSUYDU: gercek mezuniyet o andan sonra
+/// `poolManager.initialize` satirinda `PoolAlreadyInitialized` ile revert eder ve
+/// BASKA CIKIS YOKTUR -- curve'de ikinci bir hedef, kurtarma yolu ya da "zaten
+/// acilmissa atla" dali yoktur. Tamamlanmis bir curve'de satis da kapali
+/// oldugundan, toplanan raise'in TAMAMI sonsuza kadar kilitlenirdi. Maliyeti
+/// birkac dolarlik tozdu ve HER launch'a uygulanabilirdi.
+///
+/// IKI KATMAN, ve ikincisi birincisine GUVENMEZ: locker `token.curve() == curve`
+/// ister; hook ayrica curve'un `graduated` bayragini okur, yani hedef tarafi
+/// yeniden yanlis yazilsa bile havuz odeme yapilmadan acilamaz.
+contract ArcpadLockerCurveSpoofTest is ArcpadLockerTest {
+    using StateLibrary for IPoolManager;
+
+    /// @dev Saldirganin kurdugu sahne: kurban tamamlanmis, mezun olmayi
+    ///      bekliyor; locker toz likidite ile fonlanmis.
+    function _armSpoof(string memory n)
+        internal
+        returns (address token, address payable curve, SpoofCurve spoof, uint256 trapped)
+    {
+        (token, curve) = _launchAndBuyOut(n);
+        assertTrue(BondingCurve(curve).complete(), "kurban tamamlanmadi");
+        assertFalse(BondingCurve(curve).graduated(), "kurban zaten mezun");
+        trapped = BondingCurve(curve).realQuoteReserves();
+        assertGt(trapped, 0, "kilitlenecek raise yok");
+
+        uint256 dustBase = 1e18;
+        uint256 dustQuoteUnits = 1_000;
+        vm.prank(address(curve));
+        IERC20(token).transfer(address(locker), dustBase);
+        usdc.mint(address(locker), dustQuoteUnits);
+
+        spoof = new SpoofCurve(token, curve, dustBase, dustQuoteUnits * 1e12);
+    }
+
+    /// KATMAN 1 -- LOCKER. Token'in bagli oldugu curve DEGILSE reddeder.
+    function test_spoofedCurveCannotOpenTheCanonicalPool() public {
+        (address token, address payable curve, SpoofCurve spoof, uint256 trapped) = _armSpoof("Arc");
+
+        vm.prank(address(0xA11CE));
+        vm.expectRevert(ArcpadLocker.CurveTokenMismatch.selector);
+        locker.graduate(address(spoof));
+
+        // Havuz ACILMADI ve kurban dokunulmamis: mezuniyet HALA mumkun.
+        (PoolKey memory key,) = _keyOf(token);
+        (uint160 sqrtPrice,,,) = pm.getSlot0(key.toId());
+        assertEq(sqrtPrice, 0, "havuz saldirganca acildi");
+        assertEq(BondingCurve(curve).realQuoteReserves(), trapped, "raise hareket etti");
+
+        // VE ASIL ISPAT: mesru mezuniyet BASARIR. Bir revert tek basina
+        // "kalici olarak kilitlendi" ile ayirt edilemezdi.
+        locker.graduate(curve);
+        assertTrue(BondingCurve(curve).graduated(), "mesru mezuniyet gecmedi");
+    }
+
+    /// KATMAN 2 -- HOOK. Hedef tarafi yeniden yanlis yazilsa bile, odeme
+    /// yapilmamis bir curve'un havuzu ACILAMAZ.
+    ///
+    /// Hedefin kontrolu BURADA ATLANIR (`prank` ile dogrudan `initialize`),
+    /// cunku olculen sey tam olarak "locker bir daha hata yaparsa ne olur"dur.
+    function test_theHookRefusesAPoolWhoseCurveHasNotPaid() public {
+        (address token, address payable curve) = _launchAndBuyOut("Arc");
+        assertFalse(BondingCurve(curve).graduated(), "kurulum: curve zaten mezun");
+
+        (PoolKey memory key, bool baseIsCurrency0) = _keyOf(token);
+        uint160 price = GraduationMath.sqrtPriceX96(
+            BondingCurve(curve).virtualQuoteReserves(),
+            BondingCurve(curve).virtualTokenReserves(),
+            baseIsCurrency0
+        );
+
+        vm.prank(address(locker));
+        vm.expectRevert();
+        pm.initialize(key, price);
+
+        (uint160 sqrtPrice,,,) = pm.getSlot0(key.toId());
+        assertEq(sqrtPrice, 0, "odeme yapilmadan havuz acildi");
+    }
+
+    /// VE MESRU YOL HALA CALISIR -- iki katman da gecirir.
+    function test_theLegitimatePathStillGraduates() public {
+        (address token, address payable curve) = _launchAndBuyOut("Arc");
+        locker.graduate(curve);
+
+        assertTrue(BondingCurve(curve).graduated(), "mezuniyet gecmedi");
+        (PoolKey memory key,) = _keyOf(token);
+        (uint160 sqrtPrice,,,) = pm.getSlot0(key.toId());
+        assertGt(sqrtPrice, 0, "havuz acilmadi");
+        assertGt(_liquidityOfToken(token), 0, "likidite tohumlanmadi");
+    }
+}
+
+/// ============================================================================
+///  KURULUM BAGIMLILIKLARI SIFIR OLAMAZ
+/// ============================================================================
+///
+/// Bunlar deploy aninda DISARIDAN verilir ve baska hicbir yerde dogrulanmaz --
+/// yani buradaki kontroller `protocolTreasury()`teki gibi "gercek factory ile
+/// ulasilamaz olu kod" DEGILDIR; asagidaki testler onlari oldurur.
+///
+/// EN SESSIZ OLANI ESCROW: `deposit` hicbir sey dondurmedigi icin solc
+/// EXTCODESIZE kontrolu uretmez, yani kodsuz bir adrese yapilan
+/// `deposit{value: x}` BASARILI SAYILIR. Sifir escrow'lu bir hook her swap'te
+/// ucreti sessizce yakardi -- ve hook'un adresi `PoolKey`in bir alani oldugu
+/// icin bu ilk mezuniyetten sonra DUZELTILEMEZDI.
+contract ArcpadPoolLayerZeroDependencyTest is ArcpadLockerTest {
+    function test_lockerRefusesAZeroPoolManager() public {
+        vm.expectRevert(ArcpadLocker.ZeroDependency.selector);
+        new ArcpadLocker(IPoolManager(address(0)), address(factory), IHooks(address(hook)));
+    }
+
+    function test_lockerRefusesAZeroFactory() public {
+        vm.expectRevert(ArcpadLocker.ZeroDependency.selector);
+        new ArcpadLocker(IPoolManager(address(pm)), address(0), IHooks(address(hook)));
+    }
+
+    /// Sifir hook GORUNMEZ olurdu: `GraduationMath.poolKey` onu ANAHTARA koyar
+    /// ve hook'suz bir anahtar, arcpad'in korumalarinin HICBIRI olmadan acilan
+    /// bir havuzdur.
+    function test_lockerRefusesAZeroHook() public {
+        vm.expectRevert(ArcpadLocker.ZeroDependency.selector);
+        new ArcpadLocker(IPoolManager(address(pm)), address(factory), IHooks(address(0)));
+    }
+
+    /// @dev HOOK'U DUZ `new` ILE DENEMEK OLCMEZ. `BaseHook(poolManager_)`
+    ///      constructor GOVDESINDEN ONCE calisir ve adresin izin bayraklarini
+    ///      dogrular; rastgele bir adreste `HookAddressNotValid` ile duser ve
+    ///      test, olcmek istedigi kontrole HIC ULASMAZ. Gercek deploy yolu
+    ///      CREATE2 + madenlenmis adrestir, dolayisiyla test de oyle olmali.
+    function _deployHookWith(address factory_, address escrow_) private {
+        bytes memory args = abi.encode(IPoolManager(address(pm)), factory_, escrow_);
+        (, bytes32 salt) = HookMiner.find(CREATE2_DEPLOYER, 0x20CC, type(ArcpadHook).creationCode, args);
+        vm.prank(CREATE2_DEPLOYER);
+        new ArcpadHook{salt: salt}(IPoolManager(address(pm)), factory_, escrow_);
+    }
+
+    function test_hookRefusesAZeroFactory() public {
+        vm.expectRevert(ArcpadHook.ZeroDependency.selector);
+        _deployHookWith(address(0), address(escrow));
+    }
+
+    /// EN SESSIZ ARIZA. Bkz. sinifin basindaki not: kodsuz bir escrow'a yapilan
+    /// `deposit{value: x}` REVERT ETMEZ, cunku `deposit` hicbir sey dondurmez
+    /// ve solc EXTCODESIZE kontrolu uretmez.
+    function test_hookRefusesAZeroEscrow() public {
+        vm.expectRevert(ArcpadHook.ZeroDependency.selector);
+        _deployHookWith(address(factory), address(0));
+    }
+}

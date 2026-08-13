@@ -21,6 +21,14 @@ interface IFactoryFeeSchedule {
     function feeScheduleOf(address token) external view returns (address);
 }
 
+/// @dev Token'in BAGLI oldugu curve. `LaunchToken.curve` `immutable`dir ve
+///      factory tarafindan yazilir, yani bu okuma bir KANITTIR: kanonik bir
+///      token'in isaret ettigi curve, factory'nin o launch icin deploy ettigi
+///      curve'dur ve baska hicbir sey olamaz.
+interface ILaunchTokenCurve {
+    function curve() external view returns (address);
+}
+
 /// @title ArcpadLocker
 /// @notice Graduation hedefi. Curve'un odemesini alir, havuzu curve'un
 ///         KAPANIS FIYATINDA acar, tam aralik likidite ekler ve pozisyonu
@@ -71,13 +79,27 @@ contract ArcpadLocker is IUnlockCallback {
 
     error NotPoolManager();
     error CurveNotFromFactory();
+    /// @dev Verilen curve, token'in BAGLI oldugu curve DEGIL.
+    error CurveTokenMismatch();
     error UnexpectedCredit();
     error SeedShortfall();
     error ZeroLiquidity();
     error PoolPriceMismatch();
     error PositionNotSeeded();
+    /// @dev Kurulum argumani sifir. Bkz. constructor.
+    error ZeroDependency();
 
+    /// @dev DEPLOY ANINDA verilen ve baska hicbir yerde dogrulanmayan uc
+    ///      bagimlilik. Sifir bir `factory` her mezuniyeti `CurveNotFromFactory`
+    ///      ile reddederdi (fail-closed, gorunur); sifir bir `hook` ise
+    ///      GORUNMEZ olurdu -- `GraduationMath.poolKey` onu anahtara koyar ve
+    ///      hook'suz bir anahtar, arcpad'in korumalarinin HICBIRI olmadan acilan
+    ///      bir havuz demektir. Kontrol mutasyonla oldurulebilir, dolayisiyla
+    ///      olu kod degildir.
     constructor(IPoolManager poolManager_, address factory_, IHooks hook_) {
+        if (address(poolManager_) == address(0)) revert ZeroDependency();
+        if (factory_ == address(0)) revert ZeroDependency();
+        if (address(hook_) == address(0)) revert ZeroDependency();
         poolManager = poolManager_;
         factory = factory_;
         hook = hook_;
@@ -115,6 +137,30 @@ contract ArcpadLocker is IUnlockCallback {
         if (IFactoryFeeSchedule(factory).feeScheduleOf(token) == address(0)) {
             revert CurveNotFromFactory();
         }
+
+        /*
+         * ============ VE TOKEN GERI ISARET ETMELI ============
+         *
+         * ONCEKI HALDE BU SATIR YOKTU VE ACIK KANITLANDI (PoC:
+         * `test_POC_spoofedCurveBricksGraduationForever`). Ustteki kontrol
+         * TOKEN'in kanonik oldugunu dogrular, ama `token` GUVENILMEYEN
+         * `curve`den okunur -- yani saldirgan gercek bir token bildiren sahte
+         * bir curve verir, kontrol gecer, ve `curve.graduate()` HICBIR SEY
+         * odemeden istedigi sayilari dondurur.
+         *
+         * Sonucu bir hirsizlik degil, DAHA KOTUSUYDU: locker KANONIK havuzu
+         * saldirganin sectigi toz likiditeyle acardi. Gercek mezuniyet o andan
+         * sonra `poolManager.initialize` satirinda `PoolAlreadyInitialized` ile
+         * revert eder ve BASKA CIKIS YOKTUR -- curve'de ikinci bir hedef,
+         * kurtarma yolu ya da "zaten acilmissa atla" dali yoktur. Tamamlanmis
+         * bir curve'de satis da kapali oldugundan, toplanan raise'in TAMAMI
+         * sonsuza kadar kilitlenirdi. Maliyeti birkac dolarlik tozdu.
+         *
+         * `LaunchToken.curve` `immutable`dir ve factory yazar; dolayisiyla bu
+         * tek karsilastirma `curve`u kanonik kumeye baglar ve aynalama
+         * hilesini tamamen kapatir.
+         */
+        if (ILaunchTokenCurve(token).curve() != curve) revert CurveTokenMismatch();
 
         // --- 1. ODEMEYI CEK. Curve `graduated`i BUNUN ICINDE latch eder. ---
         (uint256 baseAmount, uint256 quoteAmount) = IGraduatableCurve(curve).graduate();

@@ -55,6 +55,7 @@ interface ILaunchTokenView {
 interface ICurveView {
     function virtualQuoteReserves() external view returns (uint256);
     function virtualTokenReserves() external view returns (uint256);
+    function graduated() external view returns (bool);
 }
 
 /// @title ArcpadHook
@@ -110,13 +111,35 @@ contract ArcpadHook is BaseHook {
     error WrongTickSpacing();
     error TokenNotFromFactory();
     error PriceIsNotTheCurveClosingPrice();
+    /// @dev Curve odemeyi yapmadi -- havuz acilamaz. Bkz. `_beforeInitialize`.
+    error CurveNotGraduated();
+    /// @dev Kurulum argumani sifir. Bkz. constructor.
+    error ZeroDependency();
 
     /// @dev TREASURY BIR CONSTRUCTOR ARGUMANI DEGILDIR VE OLMAMALIDIR.
     ///      Argüman olsaydi tek makul saklama yeri bir kopya olurdu ve kopya
     ///      tam olarak kaldirilan kusurdur; "alip dogrula ama okuma" ise
     ///      olu bir arguman birakirdi. Curve'un constructor'i da ayni
     ///      sebeple `protocolTreasury` ALMAZ (`LaunchFactory.sol:746`).
+    /// @dev SIFIR KONTROLU BURADA DOGRUDUR, `protocolTreasury()`teki gibi
+    ///      "olu kod" DEGILDIR -- ve ayrimin sebebi kaynagin farkli olmasidir.
+    ///      `protocolTreasury` DOGRULANMIS bir yerden (factory) calisma aninda
+    ///      okunur, dolayisiyla oradaki bir kontrol gercek factory ile
+    ///      ulasilamaz olurdu. Bunlar ise DEPLOY ANINDA disaridan verilir ve
+    ///      baska hicbir yerde dogrulanmaz; kontrol mutasyonla oldurulebilir
+    ///      (sifirla deploy et, revert bekle).
+    ///
+    ///      `escrow == 0` SESSIZ BIR YAKMA OLURDU ve bu satirin asil gerekcesi
+    ///      odur: `deposit` hicbir sey dondurmedigi icin solc EXTCODESIZE
+    ///      kontrolu URETMEZ, yani kodsuz bir adrese yapilan
+    ///      `deposit{value: x}` BASARILI SAYILIR ve ucret sifir adresine
+    ///      gider. Yanlis deploy edilmis bir hook her swap'te ucreti sessizce
+    ///      yakardi -- ve hook'un adresi `PoolKey`in alani oldugu icin
+    ///      duzeltilemezdi.
     constructor(IPoolManager poolManager_, address factory_, address escrow_) BaseHook(poolManager_) {
+        if (address(poolManager_) == address(0)) revert ZeroDependency();
+        if (factory_ == address(0)) revert ZeroDependency();
+        if (escrow_ == address(0)) revert ZeroDependency();
         factory = factory_;
         escrow = escrow_;
     }
@@ -216,6 +239,29 @@ contract ArcpadHook is BaseHook {
         // kutuphaneyi cagirir); oldurdugu mutant "dogru hesapladi, BASKASINI
         // gecirdi"dir, ve o mutant tek katmanda gorunmez.
         address curve = ILaunchTokenView(base).curve();
+
+        /*
+         * ============ HAVUZ, ODEME YAPILMADAN ACILAMAZ ============
+         *
+         * `graduated` curve'de TERMINAL bir bayraktir ve YALNIZCA curve `D`
+         * token ile `R` quote'u hedefe fiilen odedigi cerceve icinde true olur.
+         * Locker `initialize`i o odemeden SONRA cagirir, dolayisiyla mesru
+         * yolda bu kontrol her zaman gecer.
+         *
+         * IKINCI KATMANDIR ve bagimsizdir: hedefin kendi dogrulamasina HIC
+         * guvenmez. Gerekcesi olculmustur -- locker'in ilk hali `graduate(curve)`
+         * parametresini token'a baglamiyordu ve gercek bir token bildiren sahte
+         * bir curve, kanonik havuzu HICBIR ODEME YAPILMADAN aciyordu; bu tek
+         * satir o saldiriyi hedef tarafi hic duzeltilmese bile durdururdu.
+         * Hook'un adresi `PoolKey`in bir alani oldugu icin BU KATMAN sonradan
+         * eklenemez: ilk graduation'dan sonra hook degistirilemez.
+         *
+         * Hedef ileride degisirse (factory'nin gecikmeli setter'i) korumanin
+         * gucu aynen durur, cunku dayandigi sey hedefin kimligi degil CURVE'UN
+         * KENDI durumudur.
+         */
+        if (!ICurveView(curve).graduated()) revert CurveNotGraduated();
+
         uint160 expected = GraduationMath.sqrtPriceX96(
             ICurveView(curve).virtualQuoteReserves(), ICurveView(curve).virtualTokenReserves(), !quoteIsCurrency0
         );
