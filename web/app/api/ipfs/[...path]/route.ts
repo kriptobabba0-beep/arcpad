@@ -1,3 +1,4 @@
+import { imageTypeOf } from '@/lib/imageBytes'
 import { ipfsGatewayOrigins, ipfsPathPrefix } from '@/lib/ipfs'
 import { type CachedImage, once, readCached, writeCached } from '@/lib/ipfsCache'
 
@@ -73,39 +74,14 @@ const CID = /^(Qm[1-9A-HJ-NP-Za-km-z]{44}|b[a-z2-7]{58,})$/
 /** Path segments after the CID: ordinary file names, and nothing that climbs. */
 const SUBPATH_SEGMENT = /^[\w][\w\-.]{0,127}$/
 
-/**
- * Magic numbers for the four types `/api/metadata` accepts on upload.
+/*
+ * TUR KARARI `lib/imageBytes.ts`TEN GELIR VE BURADA TEKRARLANMAZ.
  *
- * SNIFFED, NOT TRUSTED. The bytes are the only thing here that the person who
- * pinned the file cannot lie about.
+ * Ayni soruyu yukleme rotasi da soruyor. Iki kopya ayrisirsa ariza IKI YONDE
+ * de sessizdir: gevsek yukleme + siki sunum = kabul edilen ama asla gorunmeyen
+ * dosya; siki yukleme + gevsek sunum = bizim origin'imizden HTML. Bkz. o
+ * dosyanin basligi.
  */
-function imageTypeOf(bytes: Uint8Array): string | null {
-  const at = (i: number) => bytes[i]
-  if (bytes.length >= 8 && at(0) === 0x89 && at(1) === 0x50 && at(2) === 0x4e && at(3) === 0x47) {
-    return 'image/png'
-  }
-  if (bytes.length >= 3 && at(0) === 0xff && at(1) === 0xd8 && at(2) === 0xff) {
-    return 'image/jpeg'
-  }
-  if (bytes.length >= 6 && at(0) === 0x47 && at(1) === 0x49 && at(2) === 0x46 && at(3) === 0x38) {
-    return 'image/gif'
-  }
-  if (
-    bytes.length >= 12 &&
-    at(0) === 0x52 &&
-    at(1) === 0x49 &&
-    at(2) === 0x46 &&
-    at(3) === 0x46 &&
-    at(8) === 0x57 &&
-    at(9) === 0x45 &&
-    at(10) === 0x42 &&
-    at(11) === 0x50
-  ) {
-    return 'image/webp'
-  }
-  return null
-}
-
 /**
  * `['Qm…', 'logo.png']` -> `Qm…/logo.png`, or `null` if anything is off.
  *

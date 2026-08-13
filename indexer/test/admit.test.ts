@@ -241,6 +241,50 @@ describe('admit', () => {
     expect(await count('launches')).toBe(0)
   })
 
+  /*
+   * ============================================================================
+   *  `curve` ALANI TASIYICIDIR -- KULLANICININ PARASI ORAYA GIDER
+   * ============================================================================
+   *
+   * Denetimde (ikinci tur) sorulan soru suydu: token sayfasi kullaniciya hangi
+   * adrese `msg.value` gonderteceğine VERITABANINDAN karar veriyor
+   * (`overview.curve`), ve o sayfa yolunda ikinci bir zincir kontrolu YOK.
+   * Guvenli olmasinin TEK sebebi burasi: `curve`, token adresinin CREATE2
+   * on-goruntusune GIRER, dolayisiyla sahte bir curve tasiyan bir `Launched`
+   * olayi turetmede TUTMAZ ve kabul edilmez.
+   *
+   * Yani "veritabanindaki curve guvenilir" iddiasi bir varsayim degil, BU
+   * KONTROLUN sonucudur -- ve kontrol kaldirilirsa iddia sessizce yanlis olur:
+   * satir yazilir, sayfa "Canonical" cizer, para saldirganin sozlesmesine
+   * gider. Bu yuzden alan ADIYLA pinleniyor.
+   *
+   * Ustteki `forged` testi bunu YAKALAMAZ: o bytecode'u degistirir, bu ise
+   * gecerli bir launch'in TEK BIR ALANINI degistirir ve geri kalan her sey
+   * dogru kalir.
+   */
+  it('curve ALANI degistirilmis bir Launched REDDEDILIR -- para oraya gider', async () => {
+    const event = await launchedFrom('live')
+    const attacker = '0x00000000000000000000000000000000deadbeef' as Address
+    expect(event.curve.toLowerCase()).not.toBe(attacker)
+
+    const tampered = { ...event, curve: attacker }
+    // Turetme `curve`u iceriyorsa bu adres artik tutmaz.
+    expect(deriveTokenAddress(inputOf(tampered, LIVE.factory))).not.toBe(event.token)
+
+    await expect(admit(pool, LIVE_DEPLOYMENT, tampered)).rejects.toThrow(NonCanonicalLaunch)
+    expect(await count('launches')).toBe(0)
+  })
+
+  /*
+   * VE KONTROL GRUBU: degistirilmemis AYNI olay KABUL EDILIR. Onsuz ustteki
+   * test "admit her seyi reddediyor" ile ayirt edilemezdi.
+   */
+  it('ayni olay degistirilmeden KABUL EDILIR -- red, curve yuzunden', async () => {
+    const event = await launchedFrom('live')
+    expect(await admit(pool, LIVE_DEPLOYMENT, event)).toBe(1)
+    expect(await count('launches')).toBe(1)
+  })
+
   it('reddin sebebi non_canonical dir ve beklenen adres kayda gecer', async () => {
     const forged = await launchedFrom('forged')
     const deployment = { ...LIVE_DEPLOYMENT, factory: forged.factory }

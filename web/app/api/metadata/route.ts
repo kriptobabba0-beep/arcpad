@@ -1,4 +1,5 @@
 import { buildMetadataJson, EMPTY_FIELDS, type LaunchFields } from '@/components/create/fields'
+import { IMAGE_MAGIC_BYTES, imageTypeOf } from '@/lib/imageBytes'
 import { resolvableUrl } from '@/lib/metadata'
 import { readPinningConfig } from './pinning'
 
@@ -33,11 +34,9 @@ export const dynamic = 'force-dynamic'
 export const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
 /**
- * `image/svg+xml` YOKTUR VE EKLENMEYECEK. SVG betik calistirabilen bir
- * dokumandir; `<img>` icinde zararsizdir ama pinlenen dosyanin gateway
- * URL'i dogrudan da acilabilir ve orada bir HTML dokumani gibi davranir.
+ * TUR KARARI BAYTLARDAN VERILIR, `lib/imageBytes.ts`te, ve sunum rotasiyla
+ * AYNI koddan. Bkz. o dosyanin basligi.
  */
-const ALLOWED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'])
 
 type PinResponse = { readonly uri: string; readonly image?: string }
 
@@ -169,7 +168,28 @@ export async function POST(request: Request): Promise<Response> {
   let image: string | undefined
   if (file instanceof Blob && file.size > 0) {
     if (file.size > MAX_IMAGE_BYTES) return json({ error: 'imageTooLarge' }, 413)
-    if (!ALLOWED_IMAGE_TYPES.has(file.type)) return json({ error: 'imageTypeNotAllowed' }, 415)
+
+    /*
+     * ============ TUR, ISTEMCININ SOZUNDEN DEGIL BAYTLARDAN ============
+     *
+     * Onceki hal `file.type`a bakiyordu -- yani MULTIPART BASLIGINA, ki onu
+     * yukleyen yazar. `Content-Type: image/png` yazan biri HERHANGI bir baytı
+     * pinletebiliyordu ve bu rota KIMLIK DOGRULAMASI ISTEMIYOR: yani
+     * internetteki herkes, bizim odedigimiz pinning hesabina 5 MB'lik keyfi
+     * icerik yazabiliyordu.
+     *
+     * Depolanmis XSS'e DONUSMUYORDU -- `/api/ipfs/…` zaten baytlara bakip
+     * gorsel olmayani 415 ile reddediyor, yani o dosya bizim origin'imizden
+     * asla HTML olarak sunulmazdi. Ama kotamiz ve hesabimiz baskasinin
+     * deposu olurdu, ve oraya konan seyin ne oldugunu biz secmiyorduk.
+     *
+     * Ayrica bir DOGRULUK duzeltmesi: sunum tarafi zaten baytlara bakiyordu,
+     * dolayisiyla eskiden kabul edilen bir dosya sessizce ASLA GORUNMEYEBILIR
+     * -- form "yuklendi" der, kart sonsuza kadar gradyan cizerdi. Simdi
+     * reddedilen sey ANINDA ve gerekcesiyle reddediliyor.
+     */
+    const head = new Uint8Array(await file.slice(0, IMAGE_MAGIC_BYTES).arrayBuffer())
+    if (imageTypeOf(head) === null) return json({ error: 'imageTypeNotAllowed' }, 415)
 
     const pinned = await pinOne(config, file, 'artwork')
     if (pinned === null) return json({ error: 'pinningFailed' }, 502)
