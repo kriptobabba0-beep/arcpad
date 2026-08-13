@@ -426,9 +426,26 @@ export async function loadWatchSet(
     curve: string
     graduated: boolean | null
     target: string | null
+    traded: boolean
   }>(
-    `SELECT l.token, l.curve, cs.graduated, cs.graduation_target_addr AS target
-       FROM launches l LEFT JOIN curve_state cs ON cs.token = l.token`,
+    /*
+     * `traded` -- BU TOKEN HIC ISLEM GORDU MU.
+     *
+     * `volume_total_wei` KUMULATIFTIR ve azalmaz, yani yuklem MONOTONDUR: bir
+     * token bir kez islem gordukten sonra sonsuza kadar "gormus" kalir. Geri
+     * donebilen bir yuklem (ornegin "su an curve disinda holder'i var mi")
+     * ayni kumeyi verirdi ama akil yurutmesi kirilgan olurdu -- ve burada
+     * yanlis akil yurutmenin bedeli EKSIK `Transfer`dir.
+     *
+     * Sifir olamayacagi icin `> 0` tam olarak "en az bir islem" demektir:
+     * `quoteBuyCost` en az 1 doner ve satista `proceeds > ucretler` sarti var,
+     * yani her islem toplama en az 1 ekler.
+     */
+    `SELECT l.token, l.curve, cs.graduated, cs.graduation_target_addr AS target,
+            COALESCE(ts.volume_total_wei, 0) > 0 AS traded
+       FROM launches l
+       LEFT JOIN curve_state cs ON cs.token = l.token
+       LEFT JOIN token_stats ts ON ts.token = l.token`,
   )
   const pools = new Map<Hex, PoolRef>()
   if (resolveHook !== undefined) {
@@ -448,11 +465,30 @@ export async function loadWatchSet(
       })
     }
   }
+  /*
+   * ============ TRANSFER KUMESI LAUNCH SAYISIYLA BUYUMEZ ============
+   *
+   * `Transfer` topic0'i evrenseldir, yani bu tek sorgu adres filtresini
+   * BIRAKAMAZ -- ve filtre `launches`'in tamamini tasidigi surece bedel KAYIT
+   * sayisina baglidir. Launch ucretsizdir (olculdu: 0,039 USDC) ve
+   * POPULERLIK dogrudan kayit uretir, yani yanlis olcekleme urunun basari
+   * halinde de vurur, saldiri halinde de.
+   *
+   * Arzinin tamami hala curve'de duran bir token `Transfer` YAYAMAZ: kimsede
+   * yoktur ki gondersin. Dolayisiyla kume "hic islem gormus" olanlarla
+   * sinirlanir ve `fetchRange` onu bu araligin launch'lari (FAZ 1.5) ve bu
+   * araligin curve olaylari (FAZ 1.6) ile buyutur.
+   *
+   * YANLIS OLURSA SESSIZ DEGIL GURULTULU DUSER: `holders.balance_tok >= 0`
+   * CHECK'i eksik bir `Transfer`de patlar ve transaction geri alinir --
+   * semanin yorumu bu senaryoyu ismen anlatiyor.
+   */
   return {
     factory: deployment.factory,
     escrow: deployment.escrow,
     curves: new Set(rows.map((r) => r.curve as Address)),
-    tokens: new Set(rows.map((r) => r.token as Address)),
+    tokens: new Set(rows.filter((r) => r.traded).map((r) => r.token as Address)),
+    curveToToken: new Map(rows.map((r) => [r.curve as Address, r.token as Address])),
     pools,
   }
 }

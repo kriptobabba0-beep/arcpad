@@ -19,6 +19,7 @@ import {SwapParams, ModifyLiquidityParams} from "@uniswap/v4-core/src/types/Pool
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {HookMiner} from "@uniswap/v4-periphery/test/shared/HookMiner.sol";
 
+import {BaseHook} from "uniswap-hooks/base/BaseHook.sol";
 import {ArcpadHook} from "../src/ArcpadHook.sol";
 import {PoolDeployLib} from "../script/PoolDeployLib.sol";
 import {GraduationMath} from "../src/libraries/GraduationMath.sol";
@@ -832,3 +833,51 @@ contract ArcpadHookTest is Test {
     }
 }
 
+
+/// ============================================================================
+///  KANCALARA DOGRUDAN CAGRI: `onlyPoolManager` TASIYICIDIR
+/// ============================================================================
+///
+/// `_beforeInitialize`in `sender` argumani BIR PARAMETREDIR, `msg.sender`
+/// DEGIL -- `PoolManager` onu doldurur. Dolayisiyla kanca dogrudan
+/// cagrilabilseydi, saldirgan `sender` yerine graduation hedefini YAZAR ve
+/// "yalnizca hedef initialize edebilir" kontrolunu duz gecerdi.
+///
+/// Ayrimi tasiyan sey `BaseHook.onlyPoolManager`dir ve bu deponun kodunda
+/// GORUNMEZ: bir bagimliligin modifier'idir. Denetim (ucuncu gecis) onu
+/// testsiz buldu -- yani "kanca korunuyor" iddiasi bir OKUMAYA dayaniyordu,
+/// bir olcume degil. Uc giris noktasinin ucu de burada yuruyor.
+///
+/// `_beforeSwap`/`_afterSwap` icin de ayni sey gecerlidir ve daha somuttur:
+/// dogrudan cagirabilen biri `configOf`u okumadan ucret hesaplatabilir ya da
+/// `take` cagrisini bir baska havuzun parasi uzerinde tetikleyebilirdi.
+contract ArcpadHookDirectCallTest is ArcpadHookTest {
+    function test_beforeInitializeRefusesEveryCallerButThePoolManager() public {
+        (PoolKey memory key,) = _keyFor(address(token));
+        uint160 price = GraduationMath.sqrtPriceX96(
+            BondingCurve(payable(curve)).virtualQuoteReserves(),
+            BondingCurve(payable(curve)).virtualTokenReserves(),
+            Currency.unwrap(key.currency0) != GraduationMath.QUOTE
+        );
+
+        // SALDIRGAN, HEDEFIN KENDISINI `sender` OLARAK YAZIYOR. Kontrol
+        // parametreye baktigi icin bu, korumayi TAM OLARAK atlatan cagridir.
+        vm.prank(address(0xBAD));
+        vm.expectRevert(BaseHook.NotPoolManager.selector);
+        IHooks(address(hook)).beforeInitialize(address(locker), key, price);
+    }
+
+    function test_beforeSwapAndAfterSwapRefuseDirectCalls() public {
+        (PoolKey memory key,) = _keyFor(address(token));
+        SwapParams memory params =
+            SwapParams({zeroForOne: true, amountSpecified: -1e6, sqrtPriceLimitX96: 0});
+
+        vm.prank(address(0xBAD));
+        vm.expectRevert(BaseHook.NotPoolManager.selector);
+        IHooks(address(hook)).beforeSwap(address(0xBAD), key, params, "");
+
+        vm.prank(address(0xBAD));
+        vm.expectRevert(BaseHook.NotPoolManager.selector);
+        IHooks(address(hook)).afterSwap(address(0xBAD), key, params, BalanceDelta.wrap(0), "");
+    }
+}

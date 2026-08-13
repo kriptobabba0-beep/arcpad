@@ -281,6 +281,7 @@ describe('apply/fees', () => {
       escrow: LIVE.escrow,
       curves: new Set<Address>(),
       tokens: new Set<Address>(),
+      curveToToken: new Map<Address, Address>(),
       pools: new Map(),
     }
     const first = BigInt(logs[0]!.blockNumber)

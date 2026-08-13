@@ -66,6 +66,7 @@ const EMPTY_WATCH: WatchSet = {
   escrow: FIX.escrow,
   curves: new Set(),
   tokens: new Set(),
+  curveToToken: new Map(),
   pools: new Map(),
 }
 
@@ -187,6 +188,7 @@ describe('iki fazli cekis', () => {
       ...EMPTY_WATCH,
       curves: new Set([FIX.curve]),
       tokens: new Set([FIX.token]),
+      curveToToken: new Map(),
       pools: new Map(),
     }
     const events = await fetchRange(node, watch, BUY_BLOCK, BUY_BLOCK)
@@ -225,6 +227,7 @@ describe('EIP-7708 duvari', () => {
     escrow: LIVE.escrow,
     curves: new Set(),
     tokens: new Set(),
+    curveToToken: new Map(),
     pools: new Map(),
   }
 
@@ -474,6 +477,7 @@ describe('RPC hata taksonomisi', () => {
     escrow: LIVE.escrow,
     curves: new Set(),
     tokens: new Set(),
+    curveToToken: new Map(),
     pools: new Map(),
   }
 
@@ -590,6 +594,7 @@ describe('yanit uzerindeki sert iddialar', () => {
         escrow: LIVE.escrow,
         curves: new Set(),
         tokens: new Set(),
+        curveToToken: new Map(),
         pools: new Map(),
       },
       BigInt(logs[0]!.blockNumber),
@@ -751,14 +756,24 @@ describe('kurulmus Graduated', () => {
       escrow: LIVE.escrow,
       curves: new Set([LIVE.curve]),
       tokens: new Set([LIVE.token]),
+      curveToToken: new Map(),
       pools: new Map(),
     }
     const events = await fetchRange(node, watch, BLOCK, BLOCK)
     expect(events.map((e) => e.kind)).toEqual(['graduated'])
 
-    const curveFilter = node.logFilters.find(
-      (f) => Array.isArray(f['address']) && (f['address'] as string[]).includes(LIVE.curve),
-    )
+    /*
+     * SORGU ARTIK ADRESINDEN DEGIL TOPIC'INDEN BULUNUR. Curve sorgusu adres
+     * filtresi tasimiyor -- kaldirilmasi bilincli bir KAPASITE kararidir
+     * (bkz. `logs.ts`, "MALIYET AKTIVITEYLE OLCEKLENIR"), ve yayinci kontrolu
+     * cekme katmanina tasindi. Bu testin OLCTUGU sey degismedi: uc topic de
+     * gercekten soruluyor mu.
+     */
+    const curveFilter = node.logFilters.find((f) => {
+      const topics = f['topics'] as unknown[] | undefined
+      const first = Array.isArray(topics?.[0]) ? (topics[0] as string[]) : []
+      return first.includes(TOPIC0.graduated)
+    })
     expect((curveFilter?.['topics'] as Hex[][] | undefined)?.[0]).toEqual([
       TOPIC0.trade,
       TOPIC0.completed,
@@ -775,6 +790,7 @@ describe('kurulmus Graduated', () => {
         escrow: LIVE.escrow,
         curves: new Set([LIVE.curve]),
         tokens: new Set([LIVE.token]),
+        curveToToken: new Map(),
         pools: new Map(),
       },
       BLOCK,
@@ -807,6 +823,7 @@ describe('kurulmus Graduated', () => {
         escrow: LIVE.escrow,
         curves: new Set([LIVE.curve]),
         tokens: new Set([LIVE.token]),
+        curveToToken: new Map(),
         pools: new Map(),
       },
       BLOCK,
@@ -833,6 +850,7 @@ describe('cozme (canli Arc degerleri)', () => {
         escrow: LIVE.escrow,
         curves: new Set(),
         tokens: new Set(),
+        curveToToken: new Map(),
         pools: new Map(),
       },
       first,
@@ -1097,5 +1115,189 @@ describe('pacing', () => {
     await fetchRange(node, EMPTY_WATCH, LAUNCH_BLOCK, BUY_BLOCK, { pacer: counting })
     expect(calls).toBe(node.requests.length)
     expect(calls).toBeGreaterThanOrEqual(4)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// KAPASITE -- MALIYET AKTIVITEYLE OLCEKLENIR, KAYIT SAYISIYLA DEGIL
+// ---------------------------------------------------------------------------
+//
+// BULUNAN SORUN (denetim, ucuncu gecis): curve sorgusu `launches`'in TAMAMINI
+// adres filtresine koyuyordu, yani her 500 launch her donguye bir
+// `eth_getLogs` cagrisi daha ekliyordu -- KALICI olarak. Yanlis olcekleme
+// buydu: launch ucretsizdir (olculdu: 0,039 USDC) ve POPULERLIK dogrudan
+// kayit uretir. Yuzlerce kisinin ayni anda launch etmesi bir saldiri degil,
+// urunun BASARI halidir; sistem onu tasimak zorunda.
+//
+// Uc `topic0` arcpad'e ozgudur, dolayisiyla adres filtresi kaldirilip yerine
+// CEKME katmaninda yayinci kontrolu konuldu. Guvenlik ayni, maliyet artik
+// aktiviteyle orantili.
+describe('kapasite: curve sorgusu izleme kumesiyle buyumez', () => {
+  /** `n` uydurma curve tasiyan bir izleme kumesi. */
+  function watchWith(n: number): WatchSet {
+    const curves = new Set<Address>([FIX.curve])
+    for (let i = 0; i < n; i++) {
+      curves.add(`0x${(i + 1).toString(16).padStart(40, '0')}` as Address)
+    }
+    return { ...EMPTY_WATCH, curves, tokens: new Set([FIX.token]) }
+  }
+
+  /** Curve olaylarini soran cagrilarin sayisi. */
+  function curveQueryCount(node: FakeNode): number {
+    return node.logFilters.filter((f) => {
+      const topics = f['topics'] as unknown[] | undefined
+      const first = Array.isArray(topics?.[0]) ? (topics[0] as string[]) : []
+      return first.includes(TOPIC0.trade)
+    }).length
+  }
+
+  it('10, 5.000 ve 50.000 curve ayni sayida cagri uretir', async () => {
+    const counts: number[] = []
+    for (const n of [10, 5_000, 50_000]) {
+      const node = new FakeNode(launchAndBuy())
+      await fetchRange(node, watchWith(n), LAUNCH_BLOCK, BUY_BLOCK)
+      counts.push(curveQueryCount(node))
+    }
+    // ONCEKI HALDE bunlar 1, 10 ve 100 olurdu (500'luk dilimler).
+    expect(counts).toEqual([1, 1, 1])
+  })
+
+  it('curve sorgusu ADRES FILTRESI TASIMAZ -- tasisaydi kume ile buyurdu', async () => {
+    const node = new FakeNode(launchAndBuy())
+    await fetchRange(node, watchWith(1_000), LAUNCH_BLOCK, BUY_BLOCK)
+    const curveFilters = node.logFilters.filter((f) => {
+      const topics = f['topics'] as unknown[] | undefined
+      const first = Array.isArray(topics?.[0]) ? (topics[0] as string[]) : []
+      return first.includes(TOPIC0.trade)
+    })
+    expect(curveFilters).toHaveLength(1)
+    expect(curveFilters[0]?.['address']).toBeUndefined()
+  })
+
+  /*
+   * VE GUVENLIK AYNI KALIR. Adres filtresi kaldirildi ama ISLEVI kaldirilmadi:
+   * yayinci kontrolu cekme katmaninda duruyor. Bu test onu olcer -- sahte bir
+   * `Trade`, GERCEK topic0 ile ama bilinmeyen bir adresten gelir ve ELENIR.
+   *
+   * Elenmesi SART: ingest'teki `UnknownCurve` bir HALT'tir, yani sizan tek bir
+   * sahte olay indexer'i durdururdu -- launch spam'inden bile ucuz bir
+   * saldiri.
+   */
+  it('SAHTE bir Trade -- gercek topic0, bilinmeyen yayinci -- ELENIR', async () => {
+    const real = rawLogs('buy_exact_tokens_out', { block: BUY_BLOCK })
+    const genuineTrade = real.find((l) => l.topics[0] === TOPIC0.trade)
+    expect(genuineTrade, 'fixture icinde Trade yok').toBeDefined()
+
+    const forged: RawLog = {
+      ...(genuineTrade as RawLog),
+      address: '0x00000000000000000000000000000000deadbeef',
+      logIndex: '0x63',
+    }
+
+    const node = new FakeNode([...launchAndBuy(), forged], { ignoreAddressFilter: true })
+    const events = await fetchRange(node, EMPTY_WATCH, LAUNCH_BLOCK, BUY_BLOCK)
+
+    const traders = events.filter((e) => e.kind === 'trade')
+    expect(traders.length, 'sahte Trade ice sizdi').toBe(1)
+    for (const e of traders) {
+      expect((e as { curve: string }).curve.toLowerCase()).toBe(FIX.curve)
+    }
+  })
+
+  /*
+   * AYNI ARALIKTA LAUNCH + ALIM hala calisir. Yayinci filtresi FAZ 1.5'ta
+   * buyutulmus kumeye karsidir, yani ayni aralikta dogan bir curve'un ilk
+   * islemi ELENMEZ. Bu, iki fazli tasarimin zaten koruduğu ozelliktir ve
+   * degisiklik onu bozmamalidir.
+   */
+  it('ayni aralikta dogan bir curve in ILK islemi elenmez', async () => {
+    const node = new FakeNode(launchAndBuy(), { ignoreAddressFilter: true })
+    const events = await fetchRange(node, EMPTY_WATCH, LAUNCH_BLOCK, BUY_BLOCK)
+    expect(kinds(events)).toContain('launched')
+    expect(kinds(events)).toContain('trade')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// KAPASITE 2 -- TRANSFER KUMESI DE LAUNCH SAYISIYLA BUYUMEZ
+// ---------------------------------------------------------------------------
+//
+// `Transfer` topic0'i EVRENSELDIR, yani bu tek sorgu adres filtresini
+// birakamaz. Bunun yerine kume kuculur: arzinin tamami hala curve'de duran
+// bir token `Transfer` YAYAMAZ -- kimsede yoktur ki gondersin.
+//
+// Kume UC kaynaktan birlesir ve ucu de gerekli. Asagidaki testler ucunu de
+// ayri ayri yuruyor; biri dusesse eksik bir `Transfer` demektir ve o,
+// `holders.balance_tok >= 0` CHECK'inde indexer'i durdururdu.
+describe('kapasite: transfer kumesi', () => {
+  function transferFilters(node: FakeNode): Record<string, unknown>[] {
+    return node.logFilters.filter((f) => {
+      const topics = f['topics'] as unknown[] | undefined
+      return topics?.[0] === TOPIC0.transfer
+    })
+  }
+
+  function addressesIn(filters: Record<string, unknown>[]): Set<string> {
+    const out = new Set<string>()
+    for (const f of filters) {
+      const a = f['address']
+      for (const one of Array.isArray(a) ? (a as string[]) : a === undefined ? [] : [a as string]) {
+        out.add(one.toLowerCase())
+      }
+    }
+    return out
+  }
+
+  /** (1) BU ARALIKTA LAUNCH: mint `Transfer`i icin kumede olmali. */
+  it('bu aralikta launch edilen token transfer kumesine girer', async () => {
+    const node = new FakeNode(launchAndBuy())
+    await fetchRange(node, EMPTY_WATCH, LAUNCH_BLOCK, BUY_BLOCK)
+    expect(addressesIn(transferFilters(node))).toContain(FIX.token)
+  })
+
+  /*
+   * (2) BU ARALIKTA ILK ALIM: token daha once hic islem gormemis, yani
+   * `watch.tokens`te DEGIL -- ama ayni islemde hem `Trade` hem `Transfer`
+   * var. FAZ 1.6 onu curve olayindan bulup ekler.
+   */
+  it('ILK ALIMDA token, curve olayindan bulunup kumeye eklenir', async () => {
+    const node = new FakeNode(rawLogs('buy_exact_tokens_out', { block: BUY_BLOCK }))
+    const watch: WatchSet = {
+      ...EMPTY_WATCH,
+      curves: new Set([FIX.curve]),
+      // Token BILEREK bos: "hic islem gormemis" hali.
+      tokens: new Set(),
+      curveToToken: new Map([[FIX.curve, FIX.token]]),
+    }
+    await fetchRange(node, watch, BUY_BLOCK, BUY_BLOCK)
+    expect(addressesIn(transferFilters(node))).toContain(FIX.token)
+  })
+
+  /*
+   * (3) HIC ISLEM GORMEMIS VE BU ARALIKTA SESSIZ olan tokenlar SORULMAZ.
+   * Olcekleme iddiasi tam olarak budur: 50.000 sessiz launch, transfer
+   * sorgusuna TEK BIR adres eklemez.
+   */
+  it('sessiz ve hic islem gormemis tokenlar sorulmaz', async () => {
+    const node = new FakeNode(rawLogs('buy_exact_tokens_out', { block: BUY_BLOCK }))
+    const silent = new Map<Address, Address>()
+    for (let i = 1; i <= 5_000; i++) {
+      const c = `0x${i.toString(16).padStart(40, '0')}` as Address
+      const t = `0x${(i + 900_000).toString(16).padStart(40, '0')}` as Address
+      silent.set(c, t)
+    }
+    const watch: WatchSet = {
+      ...EMPTY_WATCH,
+      curves: new Set([FIX.curve, ...silent.keys()]),
+      tokens: new Set(),
+      curveToToken: new Map([[FIX.curve, FIX.token], ...silent]),
+    }
+    await fetchRange(node, watch, BUY_BLOCK, BUY_BLOCK)
+
+    const asked = addressesIn(transferFilters(node))
+    expect(asked).toContain(FIX.token)
+    // 5.000 sessiz token'in HICBIRI sorulmadi.
+    for (const t of silent.values()) expect(asked.has(t)).toBe(false)
+    expect(asked.size).toBe(1)
   })
 })

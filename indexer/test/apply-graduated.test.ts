@@ -180,6 +180,7 @@ describe('apply/graduated', () => {
         escrow: LIVE.escrow,
         curves: new Set([LIVE.curve]),
         tokens: new Set([LIVE.token]),
+        curveToToken: new Map(),
         pools: new Map(),
       },
       GRAD_BLOCK,

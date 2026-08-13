@@ -311,7 +311,30 @@ export interface WatchSet {
   factory: Address
   escrow: Address
   curves: ReadonlySet<Address>
+  /**
+   * `Transfer` SORULACAK TOKEN'LAR -- LAUNCH EDILMIS HEPSI DEGIL.
+   *
+   * `Transfer` topic0'i EVRENSELDIR, dolayisiyla bu tek sorgu adres filtresini
+   * BIRAKAMAZ (filtresiz olculen hacim 11.692 log / 1.000 blok). O yuzden
+   * kume KUCULTULUR: arzinin tamami hala curve'de duran bir token `Transfer`
+   * YAYAMAZ -- kimsede yoktur ki gondersin.
+   *
+   * Yuklem MONOTONDUR ("hic islem gordu mu"), yani bir kez girdikten sonra
+   * cikmaz; geri donebilen bir yuklem (ornegin "su an holder'i var mi") ayni
+   * kumeyi verirdi ama akil yurutmesi cok daha kirilgan olurdu.
+   *
+   * UC KAYNAK BIRLESIR ve ucu de gerekli: (1) daha once islem gormus olanlar
+   * -- burada; (2) BU ARALIKTA launch edilenler -- mint `Transfer`i icin,
+   * `fetchRange` FAZ 1.5; (3) BU ARALIKTA curve'u olay yayanlar -- ilk alim
+   * ayni islemde hem `Trade` hem `Transfer` uretir, `fetchRange` FAZ 1.6.
+   */
   tokens: ReadonlySet<Address>
+  /**
+   * curve -> token. `Trade` ve `Completed` TOKEN ADRESINI TASIMAZ (kimlik
+   * `log.address` = curve'dur), dolayisiyla "bu aralikta islem goren token"
+   * ancak bu eslemeyle bulunur.
+   */
+  curveToToken: ReadonlyMap<Address, Address>
   /**
    * MEZUN TOKEN'LARIN HAVUZLARI, `PoolId`e gore. BOS OLMASI NORMALDIR ve
    * bugun oyledir: uretim factory'sinin `graduationTarget`i `0x0`, yani hicbir
@@ -1266,10 +1289,14 @@ export async function fetchRange(
     curves.add(addressFrom(log.topics[2] as Hex))
   }
 
-  // FAZ 2: geri kalan her sey, GUNCELLENMIS kumeyle. Uc sorgu da havuzdan
-  // gecer (bkz. `createPacer`), yani `Promise.all` es zamanlilik ISTEMEZ --
-  // yalnizca sirayi cagirana birakir.
-  const [curveLogs, escrowLogs, transferLogs] = await Promise.all([
+  // FAZ 2: geri kalan her sey, GUNCELLENMIS kumeyle.
+  //
+  // SIRA DEGISTI VE BU BILINCLIDIR: curve sorgusu transfer sorgusundan ONCE
+  // biter, cunku FAZ 1.6 onun sonucuna bakip transfer kumesini buyutur. Bedeli
+  // YOK: uc sorgu da ayni pacer'dan gecer (bkz. `createPacer`), yani
+  // `Promise.all` zaten es zamanlilik uretmiyordu -- yalnizca sirayi
+  // gizliyordu.
+  const [curveLogs, escrowLogs] = await Promise.all([
     // `Trade`/`Completed`/`Graduated` topic0'lari arcpad'e ozgudur AMA adres
     // filtresi yine de ZORUNLUDUR: herkes ayni imzayi tasiyan bir olay
     // YAYABILIR (bkz. `contracts/fixtures/forged.json` -- gercek `topic0`,
@@ -1280,16 +1307,41 @@ export async function fetchRange(
     // (`emit Graduated(...)` `BondingCurve.graduate()` icindedir), yani izleme
     // kumesi `curves`tir. Escrow filtresine konsaydi HICBIR ZAMAN doner ve
     // "cekiliyor ama hic gelmiyor" arizasi tamamen sessiz olurdu.
-    getLogsChunked(
+    /*
+     * ============ MALIYET AKTIVITEYLE OLCEKLENIR, KAYIT SAYISIYLA DEGIL ============
+     *
+     * ONCEKI HAL ADRES FILTRESI KULLANIYORDU ve o filtre `launches`'in TAMAMINI
+     * tasiyordu: her 500 launch, HER DONGUDE bir `eth_getLogs` cagrisi daha
+     * demekti. Yanlis olcekleme buydu -- bedel KAYIT sayisina baglanmisti, oysa
+     * kayit ucretsizdir (olculdu: launch basina 0,039 USDC) ve populerlik
+     * dogrudan kayit uretir. 100.000 launch, adres filtreli sorguda dongu
+     * basina +200 cagri; Arc `eth_getLogs`i IP basina MALIYET BUTCESIYLE
+     * sinirladigi ve butce bitince tek bloklu sorgu bile reddedildigi icin
+     * sonuc, veri katmaninin KALICI olarak durmasiydi. Saldiri olarak da
+     * ucuzdu, ama asil sorun saldiri degil: BASARI ayni yuku uretir.
+     *
+     * Uc `topic0` arcpad'e OZGUDUR, dolayisiyla adres filtresi olmadan sorulan
+     * bir aralik yalnizca arcpad olaylarini (arti sahtelerini) dondurur ve
+     * boyutu AKTIVITEYLE orantilidir -- dogru olcekleme budur.
+     *
+     * FILTRE KALDIRILMADI, TASINDI. Adres filtresinin islevi provenance'ti ve
+     * o islev asagida, `curves` kumesine karsi AYNEN yapiliyor. Iki fark var
+     * ve ikisi de lehimize:
+     *   - Cagri sayisi N'den BAGIMSIZ (ceil(N/500) -> 1).
+     *   - Sahte olay maliyeti saldirgana KALICI degil SUREKLI: yayin
+     *       durdugunda etki biter. Launch spam'i ise tek odemeyle sonsuza
+     *       kadar surerdi.
+     *
+     * INGEST'TEKI `UnknownCurve` HALT'I YERINDE KALIR VE KALMALIDIR: bu
+     * filtreden sonra oraya bilinmeyen bir curve ULASAMAZ, dolayisiyla ulasirsa
+     * gercekten bir hata vardir. Filtreyi ingest'e tasimak o sinyali yok
+     * ederdi.
+     */
+    getLogs(
       client,
-      [...curves],
-      [[TOPIC0.trade, TOPIC0.completed, TOPIC0.graduated]],
-      from,
-      to,
+      { from, to, topics: [[TOPIC0.trade, TOPIC0.completed, TOPIC0.graduated]] },
       pacer,
-      chunk,
-      options.widthMemo,
-    ),
+    ).then((logs) => logs.filter((log) => curves.has(log.address.toLowerCase() as Address))),
     getLogs(
       client,
       { from, to, address: watch.escrow, topics: [[TOPIC0.deposited, TOPIC0.claimed]] },
@@ -1298,17 +1350,34 @@ export async function fetchRange(
     // EIP-7708 DUVARI: `Transfer` ASLA adres filtresi olmadan sorulmaz.
     // Filtresiz sorgunun olculen hacmi 11.692 log / 1.000 blok ve icinde her
     // native hareket var.
-    getLogsChunked(
-      client,
-      [...tokens],
-      [TOPIC0.transfer],
-      from,
-      to,
-      pacer,
-      chunk,
-      options.widthMemo,
-    ),
   ])
+
+  /*
+   * FAZ 1.6: BU ARALIKTA CURVE'U OLAY YAYAN TOKEN'LARI TRANSFER KUMESINE EKLE.
+   *
+   * `watch.tokens` yalnizca DAHA ONCE islem gormus tokenlari tasir (bkz. o
+   * alanin notu). Bir tokenin ILK ALIMI ayni islemde hem `Trade` hem
+   * `Transfer` uretir, yani o an kumede degildir ve transfer'i kacardi --
+   * `holders.balance_tok >= 0` CHECK'i bunu gurultuyle yakalardi ama once
+   * indexer dururdu. Bu faz o durumu hic dogurmaz.
+   *
+   * FAZ 1.5 ILE AYNI ARIZANIN IKINCI YUZU: orada launch, burada ilk islem.
+   */
+  for (const log of curveLogs) {
+    const token = watch.curveToToken.get(log.address.toLowerCase() as Address)
+    if (token !== undefined) tokens.add(token)
+  }
+
+  const transferLogs = await getLogsChunked(
+    client,
+    [...tokens],
+    [TOPIC0.transfer],
+    from,
+    to,
+    pacer,
+    chunk,
+    options.widthMemo,
+  )
 
   // FAZ 2.5: BU ARALIKTA MEZUN OLAN TOKEN'LARIN HAVUZLARINI KUMEYE EKLE.
   //

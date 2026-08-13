@@ -553,6 +553,7 @@ export async function liveDecodedEvents(): Promise<DecodedEvent[]> {
       escrow: LIVE.escrow,
       curves: new Set(),
       tokens: new Set(),
+      curveToToken: new Map(),
       pools: new Map(),
     },
     first,

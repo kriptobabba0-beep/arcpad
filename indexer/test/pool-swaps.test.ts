@@ -84,6 +84,7 @@ const watchWithPool = (pools: ReadonlyMap<Hex, PoolRef> = new Map([[POOL_ID, REF
   escrow: LIVE.escrow,
   curves: new Set([LIVE.curve]),
   tokens: new Set([TOKEN]),
+  curveToToken: new Map(),
   pools,
 })
 
