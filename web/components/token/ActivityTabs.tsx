@@ -291,9 +291,7 @@ function HolderTable({
                     {isCreator ? <Tag>Creator</Tag> : null}
                   </span>
                 </Td>
-                <Td className="tabular-nums">
-                  {supplyPercent(row.balanceTok, totalSupplyTok)}%
-                </Td>
+                <Td className="tabular-nums">{supplyPercent(row.balanceTok, totalSupplyTok)}%</Td>
                 <Td className="tabular-nums">{compactTokens(row.balanceTok)}</Td>
                 <Td className="tabular-nums">
                   {formatUsdcCompact((row.balanceTok * priceWeiPerToken) / 10n ** 18n)}

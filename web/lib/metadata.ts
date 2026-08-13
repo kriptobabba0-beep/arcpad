@@ -160,7 +160,8 @@ function link(value: unknown): string | undefined {
  *   cannot differ from the first. Retrying it would multiply our requests to
  *   the gateways we depend on for a result already known.
  */
-type Attempt = { readonly kind: 'unreachable' } | { readonly kind: 'answered'; readonly body: string | null }
+type Attempt =
+  { readonly kind: 'unreachable' } | { readonly kind: 'answered'; readonly body: string | null }
 
 const UNREACHABLE: Attempt = { kind: 'unreachable' }
 

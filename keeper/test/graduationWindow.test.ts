@@ -2881,7 +2881,7 @@ describe('hayatta kalan mutantlarin kapatilmasi', () => {
  * iyilestirme degil, bir guvenlik gerilemesidir.
  */
 describe('tarama sogumasi: siklik duser, ALARM DUSMEZ', () => {
-  it('SOGUMA SIRASINDA BILE izinsiz bir hedef AYNI POLL\'DA sayfa cikarir', async () => {
+  it("SOGUMA SIRASINDA BILE izinsiz bir hedef AYNI POLL'DA sayfa cikarir", async () => {
     const health = createScanHealth()
     const sink = recorder()
     // Ust uste dort dusus: sayac 4, yani soguma 3 poll.
@@ -2928,10 +2928,13 @@ describe('tarama sogumasi: siklik duser, ALARM DUSMEZ', () => {
 
     expect(
       hostile.oks().some((m) => m.includes('log-scan-cooling-down')),
-      'bu poll gercekten bir soguma poll\'u olmali, yoksa test hicbir sey kanitlamaz',
+      "bu poll gercekten bir soguma poll'u olmali, yoksa test hicbir sey kanitlamaz",
     ).toBe(true)
     const page = hostile.pages().find((m) => m.includes('NOT on the allowlist'))
-    expect(page, 'soguma alarmi susturamaz -- seviye state\'ten gelir, loglardan degil').toBeDefined()
+    expect(
+      page,
+      "soguma alarmi susturamaz -- seviye state'ten gelir, loglardan degil",
+    ).toBeDefined()
   })
 
   it('soguma sirasinda getLogs HIC yayilmaz', async () => {

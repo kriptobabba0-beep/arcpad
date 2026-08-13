@@ -1877,8 +1877,8 @@ export async function runWatcher(deps: WatcherDeps): Promise<void> {
         // hicbir iddiada bulunmaz.
         caughtUp = false
         emit(
-        'ok',
-        'log-scan-deferred',
+          'ok',
+          'log-scan-deferred',
           `log-scan-deferred: scanned through block ${scan.scannedThrough} of ${state.blockNumber} this poll and stopped at the per-poll budget of ${scanOpts.maxChunks} chunk(s). The indexer owns the chain walk; this watcher rations its own so the two do not exhaust the shared rate limit (measured: two concurrent walkers left the indexer completing ZERO ranges). Exposure is NOT measured and the governance history is INCOMPLETE until this catches up.`,
         )
       }

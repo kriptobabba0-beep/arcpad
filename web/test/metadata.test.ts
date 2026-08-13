@@ -238,10 +238,12 @@ describe('the metadata document is cached by content, not by clock', () => {
   it('the cached document still goes through validation', async () => {
     // The cache holds the RAW text, so a document is never trusted merely
     // because it is local. Poison the file and the allow-list must still bite.
-    vi.stubGlobal('fetch', async () =>
-      new Response(JSON.stringify({ description: 'ok', image: 'http://evil.test/x.png' }), {
-        status: 200,
-      }),
+    vi.stubGlobal(
+      'fetch',
+      async () =>
+        new Response(JSON.stringify({ description: 'ok', image: 'http://evil.test/x.png' }), {
+          status: 200,
+        }),
     )
     const fresh = await resolveMetadata(`ipfs://${CID}`)
     expect(fresh?.image, 'an http image is refused on the way in').toBeUndefined()

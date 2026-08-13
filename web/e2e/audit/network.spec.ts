@@ -77,9 +77,7 @@ function allowedHosts(): Set<string> {
   return new Set([new URL(base).host, new URL(rpc).host])
 }
 
-test('every request on every route goes to us or the RPC — and nowhere else', async ({
-  page,
-}) => {
+test('every request on every route goes to us or the RPC — and nowhere else', async ({ page }) => {
   const seen = collect(page)
   const allowed = allowedHosts()
 

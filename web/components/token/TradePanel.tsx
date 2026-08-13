@@ -52,7 +52,7 @@ import {
   type TradePhase,
   type TradeTab,
 } from './tradeModel'
-import { BuyUnitToggle, TradeSideTabs } from './TradeTabs'
+import { TradeSideTabs } from './TradeTabs'
 import { AmountCard, AssetRow, DetailsSection, SummaryRow } from './TradeCard'
 import { useApproval } from './useApproval'
 import { useCurveState } from './useCurveState'
@@ -436,18 +436,16 @@ export function TradeForm({
               label="You receive"
               testId="you-receive"
               value={
-                tab === 'sell' ? (
-                  /*
+                tab === 'sell'
+                  ? /*
                     KOTA SATIRLARINDA `formatUsdcQuote`: `5,000.000000` yerine
                     `5,000`. Alti ondalik bir BAKIYE icin dogrudur (tam olarak
                     neye sahipsin), bir kotada gorsel kirlilik -- ve satirin
                     basinda zaten `~` var.
                   */
-                  `~ ${formatUsdcQuote(plan.curveAmount - plan.protocolFee - plan.creatorFee, 'down')} USDC`
-                ) : (
-                  // `11,000,000.000000 LOCKED` -> `11.00M LOCKED`.
-                  `~ ${formatTokenCompact(plan.tokens)} ${symbol}`
-                )
+                    `~ ${formatUsdcQuote(plan.curveAmount - plan.protocolFee - plan.creatorFee, 'down')} USDC`
+                  : // `11,000,000.000000 LOCKED` -> `11.00M LOCKED`.
+                    `~ ${formatTokenCompact(plan.tokens)} ${symbol}`
               }
             />
             {tab === 'sell' ? null : (

@@ -80,8 +80,7 @@ export function TokenStatStrip({
         </Value>
         {sellSharePercent === null ? null : (
           <span className="text-[12px] text-negative">
-            <LiveNumber value={BigInt(Math.round(sellSharePercent * 10))} format="percent1" />{' '}
-            sells
+            <LiveNumber value={BigInt(Math.round(sellSharePercent * 10))} format="percent1" /> sells
           </span>
         )}
       </Cell>

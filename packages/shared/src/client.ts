@@ -104,7 +104,9 @@ export function createArcClient(rpcUrl: string | readonly string[], options?: Ar
      * digeri.
      */
     transport:
-      transports.length === 1 ? (transports[0] as ReturnType<typeof http>) : fallback(transports, { rank: false }),
+      transports.length === 1
+        ? (transports[0] as ReturnType<typeof http>)
+        : fallback(transports, { rank: false }),
   })
 }
 

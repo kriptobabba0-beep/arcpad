@@ -59,9 +59,8 @@ describe('where artwork comes from, across the app and its CSP', () => {
     process.env.NEXT_PUBLIC_IPFS_GATEWAY = CUSTOM
     vi.resetModules()
 
-    const { ipfsGatewayOrigin, ipfsGatewayOrigins, DEFAULT_IPFS_GATEWAYS } = await import(
-      '../lib/ipfs'
-    )
+    const { ipfsGatewayOrigin, ipfsGatewayOrigins, DEFAULT_IPFS_GATEWAYS } =
+      await import('../lib/ipfs')
     const { resolvableUrls } = await import('../lib/metadata')
 
     expect(ipfsGatewayOrigin(), 'the configured one is tried first').toBe(CUSTOM)

@@ -710,11 +710,7 @@ export function fillCandleGaps(
   for (const candle of candles) {
     const previous = out[out.length - 1]
     if (previous !== undefined) {
-      for (
-        let t = previous.bucket.getTime() + step;
-        t < candle.bucket.getTime();
-        t += step
-      ) {
+      for (let t = previous.bucket.getTime() + step; t < candle.bucket.getTime(); t += step) {
         out.push(flat(new Date(t), previous.closeWei))
       }
     }

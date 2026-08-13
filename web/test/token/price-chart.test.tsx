@@ -108,7 +108,9 @@ describe('<PriceChart>', () => {
      * Fiyat, market cap`in tam olarak 1e9`da biri (`007_views.sql`: N = 1e27).
      * Bolme yapilmasaydi grafik "fiyat" yazip market cap cizerdi.
      */
-    render(<PriceChart candles={[candle(0, 2n * USDC, 2n * USDC)]} metric="price" shape="candles" />)
+    render(
+      <PriceChart candles={[candle(0, 2n * USDC, 2n * USDC)]} metric="price" shape="candles" />,
+    )
     const points = setData.mock.calls.map((c) => c[0]).find((d) => d[0]?.['open'] !== undefined)
     expect(points?.[0]?.['open']).toBeCloseTo(2 / 1e9, 12)
   })

@@ -852,14 +852,20 @@ describe('gecici hata politikasi', () => {
     }
     const slept: number[] = []
     const delays: number[] = []
-    await runWithRetry(pool, limited, LIVE_DEPLOYMENT, { ...CONFIG, maxAttempts: 3 }, {
-      sleep: async (ms) => {
-        slept.push(ms)
+    await runWithRetry(
+      pool,
+      limited,
+      LIVE_DEPLOYMENT,
+      { ...CONFIG, maxAttempts: 3 },
+      {
+        sleep: async (ms) => {
+          slept.push(ms)
+        },
+        onRetry: (info) => {
+          delays.push(info.delayMs)
+        },
       },
-      onRetry: (info) => {
-        delays.push(info.delayMs)
-      },
-    })
+    )
 
     // GENEL butce (3) hiz sinirini SINIRLAMAZ: sekiz reddin sekizi de
     // yeniden denendi, yani `maxAttempts` bu dala hic karismadi.
@@ -1137,7 +1143,6 @@ describe('gecikme, indexer TAKILIYKEN de gorunur', () => {
   })
 
   it('geri cekilme uykusunda bas TAZELENIR -- `behind` donmaz', async () => {
-
     // Imleci ilerlet: bir tur basariyla tamamlansin.
     await runWithRetry(pool, new ChainNode(logs), LIVE_DEPLOYMENT, CONFIG, {
       sleep: async () => {},
@@ -1213,7 +1218,7 @@ describe('gecikme, indexer TAKILIYKEN de gorunur', () => {
     await expect(run).rejects.toThrow('STOP')
 
     const { rows } = await pool.query<{ age: string }>(
-      "SELECT extract(epoch from age(now(), updated_at))::int AS age FROM sync_state WHERE id = 1",
+      'SELECT extract(epoch from age(now(), updated_at))::int AS age FROM sync_state WHERE id = 1',
     )
     // Basi kaybetmek CANLILIGI da kaybettirmemeli: dogru bir sayiyi, baska
     // bir sayinin arizasi yuzunden susturmak olurdu.

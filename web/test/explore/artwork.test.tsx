@@ -48,13 +48,7 @@ const CID = 'QmXULSPHUzkHpC7Ua3SABpnNVNRERofjyiTETXM1HBonNH'
 describe('TokenGrid passes artwork through', () => {
   it('draws the image when the map has one for that token', () => {
     const a = overview('0x1111111111111111111111111111111111111111', 'AAA')
-    render(
-      <TokenGrid
-        tokens={[a]}
-        label="Launches"
-        images={{ [a.token]: `ipfs://${CID}` }}
-      />,
-    )
+    render(<TokenGrid tokens={[a]} label="Launches" images={{ [a.token]: `ipfs://${CID}` }} />)
     const img = screen.getByTestId('token-artwork').querySelector('img')
     expect(img, 'the grid must render the artwork it was given').not.toBeNull()
     // SAME-ORIGIN. A gateway URL here would be discarded by Chrome's ORB --

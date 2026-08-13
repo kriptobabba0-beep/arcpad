@@ -116,7 +116,10 @@ describe('the client bundle', () => {
 
   it('has entries to check at all (anti-vacuum)', () => {
     // Without this, a broken detector would pass by finding nothing to test.
-    expect(clientEntries.length, "no 'use client' modules found -- the scan is wrong").toBeGreaterThan(3)
+    expect(
+      clientEntries.length,
+      "no 'use client' modules found -- the scan is wrong",
+    ).toBeGreaterThan(3)
   })
 
   it('no client module reaches a node builtin, however indirectly', () => {
@@ -131,6 +134,9 @@ describe('the client bundle', () => {
 
     // The message IS the value: Turbopack says "chunking context ... does not
     // support external modules" and names one file. This names the road.
-    expect(offenders, `a browser bundle cannot contain these:\n\n  ${offenders.join('\n\n  ')}\n`).toEqual([])
+    expect(
+      offenders,
+      `a browser bundle cannot contain these:\n\n  ${offenders.join('\n\n  ')}\n`,
+    ).toEqual([])
   })
 })

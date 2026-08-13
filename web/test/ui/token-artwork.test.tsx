@@ -71,7 +71,7 @@ describe('resolveArtworkSrc', () => {
    * bir `<img>` cizilip sonra yedege duselerek. Kaynakta reddetmek ayni
    * zamanda her ziyaretcinin IP'sini o hosta sizdiran istegi de yok eder.
    */
-  it('gateway url\'i vekile yazilir, yabanci host reddedilir', () => {
+  it("gateway url'i vekile yazilir, yabanci host reddedilir", () => {
     expect(resolveArtworkSrc('https://gateway.pinata.cloud/ipfs/bafyfoo/a.png')).toBe(
       '/api/ipfs/bafyfoo/a.png',
     )

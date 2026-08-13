@@ -1981,7 +1981,8 @@ export async function getVolumeSplit(
    * degildir: sifir "son sifir saniye", yani bos bir pencere olurdu ve ekran
    * sessizce her yerde sifir gosterirdi.
    */
-  const since = options.sinceSeconds === undefined ? null : Math.max(1, Math.floor(options.sinceSeconds))
+  const since =
+    options.sinceSeconds === undefined ? null : Math.max(1, Math.floor(options.sinceSeconds))
 
   const { rows } = await db.query<{
     volume_wei: string

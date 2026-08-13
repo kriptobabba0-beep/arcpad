@@ -92,8 +92,14 @@ function imageTypeOf(bytes: Uint8Array): string | null {
   }
   if (
     bytes.length >= 12 &&
-    at(0) === 0x52 && at(1) === 0x49 && at(2) === 0x46 && at(3) === 0x46 &&
-    at(8) === 0x57 && at(9) === 0x45 && at(10) === 0x42 && at(11) === 0x50
+    at(0) === 0x52 &&
+    at(1) === 0x49 &&
+    at(2) === 0x46 &&
+    at(3) === 0x46 &&
+    at(8) === 0x57 &&
+    at(9) === 0x45 &&
+    at(10) === 0x42 &&
+    at(11) === 0x50
   ) {
     return 'image/webp'
   }

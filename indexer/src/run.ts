@@ -1224,7 +1224,6 @@ export async function runWithRetry(
   const observeHead = (): Promise<bigint> =>
     options.head?.(client) ?? finalizedHeadVia(client, headPacer)
 
-
   for (;;) {
     try {
       return await runOnce(pool, client, deployment, config, options)

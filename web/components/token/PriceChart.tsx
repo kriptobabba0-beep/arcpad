@@ -265,8 +265,7 @@ export function PriceChart({
    * sayilar degisirdi.
    */
   const shown =
-    (hoverTime === null ? undefined : rowsRef.current.get(hoverTime)) ??
-    candles[candles.length - 1]
+    (hoverTime === null ? undefined : rowsRef.current.get(hoverTime)) ?? candles[candles.length - 1]
 
   return (
     <section className="flex flex-col gap-3">

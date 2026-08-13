@@ -27,11 +27,7 @@ import { TokenPriceChart } from '@/components/token/PriceHistoryChart'
 import { LifecycleNotice } from '@/components/token/LifecycleNotice'
 import { ProgressToGraduation } from '@/components/token/ProgressToGraduation'
 import { ActivityTabs, tabOf } from '@/components/token/ActivityTabs'
-import {
-  PriceChart,
-  type ChartMetric,
-  type ChartShape,
-} from '@/components/token/PriceChart'
+import { PriceChart, type ChartMetric, type ChartShape } from '@/components/token/PriceChart'
 import {
   MetricPicker,
   ShapePicker,
