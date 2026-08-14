@@ -52,6 +52,17 @@ jobs:
       - name: Frozen bytecode gate
         run: make frozen-hash
 
+      # BAGIMLILIK SABITLEME. `frozen-hash` bizim baytlarimizi, bu kapi
+      # BASKASININ kaynagini dondurur -- ve CI'da olmasi YEREL kosudan daha
+      # onemlidir: bir submodule kaymasi bir PR'da gelir, ve derleme onu
+      # sessizce KABUL EDER (yeni kodla derler, testler yesil kalir).
+      #
+      # `checkout` adiminin `submodules: recursive` ayari bu kapinin on
+      # kosuludur: kurulmamis bir submodule `-` oneki alir ve kapi onu da
+      # KIRMIZI sayar. Yani ikisi birlikte fail-closed'dir.
+      - name: Dependency pin gate
+        run: make deps-pin
+
       - name: Test
         run: forge test --root contracts --no-match-path 'test/fork/*' -vv
         env:

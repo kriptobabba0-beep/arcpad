@@ -1,4 +1,4 @@
-.PHONY: install build test fixtures fmt fmt-check lint fork-test fork-test-live slither dev clean frozen-hash frozen-hash-chain
+.PHONY: install build test fixtures fmt fmt-check lint fork-test fork-test-live slither dev clean frozen-hash frozen-hash-chain deps-pin
 
 install:
 	corepack enable pnpm || pnpm --version
@@ -21,7 +21,7 @@ build:
 # ama BROADCAST yine de fail-closed'dir. `forge script --broadcast`,
 # `make frozen-hash` kosmadan `FrozenArtifactMissing` ile DUSER ve bu KASITLIDIR:
 # dondurulmus bytecode'u dogrulanmamis bir deploy yayin YAPAMAMALIDIR.
-test: frozen-hash
+test: frozen-hash deps-pin
 	forge test --root contracts --no-match-path 'test/fork/*' -vv
 	pnpm -r test
 
@@ -58,6 +58,25 @@ frozen-hash:
 # gercek basari kosulu zincirin de ayni seyi soylemesidir.
 frozen-hash-chain:
 	$(PYTHON) contracts/tools/frozen_bytecode_gate.py --chain
+
+# BAGIMLILIK SABITLEME KAPISI, VE ACIGIN NEREDE OLDUGU OLCULDU.
+#
+# Bir submodule kaymasinin BUYUK kismi zaten yakalanir, cunku baskasinin
+# kaynagi bizim initcode'umuza GOMULUR ve o initcode'lar sabitlenmistir:
+#   OZ ERC20      -> `LaunchToken` + `LaunchFactory` FROZEN hash'i kirmizi
+#   uniswap-hooks -> `ARC_HOOK_CREATION_CODE_HASH` iddiasi kirmizi
+#   v4-periphery  -> locker initcode'u degisir, `ARC_LOCKER` adres iddiasi
+#                    kirmizi (locker CREATE2 ile, `predict(LOCKER_SALT, ...)`)
+#
+# YAKALANMAYAN TEK SEY VE EN ONEMLISI ODUR: `PoolManager`. O, kodu bizim
+# hicbir initcode'umuza GIRMEYEN tek bagimliliktir -- ayri, coktan deploy
+# EDILMIS bir kontrat ve biz yalnizca CAGIRIYORUZ. Testler onu submodule
+# KAYNAGINDAN kurar. Yani v4-core kayarsa butun paket sessizce BASKA bir
+# PoolManager'a karsi yesil kalir, canli zincirdeki ESKISI yerinde durur ve
+# testler artik deploy EDILMEMIS bir kontratin ozelliklerini kanitliyor olur.
+# Mezuniyet sonrasi butun likidite o kontratta durdugu icin bu kapi oradadir.
+deps-pin:
+	$(PYTHON) contracts/tools/dependency_pin_gate.py
 
 fmt:
 	forge fmt --root contracts
