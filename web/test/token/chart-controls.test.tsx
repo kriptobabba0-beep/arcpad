@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
+import { VolumePanel } from '@/components/token/VolumePanel'
 import {
   CHART_TF_PARAM,
   MetricPicker,
@@ -98,5 +99,47 @@ describe('metrik etiketi', () => {
     expect(label.tagName).toBe('SPAN')
     expect(screen.queryByRole('link')).toBeNull()
     expect(label).not.toHaveTextContent('Price')
+  })
+})
+
+/**
+ * ============================================================================
+ *  CAGRI YERI TESTI -- VE NICIN YUKARIDAKILER YETMEDI
+ * ============================================================================
+ *
+ * Yukaridaki testler `TimeframePicker`i DOGRUDAN, `param` vererek cagiriyor ve
+ * hepsi yesildi. Canli sayfada ise hacim dugmeleri hala `?tf=` yaziyordu:
+ * `VolumePanel` bileseni `param`SIZ cagiriyordu ve varsayilan `tf`dir.
+ *
+ * Yani hata bilesende degil, ONU KULLANAN SATIRDAYDI -- ve o satiri hicbir
+ * test okumuyordu. Bu blok tam olarak orayi okur.
+ */
+describe('VolumePanel kendi anahtarini yazar', () => {
+  const split = {
+    volumeWei: 1_000_000_000_000_000_000n,
+    buyVolumeWei: 600_000_000_000_000_000n,
+    sellVolumeWei: 400_000_000_000_000_000n,
+    buys: 3,
+    sells: 2,
+    buyers: 2,
+    sellers: 2,
+  }
+
+  it('hacim dugmeleri `vf` yazar ve `tf`ye DOKUNMAZ', () => {
+    render(
+      <VolumePanel
+        split={split}
+        timeframe="24h"
+        params={{ [CHART_TF_PARAM]: '1h', [VOLUME_TF_PARAM]: '24h' }}
+      />,
+    )
+    const links = screen
+      .getAllByRole('link')
+      .map((a) => a.getAttribute('href') ?? '')
+    expect(links.length).toBe(4)
+    for (const href of links) expect(href).toContain('tf=1h')
+    expect(links.some((h) => h.includes('vf=5m'))).toBe(true)
+    // KRITIK IDDIA: hicbir hacim dugmesi grafigin dilimini degistirmez.
+    expect(links.some((h) => h.includes('tf=5m'))).toBe(false)
   })
 })

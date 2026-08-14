@@ -1,6 +1,6 @@
 import { LiveNumber } from '@/components/ui/LiveNumber'
 import type { VolumeSplit } from '@/lib/read'
-import { TimeframePicker, type TimeframeKey } from './ChartControls'
+import { TimeframePicker, type TimeframeKey, VOLUME_TF_PARAM } from './ChartControls'
 
 /**
  * ============================================================================
@@ -41,7 +41,24 @@ export function VolumePanel({
     <section data-testid="volume-panel" className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-[15px] font-medium">Volume</h2>
-        <TimeframePicker active={timeframe} params={params} ariaLabel="Volume timeframe" />
+        {/*
+          `param` ACIKCA VERILIR VE ATLANAMAZ -- OLCULDU.
+
+          `TimeframePicker`in varsayilani `tf`dir, yani grafiginki. Bu satir
+          bir sure `param`sizdi: iki secici ekranda AYRI duruyordu, birim
+          testleri YESILDI (cunku bileseni dogrudan, `param` vererek test
+          ediyorlardi) ve canli sayfada hacim dugmeleri hala `?tf=` yaziyordu.
+          Yani ayrim yapilmis GORUNUYOR ama yapilmamisti.
+
+          Ders: bir bilesenin dogru davranmasi, CAGRI YERININ dogru cagirdigini
+          gostermez. Asagidaki test bu satiri `VolumePanel` uzerinden olcer.
+        */}
+        <TimeframePicker
+          active={timeframe}
+          params={params}
+          param={VOLUME_TF_PARAM}
+          ariaLabel="Volume timeframe"
+        />
       </div>
 
       <p className="text-[26px] font-medium leading-none tabular-nums" data-testid="volume-total">
