@@ -151,10 +151,9 @@ export function SlippageRow({
               "ilgisiz bir dipnot" gibi okunur.
             */}
             <span
-              className={[
-                'text-[13px] tabular-nums',
-                severity === 'ok' ? '' : 'text-caution',
-              ].join(' ')}
+              className={['text-[13px] tabular-nums', severity === 'ok' ? '' : 'text-caution'].join(
+                ' ',
+              )}
               data-testid="slippage-value"
             >
               {formatSlipBps(value)}

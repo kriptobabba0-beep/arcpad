@@ -162,7 +162,7 @@ export function ShapePicker({
  * Etiket DURUYOR: grafigin neyi cizdigini soylemek hala gerekli. Sadece artik
  * bir baglanti degil, bir BASLIK.
  */
-export function MetricPicker({ active }: { active: 'fdv' }) {
+export function MetricPicker() {
   return (
     <span
       className="inline-flex shrink-0 items-center rounded-input border border-border bg-surface-2 px-2.5 py-1.5 text-[12px] leading-none text-text"

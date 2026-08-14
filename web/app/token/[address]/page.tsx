@@ -305,7 +305,7 @@ async function IndexedToken({
             controls={
               <div className="flex items-center gap-2">
                 <ShapePicker active={shape} params={sharedParams} />
-                <MetricPicker active={metric} />
+                <MetricPicker />
                 <TimeframePicker
                   active={tf}
                   params={sharedParams}

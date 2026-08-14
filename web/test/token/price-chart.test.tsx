@@ -254,8 +254,7 @@ describe('<PriceChart>', () => {
     const calls = applyOptions.mock.calls
     for (let i = calls.length - 1; i >= 0; i -= 1) {
       const scale = calls[i]?.[0]?.['timeScale'] as
-        | { tickMarkFormatter?: (time: number) => string }
-        | undefined
+        { tickMarkFormatter?: (time: number) => string } | undefined
       if (scale?.tickMarkFormatter) return scale.tickMarkFormatter
     }
     throw new Error('grafige hic tickMarkFormatter gecilmedi')

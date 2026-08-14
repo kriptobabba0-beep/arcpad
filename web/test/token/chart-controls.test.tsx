@@ -92,7 +92,7 @@ describe('zaman dilimi secicileri', () => {
  */
 describe('metrik etiketi', () => {
   it('FDV yazar ve BASILAMAZ -- gidilecek ikinci bir gorunum yok', () => {
-    render(<MetricPicker active="fdv" />)
+    render(<MetricPicker />)
     const label = screen.getByTestId('metric-picker')
     expect(label).toHaveTextContent('FDV')
     expect(label.tagName).toBe('SPAN')
