@@ -53,20 +53,58 @@ const chain = {
 } as const
 
 const CURVE_ABI = [
-  { type: 'function', name: 'virtualQuoteReserves', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
-  { type: 'function', name: 'virtualTokenReserves', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
-  { type: 'function', name: 'realQuoteReserves', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
-  { type: 'function', name: 'realTokenReserves', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  {
+    type: 'function',
+    name: 'virtualQuoteReserves',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'virtualTokenReserves',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'realQuoteReserves',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'realTokenReserves',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint256' }],
+  },
 ] as const
 
 const ERC20_ABI = [
-  { type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ name: 'a', type: 'address' }], outputs: [{ type: 'uint256' }] },
-  { type: 'function', name: 'totalSupply', stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] },
+  {
+    type: 'function',
+    name: 'balanceOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'a', type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
+  {
+    type: 'function',
+    name: 'totalSupply',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint256' }],
+  },
 ] as const
 
 const pub = createPublicClient({ chain, transport: http(RPC) })
 
-async function read(name: 'virtualQuoteReserves' | 'virtualTokenReserves' | 'realQuoteReserves' | 'realTokenReserves') {
+async function read(
+  name: 'virtualQuoteReserves' | 'virtualTokenReserves' | 'realQuoteReserves' | 'realTokenReserves',
+) {
   return (await pub.readContract({ address: CURVE, abi: CURVE_ABI, functionName: name })) as bigint
 }
 
@@ -75,7 +113,11 @@ const [vQ, vT, realQ, realT, supply] = await Promise.all([
   read('virtualTokenReserves'),
   read('realQuoteReserves'),
   read('realTokenReserves'),
-  pub.readContract({ address: TOKEN, abi: ERC20_ABI, functionName: 'totalSupply' }) as Promise<bigint>,
+  pub.readContract({
+    address: TOKEN,
+    abi: ERC20_ABI,
+    functionName: 'totalSupply',
+  }) as Promise<bigint>,
 ])
 
 /*

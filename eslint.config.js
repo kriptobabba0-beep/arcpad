@@ -66,6 +66,32 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
+    /*
+     * DUZ `.mjs` PROBE'LARI: NODE GLOBALLERI ACIKCA TANITILIR.
+     *
+     * Asagidaki blok `no-undef`i `.ts`/`.tsx` icin KAPATIR ve gerekcesi
+     * "TypeScript zaten kontrol ediyor"dur. O gerekce bir `.mjs` icin
+     * GECERLI DEGIL -- orada tip denetleyicisi yok, yani kural ACIK KALMALI
+     * ve yanlis pozitifler global listesiyle cozulmeli.
+     *
+     * Liste `globals` paketinden degil ELLE: bu depoda o paket yok ve
+     * `scripts/probe/*.mjs`in kullandigi global sayisi altiyi gecmiyor. Bir
+     * yazim hatasi (`conosle.log`) boylece hala YAKALANIR; komple kapatmak
+     * onu sessizce gecirirdi.
+     */
+    files: ['scripts/**/*.mjs'],
+    languageOptions: {
+      globals: {
+        console: 'readonly',
+        process: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        URL: 'readonly',
+        fetch: 'readonly',
+      },
+    },
+  },
+  {
     files: ['**/*.ts', '**/*.tsx'],
     rules: {
       // TypeScript (+ @types/node, @types/react) zaten butun global/ambient

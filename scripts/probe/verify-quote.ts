@@ -43,7 +43,13 @@ const chain = {
 } as const
 
 const u256 = (name: string) =>
-  ({ type: 'function', name, stateMutability: 'view', inputs: [], outputs: [{ type: 'uint256' }] }) as const
+  ({
+    type: 'function',
+    name,
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'uint256' }],
+  }) as const
 const CURVE_ABI = [
   u256('virtualQuoteReserves'),
   u256('virtualTokenReserves'),
@@ -51,11 +57,29 @@ const CURVE_ABI = [
   u256('realQuoteReserves'),
   u256('PROTOCOL_FEE_BPS'),
   u256('CREATOR_FEE_BPS'),
-  { type: 'function', name: 'graduated', stateMutability: 'view', inputs: [], outputs: [{ type: 'bool' }] },
-  { type: 'function', name: 'creator', stateMutability: 'view', inputs: [], outputs: [{ type: 'address' }] },
+  {
+    type: 'function',
+    name: 'graduated',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'bool' }],
+  },
+  {
+    type: 'function',
+    name: 'creator',
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'address' }],
+  },
 ] as const
 const ERC20_ABI = [
-  { type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ name: 'a', type: 'address' }], outputs: [{ type: 'uint256' }] },
+  {
+    type: 'function',
+    name: 'balanceOf',
+    stateMutability: 'view',
+    inputs: [{ name: 'a', type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+  },
 ] as const
 
 const pub = createPublicClient({ chain, transport: http(RPC) })
@@ -72,7 +96,12 @@ if (TRADES.length === 0) {
 }
 
 const read = (name: string, blockNumber: bigint) =>
-  pub.readContract({ address: CURVE, abi: CURVE_ABI, functionName: name as 'virtualQuoteReserves', blockNumber })
+  pub.readContract({
+    address: CURVE,
+    abi: CURVE_ABI,
+    functionName: name as 'virtualQuoteReserves',
+    blockNumber,
+  })
 
 let bad = 0
 for (const t of TRADES) {
@@ -85,10 +114,32 @@ for (const t of TRADES) {
       read('realQuoteReserves', before) as Promise<bigint>,
       read('PROTOCOL_FEE_BPS', before) as Promise<bigint>,
       read('CREATOR_FEE_BPS', before) as Promise<bigint>,
-      pub.readContract({ address: CURVE, abi: CURVE_ABI, functionName: 'graduated', blockNumber: before }) as Promise<boolean>,
-      pub.readContract({ address: CURVE, abi: CURVE_ABI, functionName: 'creator', blockNumber: before }) as Promise<string>,
-      pub.readContract({ address: TOKEN, abi: ERC20_ABI, functionName: 'balanceOf', args: [t.buyer], blockNumber: before }) as Promise<bigint>,
-      pub.readContract({ address: TOKEN, abi: ERC20_ABI, functionName: 'balanceOf', args: [t.buyer], blockNumber: t.block }) as Promise<bigint>,
+      pub.readContract({
+        address: CURVE,
+        abi: CURVE_ABI,
+        functionName: 'graduated',
+        blockNumber: before,
+      }) as Promise<boolean>,
+      pub.readContract({
+        address: CURVE,
+        abi: CURVE_ABI,
+        functionName: 'creator',
+        blockNumber: before,
+      }) as Promise<string>,
+      pub.readContract({
+        address: TOKEN,
+        abi: ERC20_ABI,
+        functionName: 'balanceOf',
+        args: [t.buyer],
+        blockNumber: before,
+      }) as Promise<bigint>,
+      pub.readContract({
+        address: TOKEN,
+        abi: ERC20_ABI,
+        functionName: 'balanceOf',
+        args: [t.buyer],
+        blockNumber: t.block,
+      }) as Promise<bigint>,
     ])
 
   const plan = planBuyExactQuoteIn(
@@ -113,7 +164,9 @@ for (const t of TRADES) {
   if (!ok) bad += 1
   console.log(`${ok ? '  ok  ' : '  FARK'} blok ${t.block}  gonderilen ${t.sent} wei`)
   console.log(`        panelin gosterecegi : ${plan.tokens}`)
-  console.log(`        zincirin verdigi    : ${actual}${ok ? '' : `   fark ${plan.tokens - actual}`}`)
+  console.log(
+    `        zincirin verdigi    : ${actual}${ok ? '' : `   fark ${plan.tokens - actual}`}`,
+  )
 }
 
 console.log('')
