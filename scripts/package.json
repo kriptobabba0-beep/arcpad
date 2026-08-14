@@ -8,7 +8,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "viem": "2.55.8"
+    "viem": "2.55.8",
+    "@arcpad/shared": "workspace:*"
   },
   "devDependencies": {
     "typescript": "5.9.3",

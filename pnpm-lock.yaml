@@ -126,6 +126,9 @@ importers:
 
   scripts:
     dependencies:
+      '@arcpad/shared':
+        specifier: workspace:*
+        version: link:../packages/shared
       viem:
         specifier: 2.55.8
         version: 2.55.8(typescript@5.9.3)
