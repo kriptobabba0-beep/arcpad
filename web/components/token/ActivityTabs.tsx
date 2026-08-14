@@ -204,7 +204,7 @@ function TradeTable({
           <tr className="bg-surface-2 text-left text-[12px] text-muted">
             <Th>Time</Th>
             <Th>Trade</Th>
-            <Th>Value</Th>
+            <Th title="What reached the curve, after the 1.25% fee">Value</Th>
             <Th>{symbol}</Th>
             <Th>Price</Th>
             <Th>Trader</Th>
@@ -296,7 +296,7 @@ function HolderTable({
             <Th>Wallet</Th>
             <Th>% supply</Th>
             <Th>Tokens</Th>
-            <Th>Value</Th>
+            <Th title="What reached the curve, after the 1.25% fee">Value</Th>
           </tr>
         </thead>
         <tbody>
@@ -332,8 +332,12 @@ function HolderTable({
 
 /* ========================================================================== */
 
-function Th({ children }: { children: React.ReactNode }) {
-  return <th className="px-4 py-2.5 font-normal">{children}</th>
+function Th({ children, title }: { children: React.ReactNode; title?: string }) {
+  return (
+    <th className="px-4 py-2.5 font-normal" title={title}>
+      {children}
+    </th>
+  )
 }
 
 function Td({ children, className }: { children: React.ReactNode; className?: string }) {
