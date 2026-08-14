@@ -138,16 +138,34 @@ function Value({ children }: { children: ReactNode }) {
  * UCGEN KARAKTERI RENGE EK OLARAK: kirmizi/yesil tek basina, renk korlugu
  * olan bir kullanici icin hicbir sey soylemez. Isaret ve yon birlikte gider.
  */
+/**
+ * DEGISIM -- VE HANGI DONEME AIT OLDUGU ARTIK YAZIYOR.
+ *
+ * Sayi, GRAFIGIN EN ESKI MUMUNUN acilisindan bugune olan degisimdir. Bu tokende
+ * her dilim ayni yuzdeyi verdi (%98,1) ve sebebi `chainCandles`: en eski mumun
+ * acilisi, kova boyutundan bagimsiz olarak ILK ISLEMIN acilisidir.
+ *
+ * AMA BU HER ZAMAN BOYLE KALMAZ. Mum sayisi 120 ile sinirli, yani cok islem
+ * goren bir tokende pencere 5M'de ~10 saat, 24H'de ~120 gundur -- ve o zaman
+ * ayni etiket iki farkli seyi soyler. Etiketsiz bir yuzde, kullanicinin
+ * "neye gore" diye soramadigi bir sayidir.
+ *
+ * `title` ve `sr-only` metin ayni cumleyi tasir: biri fareyle, oteki ekran
+ * okuyucuyla. Gorsel olarak KISA kalir cunku hucre dar ve sayinin kendisi
+ * daha onemli.
+ */
 function Change({ percent }: { percent: number }) {
   const down = percent < 0
   return (
     <span
       className={`text-[12px] tabular-nums ${down ? 'text-negative' : 'text-accent'}`}
       data-testid="stat-change"
+      title="Change since the oldest candle on the chart"
     >
       <span aria-hidden="true">{down ? '▾' : '▴'}</span>{' '}
       {/* ISARETLI gecilir; bkz. `percent1`. Ok isareti tasir, metin tasimaz. */}
       <LiveNumber value={BigInt(Math.round(percent * 10))} format="percent1" />
+      <span className="sr-only"> since the oldest candle on the chart</span>
     </span>
   )
 }

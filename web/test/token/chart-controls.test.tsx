@@ -133,9 +133,7 @@ describe('VolumePanel kendi anahtarini yazar', () => {
         params={{ [CHART_TF_PARAM]: '1h', [VOLUME_TF_PARAM]: '24h' }}
       />,
     )
-    const links = screen
-      .getAllByRole('link')
-      .map((a) => a.getAttribute('href') ?? '')
+    const links = screen.getAllByRole('link').map((a) => a.getAttribute('href') ?? '')
     expect(links.length).toBe(4)
     for (const href of links) expect(href).toContain('tf=1h')
     expect(links.some((h) => h.includes('vf=5m'))).toBe(true)
