@@ -111,8 +111,13 @@ chown root:arcpad /etc/arcpad/web.env && chmod 0640 /etc/arcpad/web.env
 set -a; . /etc/arcpad/web.env; set +a
 # `&&`, NOT A NEW LINE. See "a failed build must not reach systemd" below --
 # this is the difference between a deploy that stops and a site that is down.
+# `chown` IS PART OF THE CHAIN, NOT AN AFTERTHOUGHT: the build runs as root and
+# recreates `.next` as root, while the unit runs as `User=arcpad`. Without this
+# the fetch and image caches are silently dead every single deploy.
 pnpm --filter @arcpad/web release-gate \
-  && systemctl restart arcpad-web.service
+  && chown -R arcpad:arcpad /opt/arcpad/web/.next/cache \
+  && systemctl restart arcpad-web.service \
+  && arcpad-stale-build
 ```
 
 **A failed build must not reach `systemctl`.** Measured on this box, 2026-08-11: a build failed, the restart ran anyway, `next start` found a half-written `.next` and exited immediately, and `Restart=always` did that **146 times in four minutes** — with the site returning nothing the whole while. Nothing here was wrong except the order of two commands typed on separate lines.
@@ -122,6 +127,32 @@ pnpm --filter @arcpad/web release-gate \
 ```bash
 systemctl show arcpad-web -p NRestarts --value   # should not be climbing
 journalctl -u arcpad-web --since '5 min ago' | grep -c 'Scheduled restart'
+```
+
+**A build without a restart is worse than a failed build, because it stays green.** Measured on this box, 2026-08-14. `.next` was rebuilt at 21:22 UTC; `arcpad-web` had been up since 15:53 UTC and was never restarted. The running process keeps its build manifest **in memory**, so it went on emitting HTML that referenced its own build's chunks — chunks the new build had deleted. In the browser:
+
+```
+/_next/static/chunks/1jzgmehwb41a2.js -> 500
+ChunkLoadError: Failed to load chunk ... from module 73504
+```
+
+and the page fell to the error boundary — "Something broke on our side."
+
+**Nothing caught it, and every reason it was missed matters:** the HTTP status is **200**, so liveness checks stay green; the SSR body is correct and complete (78 KB), because the break happens at hydration; only pages whose chunks changed fail, so the site looks *mostly* fine; and if the dead chunk is lazily loaded, even opening the page does not always trigger it. The result surfaces hours later and reads as a random front-end bug.
+
+The `&&` line above is not the gap — **any `pnpm build` in that directory poisons the running process**, including one run for an unrelated reason. So the defence is a detector, not a rule. `scripts/arcpad-stale-build.sh` is installed at `/usr/local/bin/arcpad-stale-build` and runs as the last line of `arcpad-integrity`:
+
+```bash
+arcpad-stale-build    # 0 fresh, 1 stale (restart), 2 unknown (web down / no BUILD_ID)
+```
+
+It works because the served HTML contains the on-disk `BUILD_ID` verbatim, so "is the process serving the build that is on disk" is one `grep` and assumes nothing about Next's internals. Proven red by pointing `BUILD_ID` at a fake value.
+
+**Related, found in the same pass:** `.next/cache` was `root:root` while the unit runs as `User=arcpad`, so `ReadWritePaths=/opt/arcpad/web/.next` granted write at the systemd layer and POSIX refused it — `EACCES: permission denied, mkdir '.next/cache/fetch-cache'`, and the fetch/image caches never worked at all. A build that recreates `.next` as root brings it back, so check it after deploying:
+
+```bash
+ls -ld /opt/arcpad/web/.next/cache        # must be owned by arcpad
+chown -R arcpad:arcpad /opt/arcpad/web/.next/cache
 ```
 
 `pnpm addressbook --env-only` derives the router by CREATE2 from `routerInitcodeHash` rather than copying a field, so a book that has been edited by hand produces a different address here and the mismatch is visible before it ships.
