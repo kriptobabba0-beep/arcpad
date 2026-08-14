@@ -1,7 +1,13 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { SlippageRow, DEFAULT_SLIP_BPS } from '@/components/token/SlippageRow'
+import {
+  DEFAULT_SLIP_BPS,
+  HIGH_SLIP_BPS,
+  slipSeverity,
+  SlippageRow,
+  VERY_HIGH_SLIP_BPS,
+} from '@/components/token/SlippageRow'
 import type { CandleRow } from '@/lib/read'
 
 /**
@@ -36,12 +42,20 @@ const addSeries = vi.fn<(kind: string, options?: Record<string, unknown>) => unk
 const removeSeries = vi.fn()
 const subscribeCrosshairMove = vi.fn()
 const fitContent = vi.fn()
+/*
+ * GRAFIK DUZEYINDE `applyOptions`. Eksen bicimlendirici (`tickMarkFormatter`)
+ * yalnizca burada yasar -- `timeScale().applyOptions` tipinde YOKTUR. Sahte
+ * onu tasimazsa bilesen `undefined`i cagirir ve on test birden duser; ilk
+ * eklendiginde tam olarak bu oldu.
+ */
+const applyOptions = vi.fn<(options: Record<string, unknown>) => void>()
 
 vi.mock('lightweight-charts', () => ({
   createChart: vi.fn(() => ({
     addSeries,
     removeSeries,
     subscribeCrosshairMove,
+    applyOptions,
     timeScale: () => ({ fitContent }),
     remove: vi.fn(),
   })),
@@ -223,6 +237,85 @@ describe('<PriceChart>', () => {
     )
     expect(screen.getByRole('button', { name: '1H' })).toBeInTheDocument()
   })
+
+  /*
+   * ============ EKSEN ETIKETI AY BILGISI TASIR ============
+   *
+   * Kutuphanenin varsayilani gun sinirinda YALNIZCA gun numarasini yazar --
+   * "12", "13". Bildirilen kusur buydu: iki gun once mi iki ay once mi
+   * oldugu okunamiyordu.
+   *
+   * Test bicimlendiriciyi GRAFIGE GIDERKEN yakalar, kendi kopyasini
+   * cagirmaz: boylece hem etiketin dogrulugunu hem de kutuphaneye gercekten
+   * BAGLANDIGINI olcer. Ikincisi olmadan, dogru bir fonksiyonu hic
+   * baglamayan bir surum yesil kalirdi.
+   */
+  function lastFormatter(): (time: number) => string {
+    const calls = applyOptions.mock.calls
+    for (let i = calls.length - 1; i >= 0; i -= 1) {
+      const scale = calls[i]?.[0]?.['timeScale'] as
+        | { tickMarkFormatter?: (time: number) => string }
+        | undefined
+      if (scale?.tickMarkFormatter) return scale.tickMarkFormatter
+    }
+    throw new Error('grafige hic tickMarkFormatter gecilmedi')
+  }
+
+  // 2026-03-09T14:30:00Z
+  const MARCH = Date.UTC(2026, 2, 9, 14, 30) / 1000
+
+  it('EKSEN AYI YAZAR -- ciplak gun numarasi iki ay onceyi dunden ayirmaz', () => {
+    render(
+      <PriceChart
+        candles={[candle(0, USDC, USDC)]}
+        metric="fdv"
+        shape="candles"
+        bucketSeconds={3_600}
+      />,
+    )
+    const label = lastFormatter()(MARCH)
+    expect(label).toMatch(/Mar/)
+    expect(label).toMatch(/9/)
+    // Saatlik kovada saat de gerekli: gun degisimi ekranda gorunmeli.
+    expect(label).toMatch(/\d{2}:\d{2}/)
+  })
+
+  it('GUNLUK KOVADA SAAT YOK -- her etiket "00:00" ise saat bilgi tasimaz', () => {
+    render(
+      <PriceChart
+        candles={[candle(0, USDC, USDC)]}
+        metric="fdv"
+        shape="candles"
+        bucketSeconds={86_400}
+      />,
+    )
+    const label = lastFormatter()(MARCH)
+    expect(label).toMatch(/Mar/)
+    expect(label).not.toMatch(/\d{2}:\d{2}/)
+  })
+
+  /*
+   * ============ "UC DUGME AYNI GRAFIGI GOSTERIYOR" ============
+   *
+   * Bildirilen kusur gercekti ama sorgu DOGRUYDU: o tokenin butun islemleri
+   * iki kumede toplanmisti ve her kume 1H kovasina da 24H kovasina da tek
+   * basina siğiyordu. Veriyi uydurmak yerine ekran bunu SOYLER.
+   */
+  it('IKI MUMDAN AZKEN SEBEBINI SOYLER', () => {
+    render(<PriceChart candles={[candle(0, USDC, USDC)]} metric="fdv" shape="candles" />)
+    expect(screen.getByTestId('candle-scarcity')).toHaveTextContent(/1 candle at this timeframe/i)
+  })
+
+  it('UC VE UZERINDE NOT YOK -- surekli bir dipnot gurultudur', () => {
+    render(
+      <PriceChart
+        candles={[candle(0, USDC, USDC), candle(60, USDC, USDC), candle(120, USDC, USDC)]}
+        metric="fdv"
+        shape="candles"
+      />,
+    )
+    expect(screen.queryByTestId('candle-scarcity')).toBeNull()
+  })
 })
 
 /* ========================================================================== */
@@ -261,6 +354,54 @@ describe('<SlippageRow>', () => {
 
   it('GENIS TOLERANS UYARIR -- ve uyari bir metin, bir renk degil', () => {
     render(<SlippageRow value={900} auto={false} onChange={() => {}} />)
-    expect(screen.getByRole('status')).toHaveTextContent(/far from the quote/i)
+    expect(screen.getByRole('status')).toHaveTextContent(/high slippage/i)
+  })
+
+  /*
+   * ============ IKI KADEME, VE ARALARINDAKI SINIR ============
+   *
+   * Tek esikli halde %5 ile %50 ayni kirmizi ile yaziliyordu, yani kirmizi
+   * anlamini kaybediyordu. Bu blok sinirin HER IKI yanini da olcer: esigin
+   * KENDISI uyarir (`>=`), bir bps altisi UYARMAZ. Bir `>` yazim hatasi
+   * ekranda dogru gorunur ve yalnizca boyle bir cift yakalar.
+   */
+  it.each([
+    { bps: 0, severity: 'ok' },
+    { bps: DEFAULT_SLIP_BPS, severity: 'ok' },
+    { bps: HIGH_SLIP_BPS - 1, severity: 'ok' },
+    { bps: HIGH_SLIP_BPS, severity: 'high' },
+    { bps: VERY_HIGH_SLIP_BPS - 1, severity: 'high' },
+    { bps: VERY_HIGH_SLIP_BPS, severity: 'very-high' },
+    { bps: 10_000, severity: 'very-high' },
+  ])('slipSeverity($bps) -> $severity', ({ bps, severity }) => {
+    expect(slipSeverity(bps)).toBe(severity)
+  })
+
+  it('%5 KEHRIBAR "High slippage" -- bir tercih, bir kaza degil', () => {
+    render(<SlippageRow value={HIGH_SLIP_BPS} auto={false} onChange={() => {}} />)
+    const warning = screen.getByTestId('slippage-warning')
+    expect(warning).toHaveTextContent('High slippage')
+    expect(warning).not.toHaveTextContent('Very high slippage')
+    expect(warning.className).toContain('text-caution')
+    expect(warning.className).not.toContain('text-negative')
+  })
+
+  it('%20 KIRMIZI "Very high slippage"', () => {
+    render(<SlippageRow value={VERY_HIGH_SLIP_BPS} auto={false} onChange={() => {}} />)
+    const warning = screen.getByTestId('slippage-warning')
+    expect(warning).toHaveTextContent('Very high slippage')
+    expect(warning.className).toContain('text-negative')
+    expect(warning.className).not.toContain('text-caution')
+  })
+
+  it('VARSAYILANDA HIC UYARI YOK -- her acilista bir unlem, unlemi degersizlestirir', () => {
+    render(<SlippageRow value={DEFAULT_SLIP_BPS} auto onChange={() => {}} />)
+    expect(screen.queryByTestId('slippage-warning')).toBeNull()
+    expect(screen.getByTestId('slippage-value').className).not.toContain('text-caution')
+  })
+
+  it('DEGERIN KENDISI DE RENKLENIR -- goz once sayiya gider', () => {
+    render(<SlippageRow value={HIGH_SLIP_BPS} auto={false} onChange={() => {}} />)
+    expect(screen.getByTestId('slippage-value').className).toContain('text-caution')
   })
 })

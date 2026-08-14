@@ -109,27 +109,45 @@ function Side({
 }) {
   const colour = tone === 'buy' ? 'text-[#4ade80]' : 'text-[#f87171]'
   const word = tone === 'buy' ? 'buys' : 'sells'
+  /*
+   * ============ BU SATIR OKUNMAK ICIN VAR ============
+   *
+   * Bildirilen kusur: "bu bilgi metinleri kucuk ve cok soluk". Haklidir, ve
+   * sebebi olculebilir -- ikinci satir 12px `text-muted` idi, yani sayfadaki
+   * EN dusuk kontrastli metinle (5,34:1) ayni kademede. Oysa burada duran sey
+   * bir dipnot degil: kac cuzdan, ne kadar hacim, yuzde kac. Panelin CEVABI.
+   *
+   * Uc degisiklik, hepsi ayni yone: 12 -> 13px, `text-muted` -> `text-text`
+   * (5,34:1 -> 18,86:1) ve sayilar `font-medium`. Ust satir da 13 -> 14px,
+   * cunku iki satir arasindaki kademe korunmali -- ikincisini buyutup ilkini
+   * birakmak hiyerarsiyi DUZLESTIRIRDI.
+   */
   return (
-    <div className={`flex flex-col gap-1 ${align === 'right' ? 'items-end text-right' : ''}`}>
-      <span className={`text-[13px] font-medium tabular-nums ${colour}`}>
+    <div className={`flex flex-col gap-1.5 ${align === 'right' ? 'items-end text-right' : ''}`}>
+      <span className={`text-[14px] font-semibold tabular-nums ${colour}`}>
         <LiveNumber value={BigInt(count)} format="count" /> {word}
       </span>
-      <span className="flex items-center gap-1.5 text-[12px] text-muted tabular-nums">
+      <span className="flex items-center gap-1.5 text-[13px] font-medium text-text tabular-nums">
         {/*
           CUZDAN IKONU: "kac islem" ile "kac cuzdan" ayni satirda duruyor ve
           ikisi ayni sey degil -- tek bir cuzdan kirk islem yapmis olabilir.
           Isaret, hangi sayinin hangisi oldugunu etiketsiz belli eder.
         */}
-        <span aria-hidden="true">&#128100;</span>
+        <span aria-hidden="true" className="text-muted">
+          &#128100;
+        </span>
         <span className="sr-only">wallets:</span>
         <LiveNumber value={BigInt(wallets)} format="count" />
-        <span aria-hidden="true" className="text-white/20">
+        {/* Ayraclar SOLUK KALIR: onlar noktalama, veri degil. Sayilari
+            belirginlestirip ayraclari da belirginlestirmek satiri gurultuye
+            cevirirdi -- kontrast farki tam olarak neyin okunacagini soyler. */}
+        <span aria-hidden="true" className="text-white/25">
           ·
         </span>
         <LiveNumber value={valueWei} format="usdc" />
         {percent === null ? null : (
           <>
-            <span aria-hidden="true" className="text-white/20">
+            <span aria-hidden="true" className="text-white/25">
               ·
             </span>
             <LiveNumber value={BigInt(Math.round(percent * 10))} format="percent1" />

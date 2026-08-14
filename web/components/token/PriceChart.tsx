@@ -61,6 +61,34 @@ export type PriceChartProps = {
    */
   controls?: ReactNode
   emptyLabel?: string
+  /**
+   * SECILI KOVA GENISLIGI, SANIYE. Grafik veriden cikaramaz: bir kovanin bos
+   * olmasi onu diziden DUSURUR (`chainCandles` bosluk doldurmaz), yani
+   * ardisik iki mumun arasi kova genisligini SOYLEMEZ. Eksen bicimlendirici
+   * ve "kac mum" notu ikisi de buna bakar.
+   */
+  bucketSeconds?: number
+}
+
+/**
+ * EKSEN ETIKETI -- VE NICIN VARSAYILAN YETMEDI.
+ *
+ * `lightweight-charts`in kendi bicimlendiricisi gun sinirinda YALNIZCA gun
+ * numarasini yazar: "12", "13". Kullanicinin bildirdigi kusur buydu ve
+ * hakliydi -- ay bilgisi olmadan iki gun once mi iki ay once mi oldugu
+ * okunamiyor. Ayrica saatlik kovalarda saat yazip gunu hic soylemiyordu, yani
+ * gun degisimi ekranda GORUNMUYORDU.
+ *
+ * Kural KOVA GENISLIGINE gore: gunluk kovalarda tarih yeter, daha kisa
+ * kovalarda gun+ay VE saat gerekir. `en-US` her yerde oldugu gibi acikca
+ * verilir.
+ */
+function tickLabel(seconds: number, bucketSeconds: number): string {
+  const at = new Date(seconds * 1000)
+  const day = at.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  if (bucketSeconds >= 86_400) return day
+  const time = at.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })
+  return `${day} ${time}`
 }
 
 /** 18 ondalikli wei -> USDC. Grafik olcegine gecisin TEK yeri. */
@@ -79,6 +107,7 @@ export function PriceChart({
   shape,
   controls,
   emptyLabel = 'No trades yet.',
+  bucketSeconds = 3_600,
 }: PriceChartProps) {
   const boxRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -93,6 +122,9 @@ export function PriceChart({
    * kapanis (closure) hep guncel veriyi gorur.
    */
   const rowsRef = useRef(new Map<number, CandleRow>())
+  /* Ayni gerekce `rowsRef` ile: eksen bicimlendirici bir kez baglanir. */
+  const bucketRef = useRef(bucketSeconds)
+  bucketRef.current = bucketSeconds
   /*
    * GORUS ALANINI NE ZAMAN SIFIRLAMALI.
    *
@@ -148,6 +180,10 @@ export function PriceChart({
         borderColor: 'rgba(255,255,255,0.08)',
         timeVisible: true,
         secondsVisible: false,
+        // `bucketRef` uzerinden okunur, dogrudan `bucketSeconds` DEGIL: bu
+        // efekt yalnizca `hasData` degistiginde kosar, yani zaman dilimi
+        // degistiginde kapanis (closure) eski degeri tasirdi.
+        tickMarkFormatter: (time: number) => tickLabel(time, bucketRef.current),
       },
       crosshair: {
         // `Magnet`: imlec en yakin mumun degerine YAPISIR. Bir fiyat
@@ -273,12 +309,25 @@ export function PriceChart({
       })),
     )
 
+    /*
+     * EKSENI YENIDEN BICIMLENDIRMEYE ZORLA. Bicimlendirici `bucketRef`i okur
+     * ve o guncel, ama kutuphane etiketleri ONBELLEKLER: zaman dilimi
+     * degistiginde ayni fonksiyon yeniden CAGRILMAZ ve eksende bir onceki
+     * dilimin etiketleri kalir. `applyOptions` onbellegi gecersiz kilar.
+     */
+    // `chart.applyOptions({ timeScale })`, `timeScale().applyOptions()` DEGIL:
+    // ikincisinin tipi `HorzScaleOptions`tir ve `tickMarkFormatter` orada
+    // yoktur -- o secenek yalnizca grafik duzeyinde yasar.
+    chartRef.current?.applyOptions({
+      timeScale: { tickMarkFormatter: (time: number) => tickLabel(time, bucketRef.current) },
+    })
+
     const firstTime = rows[0]?.time ?? null
     if (firstTime !== fittedFrom.current) {
       fittedFrom.current = firstTime
       chartRef.current?.timeScale().fitContent()
     }
-  }, [candles, metric, shape, ready])
+  }, [candles, metric, shape, ready, bucketSeconds])
 
   /*
    * BASLIK: imlecin altindaki mum, yoksa SONUNCUSU.
@@ -318,13 +367,37 @@ export function PriceChart({
           {emptyLabel}
         </div>
       ) : (
-        <div
-          ref={boxRef}
-          data-testid="price-chart"
-          className="h-[320px] w-full sm:h-[380px]"
-          aria-label={`Price history, ${candles.length} points`}
-          role="img"
-        />
+        <>
+          <div
+            ref={boxRef}
+            data-testid="price-chart"
+            className="h-[320px] w-full sm:h-[380px]"
+            aria-label={`Price history, ${candles.length} points`}
+            role="img"
+          />
+          {/*
+            NICIN IKI DILIM AYNI GORUNUYOR -- SORULMADAN CEVAPLANIR.
+
+            Bildirilen kusur suydu: "1H, 6H ve 24H ayni grafigi gosteriyor."
+            Olculdu ve sorgu DOGRUYDU -- o tokenin butun islemleri iki sikiya
+            kumede toplanmis, ve her kume 1 saatlik kovaya da 24 saatlik
+            kovaya da TEK BASINA sigiyor. Yani uc dugme gercekten ayni iki
+            mumu uretiyordu.
+
+            Bunu "duzeltmek" veri uydurmak olurdu. Dogru olan, ekranin bunu
+            SOYLEMESI: uc mumdan azken kullanici hem sayiyi hem sebebini
+            gorur, ve daha kisa bir dilimin ise yarayacagini anlar. Esik
+            UCTUR cunku iki mum bir grafik degildir, uc mum bir sekildir.
+          */}
+          {candles.length < 3 ? (
+            <p className="text-[12px] leading-relaxed text-muted" data-testid="candle-scarcity">
+              {candles.length === 1 ? '1 candle' : `${candles.length} candles`} at this timeframe —
+              every trade so far falls inside{' '}
+              {candles.length === 1 ? 'a single bucket' : `${candles.length} buckets`}. A shorter
+              timeframe splits them further.
+            </p>
+          ) : null}
+        </>
       )}
     </section>
   )

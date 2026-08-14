@@ -36,8 +36,29 @@ import { formatSlipBps } from './tradeModel'
  * reddettiriyor. Referans tasarimin varsayilani da %2.5.
  */
 export const DEFAULT_SLIP_BPS = 250
-/** Uzerinde uyarilir. Planlayicinin ust siniri ayrica `10_000`. */
+/**
+ * IKI ESIK, IKI AYRI CUMLE -- VE NICIN TEK BIR UYARI YETMEDI.
+ *
+ * Onceden tek esik vardi (%5) ve tek bir kirmizi cumle: "A tolerance this wide
+ * lets the trade settle far from the quote you can see." Iki sorunu vardi.
+ * Birincisi, %5 ile %50 AYNI gorunuyordu -- oysa biri bir tercih, oteki bir
+ * kaza. Ikincisi, cumle uzundu ve tam da acele eden bir kullanicinin okumadigi
+ * yerde duruyordu; bir uyari once GORULMELI, sonra okunmali.
+ *
+ * Simdi: %5'ten itibaren KEHRIBAR "High slippage", %20'den itibaren KIRMIZI
+ * "Very high slippage". Renk ve ikon bir bakista, ikinci satir isteyen icin.
+ */
 export const HIGH_SLIP_BPS = 500
+export const VERY_HIGH_SLIP_BPS = 2_000
+
+export type SlipSeverity = 'ok' | 'high' | 'very-high'
+
+/** Tek yer: hem satir hem testler bunu okur. */
+export function slipSeverity(bps: number): SlipSeverity {
+  if (bps >= VERY_HIGH_SLIP_BPS) return 'very-high'
+  if (bps >= HIGH_SLIP_BPS) return 'high'
+  return 'ok'
+}
 
 export function SlippageRow({
   value,
@@ -51,6 +72,7 @@ export function SlippageRow({
 }) {
   const [editing, setEditing] = useState(false)
   const [text, setText] = useState('')
+  const severity = slipSeverity(value)
 
   return (
     <div className="flex flex-col gap-1.5" data-testid="slippage-row">
@@ -123,7 +145,18 @@ export function SlippageRow({
                 Auto
               </button>
             )}
-            <span className="text-[13px] tabular-nums" data-testid="slippage-value">
+            {/*
+              DEGERIN KENDISI DE RENKLENIR. Uyari cumlesi bir satir asagida
+              duruyor; goz once SAYIYA gider. Sayi notr kalirsa uyari
+              "ilgisiz bir dipnot" gibi okunur.
+            */}
+            <span
+              className={[
+                'text-[13px] tabular-nums',
+                severity === 'ok' ? '' : 'text-caution',
+              ].join(' ')}
+              data-testid="slippage-value"
+            >
               {formatSlipBps(value)}
             </span>
             <button
@@ -142,11 +175,24 @@ export function SlippageRow({
         )}
       </div>
 
-      {value >= HIGH_SLIP_BPS ? (
-        <p role="status" className="text-[12px] leading-snug text-negative">
-          A tolerance this wide lets the trade settle far from the quote you can see.
+      {severity === 'ok' ? null : (
+        <p
+          role="status"
+          className={[
+            'inline-flex items-center gap-1.5 text-[12px] leading-snug',
+            severity === 'very-high' ? 'text-negative' : 'text-caution',
+          ].join(' ')}
+          data-testid="slippage-warning"
+        >
+          {/*
+            IKON `aria-hidden`: ekran okuyucu zaten metni okuyor ve "ucgen
+            unlem isareti high slippage" iki kez uyarmak olurdu. Renk de tek
+            basina tasiyici DEGIL -- WCAG 1.4.1 gereği anlam metinde duruyor.
+          */}
+          <span aria-hidden="true">⚠</span>
+          {severity === 'very-high' ? 'Very high slippage' : 'High slippage'}
         </p>
-      ) : null}
+      )}
     </div>
   )
 }

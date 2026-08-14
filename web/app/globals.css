@@ -35,6 +35,19 @@
   --color-positive: var(--color-accent);
 
   /*
+   * UYARI -- "DIKKAT" ILE "TEHLIKE" AYNI RENK DEGILDIR.
+   *
+   * Slipaj uyarilari icin eklendi ve gerekcesi bir olcumdur: %5 ile %50 ayni
+   * kirmizi ile yazildiginda kullanici ikisini de ayni agirlikta okur, yani
+   * kirmizi ANLAMINI KAYBEDER. Kehribar "genis ama bilincli bir secim",
+   * kirmizi "buradan sonrasi bir kaza" demek icin ayrilmistir.
+   *
+   * `--color-negative` ile karistirilmamali: o YON tasir (satis, dusus) ve
+   * bir uyari degildir. Bu token yalnizca uyari icindir.
+   */
+  --color-caution: #f5b944;
+
+  /*
    * DEVIASYON 1 (S10). Referans arayuz zeytin `#7E8F2E` zemin uzerine BEYAZ
    * metin koyuyor; olculdu, 3,59:1 -- WCAG AA'nin normal metin icin istedigi
    * 4,5:1'in altinda. Ayni zeminde `#0B0B0B` metin 5,49:1 verir.

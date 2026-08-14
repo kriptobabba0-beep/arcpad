@@ -29,11 +29,13 @@ import { ProgressToGraduation } from '@/components/token/ProgressToGraduation'
 import { ActivityTabs, tabOf } from '@/components/token/ActivityTabs'
 import { PriceChart, type ChartMetric, type ChartShape } from '@/components/token/PriceChart'
 import {
+  CHART_TF_PARAM,
   MetricPicker,
   ShapePicker,
   TimeframePicker,
   timeframeKey,
   timeframeSeconds,
+  VOLUME_TF_PARAM,
 } from '@/components/token/ChartControls'
 import { IdentityBadge, TokenIdentity } from '@/components/token/TokenIdentity'
 import { TokenInfo } from '@/components/token/TokenInfo'
@@ -148,8 +150,20 @@ async function IndexedToken({
    * dogrulamayi kendi dosyalarinda tasiyor -- burada tekrarlamak, ayni kurali
    * iki yerde tutmak olurdu.
    */
-  const tf = timeframeKey(one(search['tf']))
-  const metric: ChartMetric = one(search['metric']) === 'price' ? 'price' : 'fdv'
+  /*
+   * IKI AYRI ZAMAN DILIMI, VE AYRILMALARININ SEBEBI OLCULDU. Tek bir `tf`
+   * ikisini birden suruyordu: hacim penceresini degistirmek mum kovasini da
+   * degistiriyordu. Bunlar AYRI sorulardir -- "her mum kac dakika" ile "son ne
+   * kadar surenin hacmi" arasinda bir bag yok.
+   */
+  const tf = timeframeKey(one(search[CHART_TF_PARAM]))
+  const vf = timeframeKey(one(search[VOLUME_TF_PARAM]))
+  /*
+   * METRIK ARTIK BIR SECIM DEGIL. `?metric=price` hala YAZILABILIR ve sayfa
+   * dusmez -- yalnizca yok sayilir. Fiyat, FDV'nin tam olarak 1e9'da biri
+   * oldugu icin iki secenek ayni mumlari ciziyordu; secici basliga donustu.
+   */
+  const metric: ChartMetric = 'fdv'
   const shape: ChartShape = one(search['shape']) === 'line' ? 'line' : 'candles'
   const tab = tabOf(one(search['tab']))
   const pageParam = Number(one(search['p']) ?? '1')
@@ -165,8 +179,8 @@ async function IndexedToken({
        * beslemek, "24H" yazip bes dakikalik hacmi gosteren bir hucre uretirdi.
        */
       readVolumeSplit(asHex(overview.token), { sinceSeconds: 86_400 }),
-      // HACIM PANELI ise SECILEN dilimi okur, cunku o secim tam yaninda duruyor.
-      readVolumeSplit(asHex(overview.token), { sinceSeconds: timeframeSeconds(tf) }),
+      // HACIM PANELI ise KENDI dilimini okur (`?vf=`), grafiginkini DEGIL.
+      readVolumeSplit(asHex(overview.token), { sinceSeconds: timeframeSeconds(vf) }),
       readTradePage(asHex(overview.token), { page, pageSize: TABLE_PAGE_SIZE }),
       readHolderPage(asHex(overview.token), { page, pageSize: TABLE_PAGE_SIZE }),
       // PROFIL FACTORY'DEN, ve dusmesi sayfayi dusurmez: al-sat paneli o zaman
@@ -235,15 +249,19 @@ async function IndexedToken({
       ? null
       : 100 - Number((daySplit.buyVolumeWei * 1_000n) / daySplit.volumeWei) / 10
 
-  /** Grafik kontrollerinin KORUYACAGI parametreler -- sekme ve sayfa haric. */
-  const chartParams: Record<string, string | undefined> = {
-    metric,
-    tf,
+  /*
+   * HER IKI KONTROL GRUBU DA AYNI TABANI KORUR, ve bu ONEMLIDIR: hacim
+   * dilimine basmak grafigin dilimini SILMEMELI, ve tersi. Ikisi de burada
+   * yaziliysa `hrefWith` her secimde otekini geri yazar.
+   */
+  const sharedParams: Record<string, string | undefined> = {
+    [CHART_TF_PARAM]: tf,
+    [VOLUME_TF_PARAM]: vf,
     ...(shape === 'candles' ? {} : { shape }),
     ...(tab === 'activity' ? {} : { tab }),
   }
   /** Sekme baglantilarinin koruyacagi parametreler. */
-  const tableQuery: Record<string, string> = { tf, metric, shape }
+  const tableQuery: Record<string, string> = { tf, vf, shape }
 
   return (
     <div className="flex flex-col gap-8">
@@ -283,16 +301,22 @@ async function IndexedToken({
             candles={candleRows}
             metric={metric}
             shape={shape}
+            bucketSeconds={timeframeSeconds(tf)}
             controls={
               <div className="flex items-center gap-2">
-                <ShapePicker active={shape} params={chartParams} />
-                <MetricPicker active={metric} params={chartParams} />
-                <TimeframePicker active={tf} params={chartParams} />
+                <ShapePicker active={shape} params={sharedParams} />
+                <MetricPicker active={metric} />
+                <TimeframePicker
+                  active={tf}
+                  params={sharedParams}
+                  param={CHART_TF_PARAM}
+                  ariaLabel="Chart timeframe"
+                />
               </div>
             }
           />
 
-          <VolumePanel split={windowSplit} timeframe={tf} params={chartParams} />
+          <VolumePanel split={windowSplit} timeframe={vf} params={sharedParams} />
 
           <ActivityTabs
             tab={tab}

@@ -217,6 +217,19 @@ const PAIRS: readonly Pair[] = [
     verdict: 'passes-normal',
   },
   {
+    /*
+     * UYARI, VE NICIN `negative`TEN AYRI OLCULUYOR: ikisi ayni anda ekranda
+     * bulunur (yuksek slipaj kehribar, cok yuksek slipaj kirmizi) ve
+     * kullanicinin ayirt etmesi gereken sey tam olarak budur. Ayni tabloda
+     * durmalari, birinin otekine yaklastirilmasini KIRMIZI bir test yapar.
+     */
+    what: 'uyari / kehribar',
+    fg: resolve('--color-caution'),
+    bg: resolve('--color-bg'),
+    ratio: 11.16,
+    verdict: 'passes-normal',
+  },
+  {
     what: 'kenarlik: YALNIZCA ince cizgi, odak halkasi OLAMAZ',
     fg: resolve('--color-border'),
     bg: resolve('--color-bg'),
@@ -245,8 +258,8 @@ describe('kontrast kapisi', () => {
     expect(resolve('--color-primary-hover')).toBe(resolve('--color-accent'))
   })
 
-  it('dokuz cift ve hover durumu olculuyor', () => {
-    expect(PAIRS).toHaveLength(10)
+  it('on cift ve hover durumu olculuyor', () => {
+    expect(PAIRS).toHaveLength(11)
   })
 })
 
