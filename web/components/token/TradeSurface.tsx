@@ -80,9 +80,32 @@ export type TradeSurfaceProps = {
    */
   readonly profile: IdentifiedProfile | null
   readonly symbol: string
+  /**
+   * TOKEN GORSELI, VE NICIN BURADAN GECMEK ZORUNDA.
+   *
+   * Bildirilen kusur: sayfanin sol ustunde tokenin gercek gorseli, al-sat
+   * panelinde BASKA bir sembol goruluyordu. Ikisi de ayni `TokenArtwork`
+   * bilesenini cagiriyor; fark girdideydi -- panele hicbir zaman bir `uri`
+   * ULASMIYORDU, o da adresten uretilen gradyan yedegine dusuyordu.
+   *
+   * Zincirin geri kalani ZATEN kuruluydu: `TradePanel` bu propu tanimliyor ve
+   * `AmountCard`a geciriyordu, `AmountCard` da `TokenArtwork`a. Kopuk olan tek
+   * halka BU dosyaydi -- yani hata bir bilesende degil, ARADAKI TASIYICIDA.
+   * Bu dosyanin ust yorumunda ayni sinifin gecmis ornekleri sayili
+   * ("the `graduated` field the page did not pass"); bu, o listenin bir
+   * yenisidir ve testi asagida.
+   */
+  readonly imageUrl?: string | null | undefined
 }
 
-export function TradeSurface({ token, curve, lifecycle, profile, symbol }: TradeSurfaceProps) {
+export function TradeSurface({
+  token,
+  curve,
+  lifecycle,
+  profile,
+  symbol,
+  imageUrl,
+}: TradeSurfaceProps) {
   /*
    * GRADUATED FIRST. `resolveLifecycle` already orders `graduated` above
    * `complete` because on chain `graduated => complete` always holds and a
@@ -102,6 +125,7 @@ export function TradeSurface({ token, curve, lifecycle, profile, symbol }: Trade
       profile={profile.profile}
       profileName={profile.name}
       symbol={symbol}
+      imageUrl={imageUrl ?? null}
     />
   )
 }

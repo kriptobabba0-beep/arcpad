@@ -358,6 +358,10 @@ async function IndexedToken({
             lifecycle={lifecycle}
             profile={identified}
             symbol={overview.symbol}
+            /* AYNI KAYNAK, YUKARIDAKI `TokenIdentity` ILE. Iki ayri ifade
+               yazmak, ayni tokenin sayfanin iki yerinde iki farkli sembolle
+               gorunmesinin yoludur -- ve bildirilen kusur tam olarak oydu. */
+            imageUrl={metadata?.image ?? null}
           />
           {lifecycle.kind === 'trading' ? (
             <ProgressToGraduation
@@ -430,6 +434,23 @@ async function ChainOnly({
 }) {
   const identified = canonicity === 'canonical' ? await profileOrNull() : null
   const chain = identified === null ? null : await readChainToken(token, identified.profile)
+  /*
+   * BU DALDA DA GERCEK GORSEL. `readChainToken` zaten `metadataURI()`yi
+   * okuyor, yani URI elimizde; eksik olan tek sey onu cozmekti ve bu dal
+   * bunu HIC yapmiyordu -- indexer dustugunde token, adresinden uretilmis bir
+   * gradyanla goruluyordu.
+   *
+   * Cozum BASARISIZ OLURSA sayfa dusmez: `resolveMetadata`nin kendi hatasi
+   * yutulur ve yedek gradyan geri gelir. Bozulmus bir yolda ikinci bir ag
+   * cagrisi eklerken dogru davranis budur.
+   */
+  const artwork =
+    chain === null
+      ? null
+      : await resolveMetadata(chain.uri).then(
+          (m) => m?.image ?? null,
+          () => null,
+        )
 
   return (
     <div className="flex flex-col gap-6">
@@ -465,7 +486,12 @@ async function ChainOnly({
           <p className="text-[13px] text-muted">Provenance: {canonicity}</p>
         </>
       ) : (
-        <ChainDrawnLaunch chain={chain} identified={identified} canonicity={canonicity} />
+        <ChainDrawnLaunch
+          chain={chain}
+          identified={identified}
+          canonicity={canonicity}
+          artwork={artwork}
+        />
       )}
     </div>
   )
@@ -484,11 +510,21 @@ function ChainDrawnLaunch({
   chain,
   identified,
   canonicity,
+  artwork,
 }: {
   chain: ChainToken
   /** Triple AND name, as one reading -- see `TradeSurface`'s prop. */
   identified: IdentifiedProfile
   canonicity: Canonicity
+  /**
+   * Cozulmus token gorseli, ya da yoksa `null`.
+   *
+   * BURADAN GECMEK ZORUNDA VE SEBEBI OLCULDU: bu bilesen hem kimlik blogunu
+   * hem al-sat panelini cizer. Yalnizca birine verilseydi ayni token sayfanin
+   * iki yerinde iki farkli sembolle gorunurdu -- indekslenmis dalda bildirilen
+   * kusur tam olarak buydu.
+   */
+  artwork: string | null
 }) {
   const profile = identified.profile
   // Zincir dali da AYNI iki bayragi besler: `readChainToken` `graduated()`i
@@ -511,6 +547,7 @@ function ChainDrawnLaunch({
         name={chain.name}
         symbol={chain.symbol}
         token={chain.token}
+        imageUrl={artwork}
         badges={<CanonicalBadge status={canonicity} />}
       />
 
@@ -579,6 +616,7 @@ function ChainDrawnLaunch({
             lifecycle={lifecycle}
             profile={identified}
             symbol={chain.symbol}
+            imageUrl={artwork}
           />
         </div>
       </div>
