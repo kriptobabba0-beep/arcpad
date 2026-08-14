@@ -1,4 +1,4 @@
-.PHONY: install build test fixtures fmt fmt-check lint fork-test fork-test-live slither dev clean frozen-hash frozen-hash-chain deps-pin
+.PHONY: install build test fixtures fmt fmt-check lint fork-test fork-test-live slither dev clean frozen-hash frozen-hash-chain deps-pin deps-pin-chain
 
 install:
 	corepack enable pnpm || pnpm --version
@@ -77,6 +77,17 @@ frozen-hash-chain:
 # Mezuniyet sonrasi butun likidite o kontratta durdugu icin bu kapi oradadir.
 deps-pin:
 	$(PYTHON) contracts/tools/dependency_pin_gate.py
+
+# Ayni kapi + CANLI ZINCIR, ve iddiasi sudur: Arc'taki `PoolManager` ile
+# ETHEREUM MAINNET'teki kanonik Uniswap v4 `PoolManager`i AYNI BAYTLARDIR.
+# Olculdu: 24.009 baytin tamami esit, tek fark 13618. bayttaki 20 bayt ve o
+# 20 bayt her kontratin KENDI adresi (`noDelegateCall` immutable'i).
+#
+# CI'DA KOSMAZ. Disaridaki bir kamu RPC'sini zorunlu kapiya cevirmek, kapiyi
+# ag hatasiyla kirmizi yapardi -- ve bu depo iki kez ogrendi ki insanlarin
+# gormezden gelmeye alistigi bir kapi, hic olmayan bir kapidan KOTUDUR.
+deps-pin-chain:
+	$(PYTHON) contracts/tools/dependency_pin_gate.py --mainnet
 
 fmt:
 	forge fmt --root contracts
