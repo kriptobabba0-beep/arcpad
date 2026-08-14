@@ -85,6 +85,22 @@ export function SearchResultRow({
       onMouseMove={onHover}
       className={cx(ROW_BASE, selected && ROW_SELECTED)}
     >
+      {/*
+        `uri={null}` BILINCLI, VE BU YORUM ONU BIR KAZA OLMAKTAN CIKARIYOR.
+
+        Bir sonraki okuyan `row.uri`yi gecirmek isteyecek. GECIRMEMELI: o alan
+        metadata JSON'unun adresidir, GORSELIN degil (`TokenArtwork`in kendi
+        uyarisi). Bir `<img>`e verilmesi JSON'u resim diye cizmeye calismaktir.
+
+        Gercek gorsel `resolveArtworkMap` ile gelir -- explore sayfasinin
+        yaptigi budur. Burada KOSULMUYOR cunku bu uc her TUS VURUSUNDA yeniden
+        sorgulanir ve satir basina bir gateway cagrisi eklemek, aramayi
+        acilir listenin en yavas parcasi yapardi.
+
+        Yani yedek gradyan bir eksiklik degil bir TAKAS. Kapatilmak istenirse
+        dogru yol `app/api/search/route.ts`te toplu cozum + kablo bicimine bir
+        `image` alani; tek satirlik bir degisiklik DEGIL.
+      */}
       <TokenArtwork address={row.token} uri={null} size={36} symbol={row.symbol} />
 
       <span className="flex min-w-0 flex-1 flex-col">
