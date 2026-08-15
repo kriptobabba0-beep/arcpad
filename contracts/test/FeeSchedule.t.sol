@@ -439,6 +439,19 @@ contract FeeScheduleTest is Test {
         }
         assertTrue(found, "tarama SSTORE'u kacirdi -- tarama bozuk");
     }
+
+    /**
+     * @dev BUYBACK KAPALI TASLAGI.
+     *
+     *      `BondingCurve` her ucret dagitiminda fabrikasina bu soruyu sorar ve
+     *      fabrika, egriyi deploy eden kontrattir -- yani bu test kontrati.
+     *      Sifir hazine "kapali" demektir, dolayisiyla bu dosyalardaki her
+     *      olcum buyback ONCESI davranisi olcmeye devam eder. Buyback'in
+     *      kendi testleri ayri dosyalardadir.
+     */
+    function buybackPolicy(address) external pure returns (address, uint256) {
+        return (address(0), 0);
+    }
 }
 
 /// @dev Yalnizca kontrol grubu icin: SSTORE tasidigi KESIN olan bir kontrat.

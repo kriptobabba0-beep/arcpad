@@ -284,7 +284,7 @@ contract ArcpadLockerTest is Test {
 
         escrow = new FeeEscrow();
         schedule = new FeeSchedule();
-        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule));
+        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule), address(0));
 
         bytes memory args = abi.encode(IPoolManager(address(pm)), address(factory), address(escrow));
         (address hookAddr, bytes32 salt) =
@@ -695,7 +695,7 @@ contract ArcpadLockerTest is Test {
     /// KENDI defteridir, dolayisiyla ikinci factory'nin token'i bu locker'in
     /// factory'sinde SIFIR schedule tasir.
     function test_graduateOnACurveFromAnotherFactoryReverts() public {
-        LaunchFactory other = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule));
+        LaunchFactory other = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule), address(0));
         vm.prank(GOVERNOR);
         other.proposeGraduationTarget(address(locker));
         vm.warp(block.timestamp + 3 days);

@@ -53,12 +53,13 @@ library DeployLib {
     bytes32 internal constant CREATE2_FACTORY_CODEHASH =
         0x2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989;
 
-    /// @dev `LaunchFactory` constructor'inin ABI-encode edilmis YEDI argumani:
-    ///      7 * 32 bayt. Initcode'un KUYRUGUDUR. Faz 2'de `feeSchedule`
-    ///      eklendigi icin 192'den 224'e cikti; kuyruk uzunlugu ile decode
+    /// @dev `LaunchFactory` constructor'inin ABI-encode edilmis SEKIZ argumani:
+    ///      8 * 32 bayt. Initcode'un KUYRUGUDUR. Faz 2'de `feeSchedule`
+    ///      eklendigi icin 192'den 224'e, buyback nesli `buybackTreasury`
+    ///      ekledigi icin 224'ten 256'ya cikti; kuyruk uzunlugu ile decode
     ///      imzasi AYNI ANDA guncellenmek zorundadir, aksi halde `abi.decode`
     ///      kaymis bir kuyruktan sessizce anlamsiz degerler okurdu.
-    uint256 internal constant FACTORY_ARG_BYTES = 224;
+    uint256 internal constant FACTORY_ARG_BYTES = 256;
 
     /// @dev Salt'lar SECILMEZ, TURETILIR.
     ///      keccak256("arcpad.FeeEscrow.v1")
@@ -230,13 +231,34 @@ library DeployLib {
     ///      -- ornegin `frozenFactoryAddress` icinde -- sessizce ayrisabilirdi
     ///      ve ayrisma dogrudan FABRIKA ADRESI demektir. Sira burada da
     ///      TASIYICIDIR: `T`, `V`den ONCE gelir.
+    /**
+     * @dev SEKIZINCI ARGUMAN `buybackTreasury` VE BU DEPLOY YOLUNDA SIFIRDIR.
+     *
+     *      Sifir gecmek, buyback ozelligi KAPALI bir fabrika nesli uretir:
+     *      `buybackPolicy` her zaman sifir doner, `launchWithBuyback` ve
+     *      `setBuybackEnabled(true)` `BuybackUnavailable` ile reddedilir. Yani
+     *      bu betik BUGUNKU davranisi birebir korur.
+     *
+     *      Buyback'i acan nesil AYRI bir deploy adimidir ve sirasi zorunludur:
+     *      once `BuybackVestingVault` (fabrika adresini ON-TAHMINLE alir),
+     *      sonra `BuybackTreasury`, sonra fabrika. Ucunu tek bir betige
+     *      sikistirmak, CREATE2 on-tahminlerini birbirine baglayan uc ayri
+     *      dairesel bagimlilik uretirdi; o yuzden ayri tutuluyor.
+     */
     function factoryArgs(address escrow_, address treasury, address governor, Profile memory p, address feeSchedule_)
         internal
         pure
         returns (bytes memory)
     {
         return abi.encode(
-            escrow_, treasury, governor, p.virtualTokenReserves, p.virtualQuoteReserves, p.saleSupply, feeSchedule_
+            escrow_,
+            treasury,
+            governor,
+            p.virtualTokenReserves,
+            p.virtualQuoteReserves,
+            p.saleSupply,
+            feeSchedule_,
+            address(0)
         );
     }
 

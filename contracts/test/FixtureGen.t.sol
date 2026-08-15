@@ -223,7 +223,7 @@ contract FixtureGenTest is Test {
         vm.createDir("./fixtures", true);
 
         escrow = new FeeEscrow();
-        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
+        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
 
         vm.deal(CREATOR, 1_000e18);
         vm.deal(TRADER, 1_000e18);
@@ -790,5 +790,16 @@ contract FixtureGenTest is Test {
             out[3 + i * 2] = alphabet[uint8(raw[i]) & 0x0f];
         }
         return string(out);
+    }
+
+    /**
+     * @dev BUYBACK KAPALI TASLAGI. `BondingCurve` her ucret dagitiminda
+     *      fabrikasina bu soruyu sorar ve fabrika, egriyi deploy eden
+     *      kontrattir -- yani bu test kontrati. Sifir hazine "kapali"
+     *      demektir, dolayisiyla fixture'lar buyback ONCESI davranisi
+     *      olcmeye devam eder ve indexer ile karsilastirmalari degismez.
+     */
+    function buybackPolicy(address) external pure returns (address, uint256) {
+        return (address(0), 0);
     }
 }

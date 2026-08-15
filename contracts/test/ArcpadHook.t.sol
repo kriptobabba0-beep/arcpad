@@ -235,7 +235,7 @@ contract ArcpadHookTest is Test {
 
         escrow = new FeeEscrow();
         schedule = new FeeSchedule();
-        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule));
+        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule), address(0));
 
         locker = new LockerStub(pm, usdc);
         harness = new SwapHarness(pm);

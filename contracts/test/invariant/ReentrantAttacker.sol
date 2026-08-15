@@ -561,4 +561,17 @@ contract DirectCurveFactory {
         curve = c;
         token = t;
     }
+
+    /**
+     * @dev BUYBACK KAPALI TASLAGI.
+     *
+     *      `BondingCurve` her ucret dagitiminda fabrikasina bu soruyu sorar ve
+     *      fabrika, egriyi deploy eden kontrattir -- yani bu test kontrati.
+     *      Sifir hazine "kapali" demektir, dolayisiyla bu dosyalardaki her
+     *      olcum buyback ONCESI davranisi olcmeye devam eder. Buyback'in
+     *      kendi testleri ayri dosyalardadir.
+     */
+    function buybackPolicy(address) external pure returns (address, uint256) {
+        return (address(0), 0);
+    }
 }

@@ -289,6 +289,33 @@ contract LaunchFactory {
     ///      factory kosar.
     mapping(address token => address) public feeScheduleOf;
 
+    // ==================================================================
+    //  CREATOR-FUNDED BUYBACK & LOCK
+    // ==================================================================
+
+    /// @notice Creator ucretinin buyback'e ayrilan payi: %50.
+    /// @dev SABIT, ayarlanabilir DEGIL -- ve bu, spec'in "launch aninda
+    ///      snapshot'la" istegini bu mimaride TAM olarak karsilar. Bu deponun
+    ///      surumleme birimi FABRIKADIR: `LaunchFactory`nin initcode'u bir
+    ///      adres belirleyicisidir, yani bu sabiti degistirmek zaten YENI BIR
+    ///      FABRIKA NESLI demektir. Eski launch'lar eski fabrikada, eski
+    ///      politikayla kalir; gecmise donuk bir degisiklik YAPILAMAZ.
+    uint256 public constant BUYBACK_LOCK_BPS = 5_000;
+
+    /// @notice Ayrilan payin yatirildigi hazine. Sifir ise ozellik KAPALIDIR.
+    address public immutable buybackTreasury;
+
+    /// @notice Launch basina buyback tercihi.
+    mapping(address token => bool) public buybackEnabledOf;
+
+    /// @notice Mezuniyet sonrasi ucret kesen hook; hazine tahakkuk yetkisini
+    ///         buradan dogrular. Governor BIR KEZ yazar.
+    address public graduationHook;
+
+    /// @notice Supurmeyi tetikleyen operator. Governor doner.
+    address public buybackKeeper;
+
+
     // ---------------------------------------------------------------
     // Olaylar ve hatalar
     // ---------------------------------------------------------------
@@ -427,6 +454,16 @@ contract LaunchFactory {
 
     /// @dev Yalnizca `governor`.
     error NotGovernor();
+    /// @dev Buyback'i ACMAYA yalnizca creator yetkilidir.
+    error NotLaunchCreator();
+    /// @dev Governor buyback'i ACAMAZ; yalnizca kapatabilir.
+    error GovernorCannotEnableBuyback();
+    /// @dev Bu fabrikadan cikmamis bir token.
+    error UnknownLaunch();
+    /// @dev `graduationHook` yalnizca BIR KEZ yazilir.
+    error HookAlreadySet();
+    /// @dev Hazine yokken buyback acilamaz.
+    error BuybackUnavailable();
 
     /// @dev Sifir hedef ONERILEMEZ. Bir "hedefi geri al" yolu bilerek yoktur:
     ///      graduation'i durdurmak bir pause'dur ve bu sistemde pause yoktur.
@@ -646,7 +683,21 @@ contract LaunchFactory {
         uint256 virtualTokenReserves_,
         uint256 virtualQuoteReserves_,
         uint256 saleSupply_,
-        address feeSchedule_
+        address feeSchedule_,
+        /**
+         * @dev BUYBACK HAZINESI, VE SIFIR OLMASI MESRUDUR.
+         *
+         *      `address(0)` gecirmek ozelligi KAPALI bir fabrika uretir:
+         *      `buybackPolicy` her zaman sifir doner, `launchWithBuyback`
+         *      ve `setBuybackEnabled(true)` `BuybackUnavailable` ile reddedilir.
+         *      Yani ayni kaynak hem buyback'li hem buyback'siz bir nesil
+         *      uretebilir ve ozelligi acmak bir DEPLOY karari olur.
+         *
+         *      Kod kontrolu YOKTUR ve olmamalidir: hazine bu fabrikanin
+         *      adresini constructor'inda okur, yani ondan SONRA deploy edilir.
+         *      Bir CREATE2 on-tahmini gecirmek mesru ve beklenen kullanimdir.
+         */
+        address buybackTreasury_
     ) {
         if (escrow_ == address(0)) revert ZeroEscrowAddress();
         if (escrow_.code.length == 0) revert EscrowHasNoCode();
@@ -709,6 +760,7 @@ contract LaunchFactory {
             )) revert ProfileNotSeedable();
 
         feeSchedule = feeSchedule_;
+        buybackTreasury = buybackTreasury_;
         escrow = escrow_;
         protocolTreasury = protocolTreasury_;
         governor = governor_;
@@ -734,10 +786,129 @@ contract LaunchFactory {
     ///      en sonda. Uretilen iki kontratin constructor'i da hicbir dis cagri
     ///      yapmaz (OZ ERC20'nin `_mint`'i dahil), yani bu dizide yeniden
     ///      girilebilecek bir pencere yoktur.
+    // ==================================================================
+    //  BUYBACK: IZINLER VE POLITIKA
+    // ==================================================================
+
+    event BuybackEnabledUpdated(address indexed token, address indexed by, bool enabled);
+    event GraduationHookSet(address indexed hook);
+    event BuybackKeeperSet(address indexed keeper);
+
+    /**
+     * @notice Bir launch'in buyback tercihini degistirir.
+     *
+     * @dev ============ PROTOKOL, CREATOR'I BUYBACK'E ZORLAYAMAZ ============
+     *
+     *      Bu, ozelligin en onemli guvenlik ozelligidir ve asimetri
+     *      BILINCLIDIR:
+     *
+     *          creator : kapali -> acik   VE   acik -> kapali
+     *          governor:                       acik -> kapali  YALNIZCA
+     *
+     *      Gerekce ekonomiktir. Buyback'in parasi CREATOR'IN ucret gelirinden
+     *      cikar, ama satin alinan tokenlarin %30'u vesting sonunda PROTOKOLE
+     *      gider. Governor "acik" diyebilseydi, protokol bir creator'in kendi
+     *      gelirini, ciktisindan kendisinin pay aldigi bir kasaya ZORLA
+     *      yonlendirebilirdi. Bu kabul edilemez bir guven varsayimidir.
+     *
+     *      Ters yon serbesttir ve zararsizdir: kapatmak, gelecekteki gelirin
+     *      TAMAMINI creator'a birakir -- yani governor'in yapabilecegi tek sey
+     *      creator'in lehinedir. Referans uygulama da ayni asimetriyi tasir.
+     *
+     * @dev ZATEN AYNI DEGERE AYARLAMAK SESSIZCE GECER, revert etmez: bir
+     *      operator betigi idempotent olabilmelidir.
+     */
+    function setBuybackEnabled(address token, bool enabled) external {
+        if (feeScheduleOf[token] == address(0)) revert UnknownLaunch();
+
+        address creator = LaunchToken(token).creator();
+        if (msg.sender == creator) {
+            if (enabled && buybackTreasury == address(0)) revert BuybackUnavailable();
+        } else if (msg.sender == governor) {
+            // ASIMETRI BURADA. Bir satir, ve ozelligin guven modelinin tamami.
+            if (enabled) revert GovernorCannotEnableBuyback();
+        } else {
+            revert NotLaunchCreator();
+        }
+
+        if (buybackEnabledOf[token] == enabled) return;
+        buybackEnabledOf[token] = enabled;
+        emit BuybackEnabledUpdated(token, msg.sender, enabled);
+    }
+
+    /**
+     * @notice Curve ve hook'un okudugu tek karar noktasi.
+     * @return treasury Sifir ise buyback KAPALI.
+     * @return lockBps  Creator ucretinin ayrilan payi.
+     *
+     * @dev TEK CAGRI, IKI DEGER: "acik mi" ile "yuzde kac" ayri okunsaydi
+     *      ikisi bir islem icinde ayrisabilirdi.
+     */
+    function buybackPolicy(address token) external view returns (address treasury, uint256 lockBps) {
+        if (!buybackEnabledOf[token]) return (address(0), 0);
+        return (buybackTreasury, BUYBACK_LOCK_BPS);
+    }
+
+    /**
+     * @notice Mezuniyet hook'unu BIR KEZ kaydeder.
+     * @dev Hook, fabrika adresine madenlenmis bir tuzla deploy edildigi icin
+     *      fabrikadan SONRA var olur; constructor argumani OLAMAZ. Bir kez
+     *      yazilir cunku degistirilebilir olsaydi governor, hazineye tahakkuk
+     *      yetkisi olan sahte bir adres kaydedebilirdi.
+     */
+    function setGraduationHook(address hook) external {
+        if (msg.sender != governor) revert NotGovernor();
+        if (hook == address(0)) revert ZeroGraduationTarget();
+        if (graduationHook != address(0)) revert HookAlreadySet();
+        graduationHook = hook;
+        emit GraduationHookSet(hook);
+    }
+
+    /**
+     * @notice Supurme operatorunu doner.
+     * @dev Anahtarci DEGISTIRILEBILIR olmalidir (anahtar rotasyonu bir
+     *      operasyon gerekliligidir) ve olmasi GUVENLIDIR: anahtarcinin tek
+     *      yetkisi supurmeyi TETIKLEMEKTIR. Nereye harcanacagi, ne kadarinin
+     *      guvenli oldugu ve parcanin kime gidecegi hazinede sabittir; kotu
+     *      niyetli bir anahtarci yalnizca supurmeyi GECIKTIREBILIR, ve o
+     *      gecikme `SWEEP_GRACE` sonrasi izinsiz supurmeyle asilir.
+     */
+    function setBuybackKeeper(address keeper) external {
+        if (msg.sender != governor) revert NotGovernor();
+        buybackKeeper = keeper;
+        emit BuybackKeeperSet(keeper);
+    }
+
     function launch(string calldata name_, string calldata symbol_, string calldata uri_)
         external
         returns (address token, address curve)
     {
+        return _launch(name_, symbol_, uri_, false);
+    }
+
+    /**
+     * @notice Buyback tercihiyle birlikte launch.
+     *
+     * @dev AYRI BIR GIRIS, DEGISTIRILMIS BIR IMZA DEGIL. `launch`in uc
+     *      argumanli hali ARAYUZDE KALIR: arayuz, betikler ve indexer'in ABI
+     *      beklentisi kirilmaz ve buyback istemeyen bir creator icin hicbir
+     *      sey degismez. Spec'in geriye donuk uyumluluk maddesinin bu
+     *      mimarideki karsiligi budur.
+     */
+    function launchWithBuyback(
+        string calldata name_,
+        string calldata symbol_,
+        string calldata uri_,
+        bool buybackEnabled
+    ) external returns (address token, address curve) {
+        return _launch(name_, symbol_, uri_, buybackEnabled);
+    }
+
+    function _launch(string calldata name_, string calldata symbol_, string calldata uri_, bool buybackEnabled)
+        private
+        returns (address token, address curve)
+    {
+        if (buybackEnabled && buybackTreasury == address(0)) revert BuybackUnavailable();
         if (bytes(name_).length == 0) revert EmptyName();
         if (bytes(symbol_).length == 0) revert EmptySymbol();
 
@@ -791,6 +962,11 @@ contract LaunchFactory {
         // olayindan ONCE ve `bind`den ONCE, yani mevcut CEI disiplinine uyar --
         // her defter yazimi her dis cagridan once biter.
         feeScheduleOf[token] = feeSchedule;
+        // Tercih ANINDA yazilir: curve ilk isleminde `buybackPolicy`yi okur.
+        if (buybackEnabled) {
+            buybackEnabledOf[token] = true;
+            emit BuybackEnabledUpdated(token, msg.sender, true);
+        }
         emit FeeScheduleAssigned(token, feeSchedule);
 
         emit Launched(token, curve, msg.sender, name_, symbol_, uri_, salt);

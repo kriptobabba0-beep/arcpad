@@ -510,4 +510,17 @@ contract GraduationMathTest is Test {
         // ... ve iki durumda da havuza gecilen sqrtPriceX96 AYNIDIR: s
         assertEq(GraduationMath.sqrtPriceX96(16_453_433_369_060_378_706_681, BASE_FINAL, true), s);
     }
+
+    /**
+     * @dev BUYBACK KAPALI TASLAGI.
+     *
+     *      `BondingCurve` her ucret dagitiminda fabrikasina bu soruyu sorar ve
+     *      fabrika, egriyi deploy eden kontrattir -- yani bu test kontrati.
+     *      Sifir hazine "kapali" demektir, dolayisiyla bu dosyalardaki her
+     *      olcum buyback ONCESI davranisi olcmeye devam eder. Buyback'in
+     *      kendi testleri ayri dosyalardadir.
+     */
+    function buybackPolicy(address) external pure returns (address, uint256) {
+        return (address(0), 0);
+    }
 }

@@ -64,6 +64,18 @@ interface ICurveBoundToken {
 interface ILaunchFactory {
     function graduationTarget() external view returns (address);
     function protocolTreasury() external view returns (address);
+    /// @notice Bu launch'in buyback politikasi. `treasury == 0` -> KAPALI.
+    /// @dev TEK cagri: "acik mi" ile "yuzde kac" ayri okunsaydi ikisi bir
+    ///      islem icinde ayrisabilirdi. Ayrica `view` TASIYICIDIR -- solc
+    ///      `view`den STATICCALL uretir, yani kotu niyetli bir factory ucret
+    ///      dagitiminin ORTASINDA curve'e geri giremez. Ayni uyari
+    ///      `protocolTreasury` icin de gecerlidir ve oradan kopyalanmistir.
+    function buybackPolicy(address token) external view returns (address treasury, uint256 lockBps);
+}
+
+/// @dev Buyback payinin yatirildigi yer. `accrue` token basina defter tutar.
+interface IBuybackTreasury {
+    function accrue(address token) external payable;
 }
 
 /// @title BondingCurve
@@ -703,10 +715,52 @@ contract BondingCurve {
         // defterin tamami ondan once yazilmistir, yani CEI'nin LAFZI da
         // korunur -- `bind`'inki gibi bir sapma yok.
         IFeeEscrow(escrow).deposit{value: protocolFee}(protocolTreasury());
-        if (creatorFee != 0) IFeeEscrow(escrow).deposit{value: creatorFee}(creator);
+        _settleCreatorFee(token_, creatorFee);
 
         (bool ok,) = msg.sender.call{value: netOut}("");
         if (!ok) revert PayoutFailed();
+    }
+
+    /**
+     * @notice Creator ucretini oder; buyback aciksa bir kismini AYIRIR.
+     *
+     * @dev ============ PROTOKOL PAYINA HIC DOKUNULMAZ ============
+     *
+     *      Bu fonksiyon yalnizca `creatorFee` gorur. `protocolFee` kendi
+     *      bps'inden hesaplanir ve buraya HIC GIRMEZ, dolayisiyla "buyback
+     *      protokol gelirini azaltir" hatasi bir DIKKAT meselesi degil, bir
+     *      IMKANSIZLIKTIR. Referans uygulamada ayni ozellik bir SIRALAMA
+     *      disiplinidir (once protokol payini ayir, sonra kalani bol) cunku
+     *      orada tek bir taban ucret vardir; bizde iki bagimsiz bps oldugu icin
+     *      ayrim tipin kendisinde durur.
+     *
+     * @dev ============ ISARETLEME BURADA, SUPURMEDE DEGIL ============
+     *
+     *      Pay, ucretin KAZANILDIGI islemde ayrilir. Bir launch buyback'i
+     *      sonradan kapatirsa ONCEDEN ayrilmis para hazinede kalir ve buyback
+     *      olarak harcanir; kapaliyken biriken ucret de sonradan acilmakla
+     *      buyback'e donusemez, cunku hic yatirilmamistir. Spec'in istedigi
+     *      "eski ucretler eski politikayi izler" ozelligi bu satirdan gelir --
+     *      ayri bir `pending` alanina gerek yoktur.
+     *
+     * @dev Hazineye yapilan cagri `payable`dir ve BIR DIS CAGRIDIR; defterin
+     *      tamami bundan once yazilmistir (cagiran `_settleBuy`/satis yolunun
+     *      dis cagri bolumu). Hazine yalnizca kendi depolamasina yazar ve
+     *      curve'e geri girmez.
+     */
+    function _settleCreatorFee(address token_, uint256 creatorFee) private {
+        if (creatorFee == 0) return;
+
+        (address treasury, uint256 lockBps) = ILaunchFactory(factory).buybackPolicy(token_);
+        // `treasury == 0` KAPALI demektir; carpim hic yapilmaz.
+        uint256 buybackQuote = treasury == address(0) ? 0 : (creatorFee * lockBps) / 10_000;
+
+        if (buybackQuote != 0) IBuybackTreasury(treasury).accrue{value: buybackQuote}(token_);
+
+        uint256 creatorCash = creatorFee - buybackQuote;
+        // Kosul KALMALIDIR: `FeeEscrow.deposit` sifir tutarda revert eder ve
+        // `lockBps == 10_000` durumunda nakit pay TAM SIFIR olur.
+        if (creatorCash != 0) IFeeEscrow(escrow).deposit{value: creatorCash}(creator);
     }
 
     // ---------------------------------------------------------------
@@ -955,7 +1009,7 @@ contract BondingCurve {
         // ALICI YATIRIM ANINDA COZULUR; satis yolundaki ayni satirin notu
         // gecerlidir.
         IFeeEscrow(escrow).deposit{value: protocolFee}(protocolTreasury());
-        if (creatorFee != 0) IFeeEscrow(escrow).deposit{value: creatorFee}(creator);
+        _settleCreatorFee(token_, creatorFee);
 
         // Iade duz `call` ile yapilir ve BASARISIZLIGINDA REVERT EDER. Arc'ta
         // sozlesmelere native gonderimin basarili olacagi garanti degildir ve

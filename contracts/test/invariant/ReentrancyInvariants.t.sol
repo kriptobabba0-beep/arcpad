@@ -106,7 +106,7 @@ abstract contract ReentrancyInvariantsBase is Test {
         // olculmus kor noktasinin aynisi.
         factory = new LaunchFactory(
             address(escrow), address(actor1), address(this), T, virtualQuote, S, address(FEE_SCHEDULE)
-        );
+        , address(0));
 
         // Uc curve URUN YOLUYLA: creator'lari aktorlerdir, dolayisiyla
         // creator ucreti de silahli bir alicida birikir.

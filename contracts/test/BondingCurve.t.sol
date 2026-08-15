@@ -296,6 +296,13 @@ contract MeasuringFactory {
         return treasury;
     }
 
+    /// @dev Buyback KAPALI: sifir hazine, sifir pay. Bu taslaklarin isi
+    ///      egriyi calistirmaktir; buyback'in kendi testleri ayri dosyada.
+    function buybackPolicy(address) external pure returns (address, uint256) {
+        return (address(0), 0);
+    }
+
+
     function pull() external returns (uint256, uint256) {
         return curve.graduate();
     }
@@ -2027,5 +2034,18 @@ contract BondingCurveTest is Test {
 
         assertLe(BUYER.balance, before, "a round trip returned more than it cost");
         assertEq(address(curve).balance, curve.realQuoteReserves());
+    }
+
+    /**
+     * @dev BUYBACK KAPALI TASLAGI.
+     *
+     *      `BondingCurve` her ucret dagitiminda fabrikasina bu soruyu sorar ve
+     *      fabrika, egriyi deploy eden kontrattir -- yani bu test kontrati.
+     *      Sifir hazine "kapali" demektir, dolayisiyla bu dosyalardaki her
+     *      olcum buyback ONCESI davranisi olcmeye devam eder. Buyback'in
+     *      kendi testleri ayri dosyalardadir.
+     */
+    function buybackPolicy(address) external pure returns (address, uint256) {
+        return (address(0), 0);
     }
 }

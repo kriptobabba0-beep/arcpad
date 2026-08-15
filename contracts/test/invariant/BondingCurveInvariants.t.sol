@@ -695,7 +695,7 @@ abstract contract BondingCurveInvariantsBase is Test {
     ///      test kontratidir, boylece D3'un iki fazli setter'i kampanyanin
     ///      kurulumunda GERCEKTEN yurunur.
     function _launchViaFactory(uint256 v) internal {
-        factory = new LaunchFactory(address(escrow), TREASURY, address(this), T, v, S, address(FEE_SCHEDULE));
+        factory = new LaunchFactory(address(escrow), TREASURY, address(this), T, v, S, address(FEE_SCHEDULE), address(0));
         vm.prank(LAUNCHER);
         (, address curveAddr) = factory.launch("arcpad", "ARC", "ipfs://arcpad");
         curve = BondingCurve(curveAddr);
@@ -818,5 +818,18 @@ contract BondingCurveInvariantsTestZeroCreator is BondingCurveInvariantsBase {
     ///      cagrisinda olursa sonrasinda deneme kalmaz.
     function _afterInvariantForThisProfile() internal view override {
         assertEq(handler.completions(), 1, "curve tamamlanmadi");
+    }
+
+    /**
+     * @dev BUYBACK KAPALI TASLAGI.
+     *
+     *      `BondingCurve` her ucret dagitiminda fabrikasina bu soruyu sorar ve
+     *      fabrika, egriyi deploy eden kontrattir -- yani bu test kontrati.
+     *      Sifir hazine "kapali" demektir, dolayisiyla bu dosyalardaki her
+     *      olcum buyback ONCESI davranisi olcmeye devam eder. Buyback'in
+     *      kendi testleri ayri dosyalardadir.
+     */
+    function buybackPolicy(address) external pure returns (address, uint256) {
+        return (address(0), 0);
     }
 }

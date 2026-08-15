@@ -36,8 +36,32 @@ REPO = os.path.dirname(CONTRACTS)
 # `forge inspect <path>:<name> bytecode | sha256sum` -- HEX METNININ sha256'si,
 # baytlarin keccak'i DEGIL. (keccak `0xdf476afe...` verir ve tam olarak bir
 # kirilma gibi gorunur.)
-FROZEN = {
+# ===========================================================================
+#  NESIL AYRIMI: CANLI OLAN V1, KAYNAKTAKI V2
+# ===========================================================================
+#
+# Creator-funded buyback & lock, `BondingCurve`e bir ucret ayrimi
+# (`_settleCreatorFee`) ve `LaunchFactory`ye bir constructor argumani ekledi.
+# Ikisi de INITCODE DEGISTIRIR -- ve `LaunchFactory`nin initcode'u bir ADRES
+# BELIRLEYICISIDIR, yani bu tanim geregi YENI BIR NESILDIR.
+#
+# ESKI PINLER SILINMEZ, BURAYA TASINIR. Asagidaki `LIVE` adreslerinde duran
+# kod hala V1'dir ve oyle KALACAKTIR. Literalleri ustune yazip gecseydik canli
+# dagitimin dogrulanabilirligini kaybederdik -- ve bu dosyanin butun varlik
+# sebebi tam olarak o dogrulanabilirliktir.
+#
+# DEGISMEYEN UCU (LaunchToken, FeeEscrow, FeeSchedule) BILEREK BURAYA
+# KOPYALANMADI: onlarin V1 ve V2 hash'leri AYNIDIR, yani nesil ayrimi onlara
+# dokunmaz ve iki yerde tutmak ikinci bir dogruluk kaynagi yaratirdi.
+LEGACY_V1 = {
+    # Canli: 0x7938BE340A14A12f94a83AEa246d9d2566324c9C
     "BondingCurve": "8e2460fff48ee5b6c591d0c62041936a7c63099d2ae1d636fa3bd2b927b4982f",
+    # Canli: 0x5CA156f1809aB784655410d0f4B0704d2b306B47
+    "LaunchFactory": "e88224f8e769d2d4e50f302f6c5dc76fb738c80f5b0452f3c4f05fad889321a0",
+}
+
+FROZEN = {
+    "BondingCurve": "d1402acad9b43eda7c79b7e9548089458502b98ced9e7f2e7e8b29c9725d4356",
     "LaunchToken": "d4c19416664f373cb5e8504f9e2060bb874b0894ef4c6e266b4d9121e405f805",
     # ---------------------------------------------------------------
     # FAZ 2 EKI, VE EKLENME SEBEBI OLCULDU.
@@ -92,7 +116,7 @@ FROZEN = {
     # Yani Faz 2'de `LaunchFactory`nin initcode'u BIR ADRES BELIRLEYICISIDIR.
     # Task 7 onu zincire yazdiginda bu satir DEGISMEZ -- pin zaten
     # yayinlanacak baytlardir.
-    "LaunchFactory": "e88224f8e769d2d4e50f302f6c5dc76fb738c80f5b0452f3c4f05fad889321a0",
+    "LaunchFactory": "30949cdfb4969a97d960064261903d71f091421e6dcacd016b7c548ce03a808f",
 }
 
 # Canli olculmus adresler. `docs/`ta degil BURADA duruyorlar cunku kapinin

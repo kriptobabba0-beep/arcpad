@@ -1204,7 +1204,7 @@ contract DeployTest is Test {
                 p.virtualQuoteReserves,
                 p.saleSupply,
                 address(new FeeSchedule())
-            )
+            , address(0))
         );
     }
 
