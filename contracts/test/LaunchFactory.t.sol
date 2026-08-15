@@ -163,14 +163,14 @@ contract LaunchFactoryTest is Test {
     function setUp() public {
         FEE_SCHEDULE = new FeeSchedule();
         escrow = new FeeEscrow();
-        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         vm.deal(ALICE, 100e18);
         vm.deal(BOB, 100e18);
         vm.deal(BUYER, 1_000_000e18);
     }
 
     function _newFactory(uint256 t_, uint256 v_, uint256 s_) internal returns (LaunchFactory) {
-        return new LaunchFactory(address(escrow), TREASURY, GOVERNOR, t_, v_, s_, address(FEE_SCHEDULE), address(0));
+        return new LaunchFactory(address(escrow), TREASURY, GOVERNOR, t_, v_, s_, address(FEE_SCHEDULE));
     }
 
     /// Fuzz edilen bir dizeyi token sinirlarina sigdirir; bos ise yedegi verir.
@@ -923,13 +923,13 @@ contract LaunchFactoryTest is Test {
     /// yapisaldir: schedule bir odeme ALICISI degil, CAGRILAN bir kontrattir.
     function test_theFeeScheduleMustBeNonZeroAndHaveCode() public {
         vm.expectRevert(LaunchFactory.ZeroFeeSchedule.selector);
-        new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(0), address(0));
+        new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(0));
 
         vm.expectRevert(LaunchFactory.FeeScheduleHasNoCode.selector);
-        new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(0xDEAD), address(0));
+        new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(0xDEAD));
 
         // KONTROL: kodu olan bir adresle GECER.
-        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         assertEq(ok.feeSchedule(), address(FEE_SCHEDULE));
     }
 
@@ -1364,13 +1364,13 @@ contract LaunchFactoryTest is Test {
     /// iki iddia bunu ayrica sabitler.
     function test_constructorRejectsAZeroEscrowOrTreasury() public {
         vm.expectRevert(LaunchFactory.ZeroEscrowAddress.selector);
-        new LaunchFactory(address(0), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        new LaunchFactory(address(0), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
 
         vm.expectRevert(LaunchFactory.ZeroTreasuryAddress.selector);
-        new LaunchFactory(address(escrow), address(0), GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        new LaunchFactory(address(escrow), address(0), GOVERNOR, T, V, S, address(FEE_SCHEDULE));
 
         vm.expectRevert(LaunchFactory.ZeroGovernorAddress.selector);
-        new LaunchFactory(address(escrow), TREASURY, address(0), T, V, S, address(FEE_SCHEDULE), address(0));
+        new LaunchFactory(address(escrow), TREASURY, address(0), T, V, S, address(FEE_SCHEDULE));
 
         assertTrue(
             LaunchFactory.ZeroEscrowAddress.selector != BondingCurve.ZeroEscrow.selector,
@@ -1391,11 +1391,11 @@ contract LaunchFactoryTest is Test {
     /// launch'inda, ancak BIR ALICININ isleminde goruluyor.
     function test_constructorRejectsACodelessEscrow() public {
         vm.expectRevert(LaunchFactory.EscrowHasNoCode.selector);
-        new LaunchFactory(address(0xE0A), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        new LaunchFactory(address(0xE0A), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
 
         // KABUL EDILEN TARAF: kodu olan bir escrow gecer ve gercekten ticaret
         // yapar -- kontrolun fazla siki olmadigini gosterir.
-        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         vm.prank(ALICE);
         (address token, address curve) = ok.launch("Arc Coin", "ARC", "ipfs://cid");
         vm.prank(BUYER);
@@ -1425,20 +1425,20 @@ contract LaunchFactoryTest is Test {
 
         // (a) uye YOK (ve fallback de yok)
         vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
-        new LaunchFactory(noMember, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        new LaunchFactory(noMember, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
 
         // (b) uye REVERT ediyor
         vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
-        new LaunchFactory(reverting, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        new LaunchFactory(reverting, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
 
         // (c) YAPISAL OLARAK IMKANSIZ cevap
         vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
-        new LaunchFactory(lying, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        new LaunchFactory(lying, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
 
         // ...ve gercekci operator hatasinin kendisi: baska bir arcpad
         // kontratini yapistirmak.
         vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
-        new LaunchFactory(someToken, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        new LaunchFactory(someToken, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
     }
 
     /// YOKLAMA FAZLA KISITLAMIYOR -- iki kabul tanigi.
@@ -1457,12 +1457,12 @@ contract LaunchFactoryTest is Test {
         assertGt(escrow.owed(ALICE), 0);
         assertEq(escrow.owed(address(0)), 0, "sifir alici anahtari yazilamaz");
 
-        LaunchFactory used = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        LaunchFactory used = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         assertEq(used.escrow(), address(escrow));
 
         // (2) vekil.
         EscrowProxy proxy = new EscrowProxy(address(new FeeEscrow()));
-        LaunchFactory proxied = new LaunchFactory(address(proxy), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        LaunchFactory proxied = new LaunchFactory(address(proxy), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         assertEq(proxied.escrow(), address(proxy));
 
         // ...ve vekilli factory gercekten ticaret yapar: yoklama kozmetik
@@ -1505,7 +1505,7 @@ contract LaunchFactoryTest is Test {
             assertGt(escrow.owed(keys[i]), 0, "on kosul: her anahtara alacak yazilmali");
         }
 
-        LaunchFactory f = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        LaunchFactory f = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         assertEq(f.escrow(), address(escrow), "escrow makul bir anahtarda alacagi oldugu icin reddedildi");
 
         // ...ve YAZILAMAYAN tek anahtar hala sifir. Yoklamanin dayandigi sey
@@ -1525,7 +1525,7 @@ contract LaunchFactoryTest is Test {
         escrow.deposit{value: amount}(recipient);
         assertGt(escrow.owed(recipient), 0, "on kosul: alacak yazilmali");
 
-        LaunchFactory f = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        LaunchFactory f = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         assertEq(f.escrow(), address(escrow), "escrow bir aliciya alacak yazdigi icin reddedildi");
 
         // VE SEBEBIN KENDISI: sifir alici anahtari YAZILAMAZ, dolayisiyla
@@ -1543,7 +1543,7 @@ contract LaunchFactoryTest is Test {
     /// gostermemek icin buradadir.
     function test_theLedgerProbeDoesNotSeeAPermissiveFallback() public {
         PermissiveFallback wrong = new PermissiveFallback();
-        LaunchFactory accepted = new LaunchFactory(address(wrong), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        LaunchFactory accepted = new LaunchFactory(address(wrong), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         assertEq(accepted.escrow(), address(wrong), "acik hucre kapandiysa bu testi guncelle");
 
         // VE KACIRILANIN SONUCU OLCULUYOR. Bu sekil FAIL-CLOSED DEGILDIR:
@@ -1564,7 +1564,7 @@ contract LaunchFactoryTest is Test {
     /// gelir ve bu sabittir.
     function test_aZeroEscrowIsReportedAsZeroNotAsCodeless() public {
         vm.expectRevert(LaunchFactory.ZeroEscrowAddress.selector);
-        new LaunchFactory(address(0), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        new LaunchFactory(address(0), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         assertEq(address(0).code.length, 0, "address(0) violates BOTH escrow guards");
     }
 
@@ -1614,7 +1614,7 @@ contract LaunchFactoryTest is Test {
         // "escrow OLMAYAN, sifir OLMAYAN her adres"tir.
         Seeder safeLike = new Seeder();
         LaunchFactory f2 =
-            new LaunchFactory(address(escrow), address(safeLike), GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+            new LaunchFactory(address(escrow), address(safeLike), GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         vm.prank(ALICE);
         (, address curve2) = f2.launch("Arc Coin", "ARC", "ipfs://cid");
         vm.prank(BUYER);
@@ -1642,13 +1642,13 @@ contract LaunchFactoryTest is Test {
     /// dolayisiyla sifir kontrolu ONCE gelir ve bu sabittir.
     function test_constructorRejectsTheEscrowAsTheTreasury() public {
         vm.expectRevert(LaunchFactory.TreasuryIsTheEscrow.selector);
-        new LaunchFactory(address(escrow), address(escrow), GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        new LaunchFactory(address(escrow), address(escrow), GOVERNOR, T, V, S, address(FEE_SCHEDULE));
 
         vm.expectRevert(LaunchFactory.ZeroTreasuryAddress.selector);
-        new LaunchFactory(address(escrow), address(0), GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        new LaunchFactory(address(escrow), address(0), GOVERNOR, T, V, S, address(FEE_SCHEDULE));
 
         // Ve escrow'un KENDISI disinda her sey gecer -- koruma dardir.
-        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
         assertEq(ok.protocolTreasury(), TREASURY);
     }
 
@@ -1661,12 +1661,12 @@ contract LaunchFactoryTest is Test {
     /// birden olabilir.
     function test_constructorRejectsTheEscrowAsGovernorButAcceptsTheTreasuryAsGovernor() public {
         vm.expectRevert(LaunchFactory.GovernorIsTheEscrow.selector);
-        new LaunchFactory(address(escrow), TREASURY, address(escrow), T, V, S, address(FEE_SCHEDULE), address(0));
+        new LaunchFactory(address(escrow), TREASURY, address(escrow), T, V, S, address(FEE_SCHEDULE));
 
         vm.expectRevert(LaunchFactory.ZeroGovernorAddress.selector);
-        new LaunchFactory(address(escrow), TREASURY, address(0), T, V, S, address(FEE_SCHEDULE), address(0));
+        new LaunchFactory(address(escrow), TREASURY, address(0), T, V, S, address(FEE_SCHEDULE));
 
-        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, TREASURY, T, V, S, address(FEE_SCHEDULE), address(0));
+        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, TREASURY, T, V, S, address(FEE_SCHEDULE));
         assertEq(ok.governor(), TREASURY);
         assertEq(ok.protocolTreasury(), TREASURY);
     }
@@ -1812,19 +1812,19 @@ contract LaunchFactoryTest is Test {
     /// ZATEN kullanmistir, ikinci adim yalnizca surenin gectiginin
     /// dogrulanmasidir -- yani hedefin inmesi governor'in ikinci bir islem
     /// yapmasina BAGIMLI degildir.
-    function test_theTargetLandsOnlyAfterThreeDaysAndAnyoneMayApplyIt() public {
+    function test_theTargetLandsOnlyAfterTheDelayAndAnyoneMayApplyIt() public {
         address target = address(0xF00D);
 
         vm.expectRevert(LaunchFactory.NoPendingGraduationTarget.selector);
         factory.applyGraduationTarget();
 
-        uint256 eta = block.timestamp + 3 days;
+        uint256 eta = block.timestamp + factory.GRADUATION_TARGET_DELAY();
         vm.expectEmit(true, false, false, true, address(factory));
         emit LaunchFactory.GraduationTargetProposed(target, eta);
         vm.prank(GOVERNOR);
         factory.proposeGraduationTarget(target);
 
-        assertEq(factory.GRADUATION_TARGET_DELAY(), 3 days);
+        assertEq(factory.GRADUATION_TARGET_DELAY(), 1 days);
         assertEq(factory.pendingGraduationTarget(), target);
         assertEq(factory.pendingGraduationTargetEta(), eta);
         assertEq(factory.graduationTarget(), address(0), "oneri hemen indi");

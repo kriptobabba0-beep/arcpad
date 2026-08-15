@@ -116,7 +116,7 @@ FROZEN = {
     # Yani Faz 2'de `LaunchFactory`nin initcode'u BIR ADRES BELIRLEYICISIDIR.
     # Task 7 onu zincire yazdiginda bu satir DEGISMEZ -- pin zaten
     # yayinlanacak baytlardir.
-    "LaunchFactory": "30949cdfb4969a97d960064261903d71f091421e6dcacd016b7c548ce03a808f",
+    "LaunchFactory": "e68d095867404ce85342a9aa2eac183912e3226e3174747a6ff12e153c3273fc",
 }
 
 # Canli olculmus adresler. `docs/`ta degil BURADA duruyorlar cunku kapinin

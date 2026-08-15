@@ -88,7 +88,7 @@ contract PoolSeedInvariantsTest is Test {
 
         escrow = new FeeEscrow();
         schedule = new FeeSchedule();
-        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule), address(0));
+        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule));
 
         bytes memory args = abi.encode(IPoolManager(address(pm)), address(factory), address(escrow));
         (address hookAddr, bytes32 salt) =

@@ -122,7 +122,11 @@ library PoolDeployLib {
     ///        (3) `LaunchFactory` artik `frozen_bytecode_gate.py`nin FROZEN
     ///            kumesinde -- muafiyet, saldirinin ULASILABILIR olmasinin
     ///            sebebiydi.
-    address internal constant ARC_FACTORY = 0x5CA156f1809aB784655410d0f4B0704d2b306B47;
+    /// @dev V2 NESLI. `LaunchFactory`nin initcode'u degistigi icin adres de
+    ///      degisti; V1'i `LEGACY_V1_FACTORY` kaydinda tutuyoruz. Testnet
+    ///      oldugumuz ve eski launch'lari tasimaya gerek olmadigi icin bu
+    ///      dosya BASTAN ASAGI V2'yi gosterir -- iki nesli paralel yasatmiyoruz.
+    address internal constant ARC_FACTORY = 0x7A02759adD7193AD11A0C51914398d366Bf256A3;
 
     /// @notice Kaynaktan degil, ARAMA SONUCUNDAN gelen tek sabit.
     /// @dev `forge script PredictPool` ile madenlendi. Alt 14 bit icin gecerli
@@ -145,10 +149,42 @@ library PoolDeployLib {
     ///      HICBIR SEY MEZUN OLMADIGI ICIN (graduationTarget hala sifir,
     ///      olculdu) adres degisiminin bir bedeli yoktur: eski hook'un adresi
     ///      hicbir `PoolKey`e girmemistir.
-    bytes32 internal constant ARC_HOOK_SALT = bytes32(uint256(0x1273));
-    address internal constant ARC_HOOK = 0x89AfefCbD64c9Ae84e74698C96Dcba087c40e0cc;
+    /// @dev ============ YENIDEN MADENLENDI: BUYBACK NESLI (V2) ============
+    ///
+    ///      Creator-funded buyback ozelligi `BondingCurve` ve `LaunchFactory`
+    ///      initcode'larini degistirdi. `LaunchFactory`nin initcode'u bir ADRES
+    ///      BELIRLEYICISIDIR, dolayisiyla fabrika adresi
+    ///      `0x5CA156f1...6B47` -> `0x7A02759a...56A3` kaydi; hook'un IZINLERI
+    ///      ADRESIN ALT 14 BITINDE yasadigi ve tuz fabrikaya bagli oldugu icin
+    ///      hook de yeniden madenlendi. Yani bu uc satirin degismesi bir
+    ///      TERCIH DEGIL, kod degisikliginin zorunlu sonucudur.
+    ///
+    ///      `ARC_POOL_MANAGER` DEGISMEDI ve bu onemlidir: `PoolManager`in
+    ///      adresi fabrikaya bagli degildir (kendi tuzu var), yani mezuniyet
+    ///      likiditesinin durdugu kontrat YERINDE KALIR. Nesil degisimi
+    ///      hook/locker/fabrika ucusunu tasir, likiditeyi degil.
+    ///
+    ///      V1 UCLUSU ASAGIDA KAYITLIDIR VE SILINMEZ: `0x89Afef...e0cC` /
+    ///      `0xaEE2DA...0158` testnet'te DEPLOY EDILMIS durumdadir ve V1
+    ///      fabrikasinda BEKLEYEN bir graduation onerisi vardir (pencere
+    ///      16-19 Agustos). O nesil kendi basina yasamaya devam eder; bu
+    ///      dosyanin V2 pinleri onu ne siler ne de degistirir.
+    ///
+    ///      HICBIR SEY MEZUN OLMADIGI ICIN adres degisiminin bedeli yoktur:
+    ///      ne V1 ne V2 hook'un adresi henuz bir `PoolKey`e girmemistir.
+    bytes32 internal constant ARC_HOOK_SALT = bytes32(uint256(0xf12));
+    address internal constant ARC_HOOK = 0x2905E3331961D4405beF4C2dD2b8D501A5c620CC;
     address internal constant ARC_POOL_MANAGER = 0x617321A877e024C870516CD599A581dCDCa6c09b;
-    address internal constant ARC_LOCKER = 0xaEE2DA2D21B92AfCAccF9DAD3d72254eE1630158;
+    address internal constant ARC_LOCKER = 0xC0110b06F9AE18967cC8c050f3659Ed689a3bC62;
+
+    /// @notice V1 nesli -- CANLI, ve yalnizca KAYIT icin.
+    /// @dev Kod bu sabitleri KULLANMAZ. Bir denetcinin "eski nesil neydi"
+    ///      sorusunu depodan cevaplayabilmesi icin duruyorlar; `frozen_bytecode_gate.py`
+    ///      icindeki `LEGACY_V1` blogunun ayni gerekcesi.
+    bytes32 internal constant LEGACY_V1_HOOK_SALT = bytes32(uint256(0x1273));
+    address internal constant LEGACY_V1_HOOK = 0x89AfefCbD64c9Ae84e74698C96Dcba087c40e0cc;
+    address internal constant LEGACY_V1_LOCKER = 0xaEE2DA2D21B92AfCAccF9DAD3d72254eE1630158;
+    address internal constant LEGACY_V1_FACTORY = 0x5CA156f1809aB784655410d0f4B0704d2b306B47;
 
     /// @notice `ArcpadHook` creation code'unun hash'i, ARGUMANSIZ.
     /// @dev BU PIN, YAYINLANAN BYTECODE ILE SINANAN BYTECODE'UN AYNI

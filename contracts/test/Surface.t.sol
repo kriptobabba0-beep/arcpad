@@ -723,7 +723,7 @@ contract SurfaceTest is Test {
     ///      `setProfile` ya da bir `pause` bu kumeye bir GIRIS EKLER ve fazlalik
     ///      hatadir -- iki yonlu esitligin butun anlami budur.
     function test_launchFactoryExposesExactlyTheseFunctions() public view {
-        string[] memory expected = new string[](32);
+        string[] memory expected = new string[](33);
         expected[0] = "GRADUATION_TARGET_DELAY()";
         expected[1] = "MIN_GRADUATION_RAISE()";
         expected[2] = "MIN_OPENING_MARKET_CAP()";
@@ -760,6 +760,7 @@ contract SurfaceTest is Test {
         expected[29] = "setGraduationHook(address)";
         expected[30] = "setBuybackKeeper(address)";
         expected[31] = "launchWithBuyback(string,string,string,bool)";
+        expected[32] = "setBuybackTreasury(address)";
         _assertSetEquals(_functionSignatures("LaunchFactory"), expected, "LaunchFactory fonksiyonlari");
     }
 
@@ -779,7 +780,7 @@ contract SurfaceTest is Test {
     ///      kontrolu yalnizca ilk ikisindedir); izinsizlik ABI'de gorunmez,
     ///      `LaunchFactory.t.sol` onu davranissal olarak olcer.
     function test_launchFactoryFunctionMutabilityAndReturns() public view {
-        string[] memory expected = new string[](32);
+        string[] memory expected = new string[](33);
         expected[0] = "GRADUATION_TARGET_DELAY() view -> (uint256)";
         expected[1] = "MIN_GRADUATION_RAISE() view -> (uint256)";
         expected[2] = "MIN_OPENING_MARKET_CAP() view -> (uint256)";
@@ -815,10 +816,11 @@ contract SurfaceTest is Test {
         expected[29] = "setGraduationHook(address) nonpayable -> ()";
         expected[30] = "setBuybackKeeper(address) nonpayable -> ()";
         expected[31] = "launchWithBuyback(string,string,string,bool) nonpayable -> (address,address)";
+        expected[32] = "setBuybackTreasury(address) nonpayable -> ()";
         _assertSetEquals(_functionDescriptors("LaunchFactory"), expected, "LaunchFactory tanimlayicilari");
 
         string[] memory ctor = new string[](1);
-        ctor[0] = "constructor(address,address,address,uint256,uint256,uint256,address,address) nonpayable";
+        ctor[0] = "constructor(address,address,address,uint256,uint256,uint256,address) nonpayable";
         _assertSetEquals(_constructorDescriptor("LaunchFactory"), ctor, "LaunchFactory constructor");
     }
 
@@ -889,7 +891,7 @@ contract SurfaceTest is Test {
     ///      kalir cunku ona gore filtre yapilmaz. Ikisi de `previous`/`current`
     ///      tasir: bir denetci rotasyon gecmisini yalnizca loglardan kurar.
     function test_launchFactoryExposesExactlyTheseEvents() public view {
-        string[] memory expected = new string[](8);
+        string[] memory expected = new string[](9);
         expected[0] = "GraduationTargetChanged(address,address) indexed:(previous,current)";
         expected[1] = "GraduationTargetProposed(address,uint256) indexed:(target)";
         expected[2] = "Launched(address,address,address,string,string,string,bytes32) indexed:(token,curve,creator)";
@@ -901,11 +903,12 @@ contract SurfaceTest is Test {
         expected[5] = "BuybackEnabledUpdated(address,address,bool) indexed:(token,by)";
         expected[6] = "GraduationHookSet(address) indexed:(hook)";
         expected[7] = "BuybackKeeperSet(address) indexed:(keeper)";
+        expected[8] = "BuybackTreasurySet(address) indexed:(treasury)";
         _assertSetEquals(_eventDescriptors("LaunchFactory"), expected, "LaunchFactory olaylari");
     }
 
     function test_launchFactoryAbiCensus() public view {
-        _assertEntryCensus("LaunchFactory", 32, 28, 8, 1, 0, 0);
+        _assertEntryCensus("LaunchFactory", 33, 28, 9, 1, 0, 0);
     }
 
     // ---------------------------------------------------------------

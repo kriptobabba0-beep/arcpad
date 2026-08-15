@@ -223,7 +223,7 @@ contract FixtureGenTest is Test {
         vm.createDir("./fixtures", true);
 
         escrow = new FeeEscrow();
-        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
 
         vm.deal(CREATOR, 1_000e18);
         vm.deal(TRADER, 1_000e18);

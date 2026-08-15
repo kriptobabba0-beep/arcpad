@@ -330,7 +330,7 @@ contract GraduationCycleLiveForkTest is Test {
     ///      ama CANLI `PoolManager`, CANLI `FeeEscrow` ve CANLI `FeeSchedule`
     ///      ile.
     function _deployDisposableStack() internal {
-        factory = new LaunchFactory(liveEscrow, DISPOSABLE_TREASURY, DISPOSABLE_GOVERNOR, T, V, S, liveFeeSchedule, address(0));
+        factory = new LaunchFactory(liveEscrow, DISPOSABLE_TREASURY, DISPOSABLE_GOVERNOR, T, V, S, liveFeeSchedule);
 
         bytes memory args = abi.encode(pm, address(factory), liveEscrow);
         (address hookAddr, bytes32 salt) =
@@ -678,7 +678,7 @@ contract GraduationCycleLiveForkTest is Test {
 
         // --- YARI 2: CURVE'UN ELE ALISI, FORK'TA ---
         LaunchFactory blocked =
-            new LaunchFactory(liveEscrow, DISPOSABLE_TREASURY, DISPOSABLE_GOVERNOR, T, V, S, liveFeeSchedule, address(0));
+            new LaunchFactory(liveEscrow, DISPOSABLE_TREASURY, DISPOSABLE_GOVERNOR, T, V, S, liveFeeSchedule);
         PayoutRejectingTarget target = new PayoutRejectingTarget();
 
         vm.prank(DISPOSABLE_GOVERNOR);

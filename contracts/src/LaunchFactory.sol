@@ -233,7 +233,13 @@ contract LaunchFactory {
     ///      suresi ile INDIRME suresi AYNI sayidir. Gerekcesi
     ///      `applyGraduationTarget`in NatSpec'inde; ozeti, ihbarin azami
     ///      bayatliginin ihbar suresini asmamasi gerektigidir.
-    uint256 public constant GRADUATION_TARGET_DELAY = 3 days;
+    /// @dev BIR GUN. Uc gundu; testnet'te uc gun bir prova dongusunu uc gune
+    ///      yayar ve o sure yalnizca bekleme uretir. Pencere hala IKI TARAFLI
+    ///      (`[eta, eta + DELAY]`), yani "ihbar suresi" ozelligi korunur --
+    ///      degisen tek sey uzunlugu. MAINNET'E CIKARKEN BU DEGER YENIDEN
+    ///      DEGERLENDIRILMELIDIR: orada ihbar suresinin isi bir kullaniciya
+    ///      cikis firsati vermektir ve bir gun kisa olabilir.
+    uint256 public constant GRADUATION_TARGET_DELAY = 1 days;
 
     /// @notice `BondingCurve.graduate()`i cagirabilecek TEK adres, ve odemeyi
     ///         alan adres. Atanmadan once `address(0)`dir ve o halde her
@@ -302,8 +308,24 @@ contract LaunchFactory {
     ///      politikayla kalir; gecmise donuk bir degisiklik YAPILAMAZ.
     uint256 public constant BUYBACK_LOCK_BPS = 5_000;
 
-    /// @notice Ayrilan payin yatirildigi hazine. Sifir ise ozellik KAPALIDIR.
-    address public immutable buybackTreasury;
+    /**
+     * @notice Ayrilan payin yatirildigi hazine. Sifir ise ozellik KAPALIDIR.
+     *
+     * @dev CONSTRUCTOR ARGUMANI DEGIL, VE SEBEBI COZULEMEZ BIR DONGUDUR:
+     *
+     *          fabrika  <- hazine  <- kasa  <- fabrika
+     *
+     *      Kasa fabrikanin adresini constructor'inda alir; hazine kasanin ve
+     *      fabrikanin; fabrika da hazinenin alsaydi ucu birden birbirinin
+     *      initcode'una girerdi ve hicbir CREATE2 on-tahmini bu dongüyu
+     *      cozemezdi. Governor'in BIR KEZ yazmasi dongüyü kirar.
+     *
+     *      Yan faydasi buyuk: fabrikanin ADRESI buyback kablolamasindan
+     *      BAGIMSIZ kalir. Hook'un madenlenmis tuzu fabrika adresine bagli
+     *      oldugu icin, aksi halde hazineyi degistirmek hook'u da yeniden
+     *      madenlemeyi gerektirirdi.
+     */
+    address public buybackTreasury;
 
     /// @notice Launch basina buyback tercihi.
     mapping(address token => bool) public buybackEnabledOf;
@@ -683,21 +705,7 @@ contract LaunchFactory {
         uint256 virtualTokenReserves_,
         uint256 virtualQuoteReserves_,
         uint256 saleSupply_,
-        address feeSchedule_,
-        /**
-         * @dev BUYBACK HAZINESI, VE SIFIR OLMASI MESRUDUR.
-         *
-         *      `address(0)` gecirmek ozelligi KAPALI bir fabrika uretir:
-         *      `buybackPolicy` her zaman sifir doner, `launchWithBuyback`
-         *      ve `setBuybackEnabled(true)` `BuybackUnavailable` ile reddedilir.
-         *      Yani ayni kaynak hem buyback'li hem buyback'siz bir nesil
-         *      uretebilir ve ozelligi acmak bir DEPLOY karari olur.
-         *
-         *      Kod kontrolu YOKTUR ve olmamalidir: hazine bu fabrikanin
-         *      adresini constructor'inda okur, yani ondan SONRA deploy edilir.
-         *      Bir CREATE2 on-tahmini gecirmek mesru ve beklenen kullanimdir.
-         */
-        address buybackTreasury_
+        address feeSchedule_
     ) {
         if (escrow_ == address(0)) revert ZeroEscrowAddress();
         if (escrow_.code.length == 0) revert EscrowHasNoCode();
@@ -760,7 +768,6 @@ contract LaunchFactory {
             )) revert ProfileNotSeedable();
 
         feeSchedule = feeSchedule_;
-        buybackTreasury = buybackTreasury_;
         escrow = escrow_;
         protocolTreasury = protocolTreasury_;
         governor = governor_;
@@ -792,6 +799,7 @@ contract LaunchFactory {
 
     event BuybackEnabledUpdated(address indexed token, address indexed by, bool enabled);
     event GraduationHookSet(address indexed hook);
+    event BuybackTreasurySet(address indexed treasury);
     event BuybackKeeperSet(address indexed keeper);
 
     /**
@@ -856,6 +864,21 @@ contract LaunchFactory {
      *      yazilir cunku degistirilebilir olsaydi governor, hazineye tahakkuk
      *      yetkisi olan sahte bir adres kaydedebilirdi.
      */
+    /**
+     * @notice Buyback hazinesini BIR KEZ kaydeder ve ozelligi acar.
+     * @dev Bir kez yazilir: degistirilebilir olsaydi governor, creator'larin
+     *      ayrilmis paylarini kendi kontrol ettigi bir adrese yonlendirebilirdi.
+     *      Yazilana kadar `buybackPolicy` sifir doner, yani fabrika buyback'siz
+     *      calisir -- bu, gecerli ve guvenli bir ara durumdur.
+     */
+    function setBuybackTreasury(address treasury) external {
+        if (msg.sender != governor) revert NotGovernor();
+        if (treasury == address(0)) revert BuybackUnavailable();
+        if (buybackTreasury != address(0)) revert HookAlreadySet();
+        buybackTreasury = treasury;
+        emit BuybackTreasurySet(treasury);
+    }
+
     function setGraduationHook(address hook) external {
         if (msg.sender != governor) revert NotGovernor();
         if (hook == address(0)) revert ZeroGraduationTarget();

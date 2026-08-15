@@ -235,7 +235,7 @@ contract ArcpadHookTest is Test {
 
         escrow = new FeeEscrow();
         schedule = new FeeSchedule();
-        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule), address(0));
+        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule));
 
         locker = new LockerStub(pm, usdc);
         harness = new SwapHarness(pm);
@@ -253,7 +253,7 @@ contract ArcpadHookTest is Test {
         // Hedefi locker'a yonlendir.
         vm.prank(GOVERNOR);
         factory.proposeGraduationTarget(address(locker));
-        vm.warp(block.timestamp + 3 days);
+        vm.warp(block.timestamp + factory.GRADUATION_TARGET_DELAY());
         factory.applyGraduationTarget();
 
         (token, curve) = _launch(CREATOR, "Arc", "ARC");
@@ -539,7 +539,7 @@ contract ArcpadHookTest is Test {
 
         vm.prank(GOVERNOR);
         factory.proposeGraduationTarget(address(0x11E11));
-        vm.warp(block.timestamp + 3 days);
+        vm.warp(block.timestamp + factory.GRADUATION_TARGET_DELAY());
         factory.applyGraduationTarget();
 
         uint256 before = escrow.owed(TREASURY);

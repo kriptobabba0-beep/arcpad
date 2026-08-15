@@ -173,7 +173,7 @@ contract GovernanceForkTest is Test {
         // constructor'i `feeSchedule` argumanini kazandi, ve fabrika adresi
         // argumanlarina COMMIT EDER. Eski deger 0x0d75a4fF... Faz 1'indir ve
         // SUPERSEDE EDILMISTIR.
-        assertEq(p.factory, 0x5CA156f1809aB784655410d0f4B0704d2b306B47, "factory address moved");
+        assertEq(p.factory, 0x7A02759adD7193AD11A0C51914398d366Bf256A3, "factory address moved");
         // ...VE DEFTER AYNI SEYI SOYLUYOR. Literal, turetmenin BAGIMSIZ pini;
         // bu satir turetmeyi DEFTERE baglar, yani ikisi ayrisirsa -- Faz 2'nin
         // en pahali arizasinin sekli tam olarak buydu -- burasi kirmizi olur.

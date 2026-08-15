@@ -695,7 +695,7 @@ abstract contract BondingCurveInvariantsBase is Test {
     ///      test kontratidir, boylece D3'un iki fazli setter'i kampanyanin
     ///      kurulumunda GERCEKTEN yurunur.
     function _launchViaFactory(uint256 v) internal {
-        factory = new LaunchFactory(address(escrow), TREASURY, address(this), T, v, S, address(FEE_SCHEDULE), address(0));
+        factory = new LaunchFactory(address(escrow), TREASURY, address(this), T, v, S, address(FEE_SCHEDULE));
         vm.prank(LAUNCHER);
         (, address curveAddr) = factory.launch("arcpad", "ARC", "ipfs://arcpad");
         curve = BondingCurve(curveAddr);
