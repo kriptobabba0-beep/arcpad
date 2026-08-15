@@ -172,10 +172,10 @@ library PoolDeployLib {
     ///
     ///      HICBIR SEY MEZUN OLMADIGI ICIN adres degisiminin bedeli yoktur:
     ///      ne V1 ne V2 hook'un adresi henuz bir `PoolKey`e girmemistir.
-    bytes32 internal constant ARC_HOOK_SALT = bytes32(uint256(0xf12));
-    address internal constant ARC_HOOK = 0x2905E3331961D4405beF4C2dD2b8D501A5c620CC;
+    bytes32 internal constant ARC_HOOK_SALT = bytes32(uint256(0x3176));
+    address internal constant ARC_HOOK = 0x5a6E99B0AcE48a1cF287942FfC7A3EB740Be60cC;
     address internal constant ARC_POOL_MANAGER = 0x617321A877e024C870516CD599A581dCDCa6c09b;
-    address internal constant ARC_LOCKER = 0xC0110b06F9AE18967cC8c050f3659Ed689a3bC62;
+    address internal constant ARC_LOCKER = 0xeC928cb7DaE94A19aa4a40d7c98b780F691a610b;
 
     /// @notice V1 nesli -- CANLI, ve yalnizca KAYIT icin.
     /// @dev Kod bu sabitleri KULLANMAZ. Bir denetcinin "eski nesil neydi"
