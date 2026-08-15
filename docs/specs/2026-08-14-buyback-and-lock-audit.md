@@ -194,44 +194,35 @@ newlyVested = unvestedAmount * (nowTs - lastUpdate) / (vestingEnd - lastUpdate);
 "Kalanin oransal payi" formu. Kendini duzeltir: `vestingEnd` kaydiginda bile
 toplam korunur.
 
-### 2.3 PONS'TA BULDUGUM HATA -- ve bunu DUZELTECEGIZ (§17)
+### 2.3 `lastUpdate` -- IDDIAMI OLCTUM VE GERI ALDIM
 
-`_checkpoint` `lastUpdate`i **kosulsuz** ilerletir:
+Ilk okumada referans uygulamanin `_checkpoint`ini "zamani yutan bir hata" diye
+niteledim. **Olctum ve iddiam fazla gucluydu.** Uc olcum:
 
-```solidity
-function _checkpoint(LaunchVest storage v, uint256 nowTs) private {
-    uint256 newlyVested = _previewNewlyVested(v, nowTs);
-    if (newlyVested != 0) { ... }
-    v.lastUpdate = nowTs;          // <-- newlyVested == 0 IKEN DE
-}
-```
+1. `_checkpoint`i referans uygulamanin haline cevirdim -> paket YINE 20/20
+   gecti.
+2. 100 wei pozisyon + gunde bir `release`, bir yil -> iki surumde de 0.
+3. 100 wei pozisyon + gunde bir 1 wei `lock`, bir yil -> iki surumde de 0.
 
-`_previewNewlyVested` taban aldigi icin `unvestedAmount < remainingDuration`
-oldugunda (saniye cinsinden) sonuc 0'a duser. O an `lastUpdate` yine de
-ilerler, yani **o zaman dilimi KALICI OLARAK KAYBOLUR**. Yeterince sik
-cagrilirsa vesting `vestingEnd`e kadar TAMAMEN durur ve orada topluca acilir
--- yani "5 yila yayilmis" ozelligi yikilir.
+Gerceklesen sey su:
 
-Ulasilabilirlik: 5 yil ~1.58e8 saniye. 18 ondalikli bir token icin
-`unvestedAmount < 1.58e8` wei = 1.6e-10 token, yani gercek miktarlarda
-pratikte erisilmez. AMA spec §17 tam olarak "cok kucuk bakiyeler" ve "her
-saniye release" testini istiyor, ve bu bir GRIEFING yuzeyidir: iki
-faydalanicidan biri (protokol ya da creator) digerinin vesting'ini
-yavaslatabilir.
+* **Kalici kayip HICBIR surumde yok.** `_previewNewlyVested`in
+  `nowTs >= vestingEnd` dali kalan her seyi vest eder; tabana yuvarlanan artik
+  bitiste mutlaka geri gelir.
+* **`release` yolunu kapatan sey `_checkpoint` DEGIL, REVERT tercihimiz.**
+  Cekilecek sey yokken `NothingToRelease` ile revert ediyoruz ve revert,
+  `_checkpoint`in yazdigi `lastUpdate`i geri aliyor. Referans uygulama orada
+  `return 0` yapar; onda durum kalici olur. Fark burada.
+* **`lock` yolunda fark yok**, cunku `lock` agirlikli ortalama icin
+  `lastUpdate`i zaten yeniden yaziyor -- yeni takvim tanim geregi simdi baslar.
 
-**Bizim duzeltmemiz:** `newlyVested == 0` iken `lastUpdate`i ILERLETME.
+`if (newlyVested == 0) return;` satiri kodda DURUYOR ama SAVUNMACI olarak: niyeti
+acik yaziyor, maliyeti yok, ve davranisi degistirdigi bir senaryo kuramadim.
+"Pons'un hatasini duzelttik" diye okunmamalidir.
 
-```solidity
-if (newlyVested != 0) {
-    v.unvestedAmount  -= newlyVested;
-    v.vestedUnreleased += newlyVested;
-    v.lastUpdate = nowTs;     // yalnizca ilerleme KAYDEDILDIYSE
-}
-```
-
-Zaman birikmeye devam eder, bir sonraki cagri >= 1 wei uretir uretmez
-kaydedilir. Kayip sifir; O(1) korunur. Bu, Pons'tan bilincli bir SAPMADIR ve
-§17'nin istedigi ozelligi saglayan tek degisikliktir.
+Testin adi da bu yuzden degisti: artik `_checkpoint`i degil ASIL koruyan
+ozelligi olcuyor -- bir faydalanici `release`i ne kadar sik cagirirsa cagirsin
+otekinin vesting'ini geciktiremez.
 
 ### 2.4 Escrow: Pons'un `creditToken`i BIZDE YOK -- ve gerekmiyor (§21)
 
