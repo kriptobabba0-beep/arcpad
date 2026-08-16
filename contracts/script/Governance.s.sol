@@ -289,6 +289,57 @@ contract Governance is Script {
         _printTx("proposeGraduationTarget", factory, target, safeTxHash, nonce, txData);
     }
 
+    /**
+     * @notice Buyback hazinesini baglar. **BIR KEZ YAZILIR, GERI ALINAMAZ.**
+     * @dev Atlanirsa ozellik yalnizca KAPALI kalir ve bu GUVENLI bir ara
+     *      durumdur: `buybackPolicy` sifir doner, egri ucretin tamamini
+     *      creator'a oder.
+     */
+    function encodeSetBuybackTreasury(address factory, address treasury)
+        public
+        view
+        returns (bytes32 safeTxHash, bytes memory txData, uint256 nonce)
+    {
+        txData = abi.encodeCall(LaunchFactory.setBuybackTreasury, (treasury));
+        (safeTxHash, nonce) = _safeTxHash(_governorSafe(), factory, txData);
+        _printTx("setBuybackTreasury", factory, treasury, safeTxHash, nonce, txData);
+    }
+
+    /**
+     * @notice Mezuniyet hook'unu baglar. **BIR KEZ YAZILIR, GERI ALINAMAZ.**
+     *
+     * @dev ATLANIRSA MEZUN HAVUZLARDA TICARET DURUR -- ve bu, ustteki
+     *      adimin aksine SESSIZ DEGIL GURULTULUDUR: hook her swap'te
+     *      `treasury.accrue` cagirir, hazine `NotAccrualVenue` ile reddeder
+     *      ve swap'in TAMAMI revert eder. Yani yarim kalmis bir kurulum
+     *      burada fark edilir, ama fark edildigi yer KULLANICININ ISLEMIDIR.
+     */
+    function encodeSetGraduationHook(address factory, address hook)
+        public
+        view
+        returns (bytes32 safeTxHash, bytes memory txData, uint256 nonce)
+    {
+        txData = abi.encodeCall(LaunchFactory.setGraduationHook, (hook));
+        (safeTxHash, nonce) = _safeTxHash(_governorSafe(), factory, txData);
+        _printTx("setGraduationHook", factory, hook, safeTxHash, nonce, txData);
+    }
+
+    /**
+     * @notice Supurme operatorunu ayarlar. DONDURULEBILIR.
+     * @dev Anahtarcinin tek yetkisi supurmeyi TETIKLEMEKTIR; nereye
+     *      harcanacagi hazinede sabittir. Atanmasa bile `SWEEP_GRACE` (7 gun)
+     *      sonrasi supurme izinsizlesir, yani fonlar kilitlenmez.
+     */
+    function encodeSetBuybackKeeper(address factory, address keeper)
+        public
+        view
+        returns (bytes32 safeTxHash, bytes memory txData, uint256 nonce)
+    {
+        txData = abi.encodeCall(LaunchFactory.setBuybackKeeper, (keeper));
+        (safeTxHash, nonce) = _safeTxHash(_governorSafe(), factory, txData);
+        _printTx("setBuybackKeeper", factory, keeper, safeTxHash, nonce, txData);
+    }
+
     function encodeRotateTreasury(address factory, address next)
         public
         view

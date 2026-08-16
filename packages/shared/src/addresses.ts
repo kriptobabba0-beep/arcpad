@@ -35,7 +35,7 @@ export const LOCKER_SALT: Hex = keccak256(toBytes('arcpad.ArcpadLocker.v1'))
 /**
  * `RouterDeployLib.ROUTER_SALT`in ikizi ve DIGERLERIYLE AYNI SEKILDE
  * TURETILIR -- bir isim dizesinin keccak'i. Yigindaki TEK secilmemis-degil,
- * yani ARANMIS tuz hook'unkidir (`ARCPAD_HOOK_SALT`, madencilik sonucu 13);
+ * yani ARANMIS tuz hook'unkidir (`ARCPAD_HOOK_SALT`, madencilik sonucu 0x33f6);
  * router'inki ondan degil, `POOL_MANAGER_SALT`tan yana duser.
  */
 export const ROUTER_SALT: Hex = keccak256(toBytes('arcpad.ArcpadRouter.v1'))
@@ -47,7 +47,7 @@ export const ROUTER_SALT: Hex = keccak256(toBytes('arcpad.ArcpadRouter.v1'))
  * `PoolDeployLib.ARC_HOOK_SALT`in ikizidir. Iki taraf ayri dillerde ve ayri
  * derleme birimlerinde; ayrisirlarsa biri kirmizi olur.
  */
-export const ARCPAD_HOOK_SALT: Hex = `0x${(13).toString(16).padStart(64, '0')}` as Hex
+export const ARCPAD_HOOK_SALT: Hex = `0x${(0x33f6).toString(16).padStart(64, '0')}` as Hex
 
 /**
  * V4 izin kumesi hook'un ADRESININ ALT 14 BITINDE kodlanir ve o adres her

@@ -172,10 +172,32 @@ library PoolDeployLib {
     ///
     ///      HICBIR SEY MEZUN OLMADIGI ICIN adres degisiminin bedeli yoktur:
     ///      ne V1 ne V2 hook'un adresi henuz bir `PoolKey`e girmemistir.
-    bytes32 internal constant ARC_HOOK_SALT = bytes32(uint256(0x3176));
-    address internal constant ARC_HOOK = 0x5a6E99B0AcE48a1cF287942FfC7A3EB740Be60cC;
+    bytes32 internal constant ARC_HOOK_SALT = bytes32(uint256(0x33f6));
+    address internal constant ARC_HOOK = 0xba59e8738493e063fff12ab08443e36f3aCfA0CC;
     address internal constant ARC_POOL_MANAGER = 0x617321A877e024C870516CD599A581dCDCa6c09b;
-    address internal constant ARC_LOCKER = 0xeC928cb7DaE94A19aa4a40d7c98b780F691a610b;
+    address internal constant ARC_LOCKER = 0xBBE8EB43380d3572cF0F97BE5A9d6755Dd3c79Aa;
+
+    /// @dev ============ UCUNCU MADENCILIK: HAVUZ MERCII ============
+    ///
+    ///      Yukaridaki uclu (`salt 0x3176`, hook `0x5a6E…60cC`, locker
+    ///      `0xeC92…610b`) buyback neslinin ILK haliydi ve ARTIK GECERSIZDIR.
+    ///      Sebep tek bir kod degisikligidir: `ArcpadHook` mezuniyet SONRASI
+    ///      ucret ayrimini yapmaya (`_settleCreatorFee`) ve buyback hazinesini
+    ///      ucretten muaf tutmaya basladi. Ikisi de hook'un bytecode'unu
+    ///      degistirir, izinler ADRESIN ALT 14 BITINDE yasadigi icin tuz
+    ///      yeniden madenlenir, ve locker hook'u constructor argumani olarak
+    ///      aldigi icin O DA kayar.
+    ///
+    ///      `ARC_FACTORY` KIMILDAMADI VE BU BIR TASARIM SONUCUDUR:
+    ///      `buybackTreasury` fabrikanin constructor argumani DEGIL, governor'in
+    ///      bir kez yazdigi bir storage degiskenidir (bkz.
+    ///      `DeployLib.factoryArgs`). Havuz mercii fabrikaya hicbir arguman
+    ///      eklemedi, dolayisiyla fabrika adresi -- ve onunla birlikte Arc'ta
+    ///      uretilecek her token ve curve adresi -- sabit kaldi.
+    ///
+    ///      BEDELI YINE SIFIRDIR: hicbir sey mezun olmadi (`graduationTarget`
+    ///      hala sifir, olculdu), yani ne bu ne onceki hook adresi bir
+    ///      `PoolKey`e girmedi.
 
     /// @notice V1 nesli -- CANLI, ve yalnizca KAYIT icin.
     /// @dev Kod bu sabitleri KULLANMAZ. Bir denetcinin "eski nesil neydi"
@@ -195,7 +217,7 @@ library PoolDeployLib {
     ///      IKI artifact'i vardir (`ArcpadHook.json` 800 ve
     ///      `ArcpadHook.v4core.json` 44444444) ve initcode'lari FARKLIDIR.
     bytes32 internal constant ARC_HOOK_CREATION_CODE_HASH =
-        0x73025527d44fa3eee512ba9f5f6d44bb446ca2ef5e0c1138e638015ea8793c43;
+        0x4db05e93201778c8db0a031508b0b3a01fe717f6f8ed030b247d306f755ea725;
 
     function predict(bytes32 salt, bytes memory initcode) internal pure returns (address) {
         return DeployLib.predict(salt, initcode);

@@ -64,6 +64,42 @@ FROZEN = {
     "BondingCurve": "d1402acad9b43eda7c79b7e9548089458502b98ced9e7f2e7e8b29c9725d4356",
     "LaunchToken": "d4c19416664f373cb5e8504f9e2060bb874b0894ef4c6e266b4d9121e405f805",
     # ---------------------------------------------------------------
+    # BUYBACK NESLI, VE EKLENME SEBEBI OLCULDU.
+    #
+    # Bu iki kontrat `out/` icinde IKI AYRI ARTIFACT uretir ve initcode'lari
+    # FARKLIDIR (olculdu):
+    #
+    #   BuybackTreasury      runs 800       0d486366d99e2bcc...  (ham bayt)
+    #   BuybackTreasury      runs 44444444  8b12ff3c416b0237...  (ham bayt)
+    #   BuybackVestingVault  runs 800       25963a6b90e0d612...  (ham bayt)
+    #   BuybackVestingVault  runs 44444444  be54f435c7debc2d...  (ham bayt)
+    #
+    # ...ama ASAGIDAKI PINLER O DEGERLER DEGILDIR VE OLMAMALIDIR: bu kapi
+    # `forge inspect ... bytecode | sha256sum` ciktisini tekrar eder, yani
+    # HEX METNININ (+ sondaki newline) hash'ini alir, decode edilmis baytlarin
+    # degil (bkz. `sha_of_inspect_output`). Ustteki dort deger ham baytlarin
+    # hash'idir ve yalnizca IKI DERLEMENIN AYRISTIGINI gostermek icin burada;
+    # pin olarak kullanilirlarsa kapi haklı olarak kirmizi olur (olculdu).
+    #
+    # SEBEP `ArcpadHook`inkiyle AYNI: `BuybackPoolVenue.t.sol`
+    # `PoolManager`i ISMIYLE import eder, dolayisiyla o birimdeki HER SEY
+    # 44444444'e duser; `BuybackTreasury.t.sol` ve deploy betigi 800'de kalir.
+    #
+    # BEDELI ADRESTIR, VE GERI DONULEMEZ: `BuybackTreasury`nin adresi
+    # `LaunchFactory.setBuybackTreasury` ile BIR KEZ yazilir. Yanlis birimin
+    # bytecode'undan turetilen bir adrese yayin yapmak, hazineyi -- hicbir
+    # testin kosmadigi baytlarla -- KALICI olarak baglardi.
+    #
+    # SECIM 800'DUR VE `DeployBuybackLib` adresi `out-frozen/`dan turetir:
+    # deploy betigi 800'dur, `BuybackTreasury.t.sol` ve
+    # `BuybackPermissions.t.sol` 800'dur, yani YAYINLANAN BAYTLAR PAKETIN
+    # SINADIGI BAYTLARDIR. `BuybackPoolVenue.t.sol` 44444444'te kosar ve bu
+    # BILINCLIDIR: o paket havuz DAVRANISINI olcer, yayinlanacak baytlari
+    # degil, ve `test_dagitilan_hazine_bytecode_u_yayinlanacak_olandir`
+    # ikisinin ayrisabilecegini KAYDA GECIRIR.
+    "BuybackTreasury": "fa228e1cf9a50fd7f549ec1d4d449a93fffbf4edebc4fe1d60325e810eeba3a9",
+    "BuybackVestingVault": "5d3fc50b34210b4b97265a6c7a7ec9e16804bc19bf425cfdb8d666fd51f045a6",
+    # ---------------------------------------------------------------
     # FAZ 2 EKI, VE EKLENME SEBEBI OLCULDU.
     #
     # Bu iki satirdan ONCE kapi `FeeEscrow` ve `FeeSchedule` icin YALNIZCA

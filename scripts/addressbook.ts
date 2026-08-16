@@ -359,6 +359,37 @@ export function resolvePool(
 }
 
 /**
+ * Havuz katmanini yayinlayan IKI script'in makbuzlarindan, hook'u GERCEKTEN
+ * tasiyani ve ikisi de tasiyorsa DAHA YENISINI secer.
+ *
+ * @remarks `null` doner ve bu MESRUDUR: prova zinciri, ya da havuz katmani
+ *          henuz inmemis bir zincir. Cagiran o durumda onceki deftere duser.
+ */
+function newestPoolReceipt(chainId: number): string | null {
+  const candidates = ['DeployPool.s.sol', 'RedeployPoolLayer.s.sol'].map((s) =>
+    join(REPO_ROOT, 'contracts', 'broadcast', s, String(chainId), 'run-latest.json'),
+  )
+  let best: { path: string; block: bigint } | null = null
+  for (const path of candidates) {
+    if (!existsSync(path)) continue
+    let deployed: Map<Hex, Deployed>
+    try {
+      deployed = readDeployments(path)
+    } catch {
+      continue
+    }
+    if (!deployed.has(ARCPAD_HOOK_SALT)) continue
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as { receipts?: { blockNumber?: string }[] }
+    const block = (raw.receipts ?? []).reduce<bigint>((max, r) => {
+      const n = r.blockNumber === undefined ? 0n : BigInt(r.blockNumber)
+      return n > max ? n : max
+    }, 0n)
+    if (best === null || block > best.block) best = { path, block }
+  }
+  return best?.path ?? null
+}
+
+/**
  * Router: `DeployRouter` makbuzundan, ya da onceki defterden TASINMIS.
  *
  * TASIMA YOLU `resolveEscrow`INKI GIBIDIR, `resolvePool`INKI GIBI DEGIL --
@@ -750,16 +781,25 @@ async function main(): Promise<void> {
   // havuz katmani henuz inmemis bir zincir) adresler onceki defterden gelir ve
   // ikisi de yoksa jenerator ADIYLA durur -- sessizce eksik alan YAZMAZ,
   // cunku yukleyici onu zaten reddederdi ve teshis burada daha ucuzdur.
-  const poolReceiptPath = rehearsal
-    ? null
-    : join(
-        REPO_ROOT,
-        'contracts',
-        'broadcast',
-        'DeployPool.s.sol',
-        String(chainId),
-        'run-latest.json',
-      )
+  //
+  // IKI SCRIPT HAVUZ KATMANI YAYINLAR, VE EN YENISI KAZANIR.
+  //
+  // `DeployPool.s.sol` uc kontrati birlikte indirir; `RedeployPoolLayer.s.sol`
+  // `PoolManager`i OLDUGU GIBI birakip yalnizca hook ve locker'i yeniler --
+  // bytecode kaydiginda izlenen yol budur ve buyback nesli tam olarak oradan
+  // gecti.
+  //
+  // OLCULDU: jenerator yalnizca `DeployPool`a bakiyordu, `RedeployPoolLayer`
+  // makbuzunu HIC gormuyordu. Yeni hook (`0xba59e873...`) zincirde canliyken
+  // defter ONCEKI defterden V1 hook'unu (`0x89Afef...`) tasidi ve
+  // `assertRouterMatchesBook` bunu -- dogru olarak -- reddetti. Yani ariza
+  // ancak BASKA bir kapinin yan urunu olarak gorunur oldu.
+  //
+  // SECIM DOSYA TARIHINE GORE DEGIL, ICERIGE GORE YAPILIR: hangi makbuz
+  // `ARCPAD_HOOK_SALT` ile bir deploy TASIYORSA o kazanir, ikisi de
+  // tasiyorsa daha YENI blok numarasi olan. Dosya tarihi bir `git checkout`
+  // ile degisir; blok numarasi degismez.
+  const poolReceiptPath = rehearsal ? null : newestPoolReceipt(chainId)
   const pool = resolvePool(
     poolReceiptPath && existsSync(poolReceiptPath) ? poolReceiptPath : null,
     previous,
