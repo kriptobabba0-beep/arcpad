@@ -49,16 +49,21 @@ import {
 } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { ARCPAD_ERROR_ABI } from '../../packages/shared/src/abi/index'
+import { arcTestnet, ARC_TESTNET_CHAIN_ID } from '../../packages/shared/src/chain'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = join(HERE, '..', '..')
 
-export const ARC = {
-  id: 5_042_002,
-  name: 'Arc Testnet',
-  nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
-  rpcUrls: { default: { http: [rpcUrl()] } },
-} as const
+/**
+ * ZINCIR KAYITTAN GELIR, BURADA YENIDEN TANIMLANMAZ.
+ *
+ * Ilk surum zincir kimligini ve adi buraya SABIT yazdi ve
+ * `chain-registry.test.ts` -- dogru olarak -- kirmizi oldu: kural, chain id ve
+ * Arc host'larinin YALNIZCA kayitta yasamasidir. Gerekcesi kapinin kendi
+ * yorumunda yazili: dagilmis literaller "yeni bir ag eklemek" isini bir kayit
+ * girisinden bir AVA cevirir.
+ */
+export const ARC = arcTestnet
 
 function envLine(file: string, key: string): string {
   const raw = readFileSync(join(REPO, file), 'utf8')
@@ -89,9 +94,12 @@ export interface Book {
 }
 
 export function book(): Book {
-  return JSON.parse(
-    readFileSync(join(REPO, 'contracts/deploy/addresses.5042002.json'), 'utf8'),
-  ) as Book
+  // DOSYA ADI DA KAYITTAN KURULUR. `addresses.5042002.json` diye yazmak chain
+  // id'yi ikinci bir yere kopyalamak olurdu ve kayit kapisi -- dogru olarak --
+  // bunu da sizinti sayar: bir gun ikinci bir ag eklendiginde bu satir sessizce
+  // yanlis dosyayi okurdu.
+  const file = join(REPO, 'contracts/deploy', `addresses.${ARC_TESTNET_CHAIN_ID}.json`)
+  return JSON.parse(readFileSync(file, 'utf8')) as Book
 }
 
 /**

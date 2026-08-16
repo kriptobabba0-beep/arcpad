@@ -1,4 +1,4 @@
-/**
+﻿/**
  * ============================================================================
  *  FAZ D -- TAMAMLANMA VE MEZUNIYET
  * ============================================================================
@@ -18,7 +18,6 @@
  */
 import type { Abi, Address, PublicClient, WalletClient } from 'viem'
 import { bondingCurveAbi, launchTokenAbi } from '../../packages/shared/src/abi/index'
-import { asTok, asWei, planBuyExactQuoteIn } from '../../packages/shared/src/trade'
 import { book, type Campaign, must, mustEqual, read, send } from './harness'
 import { curveState } from './phase-curve'
 
@@ -26,7 +25,13 @@ const CURVE_ABI = bondingCurveAbi as unknown as Abi
 const TOKEN_ABI = launchTokenAbi as unknown as Abi
 
 const LOCKER_ABI = [
-  { type: 'function', name: 'hook', inputs: [], outputs: [{ type: 'address' }], stateMutability: 'view' },
+  {
+    type: 'function',
+    name: 'hook',
+    inputs: [],
+    outputs: [{ type: 'address' }],
+    stateMutability: 'view',
+  },
   {
     type: 'function',
     name: 'poolManager',
@@ -65,8 +70,6 @@ async function completeCurve(
   pub: PublicClient,
   w: WalletClient,
   curve: Address,
-  profile: ReturnType<typeof profileOf>,
-  fees: { protocolFeeBps: bigint; creatorFeeBps: bigint },
 ): Promise<{ steps: number; spentWei: bigint }> {
   let steps = 0
   let spent = 0n
@@ -97,17 +100,9 @@ async function completeCurve(
     })
     spent += budget
     steps += 1
-    void planBuyExactQuoteIn
   }
   return { steps, spentWei: spent }
 }
-
-const profileOf = (b: ReturnType<typeof book>) => ({
-  virtualTokenReserves: BigInt(b.virtualTokenReserves),
-  virtualQuoteReserves: BigInt(b.virtualQuoteReserves),
-  saleSupply: asTok(BigInt(b.saleSupply)),
-  totalSupply: asTok(BigInt(b.totalSupply)),
-})
 
 export async function phaseGraduation(
   c: Campaign,
@@ -118,19 +113,6 @@ export async function phaseGraduation(
 ): Promise<void> {
   c.phase('FAZ D -- tamamlanma ve mezuniyet')
   const b = book()
-  const profile = profileOf(b)
-  const fees = {
-    protocolFeeBps: await read<bigint>(pub, {
-      address: curve,
-      abi: CURVE_ABI,
-      functionName: 'PROTOCOL_FEE_BPS',
-    }),
-    creatorFeeBps: await read<bigint>(pub, {
-      address: curve,
-      abi: CURVE_ABI,
-      functionName: 'CREATOR_FEE_BPS',
-    }),
-  }
 
   // ------------------------------------------------------------------
   // D1. MEZUNIYETTEN ONCE `graduate()` REDDEDILIR
@@ -155,7 +137,7 @@ export async function phaseGraduation(
   // D2. EGRIYI TAMAMLA -- rezervler TAM SIFIRA iner
   // ------------------------------------------------------------------
   await c.check('D2 egri tamamlanir, realTokenReserves TAM sifir', async () => {
-    const { steps, spentWei } = await completeCurve(pub, w, curve, profile, fees)
+    const { steps, spentWei } = await completeCurve(pub, w, curve)
     const state = await curveState(pub, curve)
     must(state.complete, 'egri tamamlanmadi')
     mustEqual(state.realTokenReserves, 0n, 'kalan satis arzi')
@@ -185,23 +167,24 @@ export async function phaseGraduation(
   )
 
   // ------------------------------------------------------------------
-  // D5. MEZUNIYET -- IZINSIZ, ve odeme DEFTERDEN
-  // ------------------------------------------------------------------
-  //
-  // `graduate()` herkes cagirabilir. Odenen iki sayi DEFTERDEN ve
-  // IMMUTABLE'DAN gelir, hicbir bakiyeden degil: bir bagis egrinin odemesini
-  // sisiremez.
-  // ------------------------------------------------------------------
   // D4b. CURVE'UN KENDI `graduate()`I DOGRUDAN CAGRILAMAZ
   // ------------------------------------------------------------------
   //
   // Izinsizlik HEDEFIN girisindedir, curve'un degil. Bu bir kisitlama degil
   // bir KORUMADIR: aksi halde ucuncu bir taraf, hedefin havuzu tohumlayamadigi
   // bir ana curve'u kilitleyebilirdi.
-  await c.expectRevert('D4b curve.graduate() dogrudan NotGraduationTarget', 'NotGraduationTarget', () =>
-    send(pub, w, { address: curve, abi: CURVE_ABI, functionName: 'graduate' }),
+  await c.expectRevert(
+    'D4b curve.graduate() dogrudan NotGraduationTarget',
+    'NotGraduationTarget',
+    () => send(pub, w, { address: curve, abi: CURVE_ABI, functionName: 'graduate' }),
   )
 
+  // ------------------------------------------------------------------
+  // D5. MEZUNIYET -- LOCKER UZERINDEN, ve odeme DEFTERDEN
+  // ------------------------------------------------------------------
+  //
+  // Odenen iki sayi DEFTERDEN ve IMMUTABLE'DAN gelir, hicbir bakiyeden degil:
+  // bir bagis egrinin odemesini sisiremez.
   await c.check('D5 locker.graduate(curve) mezun eder, hedefe R ve D oder', async () => {
     const state = await curveState(pub, curve)
     const seed = await read<bigint>(pub, {

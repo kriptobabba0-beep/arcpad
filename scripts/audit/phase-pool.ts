@@ -137,7 +137,13 @@ export async function phasePool(
     const hook = await read<Address>(pub, {
       address: router,
       abi: [
-        { type: 'function', name: 'hook', inputs: [], outputs: [{ type: 'address' }], stateMutability: 'view' },
+        {
+          type: 'function',
+          name: 'hook',
+          inputs: [],
+          outputs: [{ type: 'address' }],
+          stateMutability: 'view',
+        },
       ] as unknown as Abi,
       functionName: 'hook',
     })

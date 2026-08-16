@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env tsx
+#!/usr/bin/env tsx
 /**
  * ============================================================================
  *  CANLI DENETIM KAMPANYASI -- giris noktasi
@@ -35,6 +35,7 @@ import { phaseFees } from './phase-fees'
 import { phaseGraduation } from './phase-graduation'
 import { phaseBuyback } from './phase-buyback'
 import { phasePool } from './phase-pool'
+import { ARC_TESTNET_CHAIN_ID } from '../../packages/shared/src/chain'
 import {
   bondingCurveAbi,
   launchFactoryAbi,
@@ -123,7 +124,7 @@ async function main(): Promise<void> {
   const tag = new Date().toISOString().slice(11, 16).replace(':', '')
 
   const chainId = await pub.getChainId()
-  if (chainId !== 5_042_002) throw new Error(`yanlis zincir: ${chainId}`)
+  if (chainId !== ARC_TESTNET_CHAIN_ID) throw new Error(`yanlis zincir: ${chainId}`)
   const before = await balance(pub, me)
 
   console.log(`RPC      ${rpc}`)
@@ -220,7 +221,10 @@ async function main(): Promise<void> {
 
   const after = await balance(pub, me)
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-  await c.report(new URL(`./report-${stamp}.json`, import.meta.url).pathname.slice(1), before - after)
+  await c.report(
+    new URL(`./report-${stamp}.json`, import.meta.url).pathname.slice(1),
+    before - after,
+  )
   process.exit(c.failed === 0 ? 0 : 1)
 }
 
@@ -228,6 +232,3 @@ main().catch((error: unknown) => {
   console.error(error)
   process.exit(1)
 })
-
-
-

@@ -162,10 +162,7 @@ export async function phaseBuyback(
     // tahakkuk onun `lockBps`i. Net'i yeniden turetmek yerine ORAN kontrolu
     // yapiyoruz -- tahakkuk, creator payinin yarisi olmali.
     const escrowDelta = accrued * 2n
-    must(
-      escrowDelta / accrued === 2n,
-      `tahakkuk creator payinin yarisi DEGIL: ${accrued}`,
-    )
+    must(escrowDelta / accrued === 2n, `tahakkuk creator payinin yarisi DEGIL: ${accrued}`)
     void creatorBps
     return `${accrued} wei tahakkuk etti`
   })
@@ -275,7 +272,10 @@ export async function phaseBuyback(
     })
     const pendingBefore = await pending()
     must(pendingBefore > 0n, 'supurulecek butce yok')
-    must(pendingBefore < minSweep, `butce esigin ALTINDA olmaliydi: ${pendingBefore} >= ${minSweep}`)
+    must(
+      pendingBefore < minSweep,
+      `butce esigin ALTINDA olmaliydi: ${pendingBefore} >= ${minSweep}`,
+    )
 
     const lockedBefore = await read<bigint>(pub, {
       address: vault,
@@ -486,10 +486,7 @@ export async function phaseBuyback(
     must(locked > 0n, 'kilitli token yok')
     // Bes yilda dogrusal: bir kac saniyede hak edilen, toplamin milyonda
     // birinden kucuk olmali.
-    must(
-      releasable * 1_000_000n < locked,
-      `cekilebilir COK BUYUK: ${releasable} / ${locked}`,
-    )
+    must(releasable * 1_000_000n < locked, `cekilebilir COK BUYUK: ${releasable} / ${locked}`)
     return `kilitli ${locked}, cekilebilir ${releasable}`
   })
 
