@@ -1,0 +1,76 @@
+{
+  "chainId": 5042002,
+  "finishedAt": "2026-08-16T22:25:55.597Z",
+  "passed": 8,
+  "failed": 3,
+  "skipped": 0,
+  "spentUsdc": "0.761852191581551252",
+  "results": [
+    {
+      "phase": "FAZ B -- egri: matematik, ucret, slipaj",
+      "name": "B1 alis: zincir cikitisi formulle BIREBIR ayni",
+      "outcome": "fail",
+      "detail": "alinan token: beklenen 110702345504884291908269342, olculen 110717860348972789526737919"
+    },
+    {
+      "phase": "FAZ B -- egri: matematik, ucret, slipaj",
+      "name": "B2 ucret 95/30 bps, escrow bakiyesinde olculur",
+      "outcome": "fail",
+      "detail": "protokol payi: beklenen 2850000000000000, olculen 2814814814814815"
+    },
+    {
+      "phase": "FAZ B -- egri: matematik, ucret, slipaj",
+      "name": "B3 satis: cikti formulle ayni, ucret CIKTIDAN kesilir",
+      "outcome": "fail",
+      "detail": "net odenen: beklenen 220808769420445785, olculen 221312000820445782"
+    },
+    {
+      "phase": "FAZ B -- egri: matematik, ucret, slipaj",
+      "name": "B4 alista minTokensOut asiliyorsa SlippageExceeded",
+      "outcome": "pass",
+      "detail": "SlippageExceeded"
+    },
+    {
+      "phase": "FAZ B -- egri: matematik, ucret, slipaj",
+      "name": "B5 sifir degerli alis ZeroQuoteIn",
+      "outcome": "pass",
+      "detail": "ZeroQuoteIn"
+    },
+    {
+      "phase": "FAZ B -- egri: matematik, ucret, slipaj",
+      "name": "B6 sifir token satisi ZeroTokensIn",
+      "outcome": "pass",
+      "detail": "ZeroTokensIn"
+    },
+    {
+      "phase": "FAZ B -- egri: matematik, ucret, slipaj",
+      "name": "B7 sifir token alimi ZeroTokensOut",
+      "outcome": "pass",
+      "detail": "ZeroTokensOut"
+    },
+    {
+      "phase": "FAZ B -- egri: matematik, ucret, slipaj",
+      "name": "B8 buyExactTokensOut fazlaligi IADE eder",
+      "outcome": "pass",
+      "detail": "istenen 1000000000000000000000000, harcanan 4691523589651356, iade 200504484276229044"
+    },
+    {
+      "phase": "FAZ B -- egri: matematik, ucret, slipaj",
+      "name": "B9 maxQuoteIn yetmezse SlippageExceeded",
+      "outcome": "pass",
+      "detail": "SlippageExceeded"
+    },
+    {
+      "phase": "FAZ B -- egri: matematik, ucret, slipaj",
+      "name": "B10 sahip olunandan fazlasini satmak DUSER",
+      "outcome": "pass",
+      "detail": "reddedildi"
+    },
+    {
+      "phase": "FAZ B -- egri: matematik, ucret, slipaj",
+      "name": "B11 sabit carpim k asla KUCULMEZ",
+      "outcome": "pass",
+      "detail": "k 4605316000000000003514295970943573394337646496 -> 4605316000000000004438022584667511663371153680 (+923726613723938269033507184)"
+    }
+  ]
+}
