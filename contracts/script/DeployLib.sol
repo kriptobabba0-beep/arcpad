@@ -53,13 +53,31 @@ library DeployLib {
     bytes32 internal constant CREATE2_FACTORY_CODEHASH =
         0x2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989;
 
-    /// @dev `LaunchFactory` constructor'inin ABI-encode edilmis SEKIZ argumani:
-    ///      8 * 32 bayt. Initcode'un KUYRUGUDUR. Faz 2'de `feeSchedule`
-    ///      eklendigi icin 192'den 224'e, buyback nesli `buybackTreasury`
-    ///      ekledigi icin 224'ten 256'ya cikti; kuyruk uzunlugu ile decode
+    /// @dev `LaunchFactory` constructor'inin ABI-encode edilmis YEDI argumani:
+    ///      7 * 32 bayt. Initcode'un KUYRUGUDUR. Faz 2'de `feeSchedule`
+    ///      eklendigi icin 192'den 224'e cikti; kuyruk uzunlugu ile decode
     ///      imzasi AYNI ANDA guncellenmek zorundadir, aksi halde `abi.decode`
     ///      kaymis bir kuyruktan sessizce anlamsiz degerler okurdu.
-    uint256 internal constant FACTORY_ARG_BYTES = 256;
+    ///
+    /// @dev BIR KEZ 256 YAPILDI VE O BIR REGRESYONDU (buyback nesli, c625116).
+    ///      Sebebi kayda deger, cunku sinifi tekrar edebilir: buyback isi
+    ///      constructor'a SEKIZINCI bir `buybackTreasury` argumani eklemeyi
+    ///      DENEDI, sonra o tasarimdan vazgecildi -- `buybackTreasury` bugun
+    ///      governor'in BIR KEZ yazdigi bir storage degiskenidir ve BILEREK
+    ///      oyledir (bkz. `LaunchFactory.buybackTreasury` NatSpec'i: uc kontrat
+    ///      birbirinin initcode'una girerse hicbir CREATE2 on-tahmini o
+    ///      dongüyü cozemez). Constructor geri alindi, DEPLOY TARAFI ALINMADI.
+    ///
+    ///      BEDELI: `factoryArgs` 32 baytlik bir CÖP KUYRUGU uretti. Solidity
+    ///      constructor cozucusu fazla baytlari SESSIZCE yoksayar, yani
+    ///      fabrika YINE DE deploy olurdu -- ama BASKA BIR ADRESTE
+    ///      (`0x7A02759a` -> `0x3eE0Ff0a`, olculdu). Adres kaymasi hook'un
+    ///      tuzuna, o da hook ve locker adreslerine yayildi; DeployPool
+    ///      paketinde dokuz test kirmizi oldu ve hepsi ayni tek satiri
+    ///      gosteriyordu. KAYIT: bu sabit ile `factoryArgs`in arguman sayisi
+    ///      ve `_assertInitcodeEncodesThePlan`in decode imzasi UC AYRI YERDE
+    ///      ayni sayiyi soyler; ucu birden constructor'a bakarak degistirilir.
+    uint256 internal constant FACTORY_ARG_BYTES = 224;
 
     /// @dev Salt'lar SECILMEZ, TURETILIR.
     ///      keccak256("arcpad.FeeEscrow.v1")
@@ -232,18 +250,27 @@ library DeployLib {
     ///      ve ayrisma dogrudan FABRIKA ADRESI demektir. Sira burada da
     ///      TASIYICIDIR: `T`, `V`den ONCE gelir.
     /**
-     * @dev SEKIZINCI ARGUMAN `buybackTreasury` VE BU DEPLOY YOLUNDA SIFIRDIR.
+     * @dev BUYBACK KABLOLAMASI BURAYA GIRMEZ, VE GIRMEMESI BIR TASARIM
+     *      KARARIDIR -- ihmal degil.
      *
-     *      Sifir gecmek, buyback ozelligi KAPALI bir fabrika nesli uretir:
-     *      `buybackPolicy` her zaman sifir doner, `launchWithBuyback` ve
-     *      `setBuybackEnabled(true)` `BuybackUnavailable` ile reddedilir. Yani
-     *      bu betik BUGUNKU davranisi birebir korur.
+     *      `buybackTreasury` governor'in BIR KEZ yazdigi bir storage
+     *      degiskenidir, constructor argumani DEGILDIR. Gerekce
+     *      `LaunchFactory.buybackTreasury`nin NatSpec'inde: kasa fabrikanin
+     *      adresini constructor'inda alir, hazine kasanin ve fabrikanin;
+     *      fabrika da hazinenin alsaydi ucu birden birbirinin initcode'una
+     *      girerdi ve hicbir CREATE2 on-tahmini o dongüyü cozemezdi.
      *
-     *      Buyback'i acan nesil AYRI bir deploy adimidir ve sirasi zorunludur:
+     *      KAZANC ADRES KARARLILIGIDIR VE BURADA OLCULUR: fabrikanin ADRESI
+     *      buyback kablolamasindan BAGIMSIZ kalir. Hook'un madenlenmis tuzu
+     *      fabrika adresine bagli oldugu icin, aksi halde hazineyi degistirmek
+     *      -- ya da yalnizca onu SONRADAN baglamak -- hook'u yeniden
+     *      madenlemeyi gerektirirdi, ve hook adresi her `PoolKey`in bir alani
+     *      oldugu icin ilk graduation'dan sonra bu ARTIK MUMKUN DEGILDIR.
+     *
+     *      Dolayisiyla buyback'i acan nesil fabrikanin adresini KIMILDATMAZ:
      *      once `BuybackVestingVault` (fabrika adresini ON-TAHMINLE alir),
-     *      sonra `BuybackTreasury`, sonra fabrika. Ucunu tek bir betige
-     *      sikistirmak, CREATE2 on-tahminlerini birbirine baglayan uc ayri
-     *      dairesel bagimlilik uretirdi; o yuzden ayri tutuluyor.
+     *      sonra `BuybackTreasury`, sonra `setBuybackTreasury`. Uc adim, tek
+     *      adres.
      */
     function factoryArgs(address escrow_, address treasury, address governor, Profile memory p, address feeSchedule_)
         internal
@@ -251,14 +278,7 @@ library DeployLib {
         returns (bytes memory)
     {
         return abi.encode(
-            escrow_,
-            treasury,
-            governor,
-            p.virtualTokenReserves,
-            p.virtualQuoteReserves,
-            p.saleSupply,
-            feeSchedule_,
-            address(0)
+            escrow_, treasury, governor, p.virtualTokenReserves, p.virtualQuoteReserves, p.saleSupply, feeSchedule_
         );
     }
 

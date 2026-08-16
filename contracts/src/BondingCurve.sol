@@ -282,7 +282,8 @@ contract BondingCurve {
     ///      onlemektir.
     ///
     /// @dev `to` INDEKSLIDIR cunku hedef yeniden isaretlenebilir (factory'nin
-    ///      3 gunluk gecikmeli setter'i): "bu havuzu hangi hedef tohumladi"
+    ///      `GRADUATION_TARGET_DELAY` gecikmeli setter'i): "bu havuzu hangi
+    ///      hedef tohumladi"
     ///      indexer'in soracagi bir sorudur.
     ///
     /// @dev ISIM CARPISMASI UYARISI -- KAYDA GECIRILIYOR. Spec 5.6 adim 7

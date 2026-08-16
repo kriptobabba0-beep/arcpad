@@ -216,13 +216,14 @@ contract LaunchFactory {
 
     /// @notice Bir hedef onerisinin inebilmesi icin gecmesi gereken sure.
     ///
-    /// @dev UC GUN, ve gecikmenin OLDUGU yer ile OLMADIGI yer arasindaki
-    ///      asimetri kasithdir; bkz. `setProtocolTreasury`. Buradaki gecikmenin
+    /// @dev GECIKMENIN OLDUGU yer ile OLMADIGI yer arasindaki asimetri
+    ///      kasitlidir; bkz. `setProtocolTreasury`. Buradaki gecikmenin
     ///      korudugu sey somuttur: hedef bir launch'in TUM raise'ini alir, ve
     ///      `graduate()` cagri aninda okuma yaptigi icin bir yeniden isaretleme
     ///      ZATEN TAMAMLANMIS curve'lerin odemesini de yeni adrese yonlendirir.
-    ///      Uc gunluk kamuya acik pencerede herkes o curve'leri mevcut hedefe
-    ///      bosaltabilir (`graduate()` izinsizdir hedefin girisinde). Degisiklik
+    ///      Ihbar suresi boyunca acik kalan kamuya acik pencerede herkes o
+    ///      curve'leri MEVCUT hedefe bosaltabilir (`graduate()` izinsizdir
+    ///      hedefin girisinde). Degisiklik
     ///      indikten SONRA tamamlanan curve'ler icin bir care YOKTUR -- bu
     ///      kayda gecirilir, cozulmez: yetki gercektir ve `BondingCurve`in
     ///      "kimse bir launch'in varliklarini hareket ettiremez" vaadi CURVE
@@ -337,7 +338,6 @@ contract LaunchFactory {
     /// @notice Supurmeyi tetikleyen operator. Governor doner.
     address public buybackKeeper;
 
-
     // ---------------------------------------------------------------
     // Olaylar ve hatalar
     // ---------------------------------------------------------------
@@ -364,8 +364,10 @@ contract LaunchFactory {
 
     /// @notice Bir hedef onerildi ve `eta`da inebilir hale gelecek.
     /// @dev GECIKMENIN KAMUYA ACIK YARISI. Bir indexer/keeper yalnizca bunu
-    ///      izleyerek "uc gun icinde bosaltilmasi gereken curve'ler" listesini
-    ///      kurabilir.
+    ///      izleyerek "`eta`ya kadar bosaltilmasi gereken curve'ler" listesini
+    ///      kurabilir -- ve suresini olaydaki `eta`dan okur, bir sabitten
+    ///      DEGIL; sure degistiginde yeniden dagitim gerektirmemesinin sebebi
+    ///      budur.
     event GraduationTargetProposed(address indexed target, uint256 eta);
 
     /// @notice Hedef degisti.
@@ -504,13 +506,13 @@ contract LaunchFactory {
     /// @dev Bekleyen bir oneri yok.
     error NoPendingGraduationTarget();
 
-    /// @dev Uc gun gecmedi.
+    /// @dev `GRADUATION_TARGET_DELAY` gecmedi -- `eta`ya varilmadi.
     error GraduationTargetDelayNotElapsed();
 
     /// @dev Pencere KAPANDI: oneri `eta + GRADUATION_TARGET_DELAY`den sonra
     ///      indirilemez. `GraduationTargetDelayNotElapsed` ile AYNI PENCERENIN
     ///      IKI YUZUDUR ve isimleri bilerek kardestir; care de aynidir --
-    ///      yeniden oner ve uc gun bekle. Bu hatanin varlik sebebi
+    ///      yeniden oner ve ihbar suresini yeniden bekle. Bu hatanin varlik sebebi
     ///      `applyGraduationTarget`in NatSpec'inde olculmus haliyle duruyor:
     ///      ust sinirsiz halde, tamamlanmis hicbir curve yokken yapilmis bir
     ///      oneri sonsuza kadar silahli kalir ve varliklar geldiginde SIFIR
@@ -1063,18 +1065,18 @@ contract LaunchFactory {
     ///      indirilmemis bir oneri SONSUZA KADAR SILAHLI kaliyordu. Somut
     ///      sonucu olculdu: gun 0'da, HENUZ TAMAMLANMIS HIC CURVE YOKKEN bir
     ///      hedef onerilir; kimse itiraz etmez, cunku bosaltilacak bir sey
-    ///      yoktur; gun 3'te pencere acilir, kimse indirmez ve izleyenler
+    ///      yoktur; `eta`da pencere acilir, kimse indirmez ve izleyenler
     ///      onerinin dusuruldugunu sanir; gun 368'de iki launch tamamlanmistir
     ///      ve TEK BIR ISLEM `applyGraduationTarget()` + iki `graduate()`
     ///      cagrisini yapar. Hirsizlik anindaki IHBAR SURESI SIFIRDIR.
     ///
     ///      Kusurun kalbi sudur: gecikmenin verdigi ihbar ONERI ANINDAKI
     ///      ihbardir, korudugu varliklar ise DAHA SONRA gelir -- ve gecikmenin
-    ///      tek yazili caresi ("uc gun icinde tamamlanmis curve'leri mevcut
-    ///      hedefe bosalt") tam olarak oneri aninda BOS olan kumeyi korur.
-    ///      "Oneriden itibaren uc gun ihbar" ile "varliklar hareket etmeden
-    ///      once uc gun ihbar" ayni sey DEGILDIR ve tam olarak varliklar
-    ///      pencereden SONRA geldiginde ayrisirlar.
+    ///      tek yazili caresi ("pencere kapanmadan tamamlanmis curve'leri
+    ///      mevcut hedefe bosalt") tam olarak oneri aninda BOS olan kumeyi
+    ///      korur. "Oneriden itibaren ihbar" ile "varliklar hareket etmeden
+    ///      once ihbar" ayni sey DEGILDIR ve tam olarak varliklar pencereden
+    ///      SONRA geldiginde ayrisirlar.
     ///
     /// @dev SURE `eta + GRADUATION_TARGET_DELAY`DIR VE IKINCI BIR SABIT YOKTUR.
     ///      Bu, sayiyi SERBEST BIR PARAMETRE OLMAKTAN CIKARIR -- deponun diger
@@ -1083,7 +1085,7 @@ contract LaunchFactory {
     ///      buyuklukten okunur, secilmez. Iki uctan da ayni sayiya varilir:
     ///
     ///        ALT UC (neden daha kisa olmasin): `applyGraduationTarget`
-    ///        IZINSIZDIR ve `eta` UC GUN ONCEDEN bilinen PUBLIC bir
+    ///        IZINSIZDIR ve `eta` ONERI ANINDAN ITIBAREN bilinen PUBLIC bir
     ///        degiskendir. Yani indirme adiminin KOORDINASYON MALIYETI YOKTUR:
     ///        imza gerektirmez, governor'i gerektirmez, herhangi biri -- zaten
     ///        var olmasi gereken keeper dahil (spec 8) -- tek bir islemle
@@ -1097,7 +1099,16 @@ contract LaunchFactory {
     ///        yani duzeltilen kusurun kucuk olcekli hali geri gelir. Pencereyi
     ///        ihbar suresiyle sinirlamak, ihbarin azami bayatligini ihbar
     ///        suresinin KENDISIYLE sinirlar: toplam maruziyet en fazla
-    ///        2 x GRADUATION_TARGET_DELAY, yani ALTI GUNDUR.
+    ///        2 x GRADUATION_TARGET_DELAY'dir. SAYI BURAYA YAZILMAZ, VE
+    ///        SEBEBI OLCULDU: sabit 3 GUNDEN 1 GUNE indiginde bu dosyadaki
+    ///        ondort ayri "uc gun" ifadesi sessizce yanlis oldu ve bir tanesi
+    ///        bir TESTIN icindeydi -- `Deploy.t.sol` timelock'la hicbir ilgisi
+    ///        olmayan bir iddiayi olcerken `4 days` ileri sardigi icin
+    ///        `GraduationTargetProposalExpired()` ile kirmizilasti. Bu
+    ///        NatSpec sistemin birincil tasarim kaydidir; icindeki bir sayi,
+    ///        `GRADUATION_TARGET_DELAY`i degistiren kisinin bulmak zorunda
+    ///        oldugu IKINCI bir dogruluk kaynagidir. Sabitin ADI hicbir zaman
+    ///        bayatlamaz.
     ///
     ///      Iki uc TEK BIR sayida bulusur ve o sayi sistemde ZATEN VARDIR.
     ///      Ayri bir `GRADUATION_TARGET_GRACE` sabiti EKLENMEDI: ifadeyi
@@ -1107,8 +1118,9 @@ contract LaunchFactory {
     ///      `pendingGraduationTargetEta() + GRADUATION_TARGET_DELAY()`.
     ///
     /// @dev LIVENESS BEDELI BILINCLI VE SINIRLIDIR: suresi gecen bir oneri
-    ///      YENIDEN ONERILIR ve uc gun daha beklenir. D3 bozuk bir hedeften tek
-    ///      cikis oldugu icin bu bir gecikmedir -- ama alti gun boyunca IZINSIZ
+    ///      YENIDEN ONERILIR ve ihbar suresi yeniden beklenir. D3 bozuk bir
+    ///      hedeften tek cikis oldugu icin bu bir gecikmedir -- ama pencerenin
+    ///      tamami boyunca IZINSIZ
     ///      tek bir islemin gonderilmemis olmasi, tam da "hedef bozuk ve her
     ///      sey sikismis" senaryosunda gercekci degildir: o senaryoda ihtiyaci
     ///      olanlar zaten izliyordur. Kaybi olan bir gecikme, sinirsiz silahli
@@ -1143,7 +1155,8 @@ contract LaunchFactory {
     ///
     /// @dev NICIN GECIKME YOK -- ASIMETRI KASITLI VE GEREKCESI SUDUR: bir
     ///      gecikmenin `graduationTarget` tarafinda somut bir caresi vardir
-    ///      (uc gun icinde tamamlanmis curve'leri mevcut hedefe bosaltmak).
+    ///      (pencere kapanmadan tamamlanmis curve'leri mevcut hedefe
+    ///      bosaltmak).
     ///      Treasury tarafinda O CARENIN KARSILIGI YOKTUR: rotasyon birikmis
     ///      `owed[eski]`ye DOKUNMAZ -- eski adres onu aynen talep etmeye devam
     ///      eder -- yani kamunun "once bosalt" diye yapacagi bir sey yoktur.

@@ -1140,11 +1140,33 @@ contract DeployTest is Test {
         Plan memory p = _deployedPlan();
         LaunchFactory f = LaunchFactory(p.factory);
 
+        uint256 t0 = block.timestamp;
         vm.prank(GOVERNOR);
         f.proposeGraduationTarget(address(0xCAFE));
-        // PENCERE [eta, eta + 3 gun]; eta = simdi + 3 gun. 8 gun ILERI SARMAK
-        // `GraduationTargetProposalExpired()` verir (olculdu), 4 gun vermez.
-        vm.warp(block.timestamp + 4 days);
+
+        // PENCERE `[eta, eta + DELAY]`, eta = simdi + DELAY -- yani
+        // `[t0 + DELAY, t0 + 2*DELAY]`. Asagidaki an o araligin TAM ORTASIDIR.
+        //
+        // SURE KONTRATTAN OKUNUR, LITERAL DEGILDIR, VE BU BIR DUZELTMEDIR:
+        // burada bir zamanlar `4 days` yaziyordu ve `GRADUATION_TARGET_DELAY`
+        // 3 gunken dogruydu. Sabit 1 GUNE indiginde pencere `[+1g, +2g]`
+        // oldu, 4 gun onun DISINA dustu ve test
+        // `GraduationTargetProposalExpired()` ile kirmizilasti -- olcmek
+        // istedigi seyle (geri okumanin sifir olmayan bir hedefi yakalamasi)
+        // HICBIR ILGISI OLMAYAN bir sebeple.
+        //
+        // AYRIM SU: bu dosyadaki OTEKI literaller bilerek elle yazilmistir
+        // (profil ucluleri, digest'ler) cunku ORADA olculen sey SAYININ
+        // KENDISIDIR. Burada olculen sey timelock DEGILDIR; timelock'un iki
+        // sinirinin da yurundugu yer `LaunchFactory.t.sol`dur. Buradaki sure
+        // yalnizca "hedefi gercekten kimildatabilecek bir an" demektir, ve
+        // bir ANLAMI olmayan literal yalnizca bayatlayabilir.
+        uint256 delay = f.GRADUATION_TARGET_DELAY();
+        // MUTLAK AN, `block.timestamp + X` DEGIL. `via_ir = true` ile solc
+        // `TIMESTAMP`i bir islem icinde sabit kabul edip okumayi tek sefere
+        // indirebilir; goreli warp'lar boyle SESSIZCE etkisiz kalir. Sabit bir
+        // baslangictan mutlak kurmak o sinifi tumden disarida birakir.
+        vm.warp(t0 + delay + delay / 2);
         f.applyGraduationTarget();
         assertEq(f.graduationTarget(), address(0xCAFE), "precondition: the target really moved");
 

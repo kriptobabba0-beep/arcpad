@@ -4,6 +4,7 @@ pragma solidity ^0.8.26;
 import {Script} from "forge-std/Script.sol";
 import {console2} from "forge-std/console2.sol";
 
+import {LaunchFactory} from "../src/LaunchFactory.sol";
 import {DeployLib} from "./DeployLib.sol";
 import {PoolDeployLib, PoolPlan} from "./PoolDeployLib.sol";
 import {Profiles} from "./Profiles.sol";
@@ -74,7 +75,23 @@ contract RedeployPoolLayer is Script {
         console2.log("");
         console2.log("SIRADAKI ADIM, VE OTOMATIK DEGILDIR:");
         console2.log("  governor Safe -> proposeGraduationTarget(", p.locker, ")");
-        console2.log("  3 gun sonra   -> applyGraduationTarget()   (izinsiz)");
+
+        // SURE ZINCIRDEN OKUNUR, BURAYA YAZILMAZ. Bu satirda bir zamanlar
+        // "3 gun sonra" yaziyordu; `GRADUATION_TARGET_DELAY` 1 GUNE indiginde
+        // burasi operatore YANLIS bir bekleme suresi soyleyen tek yer olarak
+        // kaldi. Bir deploy talimatinin bayatlamasi, bir yorumun
+        // bayatlamasindan baska bir siniftir: operator bunu OKUYUP UYGULAR.
+        uint256 delayHours = LaunchFactory(p.factory).GRADUATION_TARGET_DELAY() / 1 hours;
+        console2.log("  bekle (saat, ZINCIRDEN okundu):", delayHours);
+        console2.log("  sonra         -> applyGraduationTarget()   (izinsiz)");
+
+        // UST SINIR DA SOYLENIR, VE ESKI METIN BUNU HIC SOYLEMIYORDU. Pencere
+        // `[eta, eta + GRADUATION_TARGET_DELAY]` araligidir; gecirilirse oneri
+        // `GraduationTargetProposalExpired()` ile DUSER ve butun tur -- Safe
+        // imzalari dahil -- bastan yapilir. Operatorun bilmedigi bir ust sinir,
+        // olmayan bir ust sinirdan kotudur.
+        console2.log("  PENCERE IKI TARAFLIDIR: ayni sure kadar ACIK kalir, sonra oneri DUSER.");
+        console2.log("  kacirilirsa: yeniden oner ve tekrar bekle (kisayol YOK).");
         console2.log("BEKLEYEN ESKI ONERI INDIRILMEMELIDIR -- acikli locker'i silahlandirir.");
     }
 

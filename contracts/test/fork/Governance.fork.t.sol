@@ -217,14 +217,19 @@ contract GovernanceForkTest is Test {
         // Zincirde olculen bugunku hal: `pendingGraduationTarget` BOS,
         // `graduationTarget` 0x...dEaD, `eta` 0. Yani `applyGraduationTarget()`
         // KOSTU -- ve onu kimsenin ONAYLAMASI GEREKMEDI: o fonksiyon BILEREK
-        // IZINSIZDIR (`LaunchFactory.sol:841`). Uc gunluk sure doldu, pencere
-        // acildi, ve indi.
+        // IZINSIZDIR. Ihbar suresi doldu, pencere acildi, ve indi.
         //
-        // BU YUZDEN BURADA DURUYOR: "propose -> 3 gun -> apply" dongusunun
+        // TARIHSEL NOT, BUGUNKU SABITLE KARISTIRILMASIN: bu gozlem V1
+        // fabrikasinda yapildi ve ORADA `GRADUATION_TARGET_DELAY` UC GUNDU.
+        // Bugun bir GUNDUR. Yukaridaki anlati o gunun zincirini anlatir; bu
+        // testin iddiasi sureden BAGIMSIZDIR -- olctugu sey dongunun
+        // TAMAMLANMIS olmasidir, ne kadar surdugu degil.
+        //
+        // BU YUZDEN BURADA DURUYOR: "propose -> bekle -> apply" dongusunun
         // TAMAMININ Arc'ta fiilen yurudugunun kalici kanitidir, VE ayni zamanda
         // izinsiz apply'in TEORIK OLMADIGININ olcumudur. Gercek fabrikada bir
-        // oneri baslatmak, uc gun sonra HERKESIN silahlayabilecegi bir dugme
-        // birakir; burada zararsizdi cunku bu yigin DISPOSABLE.
+        // oneri baslatmak, ihbar suresi sonunda HERKESIN silahlayabilecegi bir
+        // dugme birakir; burada zararsizdi cunku bu yigin DISPOSABLE.
         assertEq(
             LaunchFactory(rehearsalFactory).graduationTarget(),
             0x000000000000000000000000000000000000dEaD,

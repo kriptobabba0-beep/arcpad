@@ -18,8 +18,8 @@ import {Profiles} from "./Profiles.sol";
 ///      `LaunchFactory`nin `feeSchedule` argumanini kaldirmadan mumkun
 ///      degildir ve olmamalidir.
 ///
-/// @dev GRADUATION HEDEFI BURADA AYARLANMAZ. `applyGraduationTarget` uc gun
-///      gecikmelidir ve R-12 acikca soyler: bir locker'a ancak o locker'a
+/// @dev GRADUATION HEDEFI BURADA AYARLANMAZ. `applyGraduationTarget`
+///      `GRADUATION_TARGET_DELAY` gecikmelidir ve R-12 acikca soyler: bir locker'a ancak o locker'a
 ///      KARSI tam bir launch -> satis -> graduate dongusu Arc testnet'te
 ///      FIILEN kosturuldiktan sonra isaret edilebilir. Bu script locker'i
 ///      YAYINLAR; isaret etmek AYRI ve INCELENMIS bir adimdir (Task 8).

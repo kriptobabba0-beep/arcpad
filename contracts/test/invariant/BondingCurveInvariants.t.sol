@@ -702,7 +702,7 @@ abstract contract BondingCurveInvariantsBase is Test {
         virtualQuote = v;
     }
 
-    /// @dev GERCEK YOL: oner, uc gun bekle, indir. Kurulumda yurunmesi
+    /// @dev GERCEK YOL: oner, ihbar suresi kadar bekle, indir. Kurulumda yurunmesi
     ///      tesadufi degil -- kampanyanin hedefi ancak timelock'tan geciyorsa
     ///      atanir, yani `graduate()`in ulasilabilir olmasi D3'un fiilen
     ///      calistigina baglidir.
