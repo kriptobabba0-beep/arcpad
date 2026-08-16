@@ -1,0 +1,53 @@
+{
+  "chainId": 5042002,
+  "finishedAt": "2026-08-16T23:14:59.411Z",
+  "passed": 7,
+  "failed": 0,
+  "skipped": 0,
+  "rpcRetries": 0,
+  "spentUsdc": "-0.318845642",
+  "results": [
+    {
+      "phase": "FAZ F -- havuz mercii: islem, ucret, buyback",
+      "name": "F1 router canli hook u bildiriyor",
+      "outcome": "pass",
+      "detail": "0xba59e8738493e063fff12ab08443e36f3aCfA0CC"
+    },
+    {
+      "phase": "FAZ F -- havuz mercii: islem, ucret, buyback",
+      "name": "F2 havuzda alim: token gelir, USDC gider",
+      "outcome": "pass",
+      "detail": "13022016416641178581554261 token alindi (500000 birim USDC ile)"
+    },
+    {
+      "phase": "FAZ F -- havuz mercii: islem, ucret, buyback",
+      "name": "F3 hook ucreti escrow a girer (protokol + creator)",
+      "outcome": "pass",
+      "detail": "protokol +4750000000000000, creator nakdi +750000000000000"
+    },
+    {
+      "phase": "FAZ F -- havuz mercii: islem, ucret, buyback",
+      "name": "F4 buyback HAVUZ merciinden tahakkuk eder",
+      "outcome": "pass",
+      "detail": "+1500000000000000 wei (havuz merciinden)"
+    },
+    {
+      "phase": "FAZ F -- havuz mercii: islem, ucret, buyback",
+      "name": "F5 havuzda satis: token gider, USDC gelir",
+      "outcome": "pass",
+      "detail": "195293031689335388549503965 token satildi"
+    },
+    {
+      "phase": "FAZ F -- havuz mercii: islem, ucret, buyback",
+      "name": "F6 havuzdan supurme: alim yapilir ve kilitlenir",
+      "outcome": "pass",
+      "detail": "52740150053590566 wei ile 1614937722807282107503991 token HAVUZDAN alindi, tamami kilitlendi"
+    },
+    {
+      "phase": "FAZ F -- havuz mercii: islem, ucret, buyback",
+      "name": "F7 supurme sonrasi butce SIFIRLANIR (hazine ucret odemez)",
+      "outcome": "pass",
+      "detail": "butce sifir"
+    }
+  ]
+}

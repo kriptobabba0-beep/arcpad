@@ -34,6 +34,7 @@ import { phaseCurve } from './phase-curve'
 import { phaseFees } from './phase-fees'
 import { phaseGraduation } from './phase-graduation'
 import { phaseBuyback } from './phase-buyback'
+import { phasePool } from './phase-pool'
 import {
   bondingCurveAbi,
   launchFactoryAbi,
@@ -192,6 +193,23 @@ async function main(): Promise<void> {
       const bbStranger = wallet(derivedKey('audit-stranger'))
       await fundIfNeeded(pub, w, bbStranger.account!.address, 50_000_000_000_000_000n)
       await phaseBuyback(c, pub, w, bbStranger, fresh.token, fresh.curve)
+    } else if (phase === 'pool') {
+      /*
+       * HAVUZ FAZI BIR MEZUNIYET ISTER ve mezuniyet ~12,3 USDC yakar.
+       * `--token=0x...` ile mezun olmus bir token yeniden kullanilabilir.
+       */
+      const givenToken = wanted.find((a) => a.startsWith('--token='))?.slice('--token='.length)
+      let poolToken: Address
+      if (givenToken !== undefined) {
+        poolToken = givenToken as Address
+      } else {
+        const fresh = await freshLaunch(pub, w, tag, true)
+        console.log(`  (buyback ACIK, mezun edilecek ${fresh.curve})`)
+        await phaseGraduation(c, pub, w, fresh.token, fresh.curve)
+        poolToken = fresh.token
+      }
+      console.log(`  (havuz tokeni ${poolToken})`)
+      await phasePool(c, pub, w, poolToken)
     } else if (phase.startsWith('--')) {
       // bayrak; faz degil
     } else {
@@ -210,5 +228,6 @@ main().catch((error: unknown) => {
   console.error(error)
   process.exit(1)
 })
+
 
 
