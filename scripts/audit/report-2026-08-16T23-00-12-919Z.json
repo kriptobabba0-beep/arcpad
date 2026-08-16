@@ -1,0 +1,107 @@
+{
+  "chainId": 5042002,
+  "finishedAt": "2026-08-16T23:00:12.920Z",
+  "passed": 11,
+  "failed": 4,
+  "skipped": 1,
+  "rpcRetries": 0,
+  "spentUsdc": "12.38240692467363346",
+  "results": [
+    {
+      "phase": "FAZ E -- buyback: izinler, tahakkuk, supurme",
+      "name": "E1 creator KAPATABILIR",
+      "outcome": "pass",
+      "detail": "kapatildi"
+    },
+    {
+      "phase": "FAZ E -- buyback: izinler, tahakkuk, supurme",
+      "name": "E2 creator YENIDEN ACABILIR",
+      "outcome": "pass",
+      "detail": "acildi"
+    },
+    {
+      "phase": "FAZ E -- buyback: izinler, tahakkuk, supurme",
+      "name": "E3 YABANCI acamaz/kapatamaz NotLaunchCreator",
+      "outcome": "pass",
+      "detail": "NotLaunchCreator"
+    },
+    {
+      "phase": "FAZ E -- buyback: izinler, tahakkuk, supurme",
+      "name": "E4 ayni degere ayarlamak revert ETMEZ",
+      "outcome": "pass",
+      "detail": "no-op kabul edildi"
+    },
+    {
+      "phase": "FAZ E -- buyback: izinler, tahakkuk, supurme",
+      "name": "E5 tahakkuk creator payinin TAM YARISI",
+      "outcome": "pass",
+      "detail": "592592592592593 wei tahakkuk etti"
+    },
+    {
+      "phase": "FAZ E -- buyback: izinler, tahakkuk, supurme",
+      "name": "E6 kapaliyken tahakkuk DURUR",
+      "outcome": "pass",
+      "detail": "tahakkuk durdu"
+    },
+    {
+      "phase": "FAZ E -- buyback: izinler, tahakkuk, supurme",
+      "name": "E7 anahtarci saati ilk tahakkukta BASLAMIS",
+      "outcome": "pass",
+      "detail": "lastSweepAt=1786921163, izinsiz=false"
+    },
+    {
+      "phase": "FAZ E -- buyback: izinler, tahakkuk, supurme",
+      "name": "E8 yabanci supuremez NotKeeper",
+      "outcome": "pass",
+      "detail": "NotKeeper"
+    },
+    {
+      "phase": "FAZ E -- buyback: izinler, tahakkuk, supurme",
+      "name": "E9 gecmis deadline DeadlinePassed",
+      "outcome": "pass",
+      "detail": "DeadlinePassed"
+    },
+    {
+      "phase": "FAZ E -- buyback: izinler, tahakkuk, supurme",
+      "name": "E10a esik ALTINDA supurme geri katlar, kilitlemez",
+      "outcome": "pass",
+      "detail": "3555555555555556 wei creator'a geri katlandi (esik 50000000000000000)"
+    },
+    {
+      "phase": "FAZ E -- buyback: izinler, tahakkuk, supurme",
+      "name": "E10b esik USTUNDE supurme ALIR ve TAMAMINI kilitler",
+      "outcome": "fail",
+      "detail": "revert CurveComplete"
+    },
+    {
+      "phase": "FAZ E -- buyback: izinler, tahakkuk, supurme",
+      "name": "E11 hazine bakiyesi == pendingQuote (sahipsiz wei yok)",
+      "outcome": "pass",
+      "detail": "bakiye 14478089696937618, bu tokenin butcesi 14390298201738715"
+    },
+    {
+      "phase": "FAZ E -- buyback: izinler, tahakkuk, supurme",
+      "name": "E12 kasa: 5 yillik pencere ve %30 protokol payi",
+      "outcome": "fail",
+      "detail": "pencere genisligi: beklenen 157680000, olculen 0"
+    },
+    {
+      "phase": "FAZ E -- buyback: izinler, tahakkuk, supurme",
+      "name": "E13 kilitten hemen sonra cekilebilir ~SIFIR",
+      "outcome": "fail",
+      "detail": "kilitli token yok"
+    },
+    {
+      "phase": "FAZ E -- buyback: izinler, tahakkuk, supurme",
+      "name": "E14 release izinsiz, paylar %70/%30",
+      "outcome": "skip",
+      "detail": "henuz hak edilmis token yok (kilit calisiyor)"
+    },
+    {
+      "phase": "FAZ E -- buyback: izinler, tahakkuk, supurme",
+      "name": "E15 cekilecek yokken release NothingToRelease",
+      "outcome": "fail",
+      "detail": "NothingToRelease bekleniyordu, VestNotOpen geldi"
+    }
+  ]
+}

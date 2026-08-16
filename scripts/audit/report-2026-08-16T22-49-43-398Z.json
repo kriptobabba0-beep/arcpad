@@ -1,0 +1,59 @@
+{
+  "chainId": 5042002,
+  "finishedAt": "2026-08-16T22:49:43.398Z",
+  "passed": 4,
+  "failed": 4,
+  "skipped": 0,
+  "rpcRetries": 0,
+  "spentUsdc": "12.370534925673633455",
+  "results": [
+    {
+      "phase": "FAZ D -- tamamlanma ve mezuniyet",
+      "name": "D1 tamamlanmadan graduate() NotComplete",
+      "outcome": "pass",
+      "detail": "NotComplete"
+    },
+    {
+      "phase": "FAZ D -- tamamlanma ve mezuniyet",
+      "name": "D2 egri tamamlanir, realTokenReserves TAM sifir",
+      "outcome": "fail",
+      "detail": "revert NetTooSmall"
+    },
+    {
+      "phase": "FAZ D -- tamamlanma ve mezuniyet",
+      "name": "D3 tamamlanmis egride alis CurveComplete",
+      "outcome": "fail",
+      "detail": "revert BEKLENIYORDU (CurveComplete), cagri BASARILI oldu"
+    },
+    {
+      "phase": "FAZ D -- tamamlanma ve mezuniyet",
+      "name": "D4 tamamlanmis egride satis CurveComplete",
+      "outcome": "pass",
+      "detail": "CurveComplete"
+    },
+    {
+      "phase": "FAZ D -- tamamlanma ve mezuniyet",
+      "name": "D5 graduate() mezun eder, hedefe R ve D oder",
+      "outcome": "fail",
+      "detail": "revert NotGraduationTarget"
+    },
+    {
+      "phase": "FAZ D -- tamamlanma ve mezuniyet",
+      "name": "D6 ikinci graduate() AlreadyGraduated",
+      "outcome": "fail",
+      "detail": "AlreadyGraduated bekleniyordu, NotGraduationTarget geldi"
+    },
+    {
+      "phase": "FAZ D -- tamamlanma ve mezuniyet",
+      "name": "D7 mezuniyetten sonra alis CurveComplete",
+      "outcome": "pass",
+      "detail": "CurveComplete"
+    },
+    {
+      "phase": "FAZ D -- tamamlanma ve mezuniyet",
+      "name": "D8 locker hook ve poolManager bildiriyor",
+      "outcome": "pass",
+      "detail": "0xba59e8738493e063fff12ab08443e36f3aCfA0CC / 0x617321A877e024C870516CD599A581dCDCa6c09b"
+    }
+  ]
+}

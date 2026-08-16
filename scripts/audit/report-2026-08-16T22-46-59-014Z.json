@@ -1,0 +1,47 @@
+{
+  "chainId": 5042002,
+  "finishedAt": "2026-08-16T22:46:59.014Z",
+  "passed": 5,
+  "failed": 1,
+  "skipped": 0,
+  "rpcRetries": 0,
+  "spentUsdc": "0.191111700823091181",
+  "results": [
+    {
+      "phase": "FAZ C -- ucret defteri: escrow",
+      "name": "C1 claim: borc sifirlanir, para cuzdana gecer",
+      "outcome": "pass",
+      "detail": "103397341176908819 wei alindi"
+    },
+    {
+      "phase": "FAZ C -- ucret defteri: escrow",
+      "name": "C2 bos bakiyede claim NothingToClaim",
+      "outcome": "pass",
+      "detail": "NothingToClaim"
+    },
+    {
+      "phase": "FAZ C -- ucret defteri: escrow",
+      "name": "C3 claim IZINSIZ ama para YALNIZCA alicinin",
+      "outcome": "pass",
+      "detail": "515357241115995360 wei hazineye, yabanci yalnizca gaz odedi"
+    },
+    {
+      "phase": "FAZ C -- ucret defteri: escrow",
+      "name": "C4 dogrudan gonderilen para TALEP EDILEMEZ",
+      "outcome": "fail",
+      "detail": "Execution reverted for an unknown reason."
+    },
+    {
+      "phase": "FAZ C -- ucret defteri: escrow",
+      "name": "C5 sifir aliciya deposit ZeroRecipient",
+      "outcome": "pass",
+      "detail": "ZeroRecipient"
+    },
+    {
+      "phase": "FAZ C -- ucret defteri: escrow",
+      "name": "C6 sifir tutarli deposit ZeroAmount",
+      "outcome": "pass",
+      "detail": "ZeroAmount"
+    }
+  ]
+}

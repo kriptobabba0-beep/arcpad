@@ -1,0 +1,65 @@
+{
+  "chainId": 5042002,
+  "finishedAt": "2026-08-16T22:52:32.429Z",
+  "passed": 8,
+  "failed": 1,
+  "skipped": 0,
+  "rpcRetries": 0,
+  "spentUsdc": "0.009697833",
+  "results": [
+    {
+      "phase": "FAZ D -- tamamlanma ve mezuniyet",
+      "name": "D1 tamamlanmadan graduate() NotComplete",
+      "outcome": "fail",
+      "detail": "NotComplete bekleniyordu, NotGraduationTarget geldi"
+    },
+    {
+      "phase": "FAZ D -- tamamlanma ve mezuniyet",
+      "name": "D2 egri tamamlanir, realTokenReserves TAM sifir",
+      "outcome": "pass",
+      "detail": "0 alis, ~0 milli-USDC harcandi"
+    },
+    {
+      "phase": "FAZ D -- tamamlanma ve mezuniyet",
+      "name": "D3 tamamlanmis egride alis CurveComplete",
+      "outcome": "pass",
+      "detail": "CurveComplete"
+    },
+    {
+      "phase": "FAZ D -- tamamlanma ve mezuniyet",
+      "name": "D4 tamamlanmis egride satis CurveComplete",
+      "outcome": "pass",
+      "detail": "CurveComplete"
+    },
+    {
+      "phase": "FAZ D -- tamamlanma ve mezuniyet",
+      "name": "D4b curve.graduate() dogrudan NotGraduationTarget",
+      "outcome": "pass",
+      "detail": "NotGraduationTarget"
+    },
+    {
+      "phase": "FAZ D -- tamamlanma ve mezuniyet",
+      "name": "D5 locker.graduate(curve) mezun eder, hedefe R ve D oder",
+      "outcome": "pass",
+      "detail": "R=12161433369060378714, D=206886011183597390493942218, locker token deltasi 6231944955160424596"
+    },
+    {
+      "phase": "FAZ D -- tamamlanma ve mezuniyet",
+      "name": "D6 ikinci mezuniyet AlreadyGraduated",
+      "outcome": "pass",
+      "detail": "AlreadyGraduated"
+    },
+    {
+      "phase": "FAZ D -- tamamlanma ve mezuniyet",
+      "name": "D7 mezuniyetten sonra alis CurveComplete",
+      "outcome": "pass",
+      "detail": "CurveComplete"
+    },
+    {
+      "phase": "FAZ D -- tamamlanma ve mezuniyet",
+      "name": "D8 locker hook ve poolManager bildiriyor",
+      "outcome": "pass",
+      "detail": "0xba59e8738493e063fff12ab08443e36f3aCfA0CC / 0x617321A877e024C870516CD599A581dCDCa6c09b"
+    }
+  ]
+}
