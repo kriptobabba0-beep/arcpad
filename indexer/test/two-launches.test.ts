@@ -175,6 +175,8 @@ describe('iki launch iceren bir aralik', () => {
       graduated: 0,
       transfers: 4,
       fees: 4,
+      // BUYBACK YOK VE OLMAMALI: iki launch da ozelligi acmadi.
+      buyback: 0,
       total: 12,
     })
     await expect(assertRangeApplied(pool, events)).resolves.toBeUndefined()

@@ -2,6 +2,13 @@ import type { Deployment, Pool, Queryable } from '@arcpad/db'
 import { withTransaction } from '@arcpad/db'
 import { admit } from '../admit'
 import type { DecodedEvent } from '../logs'
+import {
+  applyBuybackAccruedEvent,
+  applyBuybackExecutedEvent,
+  applyBuybackLockedEvent,
+  applyBuybackSkippedEvent,
+  applyVestingReleasedEvent,
+} from './buyback'
 import { applyClaimedEvent, applyDepositedEvent } from './fees'
 import { applyPoolSwapEvent } from './pool'
 import { applyCompletedEvent, applyGraduatedEvent, applyTradeEvent } from './trade'
@@ -48,31 +55,42 @@ export async function applyDecodedEvent(
     case 'poolFee':
       return 0
     /*
-     * BUYBACK OLAYLARI: COZULUR, HENUZ YAZILMAZ.
+     * BUYBACK NESLI -- BESI DE `buyback_events`E YAZAR.
      *
-     * `return 0` burada `poolInitialize`inkiyle AYNI SEYI SOYLEMEZ: orada
-     * "yazacak bir sey yok" kalicidir, burada "yazma katmani henuz yok"
-     * gecicidir. Ayrimi yorumda tutmak zorundayiz cunku ikisi de ayni satiri
-     * yazar; `default`a dusurmek ise `switch`in tuketiciligini kaybettirir ve
-     * yeni bir olay eklendiginde TypeScript uyarmaz olurdu.
-     *
-     * SIRADAKI ADIM: `packages/db/migrations/NNN_buyback.sql` +
-     * `apply/buyback.ts`, ve `verify.ts::LEDGER_OF`taki bes `null`un tablo
-     * adiyla degistirilmesi. Ucu birlikte gitmezse kapsam kontrolu sessiz
-     * kalir.
+     * Bes ayri dal, tek tablo: ture ozgu esleme `apply/buyback.ts`te, "hangi
+     * kolon hangi turde dolu olmak zorunda" ise semadaki `*_iff_*`
+     * kisitlarinda. Ayni bilginin iki yerde durmasi kasitlidir -- biri
+     * cagrilmadan, oteki YAZILAMADAN gecemez.
      */
     case 'buybackAccrued':
+      return applyBuybackAccruedEvent(db, event)
     case 'buybackExecuted':
+      return applyBuybackExecutedEvent(db, event)
     case 'buybackSkipped':
+      return applyBuybackSkippedEvent(db, event)
     case 'buybackLocked':
+      return applyBuybackLockedEvent(db, event)
     case 'vestingReleased':
-      return 0
+      return applyVestingReleasedEvent(db, event)
     default: {
       const exhaustive: never = event
       throw new Error(`applyDecodedEvent: bilinmeyen olay ${JSON.stringify(exhaustive)}`)
     }
   }
 }
+
+/**
+ * `counts.buyback`a dusen olay turleri. Bir KUME, cunku `applyEvents`in sayac
+ * zinciri `else if` merdivenidir ve bes turu tek tek yazmak, bir turu unutmayi
+ * -- yani onu sessizce `fees`e dusurmeyi -- mumkun birakirdi.
+ */
+const BUYBACK_KINDS: ReadonlySet<DecodedEvent['kind']> = new Set([
+  'buybackAccrued',
+  'buybackExecuted',
+  'buybackSkipped',
+  'buybackLocked',
+  'vestingReleased',
+] as const)
 
 export interface ApplyCounts {
   launches: number
@@ -92,6 +110,15 @@ export interface ApplyCounts {
   graduated: number
   transfers: number
   fees: number
+  /**
+   * `buyback_events`e giren satirlar -- BES TURUN TOPLAMI, ve `fees`TEN AYRI.
+   *
+   * Ayrilmasinin gerekcesi `poolSwaps`inkiyle birebir ayni: bugun beklenen
+   * deger tokenlerin cogunda SIFIRDIR (buyback varsayilan olarak KAPALIDIR ve
+   * yalnizca creator acabilir), yani `fees`e katilmis bir sayac ilk buyback'in
+   * geldigi ani da, hic gelmedigi gercegini de gizlerdi.
+   */
+  buyback: number
   total: number
 }
 
@@ -133,6 +160,7 @@ export async function applyEvents(
     graduated: 0,
     transfers: 0,
     fees: 0,
+    buyback: 0,
     total: 0,
   }
   const ordered = [...events].sort((a, b) => (a.seq === b.seq ? 0 : a.seq < b.seq ? -1 : 1))
@@ -147,6 +175,7 @@ export async function applyEvents(
     else if (event.kind === 'completed') counts.completed += n
     else if (event.kind === 'graduated') counts.graduated += n
     else if (event.kind === 'transfer') counts.transfers += n
+    else if (BUYBACK_KINDS.has(event.kind)) counts.buyback += n
     // `poolInitialize` ve `poolFee` HER ZAMAN 0 doner (bkz. yukarisi), yani
     // hangi sayaca dustukleri gozlemlenemez. `fees`e birakiliyor cunku
     // `poolFee` gercekten bir ucret olgusudur ve sifir eklemek bir sey
@@ -187,6 +216,14 @@ export async function applyRange(
   return withTransaction(pool, async (tx) => applyEvents(tx, deployment, events))
 }
 
+export {
+  applyBuybackAccruedEvent,
+  applyBuybackExecutedEvent,
+  applyBuybackLockedEvent,
+  applyBuybackSkippedEvent,
+  applyVestingReleasedEvent,
+  UnknownBuybackToken,
+} from './buyback'
 export { applyClaimedEvent, applyDepositedEvent } from './fees'
 export {
   applyPoolSwapEvent,

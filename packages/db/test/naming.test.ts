@@ -373,6 +373,37 @@ async function withColumn(ddl: string, check: (r: Report) => void): Promise<void
  * envanteri olarak da okunur.
  */
 const EXPECTED_INVENTORY = [
+  'public:r:buyback_events.block_number',
+  'public:r:buyback_events.block_time',
+  'public:r:buyback_events.caller_addr',
+  'public:r:buyback_events.creator_amount_tok',
+  'public:r:buyback_events.emitter_addr',
+  'public:r:buyback_events.event_seq',
+  'public:r:buyback_events.kind',
+  'public:r:buyback_events.log_index',
+  'public:r:buyback_events.pending_wei',
+  'public:r:buyback_events.protocol_amount_tok',
+  'public:r:buyback_events.quote_wei',
+  'public:r:buyback_events.reason',
+  'public:r:buyback_events.token',
+  'public:r:buyback_events.token_amount_tok',
+  'public:r:buyback_events.total_locked_tok',
+  'public:r:buyback_events.tx_hash',
+  'public:r:buyback_events.venue_addr',
+  'public:r:buyback_events.vesting_end_at',
+  'public:r:buyback_events.vesting_start_at',
+  'public:r:buyback_state.accrued_total_wei',
+  'public:r:buyback_state.bought_total_tok',
+  'public:r:buyback_state.last_seq',
+  'public:r:buyback_state.locked_total_tok',
+  'public:r:buyback_state.pending_quote_wei',
+  'public:r:buyback_state.released_creator_tok',
+  'public:r:buyback_state.released_protocol_tok',
+  'public:r:buyback_state.returned_total_wei',
+  'public:r:buyback_state.spent_total_wei',
+  'public:r:buyback_state.token',
+  'public:r:buyback_state.vesting_end_at',
+  'public:r:buyback_state.vesting_start_at',
   'public:r:chat_messages.author_addr',
   'public:r:chat_messages.balance_block_number',
   'public:r:chat_messages.balance_tok',
@@ -679,7 +710,9 @@ describe('adlandirma kapisi', () => {
     // isaretidir: envanter KATALOGDAN turer, yani bir tabloyu dusurup bu satiri
     // guncellememek testi kirmis olurdu -- "sildik ve kapi fark etmedi" hali
     // burada temsil EDILEMEZ.
-    expect(g.numerics).toBe(43)
+    // 43 -> 57: buyback defterinin ALTI (`buyback_events`) ve toplaminin SEKIZ
+    // (`buyback_state`) miktar sutunu, migration 016.
+    expect(g.numerics).toBe(57)
     expect(g.badNumeric).toEqual([])
   })
 

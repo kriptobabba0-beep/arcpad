@@ -1,4 +1,5 @@
 export {
+  applyBuybackEvent,
   applyCompleted,
   applyEvent,
   applyFeeEvent,
@@ -7,6 +8,7 @@ export {
   applyPoolSwap,
   applyTrade,
   applyTransfer,
+  type BuybackLedgerEvent,
   type CompletedEvent,
   type FeeLedgerEvent,
   clearCursor,

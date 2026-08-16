@@ -1,5 +1,6 @@
 import type { Address } from '../src/hex'
 import type {
+  BuybackLedgerEvent,
   CompletedEvent,
   FeeLedgerEvent,
   GraduatedEvent,
@@ -48,6 +49,9 @@ export const CURVE = addr(0xc000)
 export const CREATOR = addr(0xc4ea)
 export const ALICE = addr(0xa11ce)
 export const BOB = addr(0xb0b)
+/** Buyback hazinesi ve kasasi. Launch'lardan BAGIMSIZ, tekil adresler. */
+export const TREASURY = addr(0x7b0a)
+export const VAULT = addr(0x7ba17)
 
 const BLOCK = 54_325_469n
 /** Arc'ta ardisik bloklarin %49,1'i AYNI timestamp'i tasir; fixture bunu taklit eder. */
@@ -283,6 +287,124 @@ export const RANGE: readonly IngestEvent[] = [
 ]
 
 export const RANGE_TO = BLOCK + 3n
+
+// ---------------------------------------------------------------------------
+// BUYBACK DEFTERI -- AYRI BIR DIZI, ve `RANGE`E KATILMAZ.
+//
+// Gerekce blast radius degil ANLAM: `RANGE` "her token'in yasadigi yol"u
+// tarif eder, buyback ise VARSAYILAN OLARAK KAPALI ve yalnizca creator'in
+// acabildigi bir SECIMDIR. Onu `RANGE`e katmak, kapali olan tokenlerin
+// yolunu -- yani bugun cogunlugu -- fixture'dan silerdi.
+//
+// `IngestEvent` birlesimine de KATILMAZ ve bu ayni karardir: `applyEvent`
+// dispatcher'i `replayRange`in sentetik yoludur; buyback'in URETIM yolu
+// `indexer/src/apply/index.ts`teki tuketici `switch`tir, ve orada besi de
+// yazilidir. `poolInitialize`/`poolFee` de ayni sebeple `IngestEvent`te yok.
+// ---------------------------------------------------------------------------
+
+const VEST_START = new Date('2026-07-30T12:00:00.000Z')
+const VEST_END = new Date('2031-07-29T12:00:00.000Z')
+
+/** Bes turun HEPSI, bir tokenin gercek sirasiyla. */
+export const BUYBACK_LEDGER: readonly BuybackLedgerEvent[] = [
+  {
+    kind: 'buyback',
+    ...ref(0, BLOCK + 4n),
+    buybackKind: 'accrued',
+    token: TOKEN,
+    emitter: TREASURY,
+    venue: CURVE,
+    caller: null,
+    reason: null,
+    quoteWei: 3_000_000_000_000_000n,
+    // MUTLAK: tahakkuk sonrasi toplam. Ayrilan tutardan BUYUK, cunku bu
+    // token daha once de tahakkuk etmis olabilir -- ve tam olarak bu yuzden
+    // toplam tablosu bu sayiya SIFIRLANIR, ayrilani EKLEMEZ.
+    pendingWei: 5_000_000_000_000_000n,
+    tokenAmountTok: null,
+    totalLockedTok: null,
+    creatorAmountTok: null,
+    protocolAmountTok: null,
+    vestingStart: null,
+    vestingEnd: null,
+  },
+  {
+    kind: 'buyback',
+    ...ref(1, BLOCK + 4n),
+    buybackKind: 'executed',
+    token: TOKEN,
+    emitter: TREASURY,
+    venue: null,
+    caller: null,
+    reason: null,
+    quoteWei: 4_000_000_000_000_000n,
+    pendingWei: null,
+    tokenAmountTok: 1_000_000n * 10n ** 18n,
+    totalLockedTok: null,
+    creatorAmountTok: null,
+    protocolAmountTok: null,
+    vestingStart: null,
+    vestingEnd: null,
+  },
+  {
+    kind: 'buyback',
+    ...ref(2, BLOCK + 4n),
+    buybackKind: 'locked',
+    token: TOKEN,
+    emitter: VAULT,
+    venue: null,
+    caller: null,
+    reason: null,
+    quoteWei: null,
+    pendingWei: null,
+    tokenAmountTok: 1_000_000n * 10n ** 18n,
+    totalLockedTok: 1_000_000n * 10n ** 18n,
+    creatorAmountTok: null,
+    protocolAmountTok: null,
+    vestingStart: VEST_START,
+    vestingEnd: VEST_END,
+  },
+  {
+    kind: 'buyback',
+    ...ref(3, BLOCK + 4n),
+    buybackKind: 'released',
+    token: TOKEN,
+    emitter: VAULT,
+    venue: null,
+    caller: CREATOR,
+    reason: null,
+    quoteWei: null,
+    pendingWei: null,
+    tokenAmountTok: null,
+    totalLockedTok: null,
+    // %70 / %30 -- ucret kademesinden AYRI, sabit.
+    creatorAmountTok: 700n * 10n ** 18n,
+    protocolAmountTok: 300n * 10n ** 18n,
+    vestingStart: null,
+    vestingEnd: null,
+  },
+  {
+    kind: 'buyback',
+    ...ref(4, BLOCK + 4n),
+    buybackKind: 'skipped',
+    token: TOKEN,
+    emitter: TREASURY,
+    venue: null,
+    caller: null,
+    // Zincirin yaydigi dizelerden biri. Tire ICERIR, ve bu, `reason`a
+    // `rejected_launches`in `^[a-z_]{1,64}$` desenini dayatmanin neden yanlis
+    // olacaginin en kisa kaniti.
+    reason: 'below-threshold-or-unsafe',
+    quoteWei: 1_000_000_000_000_000n,
+    pendingWei: null,
+    tokenAmountTok: null,
+    totalLockedTok: null,
+    creatorAmountTok: null,
+    protocolAmountTok: null,
+    vestingStart: null,
+    vestingEnd: null,
+  },
+]
 
 /**
  * Blok numarasindan deterministik bir blok hash'i. `sync_state.last_block_hash`

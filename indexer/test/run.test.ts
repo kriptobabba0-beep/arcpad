@@ -251,6 +251,8 @@ describe('runOnce', () => {
       graduated: 0,
       transfers: 5,
       fees: 8,
+      // BUYBACK YOK VE OLMAMALI: canli smoke tokeninde ozellik acilmadi.
+      buyback: 0,
       total: 19,
     })
     const cursor = await getCursor(pool)

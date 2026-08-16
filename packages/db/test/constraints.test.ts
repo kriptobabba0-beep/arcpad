@@ -1,12 +1,14 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 import { putDeployment } from '../src/deployment'
-import { replayRange } from '../src/apply'
+import { applyBuybackEvent, replayRange } from '../src/apply'
 import type { PoolClient } from '../src/pool'
+import { withTransaction } from '../src/pool'
 import { toSeq } from '../src/seq'
 import { pool, resetSchema } from './setup'
 import {
   addr,
   ALICE,
+  BUYBACK_LEDGER,
   CURVE,
   DEPLOYMENT,
   GENESIS,
@@ -22,6 +24,8 @@ import {
  * `toHaveLength(14)` idi ve bir tabloyu silip baskasini eklemeye GORUNMEZDI.
  */
 const ALL_TABLES = [
+  'buyback_events',
+  'buyback_state',
   'chat_messages',
   'creator_history',
   'curve_state',
@@ -88,6 +92,19 @@ describe('kisitlar gercekten bagli mi', () => {
        VALUES ($1, $2, 'gm', 1, 55000000, $3, $4, now())`,
       [TOKEN, ALICE, hash32(0xc4a7), `0x${'ab'.repeat(65)}`],
     )
+    /*
+     * BUYBACK'IN TOHUM SATIRLARI -- BESI DE.
+     *
+     * `chat_messages` ile ayni sebeple elle konuyor: `replayRange` onlari
+     * doldurmaz cunku buyback olaylari `IngestEvent` birlesiminde DEGILDIR
+     * (gerekce `fixtures.ts`, `BUYBACK_LEDGER`). Bir tanesi degil BESI birden
+     * yaziliyor: yukaridaki tarama satirlari KOPYALAYIP bozarak calisir, ve
+     * ture gore NULL kalan kolonlari olan bir tabloda tek bir tur, otekilerin
+     * kolonlarini kopyalanamaz -- yani sessizce taranmamis birakirdi.
+     */
+    await withTransaction(pool, async (tx) => {
+      for (const event of BUYBACK_LEDGER) await applyBuybackEvent(tx, event)
+    })
   })
 
   // ---------------------------------------------------------------
@@ -115,6 +132,9 @@ describe('kisitlar gercekten bagli mi', () => {
       ORDER BY 1, 2`)
 
     expect(guarded.map((g) => `${g.rel}.${g.col}`)).toEqual([
+      'buyback_events.caller_addr',
+      'buyback_events.emitter_addr',
+      'buyback_events.venue_addr',
       'chat_messages.author_addr',
       'creator_history.creator',
       'curve_state.curve',
@@ -165,6 +185,47 @@ describe('kisitlar gercekten bagli mi', () => {
         graduated_seq: '99999999',
         graduation_base_tok: '0',
         graduation_quote_wei: '0',
+      },
+      /*
+       * `buyback_events` AYNI SINIFIN DAHA GENIS HALI: `graduated_iff_payout`
+       * TEK bir bayragin yoldaslarini istiyordu, burada `kind` BES degerden
+       * birini alir ve her deger BASKA bir kolon kumesini zorunlu/yasak yapar.
+       *
+       * Yani yoldas kumesi yalnizca hedef kolonu MESRU kilmakla kalmaz,
+       * satirin GERI KALANINI da o `kind`e uygun hale getirmek zorundadir --
+       * tarama satiri `LIMIT 1` ile secer ve hangi turden oldugu SIRA
+       * GARANTISI OLMAYAN bir seydir. Eksik birakilan tek bir alan, testi
+       * "desen calismiyor" diye degil "baska bir kisit dogru calisti" diye
+       * kirmizi yapardi.
+       *
+       * `emitter_addr` BU LISTEDE YOKTUR ve olmamali: her turde NOT NULL'dur,
+       * yani hangi satir kopyalanirsa kopyalansin mesrudur.
+       */
+      'buyback_events.caller_addr': {
+        kind: 'released',
+        creator_amount_tok: '0',
+        protocol_amount_tok: '0',
+        quote_wei: null,
+        pending_wei: null,
+        token_amount_tok: null,
+        total_locked_tok: null,
+        venue_addr: null,
+        reason: null,
+        vesting_start_at: null,
+        vesting_end_at: null,
+      },
+      'buyback_events.venue_addr': {
+        kind: 'accrued',
+        quote_wei: '0',
+        pending_wei: '0',
+        token_amount_tok: null,
+        total_locked_tok: null,
+        creator_amount_tok: null,
+        protocol_amount_tok: null,
+        caller_addr: null,
+        reason: null,
+        vesting_start_at: null,
+        vesting_end_at: null,
       },
     }
 
@@ -229,7 +290,9 @@ describe('kisitlar gercekten bagli mi', () => {
       client.release()
     }
     // Tarama gercekten butun aileyi gezdi.
-    expect(checked).toHaveLength(19)
+    // 19 -> 22: `buyback_events`in uc adres sutunu (`emitter_addr`,
+    // `venue_addr`, `caller_addr`), migration 016.
+    expect(checked).toHaveLength(22)
   })
 
   it('adres tasiyan HER sutun ya desenle ya yabanci anahtarla korunur', async () => {
@@ -318,6 +381,11 @@ describe('kisitlar gercekten bagli mi', () => {
     // Aday kumesinin kendisi de sabitlenir: sessizce KUCULMESI, "hepsi
     // korunuyor" ifadesini bosaltmanin en kolay yolu olurdu.
     expect(kinds.map((k) => k.name)).toEqual([
+      'buyback_events.caller_addr',
+      'buyback_events.emitter_addr',
+      'buyback_events.token',
+      'buyback_events.venue_addr',
+      'buyback_state.token',
       'chat_messages.author_addr',
       'chat_messages.token',
       'creator_history.creator',

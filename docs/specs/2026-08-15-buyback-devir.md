@@ -4,21 +4,24 @@
 > kalindigini ve BIR SONRAKI KOMUTUN NE OLDUGUNU tahmine yer birakmadan
 > soylemek.
 >
-> **15 Agustos, ikinci oturum sonu.** Onceki surumun tarif ettigi tikanma
-> COZULDU ve teshisi YANLISTI; §2 neyin yanlis oldugunu ve dogrusunu anlatir.
+> **16 Agustos, ucuncu oturum sonu.** §9'un birakti isi -- KALICILIK -- indi;
+> bolumun basligi artik "BITEN". Geriye TEK is kaldi: havuz merciinin canli
+> yayini (§14), ve o bir zamanlama meselesi.
 
 ## 1. Durum
 
 | dal | test | ne ise yarar |
 |---|---|---|
-| `buyback-v2` | **822/822 forge**, 302 shared, 1294 web, 355 keeper, 150 indexer | butun buyback isi burada |
+| `buyback-v2` | **822/822 forge**, 308 shared, 1294 web, 355 keeper, **404 db**, **318 indexer** | butun buyback isi burada |
 | `phase-1d-deploy` | uretim dali | canli VPS bunu kosuyor; bu oturumda DOKUNULMADI |
 
-Kapilar: `make frozen-hash` YESIL, `make deps-pin` YESIL, `pnpm run lint` temiz.
+Kapilar: `make frozen-hash` YESIL, `make deps-pin` YESIL, `pnpm run lint` temiz,
+`tsc --project web` temiz.
 
-**Bu makinede kosamayan:** `packages/db` (19 suite) ve `indexer`in 10 db
-suite'i `DATABASE_URL` ister; ne Postgres ne docker var. CI onlari bir Postgres
-servisiyle kosar (`.github/workflows/node.yml`).
+**Bu makinede kosamayan:** `packages/db` (19 suite) ve `indexer`in db suite'leri
+`DATABASE_URL` ister; ne Postgres ne docker var. Bu oturumda SUNUCUDA kosturuldu
+(§9'un altindaki not yolu tarif ediyor); CI de bir Postgres servisiyle kosar
+(`.github/workflows/node.yml`).
 
 ## 2. COZULEN TIKANMA — ve teshisin neden yanlis oldugu
 
@@ -227,27 +230,76 @@ edilemez ve test edilmeyen onlem yoktur).
    YAZILI bir sure kosulu birakildi (creator vesting talebi ekleyen commit
    onlari `FAILURE_TABLE`a tasimak zorunda).
 
-### KALAN: kalicilik
+### BITEN: kalicilik (16 Agustos) -- UCU DE TEK COMMIT'TE
 
-`verify.ts::LEDGER_OF` bes olayi `null` tasiyor ve `apply/index.ts` `return 0`
-diyor. **Bu bilincli bir ara durumdur ve ikisi de yorumla isaretlendi**, ama
-sonucu somut: olaylar cozuluyor, veritabanina YAZILMIYOR, dolayisiyla site
-buyback rakamlarini HENUZ gosteremez.
+`packages/db/migrations/016_buyback.sql` (`buyback_events` defteri + token
+basina `buyback_state` toplami), `indexer/src/apply/buyback.ts`, ve
+`verify.ts::LEDGER_OF`taki bes `null` -> `'buyback_events'`.
 
-Yapilacak, tek commit'te:
-* `packages/db/migrations/NNN_buyback.sql` -- `buyback_events` defteri +
-  token basina `buyback_state` toplami (`pendingQuote`, kumulatif harcanan/
-  alinan, kilitli, dagitilan).
-* `indexer/src/apply/buyback.ts` -- bes olayin uygulanmasi, idempotent.
-* `verify.ts::LEDGER_OF`taki bes `null` -> `'buyback_events'`.
-  **UCU BIRLIKTE GITMEZSE** kapsam kontrolu buyback satirlarini aramaz ve
-  eksik veri sessiz kalir.
+**Kapinin disleri MUTASYONLA olculdu, IDDIA EDILMEDI:** `LEDGER_OF`taki
+`buybackLocked` tekrar `null` yapilinca `apply-buyback` suite'inde TAM OLARAK
+BIR test duser -- kapsam kontrolununki. O satirin bir susleme degil bir kapi
+oldugu boylece calistirilarak gosterildi.
+
+#### Olculdu ve TASARIMI DEGISTIRDI: fixture bir ISLEM DILIMIDIR
+
+Ilk sema `CHECK (pending_quote_wei = accrued_total_wei - spent_total_wei -
+returned_total_wei)` tasiyordu -- `fee_balances.claimable_is_the_difference`in
+birebir karsiligi. **Kaldirildi, cunku MESRU bir log dilimini reddediyordu.**
+`contracts/fixtures/buyback.json` TEK BIR islemin loglaridir: oradaki tahakkuk
+94.672.977.389.008 wei, ayni islemdeki supurmenin harcadigi
+63.904.259.737.580.596 wei. Aradaki fark daha onceki islemlerde birikti ve o
+loglar dosyada YOK.
+
+Yerine gecen kural daha dar ve bu yuzden daha guclu:
+
+* `pending_quote_wei` her tahakkukta ZINCIRIN MUTLAK `pending` degerine
+  KURULUR (toplanmaz), iki tahakkuk arasinda delta ile ilerler, ve
+  `GREATEST(0, ...)` ile kirpilir. Dusen bir olay bu yuzden en fazla bir
+  tahakkuk boyu yasar.
+* Kirpma URETIMDE BAGLAYAMAZ (`deployment.start_block` fabrikanin dagitim
+  blogudur, yani indexer hazine var olmadan once baslar) ve BAGLADIGI hal ayri
+  bir testle olculur -- gizli bir davranis degil.
+* Dusen olayin KENDISINI yakalayan sey bu tablo degil, kapsam kontroludur.
+
+#### `reason`da desen kisiti YOKTUR -- ve bu bilincli
+
+`rejected_launches.reason` BIZIM yazdigimiz bir etikettir; `buyback_events.reason`
+ZINCIRDEN gelir (`below-threshold-or-unsafe` -- tire icerir). Zincirin mesru
+olarak yayabilecegi bir degeri reddeden bir CHECK, ingest islemini geri alir ve
+indexer'i o blokta SONSUZA KADAR kilitler; `002_launches.sql` ayni gerekceyi
+uzunluk kisitlari icin yaziyor.
+
+#### Semada bir tablo acmanin gercek maliyeti -- ALTI KAPI
+
+Yeni tablo, elle yazilmis alti listeyi birden hareket ettirdi. Hepsi
+GUNCELLENDI ve hicbiri gevsetilmedi:
+
+| kapi | ne degisti |
+|---|---|
+| `migrate.test.ts::EXPECTED` | `016_buyback.sql`; ve "sona ekleme" probu `016_` -> `017_` (`016_appended` artik ONE siralanirdi) |
+| `constraints.test.ts::ALL_TABLES` | iki tablo; ve bosluk muhafizi icin BES tohum satiri |
+| `constraints.test.ts` adres taramasi | 19 -> 22 sutun, ve `caller_addr`/`venue_addr` icin YOLDAS alanlar |
+| `naming.test.ts::EXPECTED_INVENTORY` | otuz bir sutun |
+| `naming.test.ts` numeric sayisi | 43 -> 57 |
+| `pool.test.ts::snapshot` | iki tablo |
+
+> `caller_addr`/`venue_addr` YOLDAS ALANLARI istedi ve sebep ogreticidir:
+> tarama bir satiri kopyalayip TEK bir kolonu bozar, ama `kind` bes degerden
+> birini alir ve her deger BASKA bir kolon kumesini zorunlu/yasak yapar. Yoldas
+> kumesi olmadan pozitif kontrol "desen calismiyor" diye degil "BASKA bir kisit
+> dogru calisti" diye kirmizi olurdu.
 
 > **BU ADIM POSTGRES ISTER.** Sunucuda calisiyor ve `/etc/arcpad/db-test.env`
-> icinde ayrilmis bir test veritabani var (`arcpad_test`). SSH TUNELI DENENDI
-> VE PRATIK DEGIL: 404 db testi on dakikada bitmedi, cunku her sorgu ag
-> gecikmesi yiyor. Dogru yol testleri SUNUCUDA kosturmaktir (calisma agacini
-> oraya senkronlayip) ya da CI'a birakmaktir.
+> icinde ayrilmis bir test veritabani var (`arcpad_test`). SSH TUNELI PRATIK
+> DEGIL (404 db testi on dakikada bitmedi). Kullanilan yol: `/opt/arcpad`
+> (URETIM checkout'u) KAYNAK olarak klonlanip `/root/arcpad-buyback`
+> worktree'si kuruldu, degisen dosyalar `scp` ile tasindi, testler SUNUCUDA
+> kosturuldu. Uretim checkout'una DOKUNULMADI.
+>
+> **TEK VERITABANI, TEK KOSU.** Iki tam kosuyu ust uste bindirmek
+> `migrate.test.ts`te 32 sahte dusus uretti: onceki kosunun indexer fazi ayni
+> semayi dusuruyordu. Ariza kodda degil olcumdeydi.
 
 ## 10. ACIK KARAR -- OLCULDU, KAPATILMADI
 

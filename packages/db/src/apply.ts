@@ -631,6 +631,146 @@ export async function applyFeeEvent(db: Queryable, e: FeeLedgerEvent): Promise<n
 }
 
 /**
+ * BUYBACK DEFTERI -- `buyback_events` + `buyback_state`.
+ *
+ * `applyFeeEvent` ILE AYNI IKI IFADELI KALIP, ayni zorunlulukla: artimli
+ * guncelleme defter satirinin GERCEKTEN eklenmis olmasina baglidir, ve
+ * `pending_quote_wei` bir CHECK tasidigi icin onerilen satirda
+ * degerlendirilemez -- yani `ON CONFLICT DO UPDATE` icinde hesaplanamaz.
+ * Ikisinin AYNI ISLEMDE cagrilmasi bu yuzden ZORUNLUDUR (`applyRange`).
+ *
+ * BES TURUN TEK KAYDA SIGMASI icin alanlarin cogu `null` olabilir; hangisinin
+ * hangi turde dolu OLMAK ZORUNDA oldugunu bu tip DEGIL, semadaki `*_iff_*`
+ * kisitlari soyler. Tipi dar bir birlesim yapmak (bes ayri arayuz) cagiran
+ * tarafi guzellestirir ama SQL yine on dort parametre alir; kisit semada
+ * durdugu surece iki bicim de ayni seyi garanti eder, ve bu bicim
+ * `FeeLedgerEvent`in (`from: Address | null`) buyutulmus halidir.
+ */
+export interface BuybackLedgerEvent extends LogRef {
+  kind: 'buyback'
+  buybackKind: 'accrued' | 'executed' | 'skipped' | 'locked' | 'released'
+  token: Address
+  /** Olayi yayan kontrat: hazine ya da kasa. */
+  emitter: Address
+  /** `accrued`: tahakkuku yapan merci (egri ya da hook). Digerlerinde null. */
+  venue: Address | null
+  /** `released`: `release()`i cagiran. Digerlerinde null. */
+  caller: Address | null
+  /** `skipped`: zincirin yaydigi sebep dizesi. Digerlerinde null. */
+  reason: string | null
+  /** `accrued`/`executed`/`skipped` tutari, native wei. */
+  quoteWei: bigint | null
+  /** `accrued`: tahakkuk SONRASI bekleyen -- zincirin MUTLAK degeri. */
+  pendingWei: bigint | null
+  /** `executed`: alinan token. `locked`: kilitlenen token. */
+  tokenAmountTok: bigint | null
+  /** `locked`: kasadaki kumulatif toplam (zincirin mutlak sayisi). */
+  totalLockedTok: bigint | null
+  creatorAmountTok: bigint | null
+  protocolAmountTok: bigint | null
+  vestingStart: Date | null
+  vestingEnd: Date | null
+}
+
+export async function applyBuybackEvent(db: Queryable, e: BuybackLedgerEvent): Promise<number> {
+  const n = await affected(
+    db,
+    `WITH ins AS (
+       INSERT INTO buyback_events
+         (event_seq, block_number, log_index, tx_hash, block_time, kind, token,
+          emitter_addr, venue_addr, caller_addr, reason,
+          quote_wei, pending_wei, token_amount_tok, total_locked_tok,
+          creator_amount_tok, protocol_amount_tok, vesting_start_at, vesting_end_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+       ON CONFLICT (event_seq) DO NOTHING
+       RETURNING token, event_seq
+     ),
+     seed AS (
+       INSERT INTO buyback_state (token, last_seq) SELECT token, event_seq FROM ins
+       ON CONFLICT (token) DO NOTHING
+       RETURNING 1
+     )
+     SELECT count(*)::int AS n FROM ins`,
+    [
+      e.eventSeq.toString(),
+      e.blockNumber.toString(),
+      e.logIndex,
+      lowerHash32(e.txHash),
+      e.blockTime,
+      e.buybackKind,
+      lower(e.token),
+      lower(e.emitter),
+      e.venue === null ? null : lower(e.venue),
+      e.caller === null ? null : lower(e.caller),
+      e.reason === null ? null : pgSafeText(e.reason),
+      e.quoteWei?.toString() ?? null,
+      e.pendingWei?.toString() ?? null,
+      e.tokenAmountTok?.toString() ?? null,
+      e.totalLockedTok?.toString() ?? null,
+      e.creatorAmountTok?.toString() ?? null,
+      e.protocolAmountTok?.toString() ?? null,
+      e.vestingStart,
+      e.vestingEnd,
+    ],
+  )
+  if (n === 0) return 0
+
+  // `pending_quote_wei` UC FARKLI SEKILDE HAREKET EDER, ve ucu de zincirin
+  // soyledigi seyi tekrar eder:
+  //   accrued   MUTLAK atama -- zincir tahakkuk sonrasi toplami yayar, yani
+  //             burada toplamak hem gereksiz hem de sapmaya acik olurdu.
+  //   executed  butceden dusulur (harcandi).
+  //   skipped   butceden dusulur (creator'a geri katlandi).
+  // `GREATEST(0, ...)` yalnizca bir log DILIMINDE baglar; gerekce migration
+  // 016'da, ve `apply-buyback` testi baglamasini OLCER.
+  await db.query(
+    `UPDATE buyback_state SET
+       pending_quote_wei = CASE
+         -- GERIDEN GELEN BIR TAHAKKUK MUTLAK DEGERI EZMEZ.
+         --
+         -- Kumulatif sutunlar sirasizdir (toplama degismelidir), ama bu sutun
+         -- bir ATAMADIR: eski bir tahakkuk yeni bir tahakkuktan SONRA
+         -- uygulanirsa butceyi GERIYE alirdi. Uretimde ulasilamaz -- imlec
+         -- yalnizca ILERI gider, bir bosluk \`assertContinuous\` ile durur, ve
+         -- zaten uygulanmis bir olay defter satirina takilip bu UPDATE'e hic
+         -- gelmez -- ama bu satir, yazicinin dogrulugunu CAGIRANIN bir
+         -- ozelligine bagli olmaktan cikarir.
+         WHEN $2 = 'accrued' AND $11::bigint >= last_seq THEN $3::numeric
+         WHEN $2 = 'accrued'                 THEN pending_quote_wei
+         WHEN $2 IN ('executed','skipped')   THEN GREATEST(0, pending_quote_wei - $4::numeric)
+         ELSE pending_quote_wei END,
+       accrued_total_wei  = accrued_total_wei  + CASE WHEN $2 = 'accrued'  THEN $4::numeric ELSE 0 END,
+       spent_total_wei    = spent_total_wei    + CASE WHEN $2 = 'executed' THEN $4::numeric ELSE 0 END,
+       returned_total_wei = returned_total_wei + CASE WHEN $2 = 'skipped'  THEN $4::numeric ELSE 0 END,
+       bought_total_tok   = bought_total_tok   + CASE WHEN $2 = 'executed' THEN $5::numeric ELSE 0 END,
+       -- ATANIR, TOPLANMAZ: zincirin mutlak \`totalLocked\`i.
+       locked_total_tok   = CASE WHEN $2 = 'locked' THEN $6::numeric ELSE locked_total_tok END,
+       released_creator_tok  = released_creator_tok
+         + CASE WHEN $2 = 'released' THEN $7::numeric ELSE 0 END,
+       released_protocol_tok = released_protocol_tok
+         + CASE WHEN $2 = 'released' THEN $8::numeric ELSE 0 END,
+       vesting_start_at = CASE WHEN $2 = 'locked' THEN $9::timestamptz  ELSE vesting_start_at END,
+       vesting_end_at   = CASE WHEN $2 = 'locked' THEN $10::timestamptz ELSE vesting_end_at   END,
+       last_seq = GREATEST(last_seq, $11::bigint)
+     WHERE token = $1`,
+    [
+      lower(e.token),
+      e.buybackKind,
+      e.pendingWei?.toString() ?? null,
+      e.quoteWei?.toString() ?? null,
+      e.tokenAmountTok?.toString() ?? null,
+      e.totalLockedTok?.toString() ?? null,
+      e.creatorAmountTok?.toString() ?? null,
+      e.protocolAmountTok?.toString() ?? null,
+      e.vestingStart,
+      e.vestingEnd,
+      e.eventSeq.toString(),
+    ],
+  )
+  return n
+}
+
+/**
  * Imleci ILERI dogru tasir.
  *
  * `WHERE EXCLUDED.last_block > sync_state.last_block` iki isi birden yapar:

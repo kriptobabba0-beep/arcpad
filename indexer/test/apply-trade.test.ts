@@ -41,6 +41,9 @@ describe('apply/trade', () => {
       graduated: 0,
       transfers: 5,
       fees: 8,
+      // BUYBACK YOK VE OLMAMALI: canli smoke tokeninde ozellik acilmadi
+      // (varsayilan KAPALI, ve yalnizca creator acabilir).
+      buyback: 0,
       total: 19,
     })
   })
@@ -135,6 +138,7 @@ describe('apply/trade', () => {
       graduated: 0,
       transfers: 0,
       fees: 0,
+      buyback: 0,
       total: 0,
     })
     // Sayaclar "hicbir satir yazilmadi" der. Dokum "hicbir DEGER degismedi"

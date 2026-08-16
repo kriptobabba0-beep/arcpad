@@ -117,7 +117,12 @@ async function main(): Promise<void> {
         // ile birlestirilmis bir sayac, ilk havuz isleminin geldigi ani da hic
         // gelmedigi gercegini de operatorun logundan silerdi.
         `poolSwaps=${result.counts.poolSwaps} ` +
-        `transfers=${result.counts.transfers} fees=${result.counts.fees}`,
+        `transfers=${result.counts.transfers} fees=${result.counts.fees} ` +
+        // BUYBACK DA AYRI BASILIR, ayni gerekceyle: ozellik varsayilan olarak
+        // KAPALIDIR ve yalnizca creator acabilir, yani sifir MESRU bir
+        // sonuctur -- ve tam da bu yuzden "hic gelmedi" ile "geldi ama
+        // sayilmadi" ayirt edilebilir olmak zorundadir.
+        `buyback=${result.counts.buyback}`,
     )
   }
 }

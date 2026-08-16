@@ -862,6 +862,16 @@ const PERMANENT = new Set([
   'UnknownPool',
   'DegeneratePoolSwap',
   'PoolPriceUnrepresentable',
+  // `UnknownCurve`in buyback tarafindaki ikizi: bir buyback olayi, `launches`ta
+  // kaydi olmayan bir token icin geldi. Yeniden denemek ayni cevabi verir --
+  // eksik olan bir RPC yaniti degil, bir launch satiri.
+  //
+  // KALICI OLMASININ ASIL SEBEBI DEVAM ETMENIN MALIYETI: bu olayi atlayip
+  // ilerlemek, o tokenin buyback muhasebesini KALICI olarak eksik birakirdi ve
+  // hicbir sey kirmizi olmazdi -- `buyback_state` yalnizca gordugu olaylardan
+  // toplanir. Yabanci anahtar zaten bir satir sonra ayni islemi geri alir; bu
+  // ad, geri almanin SEBEBINI soyler.
+  'UnknownBuybackToken',
 ])
 
 /**

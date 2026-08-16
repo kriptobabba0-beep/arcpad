@@ -94,6 +94,8 @@ describe('apply/graduated', () => {
       graduated: 1,
       transfers: 0,
       fees: 0,
+      // BUYBACK YOK VE OLMAMALI: bu fixture'in tokeninde ozellik acilmadi.
+      buyback: 0,
       total: 1,
     })
 

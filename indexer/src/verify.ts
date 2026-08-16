@@ -62,20 +62,6 @@ export class LedgerGap extends Error {
   }
 }
 
-/*
- * BUYBACK OLAYLARI COZULUR AMA HENUZ DEFTERE YAZILMAZ -- VE BU BILINCLI BIR
- * ARA DURUMDUR, BIR UNUTMA DEGIL.
- *
- * Cozme katmani (imzalar, tipler, `DECODERS`) tamamlandi ve ABI'ye karsi
- * dogrulaniyor; KALICILIK katmani (migration + `apply/buyback.ts`) ayri bir
- * adimdir ve GERCEK bir Postgres olmadan dogrulanamaz -- bu depoda veritabani
- * testleri bilerek ATLANMAZ, kosulamiyorsa kirmizi olur.
- *
- * `null` YAZMANIN ANLAMI BURADA "defteri yok" DEGIL, "defteri HENUZ yok"dur.
- * Ikisi ayni satirla ifade edildigi icin asagidaki not zorunludur: bir sonraki
- * oturum `buyback_events` tablosunu ekledigi anda bu bes satir tablo adiyla
- * degismelidir, yoksa kapsam kontrolu buyback satirlarini SESSIZCE aramaz.
- */
 const LEDGER_OF: Record<DecodedEvent['kind'], string | null> = {
   launched: 'launches',
   trade: 'trades',
@@ -103,13 +89,18 @@ const LEDGER_OF: Record<DecodedEvent['kind'], string | null> = {
   // `event_seq`leri de tutmazdi.
   poolInitialize: null,
   poolFee: null,
-  // TODO(buyback-persistence): `buyback_events` tablosu eklenince bes satir da
-  // o tablo adini tasimali. Bkz. ustteki not.
-  buybackAccrued: null,
-  buybackExecuted: null,
-  buybackSkipped: null,
-  buybackLocked: null,
-  vestingReleased: null,
+  // BUYBACK NESLI -- BESI DE AYNI DEFTERE, ve HEPSI kapsam kontrolune girer.
+  //
+  // Bes olayin tek tabloda toplanmasi, `poolSwap`in `trades`e girmesiyle ayni
+  // sinifta bir karardir: tur `kind` kolonunda yazilidir, defter tektir. Bes
+  // satirin da burada olmasi SART -- `BuybackSkipped` olmadan "para nerede"
+  // sorusu cevapsiz kalir, ve tam da o olay dusen olay olsaydi fark `KAYIP`
+  // gibi okunurdu.
+  buybackAccrued: 'buyback_events',
+  buybackExecuted: 'buyback_events',
+  buybackSkipped: 'buyback_events',
+  buybackLocked: 'buyback_events',
+  vestingReleased: 'buyback_events',
 }
 
 /**
@@ -121,6 +112,7 @@ const SEQ_COLUMN: Record<string, string> = {
   trades: 'event_seq',
   token_transfers: 'event_seq',
   fee_events: 'event_seq',
+  buyback_events: 'event_seq',
 }
 
 /**
