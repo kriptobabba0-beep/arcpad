@@ -184,6 +184,7 @@ describe('apply/graduated', () => {
         tokens: new Set([LIVE.token]),
         curveToToken: new Map(),
         pools: new Map(),
+        buyback: null,
       },
       GRAD_BLOCK,
       GRAD_BLOCK,

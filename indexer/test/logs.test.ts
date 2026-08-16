@@ -146,6 +146,7 @@ const EMPTY_WATCH: WatchSet = {
   tokens: new Set(),
   curveToToken: new Map(),
   pools: new Map(),
+  buyback: null,
 }
 
 const LAUNCH_BLOCK = 54_661_437n
@@ -170,9 +171,13 @@ describe('kapsam', () => {
   // (a) Handler kumesi.
   it('handler kumesi ile dinlenen olay kumesi iki yonlu ayni', () => {
     expect(Object.keys(DECODERS).sort()).toEqual([
-      // Buyback nesli: bes olay, iki kontrat. Ucu hazineden (tahakkuk,
-      // supurme, geri katlama), ikisi kasadan (kilit, dagitim).
+      // Buyback nesli: ALTI olay, UC kontrat. Ucu hazineden (tahakkuk,
+      // supurme, geri katlama), ikisi kasadan (kilit, dagitim), ve biri
+      // FABRIKADAN -- politika. Sonuncusu para degil KARAR tasir ve tam da bu
+      // yuzden gerekli: ozelligi acmis ama henuz islem gormemis bir token
+      // oteki besten hicbirini yaymaz.
       'buybackAccrued',
+      'buybackEnabledUpdated',
       'buybackExecuted',
       'buybackLocked',
       'buybackSkipped',
@@ -230,6 +235,10 @@ describe('kapsam', () => {
       // SIRA ASCII'YE GORE: '_' (0x5F) 'b'den (0x62) kucuktur, yani
       // `buy_exact_*` `buyback`ten ONCE gelir.
       'buyback',
+      // POLITIKA UCUNCU SENARYO: `launchWithBuyback` ACAR, `setBuybackEnabled`
+      // KAPATIR. Ayni dosyada IKI log var ve ikisi FARKLI `enabled` tasir --
+      // `bool`u hic okumayan bir cozucu tek yonlu bir fixture'dan gecerdi.
+      'buyback-policy',
       'buyback-skipped',
       'claim',
       'forged',
@@ -281,6 +290,7 @@ describe('iki fazli cekis', () => {
       tokens: new Set([FIX.token]),
       curveToToken: new Map(),
       pools: new Map(),
+      buyback: null,
     }
     const events = await fetchRange(node, watch, BUY_BLOCK, BUY_BLOCK)
     expect(kinds(events)).toEqual(['trade', 'transfer', 'deposited', 'deposited'])
@@ -320,6 +330,7 @@ describe('EIP-7708 duvari', () => {
     tokens: new Set(),
     curveToToken: new Map(),
     pools: new Map(),
+    buyback: null,
   }
 
   it('adres filtresi uygulanan CANLI aralikta hicbir 7708 logu gelmez', async () => {
@@ -570,6 +581,7 @@ describe('RPC hata taksonomisi', () => {
     tokens: new Set(),
     curveToToken: new Map(),
     pools: new Map(),
+    buyback: null,
   }
 
   // Ucu de ayri ayri: tek bir kodu yakalayan bir retry, obur ikisinde imleci
@@ -687,6 +699,7 @@ describe('yanit uzerindeki sert iddialar', () => {
         tokens: new Set(),
         curveToToken: new Map(),
         pools: new Map(),
+        buyback: null,
       },
       BigInt(logs[0]!.blockNumber),
       BigInt(logs[logs.length - 1]!.blockNumber),
@@ -849,6 +862,7 @@ describe('kurulmus Graduated', () => {
       tokens: new Set([LIVE.token]),
       curveToToken: new Map(),
       pools: new Map(),
+      buyback: null,
     }
     const events = await fetchRange(node, watch, BLOCK, BLOCK)
     expect(events.map((e) => e.kind)).toEqual(['graduated'])
@@ -883,6 +897,7 @@ describe('kurulmus Graduated', () => {
         tokens: new Set([LIVE.token]),
         curveToToken: new Map(),
         pools: new Map(),
+        buyback: null,
       },
       BLOCK,
       BLOCK,
@@ -916,6 +931,7 @@ describe('kurulmus Graduated', () => {
         tokens: new Set([LIVE.token]),
         curveToToken: new Map(),
         pools: new Map(),
+        buyback: null,
       },
       BLOCK,
       BLOCK,
@@ -943,6 +959,7 @@ describe('cozme (canli Arc degerleri)', () => {
         tokens: new Set(),
         curveToToken: new Map(),
         pools: new Map(),
+        buyback: null,
       },
       first,
       last,

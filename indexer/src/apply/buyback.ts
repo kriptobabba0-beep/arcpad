@@ -5,12 +5,13 @@ import type {
   BuybackAccruedEvent,
   BuybackExecutedEvent,
   BuybackLockedEvent,
+  BuybackEnabledUpdatedEvent,
   BuybackSkippedEvent,
   VestingReleasedEvent,
 } from '../logs'
 
 /**
- * BUYBACK UYGULAYICISI -- BES OLAY, IKI KONTRAT, TEK DEFTER.
+ * BUYBACK UYGULAYICISI -- ALTI OLAY, UC KONTRAT, TEK DEFTER.
  *
  * Bu dosyanin isi `apply/fees.ts`inkiyle ayni sinifta: cozulmus olayi
  * `@arcpad/db`nin defter yazicisina EVIRMEK. Ture ozgu bilgi -- hangi alan
@@ -75,6 +76,7 @@ const EMPTY: Specific = {
   venue: null,
   caller: null,
   reason: null,
+  enabled: null,
   quoteWei: null,
   pendingWei: null,
   tokenAmountTok: null,
@@ -110,6 +112,25 @@ async function write(
     emitter: ref.emitter,
     ...specific,
   })
+}
+
+/**
+ * `BuybackEnabledUpdated(token, by, enabled)` -- POLITIKA.
+ *
+ * Yayincisi FABRIKADIR, hazine degil, ve bu tasiyicidir: olay hazine hic
+ * yazilmamisken bile gelebilir (fabrika o durumda buyback'siz calisir ama
+ * creator'in tercihi kaydedilir). Yani bu tek dal, `watch.buyback === null`
+ * iken de veri uretir.
+ */
+export async function applyBuybackEnabledUpdatedEvent(
+  db: Queryable,
+  event: BuybackEnabledUpdatedEvent,
+): Promise<number> {
+  return write(
+    db,
+    { ...event, emitter: event.factory },
+    { ...EMPTY, buybackKind: 'policy', caller: event.by, enabled: event.enabled },
+  )
 }
 
 /**

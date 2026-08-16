@@ -5,6 +5,7 @@ import { resolveMetadata } from '@/lib/metadata'
 import {
   CHAT_PAGE_SIZE,
   chainCandles,
+  readBuyback,
   readCandles,
   readChat,
   readHolderPage,
@@ -41,6 +42,7 @@ import { IdentityBadge, TokenIdentity } from '@/components/token/TokenIdentity'
 import { TokenInfo } from '@/components/token/TokenInfo'
 import { TokenStatStrip } from '@/components/token/TokenStatStrip'
 import { VolumePanel } from '@/components/token/VolumePanel'
+import { BuybackPanel } from '@/components/token/BuybackPanel'
 import { TOTAL_SUPPLY_TOK } from '@/components/create/facts'
 import { TradeSurface } from '@/components/token/TradeSurface'
 import { ChatPanel } from '@/components/token/ChatPanel'
@@ -169,7 +171,7 @@ async function IndexedToken({
   const pageParam = Number(one(search['p']) ?? '1')
   const page = Number.isInteger(pageParam) && pageParam >= 1 ? Math.min(pageParam, 10_000) : 1
 
-  const [metadata, candles, split24h, splitWindow, tradePage, holderPage, identified] =
+  const [metadata, candles, split24h, splitWindow, tradePage, holderPage, identified, buyback] =
     await Promise.all([
       resolveMetadata(overview.uri),
       readCandles(asHex(overview.token), { bucketSeconds: timeframeSeconds(tf), limit: 120 }),
@@ -196,6 +198,12 @@ async function IndexedToken({
           return null
         },
       ),
+      /*
+       * BUYBACK, DIGERLERIYLE AYNI OKUMADA. `notFound` MESRU ve SIK bir
+       * cevaptir -- ozellik varsayilan olarak kapalidir, yani tokenlerin
+       * cogunda hic buyback olayi yoktur ve panel HIC cizilmez.
+       */
+      readBuyback(asHex(overview.token)),
     ])
 
   const lifecycle = resolveLifecycle({
@@ -216,6 +224,7 @@ async function IndexedToken({
   const daySplit = valueOf(split24h) ?? EMPTY_SPLIT
   const trades = valueOf(tradePage)
   const holders = valueOf(holderPage)
+  const buybackData = valueOf(buyback)
 
   /*
    * DEGISIM, MUMLARIN EN ESKISINDEN BUGUNE. YETERLI GECMIS YOKSA `null` --
@@ -317,6 +326,18 @@ async function IndexedToken({
           />
 
           <VolumePanel split={windowSplit} timeframe={vf} params={sharedParams} />
+
+          {/*
+            PANEL YALNIZCA BU TOKENDE BUYBACK BIR OLGU OLDUYSA CIZILIR.
+            `valueOf` `notFound` ve `unavailable` icin `undefined` doner; ikisi
+            de "cizilecek bir sey yok" demektir AMA AYNI SEBEPLE DEGIL, ve bu
+            ayrim burada bir sey degistirmez: veritabani cevap vermiyorsa
+            sayfanin ustundeki `StaleNotice` zaten konusuyor. Buraya ayri bir
+            uyari koymak, ayni arizayi iki kez soylemek olurdu.
+          */}
+          {buybackData === undefined ? null : (
+            <BuybackPanel buyback={buybackData} symbol={overview.symbol} />
+          )}
 
           <ActivityTabs
             tab={tab}

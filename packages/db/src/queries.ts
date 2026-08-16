@@ -494,6 +494,17 @@ export interface TokenOverview {
    */
   graduated: boolean
   graduatedSeq: bigint | null
+  /**
+   * CREATOR TAAHHUDU, LISTE SEVIYESINDE.
+   *
+   * `buyback_state` YOKSA `false` -- yani "hic olmadi" ile "kapatildi" burada
+   * AYNI gorunur, ve bu bilinclidir: ayrim token sayfasina aittir
+   * (`getTokenBuyback` biri icin `null`, oteki icin `enabled: false` doner).
+   * Bir kart rozetinin tasiyabilecegi nuans "acik mi"dir.
+   */
+  buybackEnabled: boolean
+  /** Kasadaki kumulatif kilit; buyback yoksa `0`. */
+  buybackLockedTok: bigint
   /** `Graduated.to`. Hedef yeniden isaretlenebilir, bu yuzden ANIN kaydi. */
   graduationTargetAddr: string | null
   /** Hedefe GERCEKTEN odenen token; `poolSeedSupplyTok`tan TURETILMEZ. */
@@ -535,6 +546,8 @@ interface OverviewRow {
   pool_seed_supply_tok: string | null
   graduated: boolean
   graduated_seq: string | null
+  buyback_enabled: boolean
+  buyback_locked_tok: string
   graduation_target_addr: string | null
   graduation_base_tok: string | null
   graduation_quote_wei: string | null
@@ -576,6 +589,8 @@ function toOverview(row: OverviewRow): TokenOverview {
     poolSeedSupplyTok: big(row.pool_seed_supply_tok),
     graduated: row.graduated,
     graduatedSeq: big(row.graduated_seq),
+    buybackEnabled: row.buyback_enabled,
+    buybackLockedTok: BigInt(row.buyback_locked_tok),
     graduationTargetAddr: row.graduation_target_addr,
     graduationBaseTok: big(row.graduation_base_tok),
     graduationQuoteWei: big(row.graduation_quote_wei),
@@ -2028,6 +2043,189 @@ export async function getVolumeSplit(
     sellers: Number(row.sellers),
     buyVolumeWei: BigInt(row.buy_volume_wei),
     sellVolumeWei: BigInt(row.sell_volume_wei),
+  }
+}
+
+/**
+ * ===========================================================================
+ * BUYBACK OKUMA MODELI
+ * ===========================================================================
+ *
+ * NE DONDURULMEDIGI, DONDURULENDEN DAHA ONEMLI: "su anda cekilebilir tutar"
+ * BU KATMANDAN CIKAMAZ ve cikmamali.
+ *
+ * `BuybackVestingVault` vesting'i CHECKPOINT'LI hesaplar:
+ *
+ *     yeni = vestsizKalan * gecenSure / (bitis - sonGuncelleme)
+ *
+ * `lastUpdate` her kilitte ve her dagitimda YENIDEN yazilir, yani hak edilmis
+ * tutar YOL BAGIMLIDIR: ayni `totalLocked`, ayni pencere ve ayni "simdi" ile
+ * iki farkli kilit gecmisi FARKLI sonuc verir. Olaylardan yeniden kurmak,
+ * her checkpoint'i de saklamayi gerektirirdi.
+ *
+ * Dogrusal bir yaklasim yazmak kolaydi ve tek kilitli tokenlerde DOGRU cevabi
+ * verirdi -- bu yuzden tehlikeli: ekranda dogru gorunen bir sayi, ikinci
+ * kilitten sonra sessizce yanlislasirdi. Arayuz canli bir rakam isterse onu
+ * `vault.releasable(token)`dan OKUMALI, buradan TURETMEMELIDIR.
+ *
+ * Buradan cikan her sey bir OLGUDUR: zincirin yaydigi tutarlar ve zamanlar.
+ */
+export interface BuybackEventRow {
+  eventSeq: bigint
+  blockTime: Date
+  txHash: string
+  kind: 'policy' | 'accrued' | 'executed' | 'skipped' | 'locked' | 'released'
+  venueAddr: string | null
+  /** `released`te cagiran, `policy`de degisikligi yapan. */
+  callerAddr: string | null
+  reason: string | null
+  enabled: boolean | null
+  quoteWei: bigint | null
+  pendingWei: bigint | null
+  tokenAmountTok: bigint | null
+  totalLockedTok: bigint | null
+  creatorAmountTok: bigint | null
+  protocolAmountTok: bigint | null
+  vestingStartAt: Date | null
+  vestingEndAt: Date | null
+}
+
+export interface TokenBuyback {
+  /** ZINCIRIN BAYRAGI, toplamlardan TURETILMIS bir tahmin degil. */
+  enabled: boolean
+  enabledSeq: bigint | null
+  enabledByAddr: string | null
+  pendingQuoteWei: bigint
+  accruedTotalWei: bigint
+  spentTotalWei: bigint
+  returnedTotalWei: bigint
+  boughtTotalTok: bigint
+  lockedTotalTok: bigint
+  releasedCreatorTok: bigint
+  releasedProtocolTok: bigint
+  /** EN SON kilidin agirlikli penceresi; kilit yoksa `null`. */
+  vestingStartAt: Date | null
+  vestingEndAt: Date | null
+  lastSeq: bigint
+  /** En yeni olaylar once. Bos olabilir (sayfa siniri sifirsa). */
+  history: readonly BuybackEventRow[]
+}
+
+interface BuybackStateRow {
+  enabled: boolean
+  enabled_seq: string | null
+  enabled_by_addr: string | null
+  pending_quote_wei: string
+  accrued_total_wei: string
+  spent_total_wei: string
+  returned_total_wei: string
+  bought_total_tok: string
+  locked_total_tok: string
+  released_creator_tok: string
+  released_protocol_tok: string
+  vesting_start_at: Date | null
+  vesting_end_at: Date | null
+  last_seq: string
+}
+
+interface BuybackHistoryRow {
+  event_seq: string
+  block_time: Date
+  tx_hash: string
+  kind: BuybackEventRow['kind']
+  venue_addr: string | null
+  caller_addr: string | null
+  reason: string | null
+  enabled: boolean | null
+  quote_wei: string | null
+  pending_wei: string | null
+  token_amount_tok: string | null
+  total_locked_tok: string | null
+  creator_amount_tok: string | null
+  protocol_amount_tok: string | null
+  vesting_start_at: Date | null
+  vesting_end_at: Date | null
+}
+
+const bigOrNull = (value: string | null): bigint | null => (value === null ? null : BigInt(value))
+
+/** Gecmis sayfasinin ust siniri. Panel bir OZETTIR, bir defter dokumu degil. */
+export const BUYBACK_HISTORY_LIMIT = 20
+
+/**
+ * Bir token'in buyback durumu + son olaylari.
+ *
+ * `null` = bu token icin HIC buyback olayi gorulmedi. `enabled: false` ile
+ * AYNI SEY DEGILDIR ve arayuz ikisini ayirmalidir: birincisi "bu ozellik bu
+ * token'da hic soz konusu olmadi", ikincisi "acilmisti, KAPATILDI".
+ */
+export async function getTokenBuyback(
+  db: Queryable,
+  token: Address,
+  options: { historyLimit?: number } = {},
+): Promise<Fresh<TokenBuyback | null>> {
+  const limit = Math.max(0, Math.min(options.historyLimit ?? BUYBACK_HISTORY_LIMIT, 200))
+  const key = lower(token)
+
+  const { rows } = await db.query<BuybackStateRow>(
+    `SELECT enabled, enabled_seq::text, enabled_by_addr,
+            pending_quote_wei::text, accrued_total_wei::text, spent_total_wei::text,
+            returned_total_wei::text, bought_total_tok::text, locked_total_tok::text,
+            released_creator_tok::text, released_protocol_tok::text,
+            vesting_start_at, vesting_end_at, last_seq::text
+       FROM buyback_state WHERE token = $1`,
+    [key],
+  )
+  const state = rows[0]
+  if (state === undefined) return { rows: null, indexer: await getIndexerStatus(db) }
+
+  const history = await db.query<BuybackHistoryRow>(
+    `SELECT event_seq::text, block_time, tx_hash, kind, venue_addr, caller_addr, reason, enabled,
+            quote_wei::text, pending_wei::text, token_amount_tok::text, total_locked_tok::text,
+            creator_amount_tok::text, protocol_amount_tok::text, vesting_start_at, vesting_end_at
+       FROM buyback_events
+      WHERE token = $1
+      ORDER BY event_seq DESC
+      LIMIT $2`,
+    [key, limit],
+  )
+
+  return {
+    rows: {
+      enabled: state.enabled,
+      enabledSeq: bigOrNull(state.enabled_seq),
+      enabledByAddr: state.enabled_by_addr,
+      pendingQuoteWei: BigInt(state.pending_quote_wei),
+      accruedTotalWei: BigInt(state.accrued_total_wei),
+      spentTotalWei: BigInt(state.spent_total_wei),
+      returnedTotalWei: BigInt(state.returned_total_wei),
+      boughtTotalTok: BigInt(state.bought_total_tok),
+      lockedTotalTok: BigInt(state.locked_total_tok),
+      releasedCreatorTok: BigInt(state.released_creator_tok),
+      releasedProtocolTok: BigInt(state.released_protocol_tok),
+      vestingStartAt: state.vesting_start_at,
+      vestingEndAt: state.vesting_end_at,
+      lastSeq: BigInt(state.last_seq),
+      history: history.rows.map((r) => ({
+        eventSeq: BigInt(r.event_seq),
+        blockTime: r.block_time,
+        txHash: r.tx_hash,
+        kind: r.kind,
+        venueAddr: r.venue_addr,
+        callerAddr: r.caller_addr,
+        reason: r.reason,
+        enabled: r.enabled,
+        quoteWei: bigOrNull(r.quote_wei),
+        pendingWei: bigOrNull(r.pending_wei),
+        tokenAmountTok: bigOrNull(r.token_amount_tok),
+        totalLockedTok: bigOrNull(r.total_locked_tok),
+        creatorAmountTok: bigOrNull(r.creator_amount_tok),
+        protocolAmountTok: bigOrNull(r.protocol_amount_tok),
+        vestingStartAt: r.vesting_start_at,
+        vestingEndAt: r.vesting_end_at,
+      })),
+    },
+    indexer: await getIndexerStatus(db),
   }
 }
 

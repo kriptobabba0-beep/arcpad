@@ -35,7 +35,10 @@ import {
   countTrades,
   countHolders,
   type CandleRow,
+  type BuybackEventRow,
+  getTokenBuyback,
   getVolumeSplit,
+  type TokenBuyback,
   type VolumeSplit,
   listTrades,
   listTradesByTrader,
@@ -612,7 +615,7 @@ export async function readTraderTrades(
  * seyin iki kaynagi demektir; sunucu bilesenleri okuma katmanini tek kapidan
  * gorur.
  */
-export type { CandleRow, VolumeSplit }
+export type { BuybackEventRow, CandleRow, TokenBuyback, VolumeSplit }
 
 /**
  * NUMARALI SAYFA ICIN: bir sayfalik islem + TOPLAM sayi.
@@ -676,6 +679,29 @@ export async function readVolumeSplit(
     const value = await getVolumeSplit(pool, token as `0x${string}`, options)
     return { value, indexer: await getIndexerStatus(pool) }
   })
+}
+
+/**
+ * Buyback durumu. `notFound` = bu token'da HIC buyback olayi yok.
+ *
+ * `readTokenOverview` ILE AYNI KATLAMA, ve sebebi ayni: `null` bir satir bir
+ * hata degil bir CEVAPTIR, ama `unavailable`dan AYRI bir cevaptir. Panel
+ * "buyback yok" ile "veritabani cevap vermiyor" hallerini ayni kutuyla
+ * gostermemeli -- birincisinde gosterilecek bir sey yoktur, ikincisinde
+ * gosterilecek sey VARDIR ve biz ulasamiyoruzdur.
+ */
+export async function readBuyback(
+  token: string,
+  options: { historyLimit?: number } = {},
+): Promise<ReadResult<TokenBuyback>> {
+  const result = await guard<TokenBuyback | null>(
+    async () => {
+      const { rows, indexer } = await getTokenBuyback(getPool(), token as `0x${string}`, options)
+      return { value: rows, indexer }
+    },
+    (value) => value === null,
+  )
+  return result as ReadResult<TokenBuyback>
 }
 
 /**

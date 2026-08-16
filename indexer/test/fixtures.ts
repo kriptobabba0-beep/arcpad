@@ -555,6 +555,7 @@ export async function liveDecodedEvents(): Promise<DecodedEvent[]> {
       tokens: new Set(),
       curveToToken: new Map(),
       pools: new Map(),
+      buyback: null,
     },
     first,
     last,

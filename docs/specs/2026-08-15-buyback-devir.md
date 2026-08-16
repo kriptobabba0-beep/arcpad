@@ -4,15 +4,16 @@
 > kalindigini ve BIR SONRAKI KOMUTUN NE OLDUGUNU tahmine yer birakmadan
 > soylemek.
 >
-> **16 Agustos, ucuncu oturum sonu.** §9'un birakti isi -- KALICILIK -- indi;
-> bolumun basligi artik "BITEN". Geriye TEK is kaldi: havuz merciinin canli
-> yayini (§14), ve o bir zamanlama meselesi.
+> **16 Agustos, ucuncu oturum sonu.** §9'un birakti isi -- KALICILIK -- indi,
+> ve OKUMA YOLU da bitti. Bu arada olculmus bir delik kapatildi: bes buyback
+> olayi CEKILMIYORDU (§9). Geriye TEK is kaldi: havuz merciinin canli yayini
+> (§14), ve o bir zamanlama meselesi.
 
 ## 1. Durum
 
 | dal | test | ne ise yarar |
 |---|---|---|
-| `buyback-v2` | **822/822 forge**, 308 shared, 1294 web, 355 keeper, **404 db**, **318 indexer** | butun buyback isi burada |
+| `buyback-v2` | **825 forge**, 308 shared, **1311 web**, 355 keeper, **404 db**, **333 indexer** | butun buyback isi burada |
 | `phase-1d-deploy` | uretim dali | canli VPS bunu kosuyor; bu oturumda DOKUNULMADI |
 
 Kapilar: `make frozen-hash` YESIL, `make deps-pin` YESIL, `pnpm run lint` temiz,
@@ -229,6 +230,71 @@ edilemez ve test edilmeyen onlem yoktur).
    siniflandirildi ve `NothingToRelease`/`NotBeneficiary`/`VestNotOpen` icin
    YAZILI bir sure kosulu birakildi (creator vesting talebi ekleyen commit
    onlari `FAILURE_TABLE`a tasimak zorunda).
+
+### 16 AGUSTOS, IKINCI TUR: OLCULMUS BIR DELIK -- BES OLAY HIC CEKILMIYORDU
+
+Okuma yolu yazilirken ortaya cikti ve kalicilikdan DAHA agir bir eksikti:
+`fetchRange` hazine ve kasa adreslerini **HIC SORMUYORDU**. Yani cozme katmani
+tamamdi, kapilari yesildi, ve uretimde tek bir buyback logu gelmezdi.
+
+**Hicbir sey kirmizi olmuyordu, ve sebebi ogreticidir:**
+
+* `logs.test.ts` loglari DOSYADAN okur, `fetchRange`ten degil;
+* `apply-buyback.test.ts` olaylari fixture'dan alir, cekmez;
+* "hic buyback logu yok" ZATEN MESRU bir durumdur (ozellik varsayilan
+  kapali), yani sifir sonuc bir alarm uretmez.
+
+Kapatildi: `WatchSet.buyback` (hazine + kasa), `createBuybackResolver`
+(fabrikanin `buybackTreasury()`si, sonra hazinenin `vault()`u; BULUNAN cift
+sonsuza kadar onbeleklenir, BULUNAMAYAN hal saklanmaz -- yoksa indexer
+calisirken kurulan bir hazine surec yeniden baslatilana kadar izlenmezdi), ve
+`fetchRange` FAZ 4.
+
+Kapiyi acan test `indexer/test/buyback-fetch.test.ts`tir ve FILTRELERE bakar,
+sonuca degil: hazine verilmeyince adresin HIC SORULMADIGINI, verilince tek
+sorgunun IKI adres ve BES topic tasidigini olcer.
+
+### ALTINCI OLAY: `BuybackEnabledUpdated` -- PARA DEGIL KARAR
+
+Okuma yolunun ilk sorusu "bu tokende buyback acik mi"dir ve bes para olayi bu
+soruya CEVAP VEREMEZ: ozelligi acmis ama henuz islem gormemis bir token
+hicbirini yaymamistir. Ustelik creator sonradan KAPATABILIR, ve kapanmis bir
+buyback'i acik gostermek var olmayan bir taahhut vaat etmektir.
+
+* Yayinci FABRIKADIR, hazine degil -- yani hazine hic yazilmamisken bile gelir.
+* Fixture GERCEK YURUTMEDEN uretildi (`test_fixture_buybackPolicy`):
+  `launchWithBuyback` ACAR, `setBuybackEnabled` KAPATIR. Iki log, iki farkli
+  `enabled` -- tek yonlu bir fixture, `bool`u hic okumayan bir cozucuyu de
+  gecirirdi.
+* **`Launched` SORGUSUNA KATILMAZ.** Ikisi de fabrikadan gelir ve tek filtrede
+  birlestirmek bir tasarruf gibi gorunur; FAZ 1.5 dongusu donen her logun
+  `topics[2]`sini CURVE sanar, oysa politika olayinda o alan `by` -- bir
+  cuzdan. Ariza sessiz olurdu; test FILTRENIN SEKLINI olcer.
+* Fixture'da politika logu `logIndex 1`, `Launched` ise `logIndex 3`: yani iki
+  fazli uygulama burada GERCEK bir log sirasiyla sinaniyor.
+
+### OKUMA YOLU (16 Agustos)
+
+| katman | ne |
+|---|---|
+| `queries.ts::getTokenBuyback` | durum + son 20 olay, `Fresh<T \| null>` |
+| `token_overview` | `buyback_enabled` + `buyback_locked_tok` (LEFT JOIN) |
+| `web/lib/read.ts::readBuyback` | `notFound` = HIC buyback olayi yok |
+| `components/token/BuybackPanel` | token sayfasi paneli |
+| `components/explore/BuybackBadge` | kart rozeti |
+
+> **PANEL BIR "SU ANDA CEKILEBILIR" TUTARI GOSTERMEZ, ve bu bir eksiklik
+> degil bir REDDIR.** `BuybackVestingVault` vesting'i checkpoint'li hesaplar
+> (`yeni = vestsizKalan * gecen / (bitis - sonGuncelleme)`) ve `lastUpdate` her
+> kilitte ve her dagitimda yeniden yazilir -- yani hak edilmis tutar YOL
+> BAGIMLIDIR ve olaylardan yeniden kurulamaz. Dogrusal bir yaklasim TEK
+> KILITLI tokenlerde DOGRU cevabi verirdi; tehlikeli olan da bu. Gosterilen
+> sey pencerenin ne kadarinin GECTIGIDIR -- bir zaman olgusu. Bir testin adi
+> bunu koruyor: "hak edilmis TOKEN MIKTARI iddia etmez".
+
+> `token_overview`da "hic olmadi" ile "kapatildi" AYNI gorunur
+> (`coalesce(..., false)`), ve bu bilinclidir: ayrim token sayfasina aittir --
+> `getTokenBuyback` biri icin `null`, oteki icin `enabled: false` doner.
 
 ### BITEN: kalicilik (16 Agustos) -- UCU DE TEK COMMIT'TE
 

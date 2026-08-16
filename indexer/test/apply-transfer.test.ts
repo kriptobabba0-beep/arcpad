@@ -320,6 +320,7 @@ describe('apply/transfer', () => {
           tokens: new Set(),
           curveToToken: new Map(),
           pools: new Map(),
+          buyback: null,
         },
         BigInt(logs[0]!.blockNumber),
         BigInt(logs[logs.length - 1]!.blockNumber),

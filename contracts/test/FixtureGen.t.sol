@@ -205,6 +205,9 @@ contract FixtureGenTest is Test {
     bytes32 internal constant TRANSFER_TOPIC0 = keccak256("Transfer(address,address,uint256)");
     bytes32 internal constant DEPOSITED_TOPIC0 = keccak256("Deposited(address,address,uint256)");
     bytes32 internal constant CLAIMED_TOPIC0 = keccak256("Claimed(address,uint256)");
+    /// Buyback POLITIKASI -- para degil KARAR. `enabled` INDEKSLI DEGILDIR,
+    /// yani `data`da durur ve cozucu onu okumak zorundadir.
+    bytes32 internal constant BUYBACK_ENABLED_TOPIC0 = keccak256("BuybackEnabledUpdated(address,address,bool)");
 
     FeeEscrow internal escrow;
     LaunchFactory internal factory;
@@ -845,11 +848,66 @@ contract FixtureGenTest is Test {
         _dump("buyback-skipped", logs);
     }
 
+    /**
+     * ...VE POLITIKA UCUNCU BIR SENARYODUR: PARA DEGIL, KARAR.
+     *
+     * @dev NEDEN AYRI BIR FIXTURE GEREKTI. `BuybackEnabledUpdated` bir tutar
+     *      tasimaz, ama arayuzun ILK TAHAKKUKTAN ONCE "bu token'da buyback
+     *      acik" diyebilmesinin TEK yolu odur. Onsuz ekran, ozelligi acmis ama
+     *      henuz islem gormemis bir token'i buyback'siz bir token'dan ayirt
+     *      EDEMEZ -- ve creator'in sonradan KAPATMASI hicbir yerde gorunmez.
+     *
+     * @dev IKI LOG, IKI YON, TEK KAYIT. Acilis `launchWithBuyback`in ICINDEN
+     *      gelir (yani `Launched` ile AYNI islemde, ki indexer'in iki fazli
+     *      uygulamasi tam olarak bu sirayla sinanir: launch satiri once
+     *      yazilmazsa politika satiri yabanci anahtara carpar), kapanis ise
+     *      ayri bir `setBuybackEnabled` cagrisindan. Yalnizca birini kaydetmek,
+     *      cozucunun `bool`u okudugunu degil yalnizca bir sabiti dondurdugunu
+     *      da gecirirdi.
+     */
+    function test_fixture_buybackPolicy() public {
+        vm.recordLogs();
+
+        vm.prank(CREATOR);
+        (address token,) = factory.launchWithBuyback("Policy Coin", "POL", "ipfs://po", true);
+
+        // KAPATMA: creator kendi tercihini geri alabilir (izin modeli
+        // `BuybackPermissions.t.sol`da yuruyor; burada yalnizca LOGU lazim).
+        vm.prank(CREATOR);
+        factory.setBuybackEnabled(token, false);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        // ANTI-VAKUM: IKI log, ve `enabled` alani IKI FARKLI deger tasimali.
+        // Tek bir log yeterli olsaydi, `bool`u hic okumayan bir cozucu de
+        // gecerdi.
+        assertEq(_countTopic(logs, BUYBACK_ENABLED_TOPIC0), 2, "iki politika logu bekleniyordu");
+        assertTrue(_hasTopic(logs, LAUNCHED_TOPIC0), "Launched yok -- ayni islem sinanamaz");
+
+        bool sawTrue;
+        bool sawFalse;
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (logs[i].topics.length == 0 || logs[i].topics[0] != BUYBACK_ENABLED_TOPIC0) continue;
+            if (abi.decode(logs[i].data, (bool))) sawTrue = true;
+            else sawFalse = true;
+        }
+        assertTrue(sawTrue, "ACMA logu yok");
+        assertTrue(sawFalse, "KAPATMA logu yok");
+
+        _dump("buyback-policy", logs);
+    }
+
     function _hasTopic(Vm.Log[] memory logs, bytes32 topic0) private pure returns (bool) {
         for (uint256 i = 0; i < logs.length; ++i) {
             if (logs[i].topics.length != 0 && logs[i].topics[0] == topic0) return true;
         }
         return false;
+    }
+
+    function _countTopic(Vm.Log[] memory logs, bytes32 topic0) private pure returns (uint256 n) {
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (logs[i].topics.length != 0 && logs[i].topics[0] == topic0) ++n;
+        }
     }
 
     function _dump(string memory name_, Vm.Log[] memory logs) private {

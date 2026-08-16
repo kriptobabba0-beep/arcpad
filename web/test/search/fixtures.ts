@@ -36,6 +36,11 @@ export function overview(patch: Partial<TokenOverview> = {}): TokenOverview {
     // yapmamalidir: iki ayri olgu, iki ayri alan.
     graduated: false,
     graduatedSeq: null,
+    // AYNI SINIF: buyback da AYRI bir olgudur ve baska hicbir alandan
+    // cikarilmaz -- ozelligi acmis ama henuz islem gormemis bir tokenin butun
+    // toplamlari sifirdir.
+    buybackEnabled: false,
+    buybackLockedTok: 0n,
     graduationTargetAddr: null,
     graduationBaseTok: null,
     graduationQuoteWei: null,

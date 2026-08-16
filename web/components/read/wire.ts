@@ -42,6 +42,11 @@ const BIGINT_FIELDS = [
   'graduatedSeq',
   'graduationBaseTok',
   'graduationQuoteWei',
+  // `buybackEnabled` bir `boolean` oldugu icin bu listede YOKTUR -- `graduated`
+  // ile ayni gerekce. Kilitli tutar ise `bigint`tir ve tel uzerinde dizeye
+  // cevrilmek ZORUNDA: aksi halde istemcide sessizce bir dize uzerinde
+  // aritmetik yapilirdi.
+  'buybackLockedTok',
   'marketCapWei',
   'priceWeiPerTok',
   'graduationRaiseWei',

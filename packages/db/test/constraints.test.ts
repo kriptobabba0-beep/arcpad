@@ -135,6 +135,7 @@ describe('kisitlar gercekten bagli mi', () => {
       'buyback_events.caller_addr',
       'buyback_events.emitter_addr',
       'buyback_events.venue_addr',
+      'buyback_state.enabled_by_addr',
       'chat_messages.author_addr',
       'creator_history.creator',
       'curve_state.curve',
@@ -205,6 +206,12 @@ describe('kisitlar gercekten bagli mi', () => {
         kind: 'released',
         creator_amount_tok: '0',
         protocol_amount_tok: '0',
+        // `enabled` DE BOSALTILMALI ve bunu olcum ogretti: tarama `LIMIT 1`
+        // ile secer, secilen satir bir `policy` satiri olabilir, ve `enabled`
+        // dolu kalirsa `buyback_enabled_iff_policy` ONCE patlar -- yani test
+        // desen kisitini degil BASKA bir kisiti olcerdi (olculdu: beklenen
+        // `buyback_events_caller_addr_check` yerine `buyback_enabled_iff_policy`).
+        enabled: null,
         quote_wei: null,
         pending_wei: null,
         token_amount_tok: null,
@@ -218,6 +225,7 @@ describe('kisitlar gercekten bagli mi', () => {
         kind: 'accrued',
         quote_wei: '0',
         pending_wei: '0',
+        enabled: null,
         token_amount_tok: null,
         total_locked_tok: null,
         creator_amount_tok: null,
@@ -290,9 +298,10 @@ describe('kisitlar gercekten bagli mi', () => {
       client.release()
     }
     // Tarama gercekten butun aileyi gezdi.
-    // 19 -> 22: `buyback_events`in uc adres sutunu (`emitter_addr`,
-    // `venue_addr`, `caller_addr`), migration 016.
-    expect(checked).toHaveLength(22)
+    // 19 -> 23: `buyback_events`in uc adres sutunu (`emitter_addr`,
+    // `venue_addr`, `caller_addr`) ve `buyback_state.enabled_by_addr`,
+    // migration 016.
+    expect(checked).toHaveLength(23)
   })
 
   it('adres tasiyan HER sutun ya desenle ya yabanci anahtarla korunur', async () => {
@@ -385,6 +394,7 @@ describe('kisitlar gercekten bagli mi', () => {
       'buyback_events.emitter_addr',
       'buyback_events.token',
       'buyback_events.venue_addr',
+      'buyback_state.enabled_by_addr',
       'buyback_state.token',
       'chat_messages.author_addr',
       'chat_messages.token',

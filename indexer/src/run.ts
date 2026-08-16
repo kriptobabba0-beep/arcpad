@@ -21,6 +21,8 @@ import { nextRange } from './cursor'
 import type {
   AddressWidthMemo,
   DecodedEvent,
+  BuybackRef,
+  BuybackResolver,
   HookResolver,
   Pacer,
   PoolRef,
@@ -74,6 +76,10 @@ const SELECTOR = {
   SALE_SUPPLY: toFunctionSelector('SALE_SUPPLY()'),
   escrow: toFunctionSelector('escrow()'),
   protocolTreasury: toFunctionSelector('protocolTreasury()'),
+  // Buyback katmani: fabrikanin BIR KEZ yazilan hazinesi, ve hazinenin
+  // `immutable` kasasi. Bkz. `createBuybackResolver`.
+  buybackTreasury: toFunctionSelector('buybackTreasury()'),
+  vault: toFunctionSelector('vault()'),
   // `ArcpadLocker`in ikisi de `immutable` getter'i. Bkz. `createHookResolver`.
   hook: toFunctionSelector('hook()'),
   poolManager: toFunctionSelector('poolManager()'),
@@ -403,6 +409,48 @@ export function createHookResolver(client: RpcClient, pacer: Pacer): HookResolve
 }
 
 /**
+ * ============ BUYBACK KATMANININ IKI ADRESI ============
+ *
+ * `hook()`/`poolManager()` ile AYNI SINIF, ayni gerekce: adresler ZINCIRDEN
+ * okunur, env'den degil. Ama bu ikisinin ayri bir ozelligi var ve cozumun
+ * seklini o belirliyor: `buybackTreasury` fabrikada BIR KEZ yazilir, yani
+ * omru boyunca YALNIZCA `0x0 -> T` gecisini yapar.
+ *
+ * ONBELLEK BU YUZDEN ASIMETRIKTIR: bulunan bir cift SONSUZA KADAR saklanir
+ * (bir daha degisemez), bulunamayan hal ise SAKLANMAZ. Sifir cevabini
+ * onbelleklemek, hazineyi indexer calisirken kuran bir governor isleminden
+ * sonra buyback'in surec yeniden baslatilana kadar HIC izlenmemesi demekti --
+ * ve bu sessiz olurdu, cunku "hic buyback logu yok" mesru bir durumdur.
+ *
+ * MALIYET: hazine kurulana kadar aralik basina BIR `eth_call`, kurulduktan
+ * sonra ikinci bir cagriyla birlikte TOPLAM IKI, ve ondan sonra SIFIR.
+ *
+ * `null` MESRUDUR: hazine yazilana kadar fabrika buyback'siz calisir.
+ */
+export function createBuybackResolver(client: RpcClient, pacer: Pacer): BuybackResolver {
+  let found: BuybackRef | null = null
+  return async (factory: Address) => {
+    if (found !== null) return found
+    try {
+      const treasury = asAddress(await ethCall(client, factory, SELECTOR.buybackTreasury, pacer))
+      if (treasury === ZERO_ADDRESS.toLowerCase()) return null
+      const vault = asAddress(await ethCall(client, treasury as Address, SELECTOR.vault, pacer))
+      // KASASIZ BIR HAZINE ZINCIRDE OLAMAZ (`vault` constructor argumani ve
+      // `immutable`), yani bu dal bir SAPMA bildirir: cevap veren adres bizim
+      // hazinemiz degildir. Sessizce yarim bir kume kurmaktansa hic kurmamak
+      // dogru -- yarim kume, kasa olaylarini kalici olarak dusururdu.
+      if (vault === ZERO_ADDRESS.toLowerCase()) return null
+      found = { treasury: treasury as Address, vault: vault as Address }
+      return found
+    } catch (error) {
+      // GECICI HATA YUTULMAZ -- `createHookResolver`in olculmus dersi.
+      if (isTransient(error)) throw error
+      return null
+    }
+  }
+}
+
+/**
  * Izleme kumesi VERITABANINDAN kurulur, bellekten degil.
  *
  * HAVUZ KUMESI DE OYLE, ve ayni sebeple: indexer yeniden baslatildiginda
@@ -420,6 +468,7 @@ export async function loadWatchSet(
   db: Queryable,
   deployment: Deployment,
   resolveHook?: HookResolver,
+  resolveBuyback?: BuybackResolver,
 ): Promise<WatchSet> {
   const { rows } = await db.query<{
     token: string
@@ -490,6 +539,13 @@ export async function loadWatchSet(
     tokens: new Set(rows.filter((r) => r.traded).map((r) => r.token as Address)),
     curveToToken: new Map(rows.map((r) => [r.curve as Address, r.token as Address])),
     pools,
+    /*
+     * COZUCU VERILMEZSE `null` -- ve bu, havuz kumesinin `resolveHook`
+     * verilmediginde bos kalmasiyla AYNI karardir. Uydurulmus bir adres
+     * koymak, testlerin gercekte hicbir sey sormadan "buyback izleniyor"
+     * demesine yol acardi.
+     */
+    buyback: resolveBuyback === undefined ? null : await resolveBuyback(deployment.factory),
   }
 }
 
@@ -692,6 +748,17 @@ export interface RunOnceOptions {
    * halinin ta kendisidir (`graduationTarget = 0x0`).
    */
   resolveHook?: HookResolver
+  /**
+   * VERILMEZSE BUYBACK KATMANI TAMAMEN KAPALIDIR: hazine adresi sorulmaz, bes
+   * olay CEKILMEZ. `resolveHook`un aynisi -- ve ayni sebeple ayri tutuluyor:
+   * bir testin buyback loglarini gormesi, o testin bir hazine adresi
+   * VERDIGINI gostermeli, tesadufi bir varsayilani degil.
+   *
+   * POLITIKA OLAYI BUNA BAGLI DEGILDIR ve olmamali: yayincisi FABRIKADIR,
+   * hazine daha hic yazilmamisken bile bir creator `launchWithBuyback`
+   * cagirabilir (fabrika o durumda buyback'siz calisir ama bayrak yazilir).
+   */
+  resolveBuyback?: BuybackResolver
 }
 
 async function finalizedHeadVia(client: RpcClient, pacer: Pacer): Promise<bigint> {
@@ -733,7 +800,7 @@ export async function runOnce(
     return null
   }
 
-  const watch = await loadWatchSet(pool, deployment, options.resolveHook)
+  const watch = await loadWatchSet(pool, deployment, options.resolveHook, options.resolveBuyback)
   const events = await fetchRange(client, watch, range.from, range.to, {
     pacer,
     ...(options.widthMemo !== undefined ? { widthMemo: options.widthMemo } : {}),

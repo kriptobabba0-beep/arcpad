@@ -5,6 +5,7 @@ import { loadConfig } from './config'
 import { createAddressWidthMemo, createPacer, type RpcClient } from './logs'
 import {
   assertStartBlockCoversEscrow,
+  createBuybackResolver,
   createHookResolver,
   ensureDeployment,
   isRateLimit,
@@ -92,12 +93,17 @@ async function main(): Promise<void> {
   // cozucu, her aralikta ayni iki `eth_call`i tekrar yapardi. Bugun hicbir
   // token mezun olmadigi icin bir kez bile cagrilmaz.
   const resolveHook = createHookResolver(rpc, pacer)
+  // BUYBACK KABLOLAMASI -> HAZINE + KASA, AYNI OMUR. Farki: hazine kurulana
+  // kadar her aralikta BIR `eth_call` yapilir (sifir cevabi onbelleklenmez --
+  // gerekce `createBuybackResolver`da), kurulduktan sonra hic yapilmaz.
+  const resolveBuyback = createBuybackResolver(rpc, pacer)
 
   for (;;) {
     const result = await runWithRetry(pool, rpc, deployment, config, {
       pacer,
       widthMemo,
       resolveHook,
+      resolveBuyback,
     })
     if (result === null) {
       // Head'e yetistik. `nextRange` `null` dondugunde HICBIR SEY yapilmaz --

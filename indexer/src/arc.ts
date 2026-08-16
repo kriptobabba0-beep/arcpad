@@ -178,6 +178,26 @@ export const EVENT_SIGNATURES = {
    * EGRIDEN hem HOOK'tan gelebilir, ve ikisi launch'in hangi asamasinda
    * oldugunu soyler -- indexer bunu bir birlestirme yapmadan okur.
    */
+  /*
+   * ALTINCISI PARA DEGIL KARAR TASIR -- ve tam da bu yuzden gerekli.
+   *
+   * Ustteki bes olay ancak buyback CALISMAYA BASLADIKTAN sonra vardir. Bir
+   * kullanicinin token sayfasinda gormesi gereken ilk sey ise "bu token'da
+   * buyback acik mi", ve o soru ILK TAHAKKUKTAN ONCE sorulur: ozelligi acmis
+   * ama henuz islem gormemis bir token, bes olaydan hicbirini yaymamistir.
+   * Onsuz ekran onu buyback'siz bir token'dan AYIRT EDEMEZ.
+   *
+   * Ayrica TEK YONLU DEGILDIR: creator sonradan KAPATABILIR (izin modeli
+   * `BuybackPermissions.t.sol`da yuruyor), ve kapanmis bir buyback'i acik
+   * gostermek, kullaniciya var olmayan bir taahhut vaat etmek olurdu.
+   *
+   * YAYINCI FABRIKADIR -- hazine degil. `launchWithBuyback` icinden ve
+   * `setBuybackEnabled`ten yayilir, yani cekme katmaninda `Launched` ile AYNI
+   * adres filtresine duser ama AYRI bir sorgudur: ikisini tek `topics`
+   * filtresinde birlestirmek, izleme kumesini buyuten dongude `topics[2]`yi
+   * curve saniyordu -- oysa politika olayinda o alan `by`, yani bir CUZDAN.
+   */
+  buybackEnabledUpdated: 'BuybackEnabledUpdated(address,address,bool)',
   buybackAccrued: 'BuybackAccrued(address,address,uint256,uint256)',
   buybackExecuted: 'BuybackExecuted(address,uint256,uint256)',
   buybackSkipped: 'BuybackSkipped(address,uint256,string)',

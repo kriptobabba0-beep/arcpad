@@ -135,6 +135,20 @@ const EXEMPT_NON_AMOUNT = new Set([
   // `_seq` ise ayri sutunda (`graduated_seq`) zaten var. Muafiyet TIP
   // KAPSAMLIDIR -- `graduated bigint` yine yakalanir.
   'graduated',
+  // `buyback_events.enabled` / `buyback_state.enabled` -- politikanin durumu.
+  // `complete` ve `graduated` ile AYNI sinifta bir boolean bayrak, ve sonek
+  // koymanin yolu yok: `_at` bir zaman BILDIRIR, `_seq` ise ayri sutunda
+  // (`enabled_seq`) zaten var. Muafiyet TIP KAPSAMLIDIR -- `enabled bigint`
+  // yine yakalanir, ve tam olarak yakalanmasi gereken sey odur.
+  'enabled',
+  // `token_overview.buyback_enabled` -- AYNI OLGU, VIEW'DEKI ADI.
+  //
+  // AYRI YAZILIYOR VE BU DOGRU: muafiyet ADA verilir, ve view'deki ad taban
+  // tablonunkinden FARKLIDIR. Genis bir view'de ciplak `enabled` "neyin
+  // etkin oldugu" sorusunu acikta birakirdi -- `graduated`in yaninda duran
+  // ikinci bir bayrak. Muafiyet yine TIP KAPSAMLIDIR: `buyback_enabled
+  // bigint` yakalanir.
+  'buyback_enabled',
   'is_buy',
   'filename',
   // `chat_messages.body` -- kullanicinin yazdigi metin. `name`/`symbol`/`uri`
@@ -378,6 +392,7 @@ const EXPECTED_INVENTORY = [
   'public:r:buyback_events.caller_addr',
   'public:r:buyback_events.creator_amount_tok',
   'public:r:buyback_events.emitter_addr',
+  'public:r:buyback_events.enabled',
   'public:r:buyback_events.event_seq',
   'public:r:buyback_events.kind',
   'public:r:buyback_events.log_index',
@@ -394,6 +409,9 @@ const EXPECTED_INVENTORY = [
   'public:r:buyback_events.vesting_start_at',
   'public:r:buyback_state.accrued_total_wei',
   'public:r:buyback_state.bought_total_tok',
+  'public:r:buyback_state.enabled',
+  'public:r:buyback_state.enabled_by_addr',
+  'public:r:buyback_state.enabled_seq',
   'public:r:buyback_state.last_seq',
   'public:r:buyback_state.locked_total_tok',
   'public:r:buyback_state.pending_quote_wei',
@@ -545,6 +563,8 @@ const EXPECTED_INVENTORY = [
   // ---------------------------------------------------------------
   'public:v:token_overview.ath_market_cap_wei',
   'public:v:token_overview.buy_count',
+  'public:v:token_overview.buyback_enabled',
+  'public:v:token_overview.buyback_locked_tok',
   'public:v:token_overview.complete',
   'public:v:token_overview.completed_seq',
   'public:v:token_overview.created_at',
@@ -710,9 +730,11 @@ describe('adlandirma kapisi', () => {
     // isaretidir: envanter KATALOGDAN turer, yani bir tabloyu dusurup bu satiri
     // guncellememek testi kirmis olurdu -- "sildik ve kapi fark etmedi" hali
     // burada temsil EDILEMEZ.
-    // 43 -> 57: buyback defterinin ALTI (`buyback_events`) ve toplaminin SEKIZ
-    // (`buyback_state`) miktar sutunu, migration 016.
-    expect(g.numerics).toBe(57)
+    // 43 -> 58: buyback defterinin ALTI (`buyback_events`) ve toplaminin SEKIZ
+    // (`buyback_state`) miktar sutunu, arti `token_overview.buyback_locked_tok`
+    // -- migration 016. View sutunlari da SAYILIR, ve `coalesce(x, 0)` typmod
+    // dusurdugu icin oradaki `::numeric(78,0)` casti bu satirin gerekcesidir.
+    expect(g.numerics).toBe(58)
     expect(g.badNumeric).toEqual([])
   })
 

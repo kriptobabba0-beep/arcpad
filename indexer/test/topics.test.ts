@@ -271,6 +271,10 @@ describe('topic0 kimlikleri', () => {
       // artifact ile iki yonlu karsilastirir, ve hatalari zaten
       // `ARCPAD_ERROR_ABI`ye girmesi ISTENEN hatalardir (`NotKeeper`,
       // `SlippageTooHigh`). `PoolManager` icin ayni sey yanlis takas olurdu.
+      // POLITIKA FABRIKANIN ABI'SINDEN -- `launched` ile ayni kaynaktan, cunku
+      // yayincisi da ayni kontrattir. Hazinenin ABI'sine bakan bir satir
+      // burada sessizce bulunamazdi.
+      buybackEnabledUpdated: launchFactoryAbi,
       buybackAccrued: buybackTreasuryAbi,
       buybackExecuted: buybackTreasuryAbi,
       buybackSkipped: buybackTreasuryAbi,

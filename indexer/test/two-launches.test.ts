@@ -133,6 +133,7 @@ const WATCH: WatchSet = {
   tokens: new Set(),
   curveToToken: new Map(),
   pools: new Map(),
+  buyback: null,
 }
 
 describe('iki launch iceren bir aralik', () => {

@@ -89,13 +89,18 @@ const LEDGER_OF: Record<DecodedEvent['kind'], string | null> = {
   // `event_seq`leri de tutmazdi.
   poolInitialize: null,
   poolFee: null,
-  // BUYBACK NESLI -- BESI DE AYNI DEFTERE, ve HEPSI kapsam kontrolune girer.
+  // BUYBACK NESLI -- ALTISI DA AYNI DEFTERE, ve HEPSI kapsam kontrolune girer.
   //
-  // Bes olayin tek tabloda toplanmasi, `poolSwap`in `trades`e girmesiyle ayni
-  // sinifta bir karardir: tur `kind` kolonunda yazilidir, defter tektir. Bes
+  // Alti olayin tek tabloda toplanmasi, `poolSwap`in `trades`e girmesiyle ayni
+  // sinifta bir karardir: tur `kind` kolonunda yazilidir, defter tektir. Alti
   // satirin da burada olmasi SART -- `BuybackSkipped` olmadan "para nerede"
   // sorusu cevapsiz kalir, ve tam da o olay dusen olay olsaydi fark `KAYIP`
   // gibi okunurdu.
+  //
+  // POLITIKA BIR TUTAR TASIMAZ AMA BIR DEGISIM TASIR: dusen bir toggle ekranda
+  // "hala acik" diye gorunur, yani sessiz kalan tam olarak KULLANICIYA VERILEN
+  // TAAHHUT olur.
+  buybackEnabledUpdated: 'buyback_events',
   buybackAccrued: 'buyback_events',
   buybackExecuted: 'buyback_events',
   buybackSkipped: 'buyback_events',

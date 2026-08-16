@@ -283,6 +283,7 @@ describe('apply/fees', () => {
       tokens: new Set<Address>(),
       curveToToken: new Map<Address, Address>(),
       pools: new Map(),
+      buyback: null,
     }
     const first = BigInt(logs[0]!.blockNumber)
     const last = BigInt(logs[logs.length - 1]!.blockNumber)

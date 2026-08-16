@@ -59,6 +59,10 @@ export const SMOKE: TokenOverview = {
   // durumda hala CANLI curve degerleridir.
   graduated: false,
   graduatedSeq: null,
+  // VARSAYILAN KAPALI, ve `token_overview`in `coalesce(bb.enabled, false)`
+  // ifadesiyle AYNI deger: buyback gormemis bir token listede boyle gorunur.
+  buybackEnabled: false,
+  buybackLockedTok: 0n,
   graduationTargetAddr: null,
   graduationBaseTok: null,
   graduationQuoteWei: null,

@@ -6,6 +6,7 @@ import {
   applyBuybackAccruedEvent,
   applyBuybackExecutedEvent,
   applyBuybackLockedEvent,
+  applyBuybackEnabledUpdatedEvent,
   applyBuybackSkippedEvent,
   applyVestingReleasedEvent,
 } from './buyback'
@@ -55,13 +56,20 @@ export async function applyDecodedEvent(
     case 'poolFee':
       return 0
     /*
-     * BUYBACK NESLI -- BESI DE `buyback_events`E YAZAR.
+     * BUYBACK NESLI -- ALTISI DA `buyback_events`E YAZAR.
      *
-     * Bes ayri dal, tek tablo: ture ozgu esleme `apply/buyback.ts`te, "hangi
+     * Alti ayri dal, tek tablo: ture ozgu esleme `apply/buyback.ts`te, "hangi
      * kolon hangi turde dolu olmak zorunda" ise semadaki `*_iff_*`
      * kisitlarinda. Ayni bilginin iki yerde durmasi kasitlidir -- biri
      * cagrilmadan, oteki YAZILAMADAN gecemez.
+     *
+     * ILKI DIGER BESTEN AYRI BIR SINIFTIR: para degil KARAR tasir, ve
+     * yayincisi FABRIKADIR. Ayni tabloya girmesinin sebebi, "para nerede"
+     * sorusunun cevabinin politikayi ICERMESI -- tahakkukun DURMASI bir ariza
+     * degil, creator'in ozelligi kapatmis olmasi olabilir.
      */
+    case 'buybackEnabledUpdated':
+      return applyBuybackEnabledUpdatedEvent(db, event)
     case 'buybackAccrued':
       return applyBuybackAccruedEvent(db, event)
     case 'buybackExecuted':
@@ -81,10 +89,11 @@ export async function applyDecodedEvent(
 
 /**
  * `counts.buyback`a dusen olay turleri. Bir KUME, cunku `applyEvents`in sayac
- * zinciri `else if` merdivenidir ve bes turu tek tek yazmak, bir turu unutmayi
- * -- yani onu sessizce `fees`e dusurmeyi -- mumkun birakirdi.
+ * zinciri `else if` merdivenidir ve alti turu tek tek yazmak, bir turu
+ * unutmayi -- yani onu sessizce `fees`e dusurmeyi -- mumkun birakirdi.
  */
 const BUYBACK_KINDS: ReadonlySet<DecodedEvent['kind']> = new Set([
+  'buybackEnabledUpdated',
   'buybackAccrued',
   'buybackExecuted',
   'buybackSkipped',
@@ -111,7 +120,7 @@ export interface ApplyCounts {
   transfers: number
   fees: number
   /**
-   * `buyback_events`e giren satirlar -- BES TURUN TOPLAMI, ve `fees`TEN AYRI.
+   * `buyback_events`e giren satirlar -- ALTI TURUN TOPLAMI, ve `fees`TEN AYRI.
    *
    * Ayrilmasinin gerekcesi `poolSwaps`inkiyle birebir ayni: bugun beklenen
    * deger tokenlerin cogunda SIFIRDIR (buyback varsayilan olarak KAPALIDIR ve
@@ -220,6 +229,7 @@ export {
   applyBuybackAccruedEvent,
   applyBuybackExecutedEvent,
   applyBuybackLockedEvent,
+  applyBuybackEnabledUpdatedEvent,
   applyBuybackSkippedEvent,
   applyVestingReleasedEvent,
   UnknownBuybackToken,

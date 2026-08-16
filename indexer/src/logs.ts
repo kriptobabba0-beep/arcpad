@@ -293,18 +293,35 @@ export interface PoolFeeEvent extends LogRef {
 
 /*
  * ---------------------------------------------------------------------------
- * BUYBACK NESLI -- BES OLAY
+ * BUYBACK NESLI -- ALTI OLAY
  * ---------------------------------------------------------------------------
  *
- * UCU HAZINEDEN, IKISI KASADAN. Ayri kontratlar oldugu icin `emitter` alani
- * hangisinden geldigini soyler; indexer bunu ADRESE gore filtreler, tipe gore
- * degil.
+ * UCU HAZINEDEN, IKISI KASADAN, BIRI FABRIKADAN. Ayri kontratlar oldugu icin
+ * `emitter` alani hangisinden geldigini soyler; indexer bunu ADRESE gore
+ * filtreler, tipe gore degil.
  *
  * TUM QUOTE MIKTARLARI NATIVE WEI'DIR (18 decimal), havuz olaylarinin 6
  * decimal biriminde DEGIL. Ayrim tasiyicidir: hazine `pendingQuote`u wei
  * tutar, havuz ise ERC-20 birimiyle konusur, ve ikisini karistirmak 10^12
  * kat hata verir -- bu depoda `_marketCap` icin bir kez olculdu.
  */
+
+/**
+ * `LaunchFactory.BuybackEnabledUpdated`. Buyback ACILDI ya da KAPANDI.
+ *
+ * Bes para olayindan AYRI bir sinif: bir tutar tasimaz, bir KARAR tasir. Ve
+ * defterde onlarla ayni tabloda durur, cunku "para nerede" sorusunun cevabi
+ * politikanin ne zaman degistigini de icerir -- bir tokende tahakkukun DURMASI
+ * bir ariza degil, creator'in ozelligi kapatmis olmasi olabilir.
+ */
+export interface BuybackEnabledUpdatedEvent extends LogRef {
+  kind: 'buybackEnabledUpdated'
+  factory: Address
+  token: Address
+  /** Degisikligi yapan: creator ya da governor (governor YALNIZCA kapatabilir). */
+  by: Address
+  enabled: boolean
+}
 
 /** `BuybackTreasury.BuybackAccrued`. Butce BUYUDU. */
 export interface BuybackAccruedEvent extends LogRef {
@@ -383,6 +400,7 @@ export type DecodedEvent =
   | PoolSwapEvent
   | PoolInitializeEvent
   | PoolFeeEvent
+  | BuybackEnabledUpdatedEvent
   | BuybackAccruedEvent
   | BuybackExecutedEvent
   | BuybackSkippedEvent
@@ -427,6 +445,34 @@ export interface WatchSet {
    * token mezun olmadi ve havuz sorgusu HIC YAPILMAZ (bkz. `fetchRange` FAZ 3).
    */
   pools: ReadonlyMap<Hex, PoolRef>
+  /**
+   * BUYBACK KATMANININ IKI ADRESI: hazine ve kasa.
+   *
+   * ============ BU ALAN OLMADAN BES OLAY HIC CEKILMIYORDU ============
+   *
+   * Cozme katmani (imzalar, tipler, `DECODERS`) tamamlanmisti ve fixture'lara
+   * karsi olculuyordu, ama `fetchRange` bu adresleri HIC SORMUYORDU -- yani
+   * uretimde tek bir buyback logu bile gelmezdi ve hicbir sey kirmizi olmazdi.
+   * Fixture'lar loglari DOSYADAN okur; cozucunun dogru olmasi, logun
+   * cekildigini SOYLEMEZ. Bu, bu depoda adi konmus "giris noktasi kapsami"
+   * arizasinin ta kendisidir.
+   *
+   * `null` MESRUDUR ve bugun de mumkundur: `buybackTreasury` governor
+   * tarafindan BIR KEZ yazilir ve yazilana kadar fabrika buyback'siz calisir
+   * (`LaunchFactory.setBuybackTreasury` NatSpec'i bunu "gecerli ve guvenli bir
+   * ara durum" diye adlandiriyor). O halde sorgu HIC YAPILMAZ -- `pools` bos
+   * oldugunda havuz sorgusunun yapilmamasiyla ayni.
+   */
+  buyback: BuybackRef | null
+}
+
+/**
+ * Hazine ve kasa adresleri. IKISI BIRLIKTE ya vardir ya yoktur: kasa
+ * hazinenin constructor argumanidir, yani bir hazine varsa kasasi da vardir.
+ */
+export interface BuybackRef {
+  treasury: Address
+  vault: Address
 }
 
 /**
@@ -441,6 +487,14 @@ export interface WatchSet {
 export type HookResolver = (
   target: Address,
 ) => Promise<{ hook: Address; poolManager: Address } | null>
+
+/**
+ * Fabrikanin buyback kablolamasi. `HookResolver` ile ayni sekil, ama SORUSU
+ * aralik basinadir: hazine indexer calisirken kurulabilir.
+ *
+ * `null` = hazine HENUZ yazilmadi. Bkz. `createBuybackResolver`.
+ */
+export type BuybackResolver = (factory: Address) => Promise<BuybackRef | null>
 
 /** Minimal RPC yuzeyi. viem'in `PublicClient`'i bunu KARSILAR. */
 export interface RpcClient {
@@ -1295,6 +1349,26 @@ function decodePoolFee(log: RawLog, ref: LogRef): PoolFeeEvent {
  * kirmizi olmaz.
  */
 
+/**
+ * `BuybackEnabledUpdated(token, by, enabled)`.
+ *
+ * `enabled` INDEKSLI DEGILDIR, yani `data`nin ilk kelimesindedir ve ABI'de
+ * `bool` 32 bayta SIFIRLA DOLDURULARAK kodlanir. Kelimenin TAMAMINA bakiyoruz,
+ * son bayta degil: `uint(...) !== 0n` her mesru kodlamayi dogru okur ve
+ * standart disi bir dolgu da sessizce `false` olmaz.
+ */
+function decodeBuybackEnabledUpdated(log: RawLog, ref: LogRef): BuybackEnabledUpdatedEvent {
+  expect('buybackEnabledUpdated', log, 3, 1)
+  return {
+    kind: 'buybackEnabledUpdated',
+    ...ref,
+    factory: addressOf(log),
+    token: addressFrom(log.topics[1] as Hex),
+    by: addressFrom(log.topics[2] as Hex),
+    enabled: uint(log.data, 0) !== 0n,
+  }
+}
+
 function decodeBuybackAccrued(log: RawLog, ref: LogRef): BuybackAccruedEvent {
   expect('buybackAccrued', log, 3, 2)
   return {
@@ -1381,6 +1455,7 @@ export const DECODERS: Readonly<Record<EventKind, (log: RawLog, ref: LogRef) => 
     poolSwap: decodePoolSwap,
     poolInitialize: decodePoolInitialize,
     poolFee: decodePoolFee,
+    buybackEnabledUpdated: decodeBuybackEnabledUpdated,
     buybackAccrued: decodeBuybackAccrued,
     buybackExecuted: decodeBuybackExecuted,
     buybackSkipped: decodeBuybackSkipped,
@@ -1632,9 +1707,59 @@ export async function fetchRange(
   // bugun oyle: uretim factory'sinin `graduationTarget`i `0x0`.
   const poolLogs = await getPoolLogs(client, [...pools.values()], from, to, pacer)
 
+  // FAZ 4: BUYBACK KATMANI. Iki sorgu, ve ikisi de ADRES FILTRELIDIR.
+  //
+  // POLITIKA AYRI SORULUR, `Launched` ILE BIRLESTIRILMEZ. Ikisi de fabrikadan
+  // gelir, yani tek bir `topics: [[launched, policy]]` filtresi cazip gorunur
+  // -- ve YANLIS olurdu: FAZ 1.5 dongusu her donen logun `topics[2]`sini bir
+  // CURVE sanip izleme kumesine ekler, oysa politika olayinda o alan `by`,
+  // yani bir cuzdan. Sonucu sessizdir: kumeye giren sahte "curve" hicbir sey
+  // yaymaz, ama `Trade` filtresi ondan sonra onu da kabul eder.
+  //
+  // BES OLAY ICIN ADRES FILTRESI ZORUNLUDUR. Topic'ler arcpad'e ozguymus gibi
+  // gorunur ama `forged.json` bu depoda tam olarak bunun neden yetmedigini
+  // kaydediyor: herkes ayni imzayi tasiyan bir olay YAYABILIR. Iki adres
+  // oldugu icin filtre ucuzdur -- curve olaylarindaki "N ile olceklenme"
+  // sorunu burada YOKTUR.
+  const [policyLogs, buybackLogs] = await Promise.all([
+    getLogs(
+      client,
+      { from, to, address: watch.factory, topics: [TOPIC0.buybackEnabledUpdated] },
+      pacer,
+    ),
+    watch.buyback === null
+      ? Promise.resolve([] as RawLog[])
+      : getLogs(
+          client,
+          {
+            from,
+            to,
+            address: [watch.buyback.treasury, watch.buyback.vault],
+            topics: [
+              [
+                TOPIC0.buybackAccrued,
+                TOPIC0.buybackExecuted,
+                TOPIC0.buybackSkipped,
+                TOPIC0.buybackLocked,
+                TOPIC0.vestingReleased,
+              ],
+            ],
+          },
+          pacer,
+        ),
+  ])
+
   const decoded = await decodeAll(
     client,
-    [...launched, ...curveLogs, ...escrowLogs, ...transferLogs, ...poolLogs],
+    [
+      ...launched,
+      ...curveLogs,
+      ...escrowLogs,
+      ...transferLogs,
+      ...poolLogs,
+      ...policyLogs,
+      ...buybackLogs,
+    ],
     from,
     to,
     pacer,

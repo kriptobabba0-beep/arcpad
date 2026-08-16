@@ -86,6 +86,9 @@ const watchWithPool = (pools: ReadonlyMap<Hex, PoolRef> = new Map([[POOL_ID, REF
   tokens: new Set([TOKEN]),
   curveToToken: new Map(),
   pools,
+  // BUYBACK KATMANI KAPALI: bu dosya havuz yolunu olcer ve hazine adresi
+  // vermek, olculmeyen bir sorguyu sessizce acardi.
+  buyback: null,
 })
 
 /**

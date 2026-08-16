@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Address } from 'viem'
-import { snapshot, toSeq } from '@arcpad/db'
+import { getTokenBuyback, getTokenOverview, snapshot, toSeq } from '@arcpad/db'
 import { applyEvents, UnknownBuybackToken } from '../src/apply'
 import type { DecodedEvent } from '../src/logs'
 import { assertRangeApplied, LedgerGap } from '../src/verify'
@@ -44,9 +44,16 @@ const BLOCK = 54_661_500n
 const SKIPPED_TOKEN = '0x912d678c62a174745dd0638e69d88e9b399e02f1' as Address
 const SKIPPED_BLOCK = 54_661_600n
 
+/** `buyback-policy` fixture'inin tokeni -- kendi launch'iyla birlikte gelir. */
+const POLICY_TOKEN = '0x82203e5b78acd0b74c6e8ae6a1c0cc30241101c0' as Address
+const POLICY_FACTORY = '0xf62849f9a0b5bf2913b396098f7c7019b51a820a' as Address
+const POLICY_BLOCK = 54_661_700n
+
 const addr = (n: number): Address => `0x${n.toString(16).padStart(40, '0')}`
 
 interface StateRow {
+  enabled: boolean
+  enabled_by_addr: string | null
   pending_quote_wei: string
   accrued_total_wei: string
   spent_total_wei: string
@@ -61,7 +68,8 @@ interface StateRow {
 
 async function state(token: Address): Promise<StateRow> {
   const { rows } = await pool.query<StateRow>(
-    `SELECT pending_quote_wei::text, accrued_total_wei::text, spent_total_wei::text,
+    `SELECT enabled, enabled_by_addr,
+            pending_quote_wei::text, accrued_total_wei::text, spent_total_wei::text,
             returned_total_wei::text, bought_total_tok::text, locked_total_tok::text,
             released_creator_tok::text, released_protocol_tok::text,
             vesting_start_at, vesting_end_at
@@ -339,6 +347,192 @@ describe('apply/buyback', () => {
 
     const events = await buybackEvents('buyback-skipped', SKIPPED_BLOCK)
     await expect(applyEvents(pool, LIVE_DEPLOYMENT, events)).rejects.toThrow(UnknownBuybackToken)
+  })
+
+  // ---------------------------------------------------------------
+  // POLITIKA -- PARA DEGIL KARAR
+  // ---------------------------------------------------------------
+
+  /**
+   * ARAYUZUN ILK SORDUGU SEY, ILK TAHAKKUKTAN ONCE CEVAPLANABILIR OLMALI.
+   *
+   * `buyback-policy` fixture'i `launchWithBuyback`in ACMASINI ve
+   * `setBuybackEnabled`in KAPATMASINI tasir. Ikisi de ayni tokene ait, yani
+   * son durum KAPALI -- ve toplam tablosu bunu soylemeli.
+   */
+  it('politika olaylari deftere girer ve SON durum toplamda durur', async () => {
+    await seedLaunch(POLICY_TOKEN, addr(0x9c00), POLICY_BLOCK)
+    const events = await buybackEvents('buyback-policy', POLICY_BLOCK)
+    expect(await applyEvents(pool, LIVE_DEPLOYMENT, events)).toMatchObject({ buyback: 2 })
+
+    const { rows } = await pool.query<{ kind: string; enabled: boolean }>(
+      'SELECT kind, enabled FROM buyback_events ORDER BY event_seq',
+    )
+    expect(rows).toEqual([
+      { kind: 'policy', enabled: true },
+      { kind: 'policy', enabled: false },
+    ])
+
+    const s = await state(POLICY_TOKEN)
+    expect(s.enabled).toBe(false)
+    // KIM YAPTI da saklanir: acan creator, kapatan da creator.
+    expect(s.enabled_by_addr).toBe('0x000000000000000000000000000000000000c7ea')
+  })
+
+  /**
+   * SIRA MUHAFIZI: GERIDEN GELEN BIR TOGGLE GUNCEL DURUMU EZMEZ.
+   *
+   * Uretimde ulasilamaz (imlec yalnizca ileri gider) ama yazicinin dogrulugu
+   * cagiranin bir ozelligine BAGLI OLMAMALI. Burada kasitli olarak once YENI
+   * olay, sonra ESKI olay uygulanir.
+   */
+  it('eski bir politika olayi YENI durumu ezmez', async () => {
+    await seedLaunch(POLICY_TOKEN, addr(0x9c00), POLICY_BLOCK)
+    const events = await buybackEvents('buyback-policy', POLICY_BLOCK)
+    const [opened, closed] = [events[0]!, events[1]!]
+
+    // Once KAPATMA (yeni), sonra ACMA (eski).
+    await applyEvents(pool, LIVE_DEPLOYMENT, [closed])
+    expect((await state(POLICY_TOKEN)).enabled).toBe(false)
+    await applyEvents(pool, LIVE_DEPLOYMENT, [opened])
+    expect((await state(POLICY_TOKEN)).enabled).toBe(false)
+  })
+
+  /**
+   * POLITIKA `Launched` ILE AYNI ISLEMDE GELIR -- VE FK O YUZDEN TUTAR.
+   *
+   * Fixture'da politika logu `logIndex 1`, `Launched` ise `logIndex 3`: yani
+   * KATI `event_seq` sirasiyla yazan bir dongu, `launches` satiri HENUZ YOKKEN
+   * politika satirini yazmaya calisirdi. `applyEvents`in iki fazi bunu
+   * onler, ve bu test o fazlari GERCEK bir log sirasiyla yurutur.
+   */
+  it('ayni islemdeki launch ve politika, iki fazli uygulamayla yazilir', async () => {
+    const all = await fixtureEvents('buyback-policy', { block: POLICY_BLOCK })
+    const launched = all.find((e) => e.kind === 'launched')
+    expect(launched, 'fixture bir Launched tasimali').toBeDefined()
+    expect(launched!.logIndex).toBeGreaterThan(
+      all.find((e) => e.kind === 'buybackEnabledUpdated')!.logIndex,
+    )
+
+    /*
+     * FABRIKA FIXTURE'INKI OLMALI -- VE BU BIR KOLAYLIK DEGIL, TESTIN
+     * DEGERININ KENDISI.
+     *
+     * `admit` tokeni CREATE2 ile YENIDEN TURETIR ve `deployment.factory`ye
+     * gore dogrular. Canli fabrikayla cagrilinca fixture'in launch'i
+     * `NonCanonicalLaunch` ile REDDEDILDI (olculdu) -- yani provenance kapisi
+     * calisiyor. Fabrikayi fixture'inkine cevirmek o kapiyi GEVSETMEZ:
+     * turetme yine kosar ve fixture'in tokeni GERCEKTEN o fabrikadan
+     * turedigi icin gecer. Boylece bu test, launch'i tohumlayarak degil
+     * URETIM YOLUNDAN gecirerek kurar.
+     */
+    const deployment = { ...LIVE_DEPLOYMENT, factory: POLICY_FACTORY }
+
+    // `transfer` DISARIDA: mint'in kendi on kosullari var ve bu testin olctugu
+    // sey o degil. Launch + politika, tam olarak zincirdeki sirayla.
+    const events = all.filter((e) => e.kind === 'launched' || e.kind === 'buybackEnabledUpdated')
+    await expect(applyEvents(pool, deployment, events)).resolves.toMatchObject({
+      launches: 1,
+      buyback: 2,
+    })
+    await expect(assertRangeApplied(pool, events)).resolves.toBeUndefined()
+
+    // VE POLITIKA SATIRI GERCEKTEN O LAUNCH'A BAGLANDI.
+    const s = await state(POLICY_TOKEN)
+    expect(s.enabled).toBe(false)
+  })
+
+  /**
+   * ============ LISTE SUTUNU: `token_overview.buyback_enabled` ============
+   *
+   * Kart rozetinin BESLENDIGI yer. `getTokenBuyback`ten AYRI olmasi sart:
+   * explore sayfasi kirk kart cizer ve kart basina bir sorgu kirk yuvarlak yol
+   * demekti.
+   *
+   * Burada `admit` uzerinden gercek bir launch yazilir, yani `curve_state` ve
+   * `token_stats` satirlari da olusur -- `token_overview` UCUNU DE `JOIN`
+   * eder ve eksik biri satiri sessizce yok ederdi.
+   */
+  it('token_overview politikayi TASIR -- acik hal', async () => {
+    const all = await fixtureEvents('buyback-policy', { block: POLICY_BLOCK })
+    const deployment = { ...LIVE_DEPLOYMENT, factory: POLICY_FACTORY }
+    const opened = all.filter(
+      (e) => e.kind === 'launched' || (e.kind === 'buybackEnabledUpdated' && e.enabled),
+    )
+    await applyEvents(pool, deployment, opened)
+
+    const { rows } = await getTokenOverview(pool, POLICY_TOKEN)
+    expect(rows?.buybackEnabled).toBe(true)
+    expect(rows?.buybackLockedTok).toBe(0n)
+  })
+
+  it('token_overview politikayi TASIR -- kapatilmis hal', async () => {
+    const all = await fixtureEvents('buyback-policy', { block: POLICY_BLOCK })
+    const deployment = { ...LIVE_DEPLOYMENT, factory: POLICY_FACTORY }
+    await applyEvents(
+      pool,
+      deployment,
+      all.filter((e) => e.kind === 'launched' || e.kind === 'buybackEnabledUpdated'),
+    )
+
+    const { rows } = await getTokenOverview(pool, POLICY_TOKEN)
+    expect(rows?.buybackEnabled).toBe(false)
+  })
+
+  /**
+   * LEFT JOIN: BUYBACK GORMEMIS BIR TOKEN LISTEDEN DUSMEZ.
+   *
+   * `JOIN` yazmak, ozelligi acmamis butun tokenleri explore sayfasindan
+   * SILERDI -- ve bugun bu, tokenlerin neredeyse tamamidir. Bu test o hatayi
+   * kart sayisiyla degil, satirin VARLIGIYLA olcer.
+   */
+  it('buyback gormemis bir token overview da DURUR (false / 0)', async () => {
+    const all = await fixtureEvents('buyback-policy', { block: POLICY_BLOCK })
+    const deployment = { ...LIVE_DEPLOYMENT, factory: POLICY_FACTORY }
+    await applyEvents(
+      pool,
+      deployment,
+      all.filter((e) => e.kind === 'launched'),
+    )
+
+    const { rows } = await getTokenOverview(pool, POLICY_TOKEN)
+    expect(rows, 'buybacksiz token overview dan DUSTU').not.toBeNull()
+    expect(rows?.buybackEnabled).toBe(false)
+    expect(rows?.buybackLockedTok).toBe(0n)
+  })
+
+  // ---------------------------------------------------------------
+  // OKUMA MODELI
+  // ---------------------------------------------------------------
+
+  it('getTokenBuyback durumu ve gecmisi birlikte doner', async () => {
+    await applyEvents(pool, LIVE_DEPLOYMENT, await buybackEvents())
+    const { rows } = await getTokenBuyback(pool, TOKEN)
+    expect(rows).not.toBeNull()
+    expect(rows!.boughtTotalTok).toBe(15_550_159_190_581_009_077_265_247n)
+    expect(rows!.lockedTotalTok).toBe(rows!.boughtTotalTok)
+    // GECMIS EN YENI ONCE: panel son olayi ustte gostermeli.
+    expect(rows!.history.map((h) => h.kind)).toEqual(['released', 'locked', 'executed', 'accrued'])
+  })
+
+  /**
+   * HIC BUYBACK OLMAYAN BIR TOKEN `null` DONER -- `enabled: false` DEGIL.
+   *
+   * Ikisi ayni ekran degildir: birincisi "bu ozellik burada hic soz konusu
+   * olmadi", ikincisi "acilmisti, KAPATILDI". Ayni degeri dondurmek, panelin
+   * o iki hali ayirt etmesini IMKANSIZ kilardi.
+   */
+  it('buyback gormemis bir token icin null doner', async () => {
+    const { rows } = await getTokenBuyback(pool, TOKEN)
+    expect(rows).toBeNull()
+  })
+
+  it('gecmis siniri asilmaz', async () => {
+    await applyEvents(pool, LIVE_DEPLOYMENT, await buybackEvents())
+    const { rows } = await getTokenBuyback(pool, TOKEN, { historyLimit: 2 })
+    expect(rows!.history).toHaveLength(2)
+    // ...ve TOPLAMLAR sinirdan ETKILENMEZ: ozet defterden degil durumdan gelir.
+    expect(rows!.boughtTotalTok).toBe(15_550_159_190_581_009_077_265_247n)
   })
 
   /**

@@ -1,4 +1,4 @@
-import type { Address } from '../src/hex'
+﻿import type { Address } from '../src/hex'
 import type {
   BuybackLedgerEvent,
   CompletedEvent,
@@ -305,17 +305,40 @@ export const RANGE_TO = BLOCK + 3n
 const VEST_START = new Date('2026-07-30T12:00:00.000Z')
 const VEST_END = new Date('2031-07-29T12:00:00.000Z')
 
-/** Bes turun HEPSI, bir tokenin gercek sirasiyla. */
+/** ALTI turun HEPSI, bir tokenin gercek sirasiyla: once KARAR, sonra para. */
 export const BUYBACK_LEDGER: readonly BuybackLedgerEvent[] = [
   {
     kind: 'buyback',
-    ...ref(0, BLOCK + 4n),
+    ...ref(0, BLOCK + 5n),
+    // POLITIKA ONCE GELIR ve bu bir siralama tercihi degil, zincirin sirasi:
+    // `launchWithBuyback` bayragi launch aninda yazar, tahakkuk ancak ilk
+    // islemde olusur.
+    buybackKind: 'policy',
+    token: TOKEN,
+    emitter: addr(0xfac),
+    venue: null,
+    caller: CREATOR,
+    reason: null,
+    enabled: true,
+    quoteWei: null,
+    pendingWei: null,
+    tokenAmountTok: null,
+    totalLockedTok: null,
+    creatorAmountTok: null,
+    protocolAmountTok: null,
+    vestingStart: null,
+    vestingEnd: null,
+  },
+  {
+    kind: 'buyback',
+    ...ref(1, BLOCK + 5n),
     buybackKind: 'accrued',
     token: TOKEN,
     emitter: TREASURY,
     venue: CURVE,
     caller: null,
     reason: null,
+    enabled: null,
     quoteWei: 3_000_000_000_000_000n,
     // MUTLAK: tahakkuk sonrasi toplam. Ayrilan tutardan BUYUK, cunku bu
     // token daha once de tahakkuk etmis olabilir -- ve tam olarak bu yuzden
@@ -330,13 +353,14 @@ export const BUYBACK_LEDGER: readonly BuybackLedgerEvent[] = [
   },
   {
     kind: 'buyback',
-    ...ref(1, BLOCK + 4n),
+    ...ref(2, BLOCK + 5n),
     buybackKind: 'executed',
     token: TOKEN,
     emitter: TREASURY,
     venue: null,
     caller: null,
     reason: null,
+    enabled: null,
     quoteWei: 4_000_000_000_000_000n,
     pendingWei: null,
     tokenAmountTok: 1_000_000n * 10n ** 18n,
@@ -348,13 +372,14 @@ export const BUYBACK_LEDGER: readonly BuybackLedgerEvent[] = [
   },
   {
     kind: 'buyback',
-    ...ref(2, BLOCK + 4n),
+    ...ref(3, BLOCK + 5n),
     buybackKind: 'locked',
     token: TOKEN,
     emitter: VAULT,
     venue: null,
     caller: null,
     reason: null,
+    enabled: null,
     quoteWei: null,
     pendingWei: null,
     tokenAmountTok: 1_000_000n * 10n ** 18n,
@@ -366,13 +391,14 @@ export const BUYBACK_LEDGER: readonly BuybackLedgerEvent[] = [
   },
   {
     kind: 'buyback',
-    ...ref(3, BLOCK + 4n),
+    ...ref(4, BLOCK + 5n),
     buybackKind: 'released',
     token: TOKEN,
     emitter: VAULT,
     venue: null,
     caller: CREATOR,
     reason: null,
+    enabled: null,
     quoteWei: null,
     pendingWei: null,
     tokenAmountTok: null,
@@ -385,7 +411,7 @@ export const BUYBACK_LEDGER: readonly BuybackLedgerEvent[] = [
   },
   {
     kind: 'buyback',
-    ...ref(4, BLOCK + 4n),
+    ...ref(5, BLOCK + 5n),
     buybackKind: 'skipped',
     token: TOKEN,
     emitter: TREASURY,
@@ -395,6 +421,7 @@ export const BUYBACK_LEDGER: readonly BuybackLedgerEvent[] = [
     // `rejected_launches`in `^[a-z_]{1,64}$` desenini dayatmanin neden yanlis
     // olacaginin en kisa kaniti.
     reason: 'below-threshold-or-unsafe',
+    enabled: null,
     quoteWei: 1_000_000_000_000_000n,
     pendingWei: null,
     tokenAmountTok: null,
@@ -417,7 +444,7 @@ export function hashFor(block: bigint): string {
 
 /**
  * Imlecin BOS oldugu (ilk kosu) durumda `replayRange`e gecilen parent hash.
- * `assertContinuous` o dalda hicbir sey karsilastirmaz, ama argüman ZORUNLU
+ * `assertContinuous` o dalda hicbir sey karsilastirmaz, ama argÃ¼man ZORUNLU
  * oldugu icin cagiran yine de bir deger vermek zorundadir -- ve bu sabitin
  * adi, degerin neden onemsiz oldugunu cagri yerinde okunur kilar.
  */

@@ -648,14 +648,16 @@ export async function applyFeeEvent(db: Queryable, e: FeeLedgerEvent): Promise<n
  */
 export interface BuybackLedgerEvent extends LogRef {
   kind: 'buyback'
-  buybackKind: 'accrued' | 'executed' | 'skipped' | 'locked' | 'released'
+  buybackKind: 'policy' | 'accrued' | 'executed' | 'skipped' | 'locked' | 'released'
   token: Address
-  /** Olayi yayan kontrat: hazine ya da kasa. */
+  /** Olayi yayan kontrat: FABRIKA (`policy`), hazine ya da kasa. */
   emitter: Address
   /** `accrued`: tahakkuku yapan merci (egri ya da hook). Digerlerinde null. */
   venue: Address | null
-  /** `released`: `release()`i cagiran. Digerlerinde null. */
+  /** `released`: `release()`i cagiran. `policy`: degisikligi yapan. */
   caller: Address | null
+  /** `policy`: yeni deger. Digerlerinde null. */
+  enabled: boolean | null
   /** `skipped`: zincirin yaydigi sebep dizesi. Digerlerinde null. */
   reason: string | null
   /** `accrued`/`executed`/`skipped` tutari, native wei. */
@@ -678,10 +680,10 @@ export async function applyBuybackEvent(db: Queryable, e: BuybackLedgerEvent): P
     `WITH ins AS (
        INSERT INTO buyback_events
          (event_seq, block_number, log_index, tx_hash, block_time, kind, token,
-          emitter_addr, venue_addr, caller_addr, reason,
+          emitter_addr, venue_addr, caller_addr, reason, enabled,
           quote_wei, pending_wei, token_amount_tok, total_locked_tok,
           creator_amount_tok, protocol_amount_tok, vesting_start_at, vesting_end_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
        ON CONFLICT (event_seq) DO NOTHING
        RETURNING token, event_seq
      ),
@@ -703,6 +705,7 @@ export async function applyBuybackEvent(db: Queryable, e: BuybackLedgerEvent): P
       e.venue === null ? null : lower(e.venue),
       e.caller === null ? null : lower(e.caller),
       e.reason === null ? null : pgSafeText(e.reason),
+      e.enabled,
       e.quoteWei?.toString() ?? null,
       e.pendingWei?.toString() ?? null,
       e.tokenAmountTok?.toString() ?? null,
@@ -751,6 +754,18 @@ export async function applyBuybackEvent(db: Queryable, e: BuybackLedgerEvent): P
          + CASE WHEN $2 = 'released' THEN $8::numeric ELSE 0 END,
        vesting_start_at = CASE WHEN $2 = 'locked' THEN $9::timestamptz  ELSE vesting_start_at END,
        vesting_end_at   = CASE WHEN $2 = 'locked' THEN $10::timestamptz ELSE vesting_end_at   END,
+       -- POLITIKA DA MUTLAK BIR ATAMADIR, yani \`pending_quote_wei\` ile AYNI
+       -- sira muhafizina tabidir: geriden gelen bir toggle, guncel durumu
+       -- ezip arayuze "kapali" dedirtirdi.
+       enabled = CASE
+         WHEN $2 = 'policy' AND $11::bigint >= last_seq THEN $12::boolean
+         ELSE enabled END,
+       enabled_seq = CASE
+         WHEN $2 = 'policy' AND $11::bigint >= last_seq THEN $11::bigint
+         ELSE enabled_seq END,
+       enabled_by_addr = CASE
+         WHEN $2 = 'policy' AND $11::bigint >= last_seq THEN $13::text
+         ELSE enabled_by_addr END,
        last_seq = GREATEST(last_seq, $11::bigint)
      WHERE token = $1`,
     [
@@ -765,6 +780,8 @@ export async function applyBuybackEvent(db: Queryable, e: BuybackLedgerEvent): P
       e.vestingStart,
       e.vestingEnd,
       e.eventSeq.toString(),
+      e.enabled,
+      e.caller === null ? null : lower(e.caller),
     ],
   )
   return n

@@ -75,6 +75,40 @@ describe('<TokenCard>', () => {
     expect(card).toHaveAccessibleName(/, graduated$/)
   })
 
+  /*
+   * BUYBACK ROZETI -- `graduated`in AYNI SINIFI, AYNI KURALLARI.
+   *
+   * Ozellik varsayilan olarak KAPALIDIR, yani rozetin cizilmedigi hal
+   * cogunluktur ve tam da bu yuzden onun testi once yazilir: her karta cikan
+   * bir rozet, hicbir sey soylemez.
+   */
+  it('BUYBACK rozeti kapali tokende CIKMAZ', () => {
+    render(<TokenCard overview={CLIMBING} />)
+    expect(screen.getByRole('link')).not.toHaveTextContent(/buyback/i)
+  })
+
+  it('buyback acikken rozet cikar VE erisilebilir adda da soyler', () => {
+    render(<TokenCard overview={{ ...CLIMBING, buybackEnabled: true }} />)
+    const card = screen.getByRole('link')
+    expect(card).toHaveTextContent('Buyback')
+    // ROZET `aria-hidden`, yani bu iddia olmadan ekran okuyucuyla gezen biri
+    // ozelligi HIC duymazdi -- iki kullanici ayni karti farkli okurdu.
+    expect(card).toHaveAccessibleName(/, creator buyback$/)
+  })
+
+  /**
+   * IKI ROZET AYNI ANDA CIZILEBILIR, ve bu zincirde MUMKUN: mezun bir tokenin
+   * buyback'i devam eder (havuz mercii tam da bunun icin var). Ust uste binen
+   * bir yerlesim, ikisinin ayni kosede oldugu gun sessizce birini gizlerdi.
+   */
+  it('mezun VE buyback acik bir token IKI rozeti de tasir', () => {
+    render(<TokenCard overview={{ ...SMOKE, graduated: true, buybackEnabled: true }} />)
+    const card = screen.getByRole('link')
+    expect(card).toHaveTextContent('Graduated')
+    expect(card).toHaveTextContent('Buyback')
+    expect(card).toHaveAccessibleName(/, graduated, creator buyback$/)
+  })
+
   it('FDV bir para birimi isareti tasir ve SIKISTIRILIR', () => {
     render(<TokenCard overview={CLIMBING} />)
     const card = screen.getByRole('link')

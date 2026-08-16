@@ -5,6 +5,7 @@ import { cx } from '@/components/ui/cx'
 import { LiveNumber } from '@/components/ui/LiveNumber'
 import { Pill } from '@/components/ui/Pill'
 import { relativeAge, relativeAgeLabel } from '@/components/ui/relativeAge'
+import { BuybackBadge } from './BuybackBadge'
 import { GraduatedBadge } from './GraduatedBadge'
 
 /**
@@ -75,7 +76,11 @@ export function TokenCard({
     `${overview.name} (${overview.symbol}), ` +
     `FDV ${overview.marketCapWei} wei, ${percent}% to graduation, ` +
     relativeAgeLabel(overview.createdAt, at) +
-    (overview.graduated ? ', graduated' : '')
+    (overview.graduated ? ', graduated' : '') +
+    // ROZET `aria-hidden`, yani ekran okuyucuya ULASAN TEK yol bu satir.
+    // `GraduatedBadge` ile ayni kalip: gorsel bir isaret, erisilebilir adda
+    // KELIMEYLE tekrarlanir -- yoksa iki kullanici ayni karti farkli okur.
+    (overview.buybackEnabled ? ', creator buyback' : '')
 
   return (
     <Link
@@ -122,6 +127,7 @@ export function TokenCard({
           {age}
         </span>
         {overview.graduated ? <GraduatedBadge /> : null}
+        {overview.buybackEnabled ? <BuybackBadge /> : null}
       </div>
 
       <div className="flex min-w-0 flex-1 flex-col gap-2 p-3.5">
