@@ -26,68 +26,7 @@ import {FeeEscrow} from "../src/FeeEscrow.sol";
 import {LaunchFactory} from "../src/LaunchFactory.sol";
 import {BondingCurve} from "../src/BondingCurve.sol";
 import {IGraduatableCurve} from "../src/interfaces/IGraduatableCurve.sol";
-
-/// @dev Arc'in tasiyici ozelligi: TEK BAKIYE, IKI GORUNUM. `balanceOf`
-///      SAKLANMAZ, native bakiyeden TURETILIR. `ArcpadHook.t.sol`daki
-///      mock'un aynisi ve ayni gerekceyle: `graduate()` quote'u
-///      `call{value:}` ile oder, yani ayri bir ERC-20 defteri tutan bir mock
-///      locker'in quote gorunumunu SIFIR birakir ve tohumlama underflow eder.
-contract UsdcMock {
-    string public constant name = "USD Coin";
-    string public constant symbol = "USDC";
-    uint8 public constant decimals = 6;
-
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    event Approval(address indexed owner, address indexed spender, uint256 value);
-
-    mapping(address => mapping(address => uint256)) public allowance;
-
-    function balanceOf(address a) public view returns (uint256) {
-        return a.balance / 1e12;
-    }
-
-    function totalSupply() external pure returns (uint256) {
-        return type(uint256).max;
-    }
-
-    function mint(address to, uint256 units) external {
-        _credit(to, units);
-        emit Transfer(address(0), to, units);
-    }
-
-    function approve(address s, uint256 a) external returns (bool) {
-        allowance[msg.sender][s] = a;
-        emit Approval(msg.sender, s, a);
-        return true;
-    }
-
-    function transfer(address to, uint256 a) external returns (bool) {
-        return _move(msg.sender, to, a);
-    }
-
-    function transferFrom(address f, address to, uint256 a) external returns (bool) {
-        uint256 al = allowance[f][msg.sender];
-        if (al != type(uint256).max) allowance[f][msg.sender] = al - a;
-        return _move(f, to, a);
-    }
-
-    function _move(address f, address t, uint256 units) private returns (bool) {
-        uint256 wei_ = units * 1e12;
-        require(f.balance >= wei_, "usdc: insufficient");
-        VmLike(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).deal(f, f.balance - wei_);
-        VmLike(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).deal(t, t.balance + wei_);
-        emit Transfer(f, t, units);
-        return true;
-    }
-
-    function _credit(address to, uint256 units) private {
-        VmLike(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).deal(to, to.balance + units * 1e12);
-    }
-}
-
-interface VmLike {
-    function deal(address, uint256) external;
-}
+import {UsdcMock} from "./helpers/ArcUsdcMock.sol";
 
 /// @dev Saldirganin KENDI `unlock`u. `PoolManager` `IUnlockCallback(msg.sender)`
 ///      cagirir, yani bu kontrat kilidi acabilir ama locker'in callback'ine
@@ -1084,9 +1023,7 @@ contract ArcpadLockerCurveSpoofTest is ArcpadLockerTest {
 
         (PoolKey memory key, bool baseIsCurrency0) = _keyOf(token);
         uint160 price = GraduationMath.sqrtPriceX96(
-            BondingCurve(curve).virtualQuoteReserves(),
-            BondingCurve(curve).virtualTokenReserves(),
-            baseIsCurrency0
+            BondingCurve(curve).virtualQuoteReserves(), BondingCurve(curve).virtualTokenReserves(), baseIsCurrency0
         );
 
         vm.prank(address(locker));

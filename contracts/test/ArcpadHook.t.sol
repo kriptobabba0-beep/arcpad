@@ -29,73 +29,7 @@ import {FeeEscrow} from "../src/FeeEscrow.sol";
 import {LaunchFactory} from "../src/LaunchFactory.sol";
 import {BondingCurve} from "../src/BondingCurve.sol";
 import {LaunchToken} from "../src/LaunchToken.sol";
-
-/// @dev Arc'ta USDC HEM native HEM 0x3600...'daki ERC-20 gorunumdur -- AYNI
-///      BAKIYENIN iki yuzu. Yerel EVM'de o esdegerlik yoktur, bu yuzden test
-///      o adrese, transferi alicinin NATIVE bakiyesine yazan bir ERC-20
-///      etch'ler. Canli olcum (blok 54019678): transfer `receive()`i
-///      CALISTIRMAZ, sadece bakiyeyi kredilendirir. Mock tam bunu taklit eder.
-contract UsdcMock {
-    string public constant name = "USD Coin";
-    string public constant symbol = "USDC";
-    uint8 public constant decimals = 6;
-
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    event Approval(address indexed owner, address indexed spender, uint256 value);
-
-    mapping(address => mapping(address => uint256)) public allowance;
-
-    /// ARC'IN TASIYICI OZELLIGI: TEK BAKIYE, IKI GORUNUM. `balanceOf`
-    /// SAKLANMAZ -- native bakiyeden TURETILIR. Ilk yazimda iki ayri defter
-    /// tutuluyordu ve o model YANLISTI: `graduate()` quote'u `call{value:}`
-    /// ile odedigi icin locker'in ERC-20 gorunumu SIFIR kaliyordu ve
-    /// likidite tohumlamasi underflow ediyordu. Arc'ta oyle bir ayrism YOK.
-    function balanceOf(address a) public view returns (uint256) {
-        return a.balance / 1e12;
-    }
-
-    function totalSupply() external pure returns (uint256) {
-        return type(uint256).max;
-    }
-
-    function mint(address to, uint256 units) external {
-        _credit(to, units);
-        emit Transfer(address(0), to, units);
-    }
-
-    function approve(address s, uint256 a) external returns (bool) {
-        allowance[msg.sender][s] = a;
-        emit Approval(msg.sender, s, a);
-        return true;
-    }
-
-    function transfer(address to, uint256 a) external returns (bool) {
-        return _move(msg.sender, to, a);
-    }
-
-    function transferFrom(address f, address to, uint256 a) external returns (bool) {
-        uint256 al = allowance[f][msg.sender];
-        if (al != type(uint256).max) allowance[f][msg.sender] = al - a;
-        return _move(f, to, a);
-    }
-
-    function _move(address f, address t, uint256 units) private returns (bool) {
-        uint256 wei_ = units * 1e12;
-        require(f.balance >= wei_, "usdc: insufficient");
-        VmLike(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).deal(f, f.balance - wei_);
-        VmLike(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).deal(t, t.balance + wei_);
-        emit Transfer(f, t, units);
-        return true;
-    }
-
-    function _credit(address to, uint256 units) private {
-        VmLike(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D).deal(to, to.balance + units * 1e12);
-    }
-}
-
-interface VmLike {
-    function deal(address, uint256) external;
-}
+import {UsdcMock} from "./helpers/ArcUsdcMock.sol";
 
 /// @dev `graduationTarget` rolunu oynar: `graduate()`i cagirir, havuzu
 ///      `initialize` eder ve likidite ekler. Task 5'in `ArcpadLocker`inin
@@ -833,7 +767,6 @@ contract ArcpadHookTest is Test {
     }
 }
 
-
 /// ============================================================================
 ///  KANCALARA DOGRUDAN CAGRI: `onlyPoolManager` TASIYICIDIR
 /// ============================================================================
@@ -869,8 +802,7 @@ contract ArcpadHookDirectCallTest is ArcpadHookTest {
 
     function test_beforeSwapAndAfterSwapRefuseDirectCalls() public {
         (PoolKey memory key,) = _keyFor(address(token));
-        SwapParams memory params =
-            SwapParams({zeroForOne: true, amountSpecified: -1e6, sqrtPriceLimitX96: 0});
+        SwapParams memory params = SwapParams({zeroForOne: true, amountSpecified: -1e6, sqrtPriceLimitX96: 0});
 
         vm.prank(address(0xBAD));
         vm.expectRevert(BaseHook.NotPoolManager.selector);

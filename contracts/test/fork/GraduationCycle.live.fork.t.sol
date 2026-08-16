@@ -20,6 +20,8 @@ import {RouterDeployLib} from "../../script/RouterDeployLib.sol";
 import {ArcpadHook} from "../../src/ArcpadHook.sol";
 import {ArcpadLocker} from "../../src/ArcpadLocker.sol";
 import {ArcpadRouter} from "../../src/ArcpadRouter.sol";
+import {BuybackTreasury} from "../../src/BuybackTreasury.sol";
+import {BuybackVestingVault} from "../../src/BuybackVestingVault.sol";
 import {LaunchFactory} from "../../src/LaunchFactory.sol";
 import {BondingCurve} from "../../src/BondingCurve.sol";
 import {FeeSchedule} from "../../src/FeeSchedule.sol";
@@ -279,6 +281,10 @@ contract GraduationCycleLiveForkTest is Test {
 
     // CANLI, defterden.
     IPoolManager internal pm;
+    BuybackVestingVault internal vault;
+    BuybackTreasury internal treasury;
+    address internal constant DISPOSABLE_KEEPER = address(0x4EE9);
+
     address internal liveEscrow;
     address internal liveFeeSchedule;
     address internal liveFactory;
@@ -341,6 +347,19 @@ contract GraduationCycleLiveForkTest is Test {
 
         locker = new ArcpadLocker(pm, address(factory), IHooks(address(hook)));
 
+        // ---- BUYBACK NESLI, AYNI ATILABILIR YIGINDA -------------------------
+        // CANLI `PoolManager`A BAGLANIR ve bu testin tasidigi deger budur:
+        // havuz mercii (`BuybackTreasury._buyOnPool`) V4'un GERCEK kodunu
+        // yurutur, bir taklidi degil. Kasa ve hazine atilabilirdir; uretim
+        // hazinesine (`0xeC111Bc3...`) HIC dokunulmaz.
+        vault = new BuybackVestingVault(address(factory));
+        treasury = new BuybackTreasury(address(factory), liveEscrow, vault, pm);
+        vm.startPrank(DISPOSABLE_GOVERNOR);
+        factory.setBuybackTreasury(address(treasury));
+        factory.setGraduationHook(address(hook));
+        factory.setBuybackKeeper(DISPOSABLE_KEEPER);
+        vm.stopPrank();
+
         vm.prank(DISPOSABLE_GOVERNOR);
         factory.proposeGraduationTarget(address(locker));
         vm.warp(block.timestamp + factory.GRADUATION_TARGET_DELAY());
@@ -368,6 +387,107 @@ contract GraduationCycleLiveForkTest is Test {
         vm.deal(BUYER, 1_000_000e18);
         vm.prank(BUYER);
         BondingCurve(curve).buyExactTokensOut{value: 100_000e18}(S, type(uint256).max);
+    }
+
+    /**
+     * MEZUNIYET SONRASI BUYBACK -- CANLI `PoolManager`A KARSI.
+     *
+     * @dev BU TESTIN OLCTUGU SEY BIR TAKLIT DEGIL. `BuybackTreasury._buyOnPool`
+     *      `poolManager.unlock` -> `swap` -> `settle`/`take` zincirini yurutur
+     *      ve buradaki `pm` Arc testnet'te DEPLOY EDILMIS `PoolManager`dir
+     *      (`0x617321A8...`), bir kopyasi degil. Yani fiyat siniri, tick
+     *      gecisleri ve delta muhasebesi V4'un GERCEK kodundan gecer.
+     *
+     * @dev URETIM YIGININA DOKUNULMAZ: fabrika, hook, locker, kasa ve hazine
+     *      bu testin kendi atilabilir kopyalaridir. Canli olan yalnizca
+     *      `PoolManager`, `FeeSchedule` (durumsuz) ve USDC gorunumudur.
+     */
+    function test_buybackSweepsOnTheLivePoolAfterGraduation() public {
+        (address token, address payable curve) = _launchAndBuyOutWithBuyback("Buyback Live");
+        locker.graduate(curve);
+        require(BondingCurve(curve).graduated(), "curve did not graduate");
+
+        (PoolKey memory key,) = _keyOf(token);
+
+        // Butceyi mesru mercii uzerinden kur: hook fabrikanin kayitli
+        // `graduationHook`udur, yani `accrue` onu kabul eder.
+        vm.deal(address(hook), 0.2e18);
+        vm.prank(address(hook));
+        treasury.accrue{value: 0.2e18}(token);
+
+        uint256 pending = treasury.pendingQuote(token);
+        assertGt(pending, treasury.MIN_SWEEP_WEI(), "butce esigin altinda -- test bosluk olcuyor");
+
+        (uint160 sqrtBefore,,,) = pm.getSlot0(key.toId());
+        assertGt(uint256(sqrtBefore), 0, "havuz acilmamis -- mezuniyet basarisiz");
+
+        vm.prank(DISPOSABLE_KEEPER);
+        treasury.sweep(token, 0, block.timestamp + 600);
+
+        uint256 spent = treasury.cumulativeQuoteSpent(token);
+        uint256 bought = treasury.cumulativeTokensBought(token);
+
+        assertGt(spent, 0, "CANLI havuzdan hic alim yapilmadi");
+        assertGt(bought, 0, "hic token alinmadi");
+        assertEq(vault.totalLocked(token), bought, "alinan token kasaya kilitlenmedi");
+
+        // MUHASEBE: hazinede muhasebesiz wei kalmaz.
+        assertEq(
+            address(treasury).balance, treasury.pendingQuote(token), "hazinede muhasebesiz bakiye var"
+        );
+
+        // FIYAT ETKISI SINIRI CANLI HAVUZDA DA BAGLAYICI.
+        (uint160 sqrtAfter,,,) = pm.getSlot0(key.toId());
+        uint256 pa = (uint256(sqrtBefore) * uint256(sqrtBefore)) >> 96;
+        uint256 pb = (uint256(sqrtAfter) * uint256(sqrtAfter)) >> 96;
+        (uint256 lo, uint256 hi) = pa < pb ? (pa, pb) : (pb, pa);
+        assertGt(lo, 0, "fiyat sifir -- olcum anlamsiz");
+        assertLe(((hi - lo) * 10_000) / lo, treasury.MAX_PRICE_IMPACT_BPS() + 1, "fiyat etkisi sinirin ustunde");
+    }
+
+    /**
+     * ...VE HAZINENIN ALIMI CANLI HAVUZDA DA UCRETTEN MUAFTIR.
+     *
+     * @dev Muafiyet `ArcpadHook._collect`in ilk satiridir. Canli `FeeSchedule`
+     *      kademe 0'da %0,95 protokol payi uygular; muafiyet calismasaydi o
+     *      pay creator'in buyback butcesinden kesilir ve `owed(DISPOSABLE_TREASURY)`
+     *      buyurdu.
+     */
+    function test_theTreasurysLivePoolBuyPaysNoProtocolFee() public {
+        (address token, address payable curve) = _launchAndBuyOutWithBuyback("Buyback Exempt");
+        locker.graduate(curve);
+
+        vm.deal(address(hook), 0.2e18);
+        vm.prank(address(hook));
+        treasury.accrue{value: 0.2e18}(token);
+
+        uint256 protocolBefore = IEscrowView(liveEscrow).owed(DISPOSABLE_TREASURY);
+
+        vm.prank(DISPOSABLE_KEEPER);
+        treasury.sweep(token, 0, block.timestamp + 600);
+
+        assertGt(treasury.cumulativeQuoteSpent(token), 0, "alim olmadi -- muafiyet olculemez");
+        assertEq(
+            IEscrowView(liveEscrow).owed(DISPOSABLE_TREASURY),
+            protocolBefore,
+            "hazinenin alimi protokole ucret odedi"
+        );
+    }
+
+    /// @dev `_launchAndBuyOut`un buyback ACIK ikizi.
+    function _launchAndBuyOutWithBuyback(string memory name)
+        internal
+        returns (address token, address payable curve)
+    {
+        vm.prank(CREATOR);
+        (address t, address c) = factory.launchWithBuyback(name, "ARC", "ipfs://x", true);
+        token = t;
+        curve = payable(c);
+
+        vm.deal(BUYER, 1_000_000e18);
+        vm.prank(BUYER);
+        BondingCurve(curve).buyExactTokensOut{value: 100_000e18}(S, type(uint256).max);
+        require(BondingCurve(curve).complete(), "curve not complete");
     }
 
     function _keyOf(address token) internal view returns (PoolKey memory key, bool baseIsCurrency0) {

@@ -2,7 +2,9 @@
 pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {BuybackTreasury} from "../src/BuybackTreasury.sol";
 import {BuybackVestingVault} from "../src/BuybackVestingVault.sol";
 import {FeeEscrow} from "../src/FeeEscrow.sol";
@@ -16,6 +18,29 @@ contract MockLaunchToken is ERC20 {
 
     function mint(address to, uint256 amount) external {
         _mint(to, amount);
+    }
+}
+
+/**
+ * ACILMAMIS BIR HAVUZ BILDIREN en kucuk `PoolManager` yuzeyi.
+ *
+ * BU PAKET EGRI MERCIINI OLCER, HAVUZ MERCIINI DEGIL. Gercek bir V4 havuzu
+ * kurmak `PoolManager` + hook + locker + tam bir mezuniyet dongusu demektir ve
+ * o, bir birim testinin degil `test/BuybackPoolVenue.t.sol`un isidir.
+ *
+ * `getSlot0` SIFIR DONER, yani mezun bir egride supurme "pool-not-initialized"
+ * ile geri katlanir. Bu bir kacamak DEGIL, kontratin gercek bir dalidir ve
+ * burada tam olarak o dal olculur.
+ */
+contract MockPoolManager {
+    /// @dev `extsload`, `getSlot0` DEGIL -- VE FARK OLCULDU. `StateLibrary`
+    ///      slot0'i bir GORUNUM FONKSIYONUYLA degil, ham depolama okumasiyla
+    ///      alir (`extsload(bytes32)`, selector `0x1e2eaeaf`). Bir `getSlot0`
+    ///      taklidi HIC CAGRILMAZ ve cagri "unrecognized function selector"
+    ///      ile duser; ilk hal tam olarak boyle kirmizi oldu. Sifir donmek
+    ///      "havuz acilmamis" demektir.
+    function extsload(bytes32) external pure returns (bytes32) {
+        return bytes32(0);
     }
 }
 
@@ -95,6 +120,10 @@ contract BuybackTreasuryTest is Test {
     MockFactory internal factory;
     MockCurve internal curve;
     MockLaunchToken internal token;
+    MockPoolManager internal poolManager;
+
+    /// @dev `vm.expectEmit` icin yerel bildirim -- kontratinkiyle AYNI imza.
+    event BuybackSkipped(address indexed token, uint256 quoteReturnedToCreator, string reason);
 
     address internal constant PROTOCOL = address(0xDA0);
     address internal constant CREATOR = address(0xC0FFEE);
@@ -109,7 +138,8 @@ contract BuybackTreasuryTest is Test {
         escrow = new FeeEscrow();
         factory = new MockFactory();
         vault = new BuybackVestingVault(address(factory));
-        treasury = new BuybackTreasury(address(factory), address(escrow), vault);
+        poolManager = new MockPoolManager();
+        treasury = new BuybackTreasury(address(factory), address(escrow), vault, IPoolManager(address(poolManager)));
         factory.set(PROTOCOL, address(treasury), HOOK, KEEPER);
 
         curve = new MockCurve();
@@ -216,12 +246,63 @@ contract BuybackTreasuryTest is Test {
         assertEq(vault.totalLocked(address(token)), 0, "kasaya bir sey girmedi");
     }
 
-    function test_mezun_egride_para_creator_a_doner() public {
+    /**
+     * MEZUN EGRI + HAVUZ YOK -> geri katlama, ve SEBEP "pool-not-initialized".
+     *
+     * BU TESTIN ANLAMI DEGISTI VE DEGISMESI GEREKIYORDU. Onceki hali "mezun
+     * egride para creator'a doner" diyordu ve o gun DOGRUYDU: hazinenin tek
+     * mercii egriydi, mezuniyetten sonra alim yapacak yer YOKTU. Yani test,
+     * bir OZELLIGI degil bir EKSIKLIGI sabitliyordu -- ve ozellik tamamlandigi
+     * gun, tamamlandigini fark etmeden kirmizi olacakti.
+     *
+     * Bugun havuz mercii VAR (`_buyOnPool`). Bu paket onu OLCEMEZ cunku
+     * `MockPoolManager` acilmamis bir havuz bildirir; olctugu sey artik
+     * mercinin YOKLUGUNDA ne oldugudur. Gercek alim `BuybackPoolVenue.t.sol`da
+     * gercek bir havuza karsi yurunur.
+     *
+     * Sebep dizesi TASIYICIDIR: `below-threshold-or-unsafe` ile ayrilmasi,
+     * bir operatorun "havuz hic acilmamis" ile "havuz ince" arasinda karar
+     * verebilmesini saglar.
+     */
+    function test_mezun_egride_havuz_yoksa_para_creator_a_doner() public {
         _accrue(1e18);
         curve.setGraduated(true);
+
+        // `expectEmit` KULLANILMIYOR VE SEBEBI OLCULDU: `_foldBack` ONCE
+        // `_refund` cagirir, yani escrow'un `Deposited`i `BuybackSkipped`ten
+        // ONCE yayilir. `expectEmit` bir SONRAKI logu esler ve escrow'unkine
+        // takilir. Log kaydi, sirayla ilgili hicbir varsayim yapmaz.
+        vm.recordLogs();
         vm.prank(KEEPER);
         treasury.sweep(address(token), 0, block.timestamp + 1);
-        assertEq(escrow.owed(CREATOR), 1e18);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 topic = keccak256("BuybackSkipped(address,uint256,string)");
+        string memory reason = "";
+        bool found = false;
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (logs[i].emitter != address(treasury) || logs[i].topics[0] != topic) continue;
+            (, reason) = abi.decode(logs[i].data, (uint256, string));
+            found = true;
+        }
+        assertTrue(found, "BuybackSkipped hic yayilmadi");
+        assertEq(reason, "pool-not-initialized", "sebep ayristi");
+
+        assertEq(escrow.owed(CREATOR), 1e18, "tamami creator'a");
+        assertEq(treasury.cumulativeQuoteSpent(address(token)), 0, "hic harcanmadi");
+    }
+
+    /// ...VE `spendable` ARTIK MEZUN EGRIDE SIFIR DONMEZ.
+    ///
+    /// @dev Anahtarcinin okudugu sayi budur. Sifir donseydi anahtarci supurmeyi
+    ///      HIC cagirmaz ve havuz mercii -- calisabilecekken -- hic tetiklenmezdi.
+    ///      Deger bir UST SINIRDIR; gercekte harcanan `BuybackExecuted`ten okunur.
+    function test_spendable_mezuniyetten_sonra_bekleyeni_bildirir() public {
+        _accrue(1e18);
+        assertGt(treasury.spendable(address(token)), 0, "egri asamasi: pozitif");
+
+        curve.setGraduated(true);
+        assertEq(treasury.spendable(address(token)), 1e18, "mezuniyet sonrasi: bekleyenin tamami ust sinir");
     }
 
     /// SATILABILIR ENVANTER BITTIYSE de para creator'a doner.

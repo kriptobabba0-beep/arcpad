@@ -45,11 +45,21 @@ interface IFactoryView {
     function graduationTarget() external view returns (address);
     function feeScheduleOf(address token) external view returns (address);
     function protocolTreasury() external view returns (address);
+    /// @dev `treasury == 0` KAPALI demektir. Curve'un okudugu fonksiyonun
+    ///      AYNISI -- `LaunchFactory.buybackPolicy`nin NatSpec'i onu "curve ve
+    ///      hook'un okudugu tek karar noktasi" diye tanimlar.
+    function buybackPolicy(address token) external view returns (address treasury, uint256 lockBps);
+    /// @dev Ucret MUAFIYETININ tek dayanagi. Governor BIR KEZ yazar.
+    function buybackTreasury() external view returns (address);
 }
 
 interface ILaunchTokenView {
     function curve() external view returns (address);
     function creator() external view returns (address);
+}
+
+interface IBuybackTreasury {
+    function accrue(address token) external payable;
 }
 
 interface ICurveView {
@@ -285,7 +295,7 @@ contract ArcpadHook is BaseHook {
     ///        exact-output: `amountToSwap` BUYUR, havuz `amountSpecified`i
     ///                      uretir, kullanici tam istedigini alir ve ucreti
     ///                      fazladan girdi olarak oder.
-    function _beforeSwap(address, PoolKey calldata key, SwapParams calldata params, bytes calldata)
+    function _beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata)
         internal
         override
         returns (bytes4, BeforeSwapDelta, uint24)
@@ -298,18 +308,20 @@ contract ArcpadHook is BaseHook {
             return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
         }
         uint256 amount = exactInput ? uint256(-params.amountSpecified) : uint256(params.amountSpecified);
-        uint256 fee = _collect(key, cfg, amount);
+        uint256 fee = _collect(key, cfg, amount, sender);
         return (IHooks.beforeSwap.selector, toBeforeSwapDelta(int128(int256(fee)), 0), 0);
     }
 
     /// @dev quote UNSPECIFIED tarafta oldugunda miktar ancak swap'ten SONRA
     ///      bilinir. `Hooks.afterSwap`in vendored govdesi bu donusu
     ///      unspecified slot'a yazar ve dogru para birimine KENDISI esler.
-    function _afterSwap(address, PoolKey calldata key, SwapParams calldata params, BalanceDelta delta, bytes calldata)
-        internal
-        override
-        returns (bytes4, int128)
-    {
+    function _afterSwap(
+        address sender,
+        PoolKey calldata key,
+        SwapParams calldata params,
+        BalanceDelta delta,
+        bytes calldata
+    ) internal override returns (bytes4, int128) {
         PoolConfig memory cfg = configOf[key.toId()];
         bool exactInput = params.amountSpecified < 0;
         bool specifiedIsCurrency0 = (exactInput == params.zeroForOne);
@@ -317,7 +329,7 @@ contract ArcpadHook is BaseHook {
 
         int128 quoteDelta = cfg.quoteIsCurrency0 ? delta.amount0() : delta.amount1();
         uint256 amount = quoteDelta < 0 ? uint256(int256(-quoteDelta)) : uint256(int256(quoteDelta));
-        uint256 fee = _collect(key, cfg, amount);
+        uint256 fee = _collect(key, cfg, amount, sender);
         return (IHooks.afterSwap.selector, int128(int256(fee)));
     }
 
@@ -339,7 +351,48 @@ contract ArcpadHook is BaseHook {
     ///
     /// @dev 10^12 donusumu `GraduationMath.quoteWei` uzerinden gecer; bu
     ///      dosyada `1e12` literali YOKTUR.
-    function _collect(PoolKey calldata key, PoolConfig memory cfg, uint256 amount) private returns (uint256 fee) {
+    ///
+    /// @dev ============ BUYBACK HAZINESI UCRETTEN MUAFTIR ============
+    ///
+    ///      NICIN VAR. Mezuniyetten sonra buyback alimi BU HAVUZDAN gecer
+    ///      (`BuybackTreasury._sweepOnPool`). Muafiyet olmasaydi o alim da
+    ///      ucrete tabi olurdu ve iki ayri sonuc dogururdu:
+    ///
+    ///        1. SIZINTI: protokol payi, creator'in buyback butcesinden
+    ///           kesilirdi. Bu, `_settleCreatorFee`in NatSpec'inde "IMKANSIZ"
+    ///           denen ozelligin -- buyback ile protokol gelirinin birbirine
+    ///           DOKUNMAMASI -- ters yonden delinmesidir.
+    ///        2. YENIDEN TAHAKKUK: alimin creator payinin bir kismi, supurme
+    ///           DEVAM EDERKEN hazineye geri yatirilirdi (`accrue` hook'u
+    ///           mercii olarak kabul eder). `sweep` `pendingQuote`u sifirladigi
+    ///           icin bu bir cift-harcama DEGILDIR, ama her supurme yeni bir
+    ///           bakiye birakir ve butce hicbir zaman tam kapanmaz.
+    ///
+    ///      GUVEN YUZEYI DAR TUTULDU. Muafiyetin tek kosulu `sender`in
+    ///      fabrikanin `buybackTreasury()`si OLMASIDIR, ve o adres governor
+    ///      tarafindan BIR KEZ yazilir (`setBuybackTreasury`); degistirilemez
+    ///      oldugu icin "muafiyeti baska bir adrese tasi" diye bir hamle
+    ///      YOKTUR. Hazine ise yalnizca `sweep` icinden swap yapar ve o yol
+    ///      hem `pendingQuote` ile hem fiyat-etkisi siniriyla sinirlidir --
+    ///      yani muafiyet, keyfi hacmi ucretsiz kilan bir kapi degildir.
+    ///
+    ///      `sender != address(0)` KONTROLU GEREKLIDIR: hazine baglanmadan
+    ///      once `buybackTreasury()` SIFIR doner, ve sifir `sender` V4'te
+    ///      olusmasa da bu esitligin kaza eseri tutmasi ihtimalini kapatmak
+    ///      bir satirdir. Kontrolsuz hali, sifir adresli bir cagriyi ucretten
+    ///      muaf kilardi.
+    ///
+    ///      MUAFIYET LP UCRETINI KAPSAMAZ ve kapsayamaz: `POOL_FEE` havuzun
+    ///      likidite saglayicilarina aittir ve V4 onu hook'tan ONCE alir.
+    ///      Buyback alimi onu oder; odemesi de dogrudur, cunku o ucret
+    ///      likiditeyi saglayanin hakkidir.
+    function _collect(PoolKey calldata key, PoolConfig memory cfg, uint256 amount, address sender)
+        private
+        returns (uint256 fee)
+    {
+        // BUYBACK HAZINESI UCRETTEN MUAFTIR -- bkz. asagidaki NatSpec.
+        if (sender != address(0) && sender == IFactoryView(factory).buybackTreasury()) return 0;
+
         (uint256 protocolBps, uint256 creatorBps) = FeeSchedule(cfg.schedule).tierFor(_marketCap(key, cfg));
 
         uint256 protocolFee = CurveMath.feeOn(amount, protocolBps);
@@ -359,9 +412,57 @@ contract ArcpadHook is BaseHook {
         // soylerdi.
         IFeeEscrow(escrow).deposit{value: GraduationMath.quoteWei(protocolFee)}(protocolTreasury());
         if (creatorFee != 0) {
-            IFeeEscrow(escrow).deposit{value: GraduationMath.quoteWei(creatorFee)}(cfg.creator);
+            _settleCreatorFee(cfg.base, cfg.creator, GraduationMath.quoteWei(creatorFee));
         }
         emit SwapFeeCollected(key.toId(), protocolFee, creatorFee);
+    }
+
+    /**
+     * @notice Creator ucretini oder; buyback aciksa bir kismini AYIRIR.
+     *
+     * @dev `BondingCurve._settleCreatorFee`IN IKIZIDIR ve birebir ayni sirayi
+     *      izler. Iki yolun (egri ve havuz) ayni ekonomiyi uretmesi gerekir;
+     *      ayrisan bir sira ya da yuvarlama, mezuniyetin creator'in gelirini
+     *      sessizce degistirmesi demek olurdu.
+     *
+     * @dev ============ PROTOKOL PAYINA HIC DOKUNULMAZ ============
+     *      Bu fonksiyon yalnizca `creatorFee` gorur; `protocolFee` cagiran
+     *      tarafta ZATEN yatirilmistir. "Buyback protokol gelirini azaltir"
+     *      hatasi bu yuzden bir dikkat meselesi degil, bir IMKANSIZLIKTIR.
+     *
+     * @dev ============ BOLME WEI'DE YAPILIR, 6-DECIMAL'DE DEGIL ============
+     *      SIRA TASIYICIDIR VE TEK DOGRU SIRA BUDUR. Cagiran once
+     *      `GraduationMath.quoteWei` ile 6 decimal'i wei'ye cevirir, bolme
+     *      SONRA gelir. Ters sira -- once 6-decimal'de bol, sonra iki parcayi
+     *      ayri ayri cevir -- her parcada bir kirpma uretir ve toplamlari
+     *      `quoteWei(creatorFee)`den 10^12 wei'ye kadar EKSIK kalirdi. O fark
+     *      hicbir yere yatirilmaz: hook'un native bakiyesinde birikir, hicbir
+     *      defterde gorunmez ve hicbir cikis yolu yoktur. Bu sirayla toplam
+     *      TAM olarak korunur -- `creatorCash = creatorWei - buybackQuote`
+     *      bir cikarmadir, ikinci bir bolme degil.
+     *
+     * @dev CANLI OKUMA, VE `PoolConfig`E ALAN EKLENMEDI. Tasarim notu
+     *      (`docs/specs/2026-08-14-...`) "PoolConfig'e buybackEnabled" diyordu;
+     *      UYGULANMADI ve gerekcesi bu dosyanin kendi kuralidir: `PoolConfig`
+     *      havuz KAYIT aninda yazilir, yani oraya konan bir bayrak politikayi
+     *      MEZUNIYET ANINDA DONDURURDU. Creator mezuniyetten sonra buyback'i
+     *      ne acabilir ne kapatabilirdi ve `setBuybackEnabled` havuz asamasinda
+     *      sessizce etkisiz kalirdi -- kontrat kabul eder, hook hic okumaz.
+     *      Ayni gerekce `protocolTreasury()`nin de neden her islemde canli
+     *      okundugunu aciklar; bkz. bu dosyadaki "CANLI OKUMA, YATIRIM ANINDA"
+     *      notu ve `treasury`nin neden constructor argumani OLMADIGI.
+     */
+    function _settleCreatorFee(address token, address creator, uint256 creatorWei) private {
+        (address treasury, uint256 lockBps) = IFactoryView(factory).buybackPolicy(token);
+        // `treasury == 0` KAPALI demektir; carpim hic yapilmaz.
+        uint256 buybackQuote = treasury == address(0) ? 0 : (creatorWei * lockBps) / 10_000;
+
+        if (buybackQuote != 0) IBuybackTreasury(treasury).accrue{value: buybackQuote}(token);
+
+        uint256 creatorCash = creatorWei - buybackQuote;
+        // Kosul KALMALIDIR: `FeeEscrow.deposit` sifir tutarda revert eder ve
+        // `lockBps == 10_000` durumunda nakit pay TAM SIFIR olur.
+        if (creatorCash != 0) IFeeEscrow(escrow).deposit{value: creatorCash}(creator);
     }
 
     /// @notice Havuzun ANLIK fiyatindan turetilmis market cap, quote'un taban
