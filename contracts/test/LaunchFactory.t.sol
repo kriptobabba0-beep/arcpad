@@ -56,7 +56,6 @@ contract Forger {
         return (address(0), 0);
     }
 
-
     function graduationTarget() external view returns (address) {
         return target.graduationTarget();
     }

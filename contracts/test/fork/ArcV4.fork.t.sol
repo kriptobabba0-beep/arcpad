@@ -226,11 +226,7 @@ contract ArcV4ForkTest is Test {
         // 2. ODEME GUCU. Kontratin degismezi `totalOwed <= balance`tir, esitlik
         //    DEGIL: dogrudan bir transfer bakiyeyi yukseltir ama `totalOwed`i
         //    yukseltmez. Bu iddia her deposit ve her claim altinda dogru kalir.
-        assertGe(
-            escrow.balance,
-            IEscrowView(escrow).totalOwed(),
-            "escrow is insolvent against its own book"
-        );
+        assertGe(escrow.balance, IEscrowView(escrow).totalOwed(), "escrow is insolvent against its own book");
     }
 
     // ---------------------------------------------------------------

@@ -41,6 +41,43 @@ fi
 echo "== 2. certbot =="
 command -v certbot >/dev/null || { apt-get update -qq && apt-get install -y -qq certbot python3-certbot-nginx; }
 
+# ============================================================================
+# 2b. NGINX'TE BU ALAN ADINA AIT BIR SERVER BLOGU VAR MI
+# ============================================================================
+#
+# BU KONTROL CERTBOT'TAN ONCE GELMEK ZORUNDA, VE SEBEBI OLCULDU.
+#
+# `certbot --nginx` iki is yapar: sertifikayi ALIR, sonra nginx'e KURAR.
+# Kurulum asamasi `server_name` ile eslesen bir blok arar; bulamazsa
+# "Could not automatically find a matching server block" ile duser -- AMA
+# SERTIFIKA ZATEN ALINMISTIR. Yani basarisiz kurulum, Let's Encrypt'in
+# haftalik kotasindan bir sertifika HARCAR.
+#
+# `outofmind.fun` ilk kurulumunda tam olarak bu yasandi: depo ile gelen
+# `sites-available/arcpad` `server_name _;` ile gelir (alan adi yokken
+# dogru olan budur) ve certbot onu eslestiremedi.
+#
+# BURADA DUZELTILIR, SIKAYET EDILMEZ: tek etkin site `_` ise ona alan adi
+# yazilir. Birden fazla site ya da beklenmedik bir yapilandirma varsa
+# DOKUNULMAZ ve operator uyarilir -- tahmin ederek baska birinin
+# yapilandirmasini bozmak, kotayi harcamaktan kotudur.
+echo "== 2b. nginx server_name =="
+SITE=/etc/nginx/sites-available/arcpad
+if nginx -T 2>/dev/null | grep -qE "^[[:space:]]*server_name[[:space:]].*${DOMAIN}"; then
+  echo "  $DOMAIN icin server blogu ZATEN var"
+elif [[ -f "$SITE" ]] && grep -qE "^[[:space:]]*server_name[[:space:]]+_;" "$SITE"; then
+  cp "$SITE" "${SITE}.bak.$(date +%s)"
+  sed -i "s/^\( *\)server_name _;/server_name ${DOMAIN};/" "$SITE"
+  echo "  server_name _ -> ${DOMAIN} (yedek: ${SITE}.bak.*)"
+  nginx -t >/dev/null 2>&1 || { echo "  nginx testi dustu, geri aliniyor" >&2; cp "${SITE}.bak."* "$SITE"; exit 1; }
+  systemctl reload nginx
+else
+  echo "  $DOMAIN icin eslesen bir server blogu YOK ve otomatik duzeltilemedi." >&2
+  echo "  certbot sertifikayi ALIR ama KURAMAZ ve kota bosa gider." >&2
+  echo "  Once nginx'te 'server_name ${DOMAIN};' ayarla, sonra tekrar kos." >&2
+  exit 1
+fi
+
 echo "== 3. sertifika + nginx yonlendirmesi =="
 # `--redirect`: 80 -> 443 kalici yonlendirme. `--agree-tos` ve `-m` olmadan
 # certbot etkilesimli sorar ve bir betikte o soru bir kilitlenmedir.

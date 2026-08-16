@@ -302,7 +302,6 @@ contract MeasuringFactory {
         return (address(0), 0);
     }
 
-
     function pull() external returns (uint256, uint256) {
         return curve.graduate();
     }
