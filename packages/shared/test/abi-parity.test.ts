@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import {
   bondingCurveAbi,
+  buybackTreasuryAbi,
+  buybackVestingVaultAbi,
   curveMathErrorsAbi,
   feeEscrowAbi,
   launchFactoryAbi,
@@ -38,6 +40,8 @@ const ARTIFACTS = {
   BondingCurve: 'contracts/out/BondingCurve.sol/BondingCurve.json',
   LaunchToken: 'contracts/out/LaunchToken.sol/LaunchToken.json',
   FeeEscrow: 'contracts/out/FeeEscrow.sol/FeeEscrow.json',
+  BuybackTreasury: 'contracts/out/BuybackTreasury.sol/BuybackTreasury.json',
+  BuybackVestingVault: 'contracts/out/BuybackVestingVault.sol/BuybackVestingVault.json',
   CurveMath: 'contracts/out/CurveMath.sol/CurveMath.json',
 } as const
 
@@ -47,6 +51,8 @@ const DISTRIBUTED: Record<keyof typeof ARTIFACTS, readonly unknown[]> = {
   BondingCurve: bondingCurveAbi,
   LaunchToken: launchTokenAbi,
   FeeEscrow: feeEscrowAbi,
+  BuybackTreasury: buybackTreasuryAbi,
+  BuybackVestingVault: buybackVestingVaultAbi,
   CurveMath: curveMathErrorsAbi,
 }
 
@@ -107,12 +113,26 @@ describe('the distributed ABI matches the compiled output', () => {
    * ANTI-VACUITY. If `normalise` ever started returning `[]` -- a bad path, a
    * failed parse swallowed somewhere -- every case above would compare `[]`
    * with `[]` and pass. These counts were read off the artifacts, once.
+   *
+   * THE COUNTS ARE A RATCHET, NOT A CONSTANT, AND UPDATING ONE IS SUPPOSED TO
+   * COST A MOMENT'S THOUGHT. `LaunchFactory` went 51 -> 71 with the buyback
+   * generation: `launchWithBuyback`, `setBuybackEnabled`, `setBuybackTreasury`,
+   * `setGraduationHook`, `setBuybackKeeper`, `buybackPolicy`,
+   * `buybackEnabledOf`, `buybackTreasury`, `buybackKeeper`, `graduationHook`,
+   * `BUYBACK_LOCK_BPS` and the events and errors that came with them.
+   *
+   * That the number had to be edited BY HAND is the point. The parity check
+   * above compares two things that both move when the contract moves; this
+   * line does not move on its own, so a surface that grows by twenty entries
+   * cannot land without someone writing down that it did.
    */
   it('the comparison is not comparing two empty arrays', () => {
-    expect(normalise(launchFactoryAbi)).toHaveLength(51)
+    expect(normalise(launchFactoryAbi)).toHaveLength(71)
     expect(normalise(bondingCurveAbi)).toHaveLength(57)
     expect(normalise(launchTokenAbi)).toHaveLength(28)
     expect(normalise(feeEscrowAbi)).toHaveLength(10)
+    expect(normalise(buybackTreasuryAbi)).toHaveLength(36)
+    expect(normalise(buybackVestingVaultAbi)).toHaveLength(27)
     expect(normalise(curveMathErrorsAbi)).toHaveLength(5)
   })
 

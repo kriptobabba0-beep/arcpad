@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { toEventSelector } from 'viem'
 import {
   bondingCurveAbi,
+  buybackTreasuryAbi,
+  buybackVestingVaultAbi,
   feeEscrowAbi,
   launchFactoryAbi,
   launchTokenAbi,
@@ -80,6 +82,20 @@ describe('topic0 kimlikleri', () => {
   const DELIBERATELY_UNHANDLED: Record<string, string> = {
     '0xe027304f2e5e4d74279f1d1b4ac8f3d1916482aa45475d7dd67699ee58d8d479':
       'FeeScheduleAssigned(address,address) -- Faz 2 havuzu, kapsam disi',
+    /*
+     * `Approval(address,address,uint256)` -- BUYBACK SUPURMESININ ARA ADIMI.
+     *
+     * `BuybackTreasury.sweep` alinan tokeni kasaya kilitlemeden once
+     * `forceApprove(vault, got)` cagirir; ERC-20 bunu bir `Approval` logu
+     * olarak yayar ve fixture'a girer.
+     *
+     * INDEKSLENMEZ VE INDEKSLENMEMELIDIR: bir onay MULKIYET DEGISIMI DEGILDIR.
+     * Onu deftere yazmak, ayni tokeni once onay sonra transfer olarak IKI KEZ
+     * saymaya davet olurdu; gercek hareket bir satir sonra gelen `Transfer`dir
+     * ve o zaten islenir. Kasadaki bakiyenin dogru kaynagi `BuybackLocked`tir.
+     */
+    '0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925':
+      'Approval(address,address,uint256) -- supurmenin kasaya verdigi onay, mulkiyet degisimi degil',
   }
 
   // ILK YON: her fixture logu ya bizim tanidigimiz bir olaydir ya da BILEREK
@@ -249,6 +265,17 @@ describe('topic0 kimlikleri', () => {
       poolSwap: [POOL_MANAGER_SWAP_EVENT],
       poolInitialize: [POOL_MANAGER_INITIALIZE_EVENT],
       poolFee: [ARCPAD_HOOK_SWAP_FEE_COLLECTED_EVENT],
+      // BUYBACK IKILISI DAGITILAN ABI'DEN GELIR -- havuz olaylarinin aksine.
+      // Sebep asimetriyi hakli kilar: `BuybackTreasury` ve
+      // `BuybackVestingVault` BIZIM kontratlarimizdir, `abi-parity` onlari
+      // artifact ile iki yonlu karsilastirir, ve hatalari zaten
+      // `ARCPAD_ERROR_ABI`ye girmesi ISTENEN hatalardir (`NotKeeper`,
+      // `SlippageTooHigh`). `PoolManager` icin ayni sey yanlis takas olurdu.
+      buybackAccrued: buybackTreasuryAbi,
+      buybackExecuted: buybackTreasuryAbi,
+      buybackSkipped: buybackTreasuryAbi,
+      buybackLocked: buybackVestingVaultAbi,
+      vestingReleased: buybackVestingVaultAbi,
     }
     // Bos kume uzerinde "hepsi gecti" dogru olurdu; sayi sabitlenir.
     expect(Object.keys(CONTRACT_OF).length).toBe(Object.keys(EVENT_SIGNATURES).length)

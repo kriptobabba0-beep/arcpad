@@ -4,6 +4,8 @@ import {
   ARCPAD_ERROR_ABI,
   type ArcpadAbiError,
   bondingCurveAbi,
+  buybackTreasuryAbi,
+  buybackVestingVaultAbi,
   curveMathErrorsAbi,
   errorSelector,
   feeEscrowAbi,
@@ -35,11 +37,21 @@ function groupBySelector(entries: readonly ArcpadAbiError[]): Map<string, string
   return bySelector
 }
 
+/**
+ * The HAND-BUILT concatenation the deduplicated dictionary is compared
+ * against. It MUST list the same sources as `abi/index.ts::SOURCES` -- if it
+ * falls behind, `toBeLessThan` compares against too small a number and the
+ * anti-vacuity claim inverts into a failure that looks like a real one.
+ * MEASURED: adding the two buyback ABIs to `SOURCES` and not here produced
+ * `expected 90 to be less than 79`.
+ */
 const ALL_DECLARED: ArcpadAbiError[] = [
   bondingCurveAbi,
   launchFactoryAbi,
   launchTokenAbi,
   feeEscrowAbi,
+  buybackTreasuryAbi,
+  buybackVestingVaultAbi,
   curveMathErrorsAbi,
 ]
   .flatMap((abi) => abi as readonly { type: string }[])
@@ -85,7 +97,12 @@ describe('error selectors', () => {
     // Anti-vacuity: if the dictionary were the raw concatenation this would be
     // equal, and the "one entry per selector" claim would be untested.
     expect(ARCPAD_ERROR_ABI.length).toBeLessThan(ALL_DECLARED.length)
-    expect(ARCPAD_ERROR_ABI).toHaveLength(66)
+    // 66 -> 71 with the buyback generation's factory errors, then 71 -> 90
+    // when `BuybackTreasury` and `BuybackVestingVault` joined `SOURCES` so the
+    // decoder could name a sweep or a vesting-claim revert. Deduplication
+    // still removes something, which the `toBeLessThan` above is what actually
+    // proves.
+    expect(ARCPAD_ERROR_ABI).toHaveLength(90)
     expect(new Set(ARCPAD_ERROR_ABI.map(errorSelector)).size).toBe(ARCPAD_ERROR_ABI.length)
   })
 

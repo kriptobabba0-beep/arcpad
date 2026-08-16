@@ -47,6 +47,26 @@ export async function applyDecodedEvent(
     case 'poolInitialize':
     case 'poolFee':
       return 0
+    /*
+     * BUYBACK OLAYLARI: COZULUR, HENUZ YAZILMAZ.
+     *
+     * `return 0` burada `poolInitialize`inkiyle AYNI SEYI SOYLEMEZ: orada
+     * "yazacak bir sey yok" kalicidir, burada "yazma katmani henuz yok"
+     * gecicidir. Ayrimi yorumda tutmak zorundayiz cunku ikisi de ayni satiri
+     * yazar; `default`a dusurmek ise `switch`in tuketiciligini kaybettirir ve
+     * yeni bir olay eklendiginde TypeScript uyarmaz olurdu.
+     *
+     * SIRADAKI ADIM: `packages/db/migrations/NNN_buyback.sql` +
+     * `apply/buyback.ts`, ve `verify.ts::LEDGER_OF`taki bes `null`un tablo
+     * adiyla degistirilmesi. Ucu birlikte gitmezse kapsam kontrolu sessiz
+     * kalir.
+     */
+    case 'buybackAccrued':
+    case 'buybackExecuted':
+    case 'buybackSkipped':
+    case 'buybackLocked':
+    case 'vestingReleased':
+      return 0
     default: {
       const exhaustive: never = event
       throw new Error(`applyDecodedEvent: bilinmeyen olay ${JSON.stringify(exhaustive)}`)

@@ -72,7 +72,24 @@ const cell = (reach: ErrorReach, at: readonly string[], why: string): SurfaceCel
  */
 export const CALL_PATH: Readonly<Record<ArcpadAction, readonly string[]>> = {
   launch: [
-    'LaunchFactory.launch',
+    // GIRIS `launchWithBuyback`TIR, `launch` DEGIL -- VE BU BILINCLI.
+    //
+    // Create formu kutu isaretliyse `launchWithBuyback`, degilse `launch`
+    // cagirir; ikisi de AYNI `_launch` govdesine duser. Yol, eylemin
+    // ULASABILECEGI EN GENIS yuzeyi tarif etmelidir, dar olani degil: dar
+    // olani secmek `BuybackUnavailable`i turetilen kumeden dislar ve o hata
+    // -- kutu isaretliyken hazine bagli degilse -- kullanicinin GORECEGI
+    // seydir.
+    //
+    // Ters secim SESSIZ OLURDU: `launch` girisiyle yazilan bir yol da yesil
+    // kalir, cunku `_launch` yine yoldadir ve oteki adlarin hepsi turetilir.
+    // Yalnizca `BuybackUnavailable` eksik kalirdi ve kullanici "bilinmeyen
+    // hata" gorurdu.
+    'LaunchFactory.launchWithBuyback',
+    // ORTAK GOVDE. Iki giris de buraya duser; `EmptyName`/`EmptySymbol` ve
+    // `BuybackUnavailable` burada revert eder, `BondingCurve`i de bu insa
+    // eder -- yani hem `at` alintilarinin hem `new` hop'unun dayanagi.
+    'LaunchFactory._launch',
     'BondingCurve.constructor',
     'CurveMath.poolSeedSupply',
     'LaunchToken.constructor',
@@ -180,14 +197,22 @@ export const ERROR_SURFACE: Readonly<Record<ArcpadAction, Surface>> = {
   // onun bir selector'u -- dolayisiyla bir hucresi -- yoktur; cozucunun
   // `EmptyRevert` dali onu tasir ve TAHMIN ETMEZ.
   launch: {
+    /// Kutu ISARETLIYKEN ve hazine HENUZ BAGLI DEGILKEN kullanicinin gordugu
+    /// sey. `guarded` DEGILDIR: form bunu engelleyemez, cunku hazinenin bagli
+    /// olup olmadigi zincir durumudur -- simulasyon gorur, form goremez.
+    BuybackUnavailable: cell(
+      'user',
+      ['LaunchFactory._launch'],
+      'buyback kutusu isaretli ama fabrikada hazine bagli degil; kutu kaldirilinca launch gecer',
+    ),
     EmptyName: cell(
       'guarded',
-      ['LaunchFactory.launch'],
+      ['LaunchFactory._launch'],
       'form bos ada izin vermez; simulasyon gorur',
     ),
     EmptySymbol: cell(
       'guarded',
-      ['LaunchFactory.launch'],
+      ['LaunchFactory._launch'],
       'form bos sembole izin vermez; simulasyon gorur',
     ),
     NameTooLong: cell('guarded', ['LaunchToken.constructor'], 'bayt sayaci 32 baytta durdurur'),

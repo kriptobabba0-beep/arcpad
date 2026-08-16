@@ -607,7 +607,8 @@ describe('adres defteri', () => {
      * IZLEMEK ZORUNDA OLMADIGINI da soyluyor.
      */
     const FIXTURE_ROUTER = '0x6D9f42706C7E7bF3D2Ad3123ca7397DA6F0bB7cd'
-    const LIVE_ROUTER = '0x7496950E09260E1Aa7d8785EdC46F7E87d25eb30'
+    // V2 nesli (buyback), 16 Agustos 2026'da yayinlandi. Onceki nesil PoolDeployLib.LEGACY_V1_* sabitlerinde kayitli.
+    const LIVE_ROUTER = '0x51Bb2Ce3f5347e5447beFf6B72801d75cCe79fD5'
 
     it('loads the router and its initcode hash from the fixture', () => {
       const b = book()

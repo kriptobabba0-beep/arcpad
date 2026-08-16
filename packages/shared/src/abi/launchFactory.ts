@@ -55,6 +55,18 @@ export const launchFactoryAbi = [
   },
   {
     type: 'function',
+    name: 'BUYBACK_LOCK_BPS',
+    inputs: [],
+    outputs: [
+      {
+        name: '',
+        type: 'uint256',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     name: 'GRADUATION_TARGET_DELAY',
     inputs: [],
     outputs: [
@@ -146,6 +158,68 @@ export const launchFactoryAbi = [
   },
   {
     type: 'function',
+    name: 'buybackEnabledOf',
+    inputs: [
+      {
+        name: 'token',
+        type: 'address',
+      },
+    ],
+    outputs: [
+      {
+        name: '',
+        type: 'bool',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'buybackKeeper',
+    inputs: [],
+    outputs: [
+      {
+        name: '',
+        type: 'address',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'buybackPolicy',
+    inputs: [
+      {
+        name: 'token',
+        type: 'address',
+      },
+    ],
+    outputs: [
+      {
+        name: 'treasury',
+        type: 'address',
+      },
+      {
+        name: 'lockBps',
+        type: 'uint256',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'buybackTreasury',
+    inputs: [],
+    outputs: [
+      {
+        name: '',
+        type: 'address',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     name: 'escrow',
     inputs: [],
     outputs: [
@@ -188,6 +262,18 @@ export const launchFactoryAbi = [
   {
     type: 'function',
     name: 'governor',
+    inputs: [],
+    outputs: [
+      {
+        name: '',
+        type: 'address',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'graduationHook',
     inputs: [],
     outputs: [
       {
@@ -266,6 +352,39 @@ export const launchFactoryAbi = [
       },
     ],
     stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'launchWithBuyback',
+    inputs: [
+      {
+        name: 'name_',
+        type: 'string',
+      },
+      {
+        name: 'symbol_',
+        type: 'string',
+      },
+      {
+        name: 'uri_',
+        type: 'string',
+      },
+      {
+        name: 'buybackEnabled',
+        type: 'bool',
+      },
+    ],
+    outputs: [
+      {
+        name: 'token',
+        type: 'address',
+      },
+      {
+        name: 'curve',
+        type: 'address',
+      },
+    ],
+    stateMutability: 'nonpayable',
   },
   {
     type: 'function',
@@ -354,6 +473,58 @@ export const launchFactoryAbi = [
   },
   {
     type: 'function',
+    name: 'setBuybackEnabled',
+    inputs: [
+      {
+        name: 'token',
+        type: 'address',
+      },
+      {
+        name: 'enabled',
+        type: 'bool',
+      },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'setBuybackKeeper',
+    inputs: [
+      {
+        name: 'keeper',
+        type: 'address',
+      },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'setBuybackTreasury',
+    inputs: [
+      {
+        name: 'treasury',
+        type: 'address',
+      },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    name: 'setGraduationHook',
+    inputs: [
+      {
+        name: 'hook',
+        type: 'address',
+      },
+    ],
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
     name: 'setProtocolTreasury',
     inputs: [
       {
@@ -366,6 +537,52 @@ export const launchFactoryAbi = [
   },
   {
     type: 'event',
+    name: 'BuybackEnabledUpdated',
+    inputs: [
+      {
+        name: 'token',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'by',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'enabled',
+        type: 'bool',
+        indexed: false,
+      },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
+    name: 'BuybackKeeperSet',
+    inputs: [
+      {
+        name: 'keeper',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
+    name: 'BuybackTreasurySet',
+    inputs: [
+      {
+        name: 'treasury',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
     name: 'FeeScheduleAssigned',
     inputs: [
       {
@@ -375,6 +592,18 @@ export const launchFactoryAbi = [
       },
       {
         name: 'schedule',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    anonymous: false,
+  },
+  {
+    type: 'event',
+    name: 'GraduationHookSet',
+    inputs: [
+      {
+        name: 'hook',
         type: 'address',
         indexed: true,
       },
@@ -476,6 +705,11 @@ export const launchFactoryAbi = [
   },
   {
     type: 'error',
+    name: 'BuybackUnavailable',
+    inputs: [],
+  },
+  {
+    type: 'error',
     name: 'DegenerateProfile',
     inputs: [],
   },
@@ -506,6 +740,11 @@ export const launchFactoryAbi = [
   },
   {
     type: 'error',
+    name: 'GovernorCannotEnableBuyback',
+    inputs: [],
+  },
+  {
+    type: 'error',
     name: 'GovernorIsTheEscrow',
     inputs: [],
   },
@@ -526,6 +765,11 @@ export const launchFactoryAbi = [
   },
   {
     type: 'error',
+    name: 'HookAlreadySet',
+    inputs: [],
+  },
+  {
+    type: 'error',
     name: 'InsufficientTokenReserve',
     inputs: [],
   },
@@ -537,6 +781,11 @@ export const launchFactoryAbi = [
   {
     type: 'error',
     name: 'NotGovernor',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'NotLaunchCreator',
     inputs: [],
   },
   {
@@ -557,6 +806,11 @@ export const launchFactoryAbi = [
   {
     type: 'error',
     name: 'TreasuryIsTheEscrow',
+    inputs: [],
+  },
+  {
+    type: 'error',
+    name: 'UnknownLaunch',
     inputs: [],
   },
   {

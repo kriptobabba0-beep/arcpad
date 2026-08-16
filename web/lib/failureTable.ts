@@ -71,6 +71,10 @@ const operator = (title: string): FailureEntry => ({ kind: 'operator', title, re
  */
 export const FAILURE_TABLE: Readonly<Record<FailureKey, FailureEntry>> = {
   // ---- launch -----------------------------------------------------------
+  // Kutu isaretliyken hazine bagli degilse. `contract` sinifi dogrudur:
+  // zincir bu islemi BU ISLEM HAKKINDA bir sebeple reddetti, ve kullanicinin
+  // yapabilecegi somut bir sey var -- kutuyu kaldirip launch etmek.
+  'launch:BuybackUnavailable': contract('Buyback is not available yet -- launch without it'),
   'launch:EmptyName': contract('A name is required'),
   'launch:EmptySymbol': contract('A symbol is required'),
   'launch:NameTooLong': contract('That name is longer than 32 bytes'),
@@ -262,6 +266,71 @@ export const UNREACHABLE_BY_CONSTRUCTION: readonly string[] = [
   'NoPendingGraduationTarget',
   'GraduationTargetDelayNotElapsed',
   'GraduationTargetProposalExpired',
+  // ---- the buyback generation ----------------------------------------
+  //
+  // `BuybackUnavailable` IS NOT HERE, AND ITS ABSENCE IS THE POINT. It used to
+  // sit on this list under "the create form has no buyback checkbox yet",
+  // together with a written expiry: *the same commit that adds the checkbox
+  // must move it into `FAILURE_TABLE`*. That commit is this one. The error is
+  // exactly what a creator sees when they tick the box before governance has
+  // wired the treasury, so it needs a sentence a person can act on -- not the
+  // "a path believed impossible" text this list produces.
+  //
+  // The three below stay: `setBuybackEnabled` is a creator-facing toggle that
+  // this frontend does not yet render, and `setGraduationHook` never leaves
+  // the governor Safe. When the toggle ships they become a
+  // `setBuybackEnabled` action of their own, and this comment expires with
+  // them.
+  'NotLaunchCreator',
+  'UnknownLaunch',
+  'GovernorCannotEnableBuyback',
+  // `setGraduationHook` is a governor one-shot; it never leaves the Safe.
+  'HookAlreadySet',
+
+  // ---- BuybackTreasury and BuybackVestingVault ---------------------------
+  //
+  // BOTH CONTRACTS' ERRORS ENTERED `ARCPAD_ERROR_ABI` WITH THE BUYBACK
+  // GENERATION, and they are listed here because THIS FRONTEND CALLS NEITHER
+  // CONTRACT. Nothing in `web/` sends `sweep`, `accrue`, `lock` or `release`;
+  // the keeper sweeps and the vault is written to only by the treasury.
+  //
+  // WHY DISTRIBUTE THEM AT ALL, THEN. A revert selector carries no contract:
+  // when the buyback panel ships and a creator presses "claim vested", the
+  // chain answers `NothingToRelease()` as four bytes, and a dictionary that
+  // never learned the name would show the raw selector. Distributing now and
+  // classifying honestly is cheaper than discovering the gap on the day the
+  // button appears.
+  //
+  // THE EXPIRY IS NAMED, as the graduation entries above taught: the commit
+  // that adds a creator-facing vesting claim MUST move `NothingToRelease`,
+  // `NotBeneficiary` and `VestNotOpen` into `FAILURE_TABLE` under a
+  // `releaseVested` action -- they are precisely what that button can hit.
+  // The rest stay: they are keeper-, treasury- or deploy-time faults.
+  'NotKeeper',
+  'NotAccrualVenue',
+  'NothingPending',
+  'DeadlinePassed',
+  'SlippageTooHigh',
+  'NotPoolManager',
+  'UnexpectedPoolDelta',
+  'NotBuybackTreasury',
+  'NotBeneficiary',
+  'NothingToRelease',
+  'VestNotOpen',
+  'ZeroAddress',
+  // `GraduationMath.poolKey` guards, reachable only from the treasury's pool
+  // venue -- a launch token can be neither the zero address nor USDC itself.
+  'ZeroBase',
+  'BaseIsQuote',
+  // OpenZeppelin internals (`SafeERC20`, `Address`, `Math`). They are not
+  // arcpad's errors at all; they arrive because the buyback contracts link
+  // those libraries. A user-facing sentence for `MathOverflowedMulDiv` would
+  // be an invention.
+  'SafeERC20FailedOperation',
+  'AddressEmptyCode',
+  'AddressInsufficientBalance',
+  'FailedInnerCall',
+  'MathOverflowedMulDiv',
 ]
 
 /** The error name half of a `(action, errorName)` key. */

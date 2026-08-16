@@ -60,27 +60,39 @@ const REPO_ROOT = join(HERE, '..', '..', '..')
 const ROUTER_SALT = keccak256(toBytes('arcpad.ArcpadRouter.v1'))
 
 /**
- * MEASURED 2026-08-09 by `eth_getCode` and two `eth_call`s against
- * `rpc.testnet.arc.io`:
+ * RE-MEASURED 2026-08-16 by `eth_getCode` and two `eth_call`s against the Arc
+ * testnet RPC, after the buyback generation shipped:
  *
- *   code at 0x6D9f4270…            6679 runtime bytes
+ *   code at 0x51Bb2Ce3…            6679 runtime bytes
  *   router.poolManager()           0x617321A877e024C870516CD599A581dCDCa6c09b
- *   router.hook()                  0x89AfefCbD64c9Ae84e74698C96Dcba087c40e0cc
+ *   router.hook()                  0xba59e8738493e063fff12ab08443e36f3aCfA0CC
  *
  * Both answers equal the address book's `poolManager` / `arcpadHook`, which is
  * the only executable proof that the configured router is wired to the pool
  * this app talks about.
+ *
+ * WHY THE ROUTER MOVED, AND WHY THE SIZE DID NOT. `ArcpadRouter`'s bytecode did
+ * not change; its `hook` is a constructor argument, so a new hook produces a
+ * new initcode and therefore a new CREATE2 address while the RUNTIME length
+ * stays byte-identical. That the size is unchanged is not a coincidence to
+ * shrug at -- it is the check that this is the SAME contract at a new address,
+ * not a different one.
+ *
+ * THE OLD ROUTER (0x7496950E…) IS STILL ON CHAIN AND STILL POINTS AT THE V1
+ * HOOK. It is not "wrong", it belongs to the superseded generation; anything
+ * still holding that address would build `PoolKey`s that V2 pools do not
+ * answer to. That is exactly what `assertRouterMatchesBook` refuses.
  */
 const LIVE = {
-  router: '0x7496950E09260E1Aa7d8785EdC46F7E87d25eb30',
+  router: '0x51Bb2Ce3f5347e5447beFf6B72801d75cCe79fD5',
   poolManager: '0x617321A877e024C870516CD599A581dCDCa6c09b',
-  hook: '0x89AfefCbD64c9Ae84e74698C96Dcba087c40e0cc',
+  hook: '0xba59e8738493e063fff12ab08443e36f3aCfA0CC',
   runtimeBytes: 6679,
 } as const
 
 const BASE_ENV: WebEnv = {
   NEXT_PUBLIC_ARC_CHAIN_ID: String(ARC_TESTNET_CHAIN_ID),
-  NEXT_PUBLIC_ARCPAD_FACTORY: '0x5CA156f1809aB784655410d0f4B0704d2b306B47',
+  NEXT_PUBLIC_ARCPAD_FACTORY: '0x7A02759adD7193AD11A0C51914398d366Bf256A3',
   NEXT_PUBLIC_ARCPAD_ESCROW: '0xEEd4431eAD3E27F16D97f677A9C4c1a963DF8dC6',
 }
 

@@ -62,9 +62,43 @@ function readWebSource(relative: string): string {
   return readFileSync(path, 'utf8')
 }
 
+/**
+ * IKI GIRIS NOKTASI, VE BAYRAK GERCEKTEN TASINIR.
+ *
+ * `launchRequest` bayragi YOKSAYSAYDI hicbir sey kirmizi olmazdi: cagri
+ * basarili olur, token dogar, ve buyback SESSIZCE kapali kalir. Kullanicinin
+ * isaretledigi kutu ile zincirde olan sey ancak burada esitlenir.
+ */
+describe('launchRequest -- buyback giris noktasi secer', () => {
+  it('kutu KAPALIYKEN uc argumanli `launch` cagrilir', () => {
+    const r = launchRequest(FACTORY, { name: 'D', symbol: 'D', uri: '', buyback: false })
+    expect(r.functionName).toBe('launch')
+    expect(r.args).toHaveLength(3)
+  })
+
+  it('kutu ACIKKEN `launchWithBuyback` cagrilir ve dorduncu arguman TRUE olur', () => {
+    const r = launchRequest(FACTORY, { name: 'D', symbol: 'D', uri: '', buyback: true })
+    expect(r.functionName).toBe('launchWithBuyback')
+    expect(r.args).toHaveLength(4)
+    expect(r.args[3]).toBe(true)
+  })
+
+  /// ANTI-VAKUM: iki dal GERCEKTEN farkli istekler uretir.
+  it('iki dal ayni istegi uretmez', () => {
+    const off = launchRequest(FACTORY, { name: 'D', symbol: 'D', uri: '', buyback: false })
+    const on = launchRequest(FACTORY, { name: 'D', symbol: 'D', uri: '', buyback: true })
+    expect(off.functionName).not.toBe(on.functionName)
+  })
+})
+
 describe('launchRequest -- `value` YOKTUR', () => {
   it('istek nesnesinde `value` anahtari bulunmaz', () => {
-    const request = launchRequest(FACTORY, { name: 'Diffusion', symbol: 'DIFF', uri: '' })
+    const request = launchRequest(FACTORY, {
+      name: 'Diffusion',
+      symbol: 'DIFF',
+      uri: '',
+      buyback: false,
+    })
     /*
      * `LaunchFactory.launch` `payable` DEGILDIR. Deger tasiyan bir cagri
      * VERI TASIMAYAN bir revert verir ve o revert, disaridan bakildiginda bir

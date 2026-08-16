@@ -1,11 +1,15 @@
 import { toFunctionSelector } from 'viem'
 import { bondingCurveAbi } from './bondingCurve'
+import { buybackTreasuryAbi } from './buybackTreasury'
+import { buybackVestingVaultAbi } from './buybackVestingVault'
 import { curveMathErrorsAbi } from './curveMath'
 import { feeEscrowAbi } from './feeEscrow'
 import { launchFactoryAbi } from './launchFactory'
 import { launchTokenAbi } from './launchToken'
 
 export { bondingCurveAbi } from './bondingCurve'
+export { buybackTreasuryAbi } from './buybackTreasury'
+export { buybackVestingVaultAbi } from './buybackVestingVault'
 export { curveMathErrorsAbi } from './curveMath'
 export { feeEscrowAbi } from './feeEscrow'
 export { launchFactoryAbi } from './launchFactory'
@@ -21,6 +25,12 @@ const SOURCES = [
   launchFactoryAbi,
   launchTokenAbi,
   feeEscrowAbi,
+  // BUYBACK IKILISI DE BURADA, VE SEBEBI COZUCUDUR. Bir anahtarci `sweep`
+  // gonderdiginde donen revert `NotKeeper()` ya da `SlippageTooHigh(...)`
+  // olabilir; sozlukte yoksa arayuz "bilinmeyen hata" der ve operator
+  // dort baytlik bir selector'la bas basa kalir.
+  buybackTreasuryAbi,
+  buybackVestingVaultAbi,
   curveMathErrorsAbi,
 ] as const
 

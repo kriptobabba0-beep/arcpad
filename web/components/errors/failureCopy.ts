@@ -91,6 +91,19 @@ function bigintArg(args: readonly unknown[] | undefined, index: number): bigint 
  */
 const CELL_COPY: Readonly<Partial<Record<FailureKey, Copy>>> = {
   // ---- launch -------------------------------------------------------------
+  /**
+   * `user` SINIFI, `operator` DEGIL -- VE AYRIM KULLANICININ EKRANINDA DURUR.
+   *
+   * Hazinenin bagli olmamasi bir kurulum durumudur, ama kullanicinin
+   * yapabilecegi SOMUT bir sey vardir: kutuyu kaldirip launch etmek. Operator
+   * metni ("bu launchpad yanlis kurulmus") dogru olmakla birlikte kullaniciyi
+   * cikissiz birakirdi -- oysa cikis bir tik uzakta.
+   */
+  'launch:BuybackUnavailable': {
+    title: 'Buyback is not available yet.',
+    body: 'This launchpad has not finished wiring its buyback treasury, so a launch cannot reserve fees for it.',
+    remedy: 'Uncheck buyback and launch now -- you can turn it on later from your token page.',
+  },
   'launch:EmptyName': {
     title: 'Name is required.',
     body: 'The factory refuses a launch with an empty name.',

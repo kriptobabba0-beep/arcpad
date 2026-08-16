@@ -5,6 +5,9 @@ import {Test, Vm} from "forge-std/Test.sol";
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {BondingCurve} from "../src/BondingCurve.sol";
 import {FeeEscrow} from "../src/FeeEscrow.sol";
+import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {BuybackTreasury} from "../src/BuybackTreasury.sol";
+import {BuybackVestingVault} from "../src/BuybackVestingVault.sol";
 import {LaunchFactory} from "../src/LaunchFactory.sol";
 import {FeeSchedule} from "../src/FeeSchedule.sol";
 import {LaunchToken} from "../src/LaunchToken.sol";
@@ -205,6 +208,9 @@ contract FixtureGenTest is Test {
 
     FeeEscrow internal escrow;
     LaunchFactory internal factory;
+    BuybackVestingVault internal vault;
+    BuybackTreasury internal treasury;
+    address internal constant KEEPER = address(0x4EE9);
 
     /// BU TEST KONTRATI `zero_creator` senaryosunun curve'unu DOGRUDAN deploy
     /// eder, yani o curve icin `factory` BUDUR ve `ILaunchFactory`nin iki
@@ -224,6 +230,17 @@ contract FixtureGenTest is Test {
 
         escrow = new FeeEscrow();
         factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
+
+        // BUYBACK KABLOLAMASI. `PoolManager` GEREKMEZ ve verilmez: bu paketin
+        // urettigi fixture'lar EGRI asamasindadir, yani supurme egri
+        // merciinden gecer. Havuz mercii `BuybackPoolVenue.t.sol`da ve canli
+        // fork paketinde yurunur.
+        vault = new BuybackVestingVault(address(factory));
+        treasury = new BuybackTreasury(address(factory), address(escrow), vault, IPoolManager(address(0xB00C)));
+        vm.startPrank(GOVERNOR);
+        factory.setBuybackTreasury(address(treasury));
+        factory.setBuybackKeeper(KEEPER);
+        vm.stopPrank();
 
         vm.deal(CREATOR, 1_000e18);
         vm.deal(TRADER, 1_000e18);
@@ -726,6 +743,114 @@ contract FixtureGenTest is Test {
     // Adresler ve topic'ler KUCUK HARF yazilir, cunku `eth_getLogs` boyle
     // dondurur; `vm.toString(address)` EIP-55 checksum'li dondurur ve fixture
     // gercek RPC ciktisindan SAPARDI.
+
+    // =================================================================
+    // BUYBACK -- BES OLAYIN HEPSI TEK SENARYODA
+    // =================================================================
+
+    /**
+     * TAHAKKUK -> SUPURME -> KILIT -> DAGITIM.
+     *
+     * @dev BU FIXTURE ZORUNLUDUR, SUSLEME DEGIL. `indexer/test/topics.test.ts`
+     *      her `TOPIC0` degerinin EN AZ BIR GERCEK LOGDA gorulmesini ister ve
+     *      `logs.test.ts` her handler'in bir fixture tarafindan egzersiz
+     *      edilmesini. Bes buyback olayi kaydedilip fixture uretilmeseydi dort
+     *      kapi birden kirmizi olurdu -- ve olmasi gerekirdi: imzasi hicbir
+     *      gercek loga uymayan bir cozucu, sessizce hicbir sey indekslemez.
+     *
+     * @dev LOGLAR FOUNDRY'NIN GERCEK YURUTMESINDEN CIKAR, elle kurulmaz. Bir
+     *      imza yanlis yazilirsa hesaplanan selector bu loglarin hicbiriyle
+     *      ortusmez ve kapi ANINDA duser; elle yazilmis bir fixture ayni yanlis
+     *      imzayi tasiyip iki tarafi da tutarli kilardi.
+     */
+    function test_fixture_buyback() public {
+        vm.prank(CREATOR);
+        (address token, address curve) = factory.launchWithBuyback("Buyback Coin", "BBK", "ipfs://bb", true);
+
+        // AL-SAT DONGUSU: esigi (`MIN_SWEEP_WEI`) asacak kadar ucret uretir.
+        // Tek yonlu alimla toplanabilecek ucret testnet profilinde esigin
+        // ALTINDA kalir -- `BuybackLifecycle.t.sol`da olculdu.
+        for (uint256 i = 0; i < 10; ++i) {
+            vm.prank(TRADER);
+            BondingCurve(payable(curve)).buyExactQuoteIn{value: 5e18}(0);
+            uint256 held = LaunchToken(token).balanceOf(TRADER);
+            if (held == 0) continue;
+            vm.startPrank(TRADER);
+            LaunchToken(token).approve(curve, held);
+            BondingCurve(payable(curve)).sellExactTokensIn(held, 0);
+            vm.stopPrank();
+        }
+        require(treasury.pendingQuote(token) > treasury.MIN_SWEEP_WEI(), "butce esigin altinda");
+
+        // ---- KAYIT BURADA BASLAR: supurme + dagitim ----
+        vm.recordLogs();
+
+        vm.prank(KEEPER);
+        treasury.sweep(token, 0, block.timestamp + 600);
+
+        // Vesting saatinin ilerlemesi icin MUTLAK bir an kurulur; goreli warp
+        // `via_ir` altinda sessizce etkisiz kalabilir (bkz. devir belgesi §6).
+        vm.warp(FIXTURE_TIMESTAMP + 365 days);
+        vm.prank(CREATOR);
+        vault.release(token);
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        // ANTI-VAKUM: bes olayin BESI de gercekten yayildi mi. Bir tanesi
+        // eksikse fixture o `TOPIC0` icin bos kalir ve indexer kapisi
+        // -- dogru olarak -- kirmizi olur; burada ADIYLA yakalanir.
+        assertTrue(_hasTopic(logs, keccak256("BuybackAccrued(address,address,uint256,uint256)")), "BuybackAccrued yok");
+        assertTrue(_hasTopic(logs, keccak256("BuybackExecuted(address,uint256,uint256)")), "BuybackExecuted yok");
+        assertTrue(_hasTopic(logs, keccak256("BuybackLocked(address,uint256,uint256,uint256,uint256)")), "BuybackLocked yok");
+        assertTrue(
+            _hasTopic(logs, keccak256("VestingReleased(address,address,uint256,uint256)")), "VestingReleased yok"
+        );
+
+        _dump("buyback", logs);
+    }
+
+    /**
+     * ...VE `BuybackSkipped` AYRI BIR SENARYODUR.
+     *
+     * @dev Ayni islemde uretilemez: supurme ya HARCAR ya GERI KATLAR, ikisini
+     *      birden yapmaz. Tamamlanmis bir egride alim yapilamaz, dolayisiyla
+     *      butun butce creator'a doner ve olay ORADA yayilir.
+     */
+    function test_fixture_buybackSkipped() public {
+        vm.prank(CREATOR);
+        (address token, address curve) = factory.launchWithBuyback("Skip Coin", "SKP", "ipfs://sk", true);
+
+        vm.prank(TRADER);
+        BondingCurve(payable(curve)).buyExactQuoteIn{value: 5e18}(0);
+
+        // Egriyi TAMAMLA: bundan sonra alim kabul edilmez, supurme geri katlar.
+        // ARGUMAN PRANK'TEN ONCE OKUNUR. `vm.prank` YALNIZCA bir sonraki
+        // cagriyi etkiler ve arguman ifadeleri ondan ONCE degerlendirilir;
+        // ic okuma prank'i tuketirse alimi TEST KONTRATI yapar ve egrinin
+        // iadesi `RefundFailed()` ile duser (olculdu, iki kez).
+        uint256 remaining = BondingCurve(payable(curve)).realTokenReserves();
+        vm.deal(TRADER, 1_000_000e18);
+        vm.prank(TRADER);
+        BondingCurve(payable(curve)).buyExactTokensOut{value: 100_000e18}(remaining, type(uint256).max);
+        require(BondingCurve(payable(curve)).complete(), "egri tamamlanmadi");
+
+        vm.recordLogs();
+        vm.prank(KEEPER);
+        treasury.sweep(token, 0, block.timestamp + 600);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+
+        assertTrue(
+            _hasTopic(logs, keccak256("BuybackSkipped(address,uint256,string)")), "BuybackSkipped yayilmadi"
+        );
+        _dump("buyback-skipped", logs);
+    }
+
+    function _hasTopic(Vm.Log[] memory logs, bytes32 topic0) private pure returns (bool) {
+        for (uint256 i = 0; i < logs.length; ++i) {
+            if (logs[i].topics.length != 0 && logs[i].topics[0] == topic0) return true;
+        }
+        return false;
+    }
 
     function _dump(string memory name_, Vm.Log[] memory logs) private {
         string memory out = string.concat(

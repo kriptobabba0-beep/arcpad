@@ -29,12 +29,29 @@ export type LaunchedAddresses = {
   readonly curve: Address
 }
 
-export type LaunchRequest = {
-  readonly address: Address
-  readonly abi: typeof launchFactoryAbi
-  readonly functionName: 'launch'
-  readonly args: readonly [string, string, string]
-}
+/**
+ * IKI GIRIS NOKTASI, TEK ISTEK TIPI.
+ *
+ * `launch(name, symbol, uri)` ve `launchWithBuyback(name, symbol, uri, bool)`
+ * fabrikada AYNI `_launch` govdesine duser; ayrildiklari tek yer buyback
+ * bayragidir. Birlesik tip, cagiranin ikisini de ayni sekilde ele almasini
+ * saglar -- ve `web/test/errors/reconcile.test.ts` yolun girisini
+ * `launchWithBuyback` olarak modeller, cunku olculmesi gereken yuzey GENIS
+ * olanidir.
+ */
+export type LaunchRequest =
+  | {
+      readonly address: Address
+      readonly abi: typeof launchFactoryAbi
+      readonly functionName: 'launch'
+      readonly args: readonly [string, string, string]
+    }
+  | {
+      readonly address: Address
+      readonly abi: typeof launchFactoryAbi
+      readonly functionName: 'launchWithBuyback'
+      readonly args: readonly [string, string, string, boolean]
+    }
 
 /**
  * `launch`'a HICBIR ZAMAN `value` KONMAZ.
@@ -50,11 +67,27 @@ export type LaunchRequest = {
  * `simulateContract`'a fiilen verdigi nesnede `value` anahtarini ariyor.
  */
 export function launchRequest(factory: Address, args: LaunchArgs): LaunchRequest {
+  // KUTU ISARETLI DEGILSE UC ARGUMANLI GIRIS CAGRILIR, `false` GECILMEZ.
+  //
+  // `launchWithBuyback(..., false)` ile `launch(...)` zincirde AYNI SEYI
+  // yapar, yani teknik olarak tek bir giris yeterdi. Ayri tutulmasinin sebebi
+  // GAZ ya da anlambilim degil, GERI ALINAMAZLIK: `launch` bugun canli
+  // fabrikada zaten kullanilan yoldur ve bir indexer/gozlemci onu imzasindan
+  // tanir. Buyback kapaliyken de yeni imzayi kullanmak, hicbir sey
+  // kazandirmadan her launch'in gorunumunu degistirirdi.
+  if (!args.buyback) {
+    return {
+      address: factory,
+      abi: launchFactoryAbi,
+      functionName: 'launch',
+      args: [args.name, args.symbol, args.uri],
+    }
+  }
   return {
     address: factory,
     abi: launchFactoryAbi,
-    functionName: 'launch',
-    args: [args.name, args.symbol, args.uri],
+    functionName: 'launchWithBuyback',
+    args: [args.name, args.symbol, args.uri, true],
   }
 }
 
@@ -208,11 +241,22 @@ export function useLaunch(options?: { driver?: LaunchDriver }): UseLaunch {
 /** Gercek surucu. `account`/`chainId` wagmi'nin baglantisindan gelir. */
 function wagmiDriver(config: ReturnType<typeof useConfig>): LaunchDriver {
   return {
+    // ISTEK TIPI BIR BIRLESIM, VE HER DAL AYRI CAGRILIR.
+    //
+    // wagmi'nin tipleri `functionName`den `args`i cikarir; bir birlesimi
+    // dogrudan gecirmek o cikarimi bozar (olculdu: TS2345, "Source has 4
+    // element(s) but target allows only 3"). Ayirici uzerinde dallanmak
+    // TypeScript'in her kolda tipi DARALTMASINI saglar ve cagri yine tam
+    // tipli kalir. `as any` ile susturmak, ABI ile `args` arasindaki tek
+    // derleme zamani baginı da kaldirirdi.
     async simulate(request) {
-      await simulateContract(config, request)
+      if (request.functionName === 'launch') await simulateContract(config, request)
+      else await simulateContract(config, request)
     },
     async write(request) {
-      return writeContract(config, request)
+      return request.functionName === 'launch'
+        ? writeContract(config, request)
+        : writeContract(config, request)
     },
     async receipt(hash) {
       return waitForTransactionReceipt(config, { hash })

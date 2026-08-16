@@ -27,6 +27,8 @@ export {
   ARCPAD_ERROR_NAMES,
   type ArcpadAbiError,
   bondingCurveAbi,
+  buybackTreasuryAbi,
+  buybackVestingVaultAbi,
   curveMathErrorsAbi,
   errorSelector,
   feeEscrowAbi,

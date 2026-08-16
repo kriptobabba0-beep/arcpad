@@ -174,6 +174,37 @@ export function LaunchForm({ facts, pinningConfigured, driver }: LaunchFormProps
             />
           </div>
 
+          {/*
+            CREATOR-FUNDED BUYBACK.
+
+            METIN, BEDELI ONCE SOYLER. Bu kutu creator'in KENDI ucret gelirinin
+            yarisini baglar ve geri alinan tokenlarin %30'u bes yilin sonunda
+            PROTOKOLE gider. Yalnizca faydayi anlatan bir etiket ("token'ini
+            destekle") dogru ama EKSIK olurdu; kullanicinin isaretlemeden once
+            bilmesi gereken sey bedeldir.
+
+            VARSAYILAN KAPALI (`EMPTY_FIELDS`), ve geri alinabilir: creator
+            launch'tan sonra token sayfasindan kapatabilir. Bunu yazmak,
+            kutunun "geri donusu olmayan" gibi okunmasini engelliyor.
+          */}
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-line p-3">
+            <input
+              type="checkbox"
+              checked={fields.buyback}
+              disabled={busy}
+              onChange={(event) => patch({ buyback: event.target.checked })}
+              className="mt-0.5"
+            />
+            <span className="text-[13px] leading-relaxed">
+              <span className="font-medium">Fund a buyback from my fees</span>
+              <span className="block text-muted">
+                Half of your creator fees buy your token back on the market and lock it for five
+                years. 30% of what is bought goes to the protocol at the end. You can turn this off
+                later.
+              </span>
+            </span>
+          </label>
+
           <MetadataUpload
             pinningConfigured={pinningConfigured}
             fields={fields}

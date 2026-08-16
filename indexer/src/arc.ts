@@ -154,6 +154,35 @@ export const EVENT_SIGNATURES = {
    * `quoteWei(...)` ile 18 decimal olarak yatirilir.
    */
   poolFee: 'SwapFeeCollected(bytes32,uint256,uint256)',
+
+  /*
+   * ---------------------------------------------------------------------
+   * BUYBACK NESLI -- BES OLAY, IKI KONTRAT
+   * ---------------------------------------------------------------------
+   *
+   * NICIN HEPSI GEREKLI. Bir kullanicinin token sayfasinda gormesi gereken
+   * sey "ne kadar geri alindi ve ne kadar kilitli"dir, ve o rakam TEK bir
+   * olaydan cikmaz:
+   *
+   *   buybackAccrued   butce BUYUR   (her islemde, egri ya da havuz)
+   *   buybackExecuted  butce HARCANIR + token alinir
+   *   buybackSkipped   butce CREATOR'A DONER -- harcanmadi, KAYBOLMADI da
+   *   buybackLocked    alinan token kasaya girer, vesting saati baslar
+   *   vestingReleased  hak edilen dagitilir (%70 creator / %30 protokol)
+   *
+   * `buybackSkipped` OLMADAN DEFTER KAPANMAZ: `accrued` ile `executed`
+   * arasindaki fark aciklanamaz kalir ve arayuz "para nerede" sorusuna
+   * cevap veremez. Uc durumun uc ayri olayi olmasi tam da bunun icin.
+   *
+   * `venue` INDEKSLIDIR ve tasiyicidir: ayni token icin tahakkuk hem
+   * EGRIDEN hem HOOK'tan gelebilir, ve ikisi launch'in hangi asamasinda
+   * oldugunu soyler -- indexer bunu bir birlestirme yapmadan okur.
+   */
+  buybackAccrued: 'BuybackAccrued(address,address,uint256,uint256)',
+  buybackExecuted: 'BuybackExecuted(address,uint256,uint256)',
+  buybackSkipped: 'BuybackSkipped(address,uint256,string)',
+  buybackLocked: 'BuybackLocked(address,uint256,uint256,uint256,uint256)',
+  vestingReleased: 'VestingReleased(address,address,uint256,uint256)',
 } as const
 
 export type EventKind = keyof typeof EVENT_SIGNATURES

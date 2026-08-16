@@ -124,7 +124,22 @@ describe('validateLaunch', () => {
     const result = validateLaunch({ ...EMPTY_FIELDS, name: 'Diffusion', symbol: 'DIFF' })
     expect(result.ok).toBe(true)
     if (!result.ok) return
-    expect(result.args).toEqual({ name: 'Diffusion', symbol: 'DIFF', uri: '' })
+    expect(result.args).toEqual({ name: 'Diffusion', symbol: 'DIFF', uri: '', buyback: false })
+  })
+
+  /**
+   * BUYBACK BAYRAGI FORMDAN ARGUMANLARA GECER -- VE DOGRULANMAZ.
+   *
+   * Ote uc alanin aksine bunun "gecersiz" bir hali yoktur; iki degeri de
+   * mesrudur. Test yine de burada, cunku bayragi `LaunchArgs`a TASIMAYI
+   * unutmak sessizce her launch'i buyback'siz yapardi: form isaretli
+   * gorunur, zincire `false` gider ve hicbir sey kirmizi olmaz.
+   */
+  it('buyback bayragi argumanlara TASINIR, iki degerde de', () => {
+    const off = validateLaunch({ ...EMPTY_FIELDS, name: 'A', symbol: 'A', buyback: false })
+    const on = validateLaunch({ ...EMPTY_FIELDS, name: 'A', symbol: 'A', buyback: true })
+    expect(off.ok && off.args.buyback).toBe(false)
+    expect(on.ok && on.args.buyback).toBe(true)
   })
 
   it('gonderilen dize OLCULEN dizedir: NFC normalize edilmis hâli doner', () => {
@@ -171,6 +186,9 @@ describe('gosterim ve metadata dokumani', () => {
 
   it('anahtar sirasi SABIT: ayni alanlar ayni dizeyi, yani ayni CID’i verir', () => {
     const json = buildMetadataJson({
+      // Buyback metadata'ya GIRMEZ; alan yalnizca tip icin burada ve
+      // degeri dokumanı ETKILEMEMELIDIR (asagidaki iddia onu olcer).
+      buyback: false,
       name: 'Diffusion',
       symbol: 'DIFF',
       description: 'A token',

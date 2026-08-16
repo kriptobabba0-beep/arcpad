@@ -38,19 +38,28 @@ import { createPublicClient, http } from 'viem'
  * sayfayla ayni fonksiyonu cagirmasi sart, yoksa olctugu sey urun degil kendi
  * secimi olur.
  */
-import { formatUsdcCompact, formatPriceWeiPerToken } from '@arcpad/shared'
+import { arcTestnet, formatUsdcCompact, formatPriceWeiPerToken } from '@arcpad/shared'
 
-const RPC = 'https://rpc.testnet.arc.network'
 const TOKEN = '0x99340e06e6acfb7ca625fb2ab6636bd51e87a526' as const
 const CURVE = '0x2E812f107742b1b9180144EAd240A46C892eEaB1' as const
 const TOTAL_SUPPLY_TOK = 10n ** 27n
 
-const chain = {
-  id: 5042002,
-  name: 'Arc Testnet',
-  nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 },
-  rpcUrls: { default: { http: [RPC] } },
-} as const
+/*
+ * ZINCIR VE RPC REGISTRY'DEN GELIR, BURADA YENIDEN YAZILMAZ.
+ *
+ * Bu blok bir zamanlar `id: 5042002` ve RPC host'unu ELLE tasiyordu, yani
+ * `packages/shared/src/chain.ts`in yaninda IKINCI bir dogruluk kaynagiydi --
+ * ve `chain-registry.test.ts` tam olarak bunu yakalar ("no tracked source
+ * outside the registry carries the chain id or an Arc host").
+ *
+ * Bir prob icin bu, kozmetikten fazlasidir: probun VAR OLMA SEBEBI urunun
+ * gordugu sayiyi urunun gordugu yerden dogrulamaktir. Kendi zincir tanimini
+ * tasiyan bir prob, urun baska bir RPC'ye tasindiginda ESKI zinciri olcmeye
+ * devam eder ve YESIL kalir -- yani en cok ise yarayacagi anda sessizce
+ * yaniltir.
+ */
+const chain = arcTestnet
+const RPC = chain.rpcUrls.default.http[0]
 
 const CURVE_ABI = [
   {

@@ -222,7 +222,11 @@ describe('the surface is derived from the contracts, not asserted', () => {
         hops += 1
       }
     }
-    expect(hops).toBe(31) // anti-vacuity: her hop gercekten yuruldu
+    // 31 -> 32: buyback nesli `launch`i `_launch`e boldu, yani `launch`
+    // eylemi bir hop daha tasiyor. Sayi elle guncellenir ve bu KASITLIDIR --
+    // yoldan bir dugum DUSMESI de burayi kirmizi yapar, ki dusen bir dugum
+    // sessizce daralan bir hata yuzeyi demektir.
+    expect(hops).toBe(32) // anti-vacuity: her hop gercekten yuruldu
   })
 
   it('every `at` citation really reverts that name, in a function on the path', () => {
@@ -244,7 +248,8 @@ describe('the surface is derived from the contracts, not asserted', () => {
         }
       }
     }
-    expect(citations).toBe(53) // anti-vacuity
+    // 53 -> 54: `launch:BuybackUnavailable` gercek bir hucre oldu.
+    expect(citations).toBe(54) // anti-vacuity
   })
 
   it('every shadowed name is really on the path -- a stale exception is a lie', () => {
@@ -260,6 +265,9 @@ describe('the surface is derived from the contracts, not asserted', () => {
         shadows += 1
       }
     }
+    // 12 -> 11: `BuybackUnavailable` ARTIK GOLGELI DEGIL. Create formu
+    // `launchWithBuyback` cagirabildigi icin koruma gercekten ulasilabilir;
+    // golge listesinden cikip `FAILURE_TABLE`a gecti.
     expect(shadows).toBe(11)
   })
 
@@ -397,7 +405,9 @@ describe('REACHABLE_BY_ACTION is the user-facing half, and it is not empty', () 
         total += 1
       }
     }
-    expect(total).toBe(24) // anti-vacuity
+    // 24 -> 25: `launch:BuybackUnavailable` kullaniciya gorunen bir
+    // hucre oldu (reach `user`), yani ulasilabilir kumeye girdi.
+    expect(total).toBe(25) // anti-vacuity
   })
 
   it('names the entrypoint-specific errors on the RIGHT entrypoint only', () => {

@@ -149,9 +149,13 @@ describe('loadGraduatorConfig', () => {
     const config = loadGraduatorConfig(BASE_ENV)
     expect(config.overridden).toBe(false)
     // Uretim defteri: locker VE fabrika, ve tarama fabrikanin blogundan.
-    expect(config.factory).toBe('0x5CA156f1809aB784655410d0f4B0704d2b306B47')
-    expect(config.locker).toBe('0xaEE2DA2D21B92AfCAccF9DAD3d72254eE1630158')
-    expect(config.startBlock).toBe(55_870_261n)
+    // V2 nesli (buyback), 16 Agustos 2026'da yayinlandi. Onceki nesil PoolDeployLib.LEGACY_V1_* sabitlerinde kayitli.
+    expect(config.factory).toBe('0x7A02759adD7193AD11A0C51914398d366Bf256A3')
+    expect(config.locker).toBe('0xBBE8EB43380d3572cF0F97BE5A9d6755Dd3c79Aa')
+    // Tarama FABRIKANIN blogundan baslar (`launchFactoryBlock`), defterin
+    // `startBlock`indan degil: escrow V1'den beri ayakta ve o blok
+    // mezuniyet taramasi icin gereksiz yere geride.
+    expect(config.startBlock).toBe(57179323n)
   })
 
   it('`--book-only` ELLE YAZILMIS ADRESLERI REDDEDER', () => {
@@ -182,7 +186,7 @@ describe('loadGraduatorConfig', () => {
   it('`--book-only` TEMIZ bir env ile defteri kullanir', () => {
     const config = loadGraduatorConfig(BASE_ENV, { bookOnly: true })
     expect(config.overridden).toBe(false)
-    expect(config.factory).toBe('0x5CA156f1809aB784655410d0f4B0704d2b306B47')
+    expect(config.factory).toBe('0x7A02759adD7193AD11A0C51914398d366Bf256A3')
   })
 
   it('BAYRAK ENV DEGIL ARGV OLMALIDIR -- kendi kilidini acan bir kapi olmasin', () => {

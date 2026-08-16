@@ -131,6 +131,12 @@ function fieldsFrom(raw: unknown): LaunchFields {
   const str = (key: keyof LaunchFields): string =>
     typeof doc[key] === 'string' ? (doc[key] as string) : ''
   return {
+    // BUYBACK METADATA'DA YOKTUR VE OLMAMALIDIR. Bu rota bir metadata
+    // dokumanini forma geri cevirir; buyback ise ZINCIR DURUMUDUR
+    // (`LaunchFactory.buybackEnabledOf`). Dokumandan okumak, bir IPFS
+    // belgesine yazilan degerin arayuzde bir zincir gercegi gibi
+    // gorunmesine izin verirdi.
+    buyback: false,
     name: str('name'),
     symbol: str('symbol'),
     description: str('description'),

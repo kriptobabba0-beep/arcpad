@@ -28,9 +28,23 @@ export type LaunchFields = {
   readonly telegram: string
   /** ZINCIRE GIDEN metadata baglantisi. Bos dize MESRUDUR (bkz. Adim 3). */
   readonly uri: string
+  /**
+   * Creator-funded buyback: ucret gelirinin bir kismi ayrilip token geri
+   * alimina harcanir ve alinan token bes yil kilitlenir.
+   *
+   * DOGRULANMAZ VE DOGRULANAMAZ. Ote uc alanin aksine bunun bir "gecersiz"
+   * hali yoktur -- iki degeri de mesrudur. Hazinenin bagli olup olmadigi ise
+   * ZINCIR DURUMUDUR; form onu bilemez, simulasyon bilir ve
+   * `launch:BuybackUnavailable` olarak geri doner.
+   */
+  readonly buyback: boolean
 }
 
 export const EMPTY_FIELDS: LaunchFields = {
+  // VARSAYILAN KAPALI. Buyback creator'in KENDI gelirini baglar ve
+  // ciktisinin %30'u protokole gider; boyle bir tercih varsayilan olarak
+  // ACIK gelemez -- kullanicinin bilerek isaretlemesi gerekir.
+  buyback: false,
   name: '',
   symbol: '',
   description: '',
@@ -136,6 +150,7 @@ export type LaunchArgs = {
   readonly name: string
   readonly symbol: string
   readonly uri: string
+  readonly buyback: boolean
 }
 
 export type FieldErrors = {
@@ -173,7 +188,14 @@ export function validateLaunch(fields: LaunchFields): Validation {
 
   if (Object.keys(errors).length > 0) return { ok: false, errors }
   // NORMALIZE EDILMIS degerler doner: olculen dize ile gonderilen dize ayni.
-  return { ok: true, args: { name: name.value, symbol: symbol.value, uri: uri.value } }
+  return {
+    ok: true,
+    // `buyback` NORMALIZE EDILMEZ CUNKU EDILECEK BIR SEYI YOK: bir boolean'in
+    // kirpilacak bosluğu ya da uzunluk siniri yoktur. Alan yine de BURADAN
+    // gecer, dogrudan forma erisilerek degil -- `LaunchArgs` zincire gidenin
+    // TEK kaynagi olmali.
+    args: { name: name.value, symbol: symbol.value, uri: uri.value, buyback: fields.buyback },
+  }
 }
 
 /**

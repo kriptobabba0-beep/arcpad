@@ -4,7 +4,7 @@ import { decodeEventLog } from 'viem'
 import { bondingCurveAbi } from '@arcpad/shared/browser'
 import { toSeq } from '@arcpad/db'
 import { TOPIC0 } from '../src/arc'
-import type { DecodedEvent, RawLog, WatchSet } from '../src/logs'
+import type { DecodedEvent, PacerClock, RawLog, WatchSet } from '../src/logs'
 import {
   createAddressWidthMemo,
   createPacer,
@@ -44,6 +44,84 @@ import {
  * `Deposited`in yayincisi escrow. Bir sonraki yeniden uretim bu testleri
  * kirmaz -- kirmasi da gerekmez, cunku olculen sey adresler degil DAVRANIS.
  */
+/**
+ * YURUTULEBILIR SANAL SAAT -- pacer'in zamanlama testleri bunun altinda kosar.
+ *
+ * UC YAKLASIM DENENDI, IKISI OLCULEREK ELENDI:
+ *
+ *   (1) GERCEK SAAT (ilk hal). Gecikme gercektir ama OLCULEMEZ: testin
+ *       gordugu bosluk makine yukune baglidir. `pnpm -r --no-bail test` bes
+ *       paketin test surecini ayni CPU'da kosturunca
+ *       `minIntervalMs es zamanli slotlar arasinda da bosluk koyar` KIRMIZI
+ *       oldu; TEK BASINA yesildi. Pacer kusursuz calisiyordu. 3ms'lik pay
+ *       normal jitter'i yutuyor, yuk altindakini yutmuyordu -- ve payi
+ *       buyutmek yanlis cevap: yeterince buyuk bir pay, araligin TAMAMEN
+ *       kaybolmasini da kabul eder.
+ *
+ *   (2) SAHTE ZAMANLAYICI (`vi.useFakeTimers`). Deterministik, ama VAKUMLU:
+ *       `setTimeout` TAM zamaninda atesledigi icin "gec atesleme" hic olusmaz
+ *       ve `begin()` icindeki ikinci `nextEarliest` ilerletmesi -- yalnizca o
+ *       durum icin var olan satir -- gozlemlenemez hale gelir. MUTASYONLA
+ *       OLCULDU: o satiri silmek, sahte saat altindaki 70 testin HEPSINI
+ *       yesil biraktı. Kusuru insaen gorunmez kilan bir test, kirmizi olmayan
+ *       bir testten kotudur.
+ *
+ *   (3) BU. Zaman pacer'a ENJEKTE edilir, yani gecikme testin KURDUGU bir sey
+ *       olur: `lateness` her `schedule` cagrisina kac ms gecikme eklenecegini
+ *       soyler. Gecikme GERCEKTEN olusur (sahte zamanlayicinin kaciridigi sey)
+ *       ve DETERMINISTIKTIR (gercek saatin veremedigi sey). Ayni mutant bu
+ *       saatin altinda OLUR -- `test_gecAtesleyenZamanlayici...` onu yurur.
+ *
+ * Pay KALKTI ve iddialar `> interval - 3`ten `>= interval`e SIKILASTI: artik
+ * olculen sey makinenin degil pacer'in davranisidir, dolayisiyla tam esitlik
+ * iddia edilebilir.
+ */
+function virtualClock(opts?: { lateness?: (nth: number) => number }): {
+  clock: PacerClock
+  drain: () => Promise<void>
+  sleep: (ms: number) => Promise<void>
+} {
+  let now = 0
+  let nth = 0
+  const pending: { at: number; fn: () => void }[] = []
+
+  const clock: PacerClock = {
+    now: () => now,
+    schedule(fn, ms) {
+      // GECIKME BURADA EKLENIR, `ms`e DEGIL VARIS ANINA: gercek bir olay
+      // dongusu de boyle davranir -- planlanan sure dogrudur, ates GEC olur.
+      const late = opts?.lateness?.(nth++) ?? 0
+      pending.push({ at: now + ms + late, fn })
+    },
+  }
+
+  // `setImmediate` GERCEKTIR ve olmasi gerekir: sanal saat ZAMANI yonetir,
+  // microtask kuyrugunu degil. Bir `resolve()`den sonra govdenin calismasi
+  // icin olay dongusunun bir tur donmesi gerekir ve `await Promise.resolve()`
+  // zincirlenmis await'ler icin YETMEZ.
+  const flush = (): Promise<void> => new Promise<void>((r) => setImmediate(r))
+
+  return {
+    clock,
+    sleep: (ms: number) =>
+      new Promise<void>((r) => {
+        clock.schedule(r, ms)
+      }),
+    async drain(): Promise<void> {
+      for (let guard = 0; guard < 10_000; guard += 1) {
+        await flush()
+        if (pending.length === 0) return
+        pending.sort((a, b) => a.at - b.at)
+        const next = pending.shift()
+        if (!next) return
+        now = Math.max(now, next.at)
+        next.fn()
+      }
+      throw new Error('virtualClock.drain: 10.000 turda bosalmadi -- sonsuz dongu')
+    },
+  }
+}
+
 function fixtureAddresses(): { factory: Address; escrow: Address; curve: Address; token: Address } {
   const launch = loadFixtureFile('launch')
   const launched = launch.logs.find((l) => l.topics[0] === TOPIC0.launched)
@@ -92,6 +170,12 @@ describe('kapsam', () => {
   // (a) Handler kumesi.
   it('handler kumesi ile dinlenen olay kumesi iki yonlu ayni', () => {
     expect(Object.keys(DECODERS).sort()).toEqual([
+      // Buyback nesli: bes olay, iki kontrat. Ucu hazineden (tahakkuk,
+      // supurme, geri katlama), ikisi kasadan (kilit, dagitim).
+      'buybackAccrued',
+      'buybackExecuted',
+      'buybackLocked',
+      'buybackSkipped',
       'claimed',
       'completed',
       'deposited',
@@ -102,6 +186,7 @@ describe('kapsam', () => {
       'poolSwap',
       'trade',
       'transfer',
+      'vestingReleased',
     ])
   })
 
@@ -140,6 +225,12 @@ describe('kapsam', () => {
       'buy_exact_quote_in',
       'buy_exact_quote_in_clamped',
       'buy_exact_tokens_out',
+      // Buyback nesli: supurme (harcama) ve geri katlama, IKI AYRI senaryo.
+      // Tek islemde ikisi birden uretilemez -- supurme ya harcar ya katlar.
+      // SIRA ASCII'YE GORE: '_' (0x5F) 'b'den (0x62) kucuktur, yani
+      // `buy_exact_*` `buyback`ten ONCE gelir.
+      'buyback',
+      'buyback-skipped',
       'claim',
       'forged',
       'launch',
@@ -1016,16 +1107,20 @@ describe('pacing', () => {
   })
 
   it('minIntervalMs ARDISIK istekler arasina bosluk koyar', async () => {
-    const pacer = createPacer({ minIntervalMs: 20 })
+    const vc = virtualClock()
+    const pacer = createPacer({ minIntervalMs: 20, clock: vc.clock })
     const started: number[] = []
     for (let i = 0; i < 3; i += 1) {
-      await pacer.run(() => {
-        started.push(Date.now())
+      const done = pacer.run(() => {
+        started.push(vc.clock.now())
         return Promise.resolve()
       })
+      await vc.drain()
+      await done
     }
-    expect(started[1]! - started[0]!).toBeGreaterThanOrEqual(18)
-    expect(started[2]! - started[1]!).toBeGreaterThanOrEqual(18)
+    // PAY YOK -- bkz. `virtualClock`.
+    expect(started[1]! - started[0]!).toBeGreaterThanOrEqual(20)
+    expect(started[2]! - started[1]!).toBeGreaterThanOrEqual(20)
   })
 
   /**
@@ -1041,19 +1136,22 @@ describe('pacing', () => {
    * kuyrukta bekler; ARALARINDAKI her bosluk hala >= minInterval olmali.
    */
   it('bir takilmadan sonra istekler patlamaz', async () => {
-    const pacer = createPacer({ minIntervalMs: 25 })
+    const vc = virtualClock()
+    const pacer = createPacer({ minIntervalMs: 25, clock: vc.clock })
     const starts: number[] = []
     const task = (ms: number) =>
       pacer.run(async () => {
-        starts.push(Date.now())
-        await new Promise((r) => setTimeout(r, ms))
+        starts.push(vc.clock.now())
+        await vc.sleep(ms)
       })
-    await Promise.all([task(60), task(0), task(0), task(0)])
+    const all = Promise.all([task(60), task(0), task(0), task(0)])
+    await vc.drain()
+    await all
     expect(starts).toHaveLength(4)
     for (let i = 1; i < starts.length; i += 1) {
       // 60ms'lik ilk istekten sonraki bosluk da dahil, hicbiri sinirin
-      // altina dusmez.
-      expect(starts[i]! - starts[i - 1]!).toBeGreaterThanOrEqual(23)
+      // altina dusmez. PAY YOK -- bkz. `virtualClock`.
+      expect(starts[i]! - starts[i - 1]!).toBeGreaterThanOrEqual(25)
     }
   })
 
@@ -1081,26 +1179,75 @@ describe('pacing', () => {
       [4, 25, 4],
       [2, 50, 6],
     ] as const) {
-      const pacer = createPacer({ concurrency, minIntervalMs: interval })
+      const vc = virtualClock()
+      const pacer = createPacer({ concurrency, minIntervalMs: interval, clock: vc.clock })
       const starts: number[] = []
-      await Promise.all(
+      const all = Promise.all(
         Array.from({ length: count }, () =>
           pacer.run(() => {
-            starts.push(Date.now())
+            starts.push(vc.clock.now())
             return Promise.resolve()
           }),
         ),
       )
+      await vc.drain()
+      await all
       starts.sort((a, b) => a - b)
       expect(starts, `concurrency=${concurrency}`).toHaveLength(count)
       for (let i = 1; i < starts.length; i += 1) {
-        // Zamanlayici granuluitesi icin kucuk bir pay -- yukaridaki
-        // 25 -> 23 payinin aynisi.
-        expect(starts[i]! - starts[i - 1]!, `concurrency=${concurrency}, i=${i}`).toBeGreaterThan(
-          interval - 3,
-        )
+        // PAY YOK, VE BU BIR SIKILASTIRMADIR. Onceki hal `> interval - 3`
+        // idi; sahte saat altinda aralik TAM olarak tutulur.
+        expect(
+          starts[i]! - starts[i - 1]!,
+          `concurrency=${concurrency}, i=${i}`,
+        ).toBeGreaterThanOrEqual(interval)
       }
     }
+  })
+
+  /**
+   * GEC ATESLEYEN BIR ZAMANLAYICI ARALIGI KISALTAMAZ.
+   *
+   * BU TESTIN OLCTUGU SATIR TEKTIR: `begin()` icindeki
+   * `nextEarliest = max(nextEarliest, clock.now() + minIntervalMs)`.
+   *
+   * NEDEN AYRI BIR TEST OLMAK ZORUNDA. O satir yalnizca `schedule` GEC
+   * atesledigende bir sey yapar, ve ustteki uc test bunu goremez cunku
+   * hicbiri gecikme URETMEZ. Olculdu: satir silindiginde bu dosyadaki 70
+   * testin HEPSI yesil kaldi. Bir kusuru gormeyen 70 test, o kusur icin sifir
+   * testtir.
+   *
+   * KURULUM: her `schedule` planlanan andan 40ms GEC atesler. Rezervasyon
+   * (`nextEarliest = at + minIntervalMs`) plana gore yapilir; istek ise
+   * plandan 40ms sonra baslar. Ikinci ilerletme olmasaydi bir sonraki istek
+   * kendi planina gore -- yani ilkinin GERCEK baslangicindan 40ms ONCEsine
+   * dayanan bir plana gore -- baslar ve olculen bosluk `minIntervalMs`in
+   * ALTINA duserdi. Ilerletme ile bosluk gercek baslangictan sayilir.
+   */
+  it('gec atesleyen bir zamanlayici araligi KISALTAMAZ', async () => {
+    const LATE = 40
+    const INTERVAL = 25
+    const vc = virtualClock({ lateness: () => LATE })
+    const pacer = createPacer({ concurrency: 1, minIntervalMs: INTERVAL, clock: vc.clock })
+    const starts: number[] = []
+    const all = Promise.all(
+      Array.from({ length: 4 }, () =>
+        pacer.run(() => {
+          starts.push(vc.clock.now())
+          return Promise.resolve()
+        }),
+      ),
+    )
+    await vc.drain()
+    await all
+
+    expect(starts).toHaveLength(4)
+    for (let i = 1; i < starts.length; i += 1) {
+      expect(starts[i]! - starts[i - 1]!, `bosluk ${i}`).toBeGreaterThanOrEqual(INTERVAL)
+    }
+    // ANTI-VAKUM: gecikme GERCEKTEN olustu. Aksi halde yukaridaki dongu
+    // gecikmesiz bir dunyayi olcer ve mutant yine hayatta kalirdi.
+    expect(starts[starts.length - 1]! - starts[0]!).toBeGreaterThanOrEqual(3 * LATE)
   })
 
   it('cekme katmani gecirilen pacer i GERCEKTEN kullanir', async () => {

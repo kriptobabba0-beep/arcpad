@@ -52,7 +52,9 @@ describe('every cell on the surface has text', () => {
         cells += 1
       }
     }
-    expect(cells).toBe(50) // anti-vacuity
+    // 50 -> 51: `launch:BuybackUnavailable`. Metni ELLE yazildi ve
+    // `remedy` alani bos DEGIL -- kullanicinin cikisi var: kutuyu kaldir.
+    expect(cells).toBe(51) // anti-vacuity
   })
 
   it('a reachable cell never falls back to the operator sentence', () => {

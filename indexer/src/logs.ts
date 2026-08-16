@@ -291,6 +291,87 @@ export interface PoolFeeEvent extends LogRef {
   creatorFeeUnits: bigint
 }
 
+/*
+ * ---------------------------------------------------------------------------
+ * BUYBACK NESLI -- BES OLAY
+ * ---------------------------------------------------------------------------
+ *
+ * UCU HAZINEDEN, IKISI KASADAN. Ayri kontratlar oldugu icin `emitter` alani
+ * hangisinden geldigini soyler; indexer bunu ADRESE gore filtreler, tipe gore
+ * degil.
+ *
+ * TUM QUOTE MIKTARLARI NATIVE WEI'DIR (18 decimal), havuz olaylarinin 6
+ * decimal biriminde DEGIL. Ayrim tasiyicidir: hazine `pendingQuote`u wei
+ * tutar, havuz ise ERC-20 birimiyle konusur, ve ikisini karistirmak 10^12
+ * kat hata verir -- bu depoda `_marketCap` icin bir kez olculdu.
+ */
+
+/** `BuybackTreasury.BuybackAccrued`. Butce BUYUDU. */
+export interface BuybackAccruedEvent extends LogRef {
+  kind: 'buybackAccrued'
+  treasury: Address
+  token: Address
+  /** Tahakkuku yapan merci: tokenin EGRISI ya da mezuniyet HOOK'u. */
+  venue: Address
+  /** Bu islemde ayrilan quote, native wei. */
+  quoteAmount: bigint
+  /** Ayirma SONRASI toplam bekleyen -- kumulatif, wei. */
+  pending: bigint
+}
+
+/** `BuybackTreasury.BuybackExecuted`. Butce HARCANDI, token alindi. */
+export interface BuybackExecutedEvent extends LogRef {
+  kind: 'buybackExecuted'
+  treasury: Address
+  token: Address
+  /** Gercekten harcanan quote, native wei. */
+  quoteSpent: bigint
+  /** Piyasadan alinan token, 18 decimal. */
+  tokensBought: bigint
+}
+
+/**
+ * `BuybackTreasury.BuybackSkipped`. Butce CREATOR'A GERI KATLANDI.
+ *
+ * @remarks BU OLAY OLMADAN DEFTER KAPANMAZ. `accrued` ile `executed`
+ *          arasindaki fark, ancak bu olayla aciklanir; onsuz arayuz "para
+ *          nerede" sorusuna cevap veremez ve fark bir KAYIP gibi okunur.
+ *          `reason` operatorun ayirt etmesi gereken durumlari tasir
+ *          (`pool-not-initialized`, `pool-cannot-absorb`,
+ *          `below-threshold-or-unsafe`, `below-one-quote-unit`).
+ */
+export interface BuybackSkippedEvent extends LogRef {
+  kind: 'buybackSkipped'
+  treasury: Address
+  token: Address
+  quoteReturnedToCreator: bigint
+  reason: string
+}
+
+/** `BuybackVestingVault.BuybackLocked`. Alinan token kilitlendi. */
+export interface BuybackLockedEvent extends LogRef {
+  kind: 'buybackLocked'
+  vault: Address
+  token: Address
+  tokenAmount: bigint
+  /** AGIRLIKLI vesting baslangici -- her yeni kilit onu ILERI iter. */
+  vestingStart: bigint
+  vestingEnd: bigint
+  /** Kilitteki kumulatif toplam. */
+  totalLocked: bigint
+}
+
+/** `BuybackVestingVault.VestingReleased`. Hak edilen dagitildi. */
+export interface VestingReleasedEvent extends LogRef {
+  kind: 'vestingReleased'
+  vault: Address
+  token: Address
+  /** `release()`i cagiran -- creator ya da protokol hazinesi. */
+  caller: Address
+  creatorAmount: bigint
+  protocolAmount: bigint
+}
+
 export type DecodedEvent =
   | LaunchedEvent
   | TradeEvent
@@ -302,6 +383,11 @@ export type DecodedEvent =
   | PoolSwapEvent
   | PoolInitializeEvent
   | PoolFeeEvent
+  | BuybackAccruedEvent
+  | BuybackExecutedEvent
+  | BuybackSkippedEvent
+  | BuybackLockedEvent
+  | VestingReleasedEvent
 
 /**
  * Izlenen adresler. `curves` ve `tokens` KUME'dir cunku her aralikta buyurler
@@ -567,6 +653,42 @@ export interface Pacer {
 }
 
 /**
+ * Pacer'in ZAMAN KAYNAGI. Uretimde `Date.now` + `setTimeout`; testte
+ * yurutulebilir bir sanal saat.
+ *
+ * NICIN ENJEKTE EDILIYOR, VE BU BIR KOLAYLIK DEGIL BIR OLCULEBILIRLIK
+ * SORUNUNUN CEVABI. `begin()` icindeki ikinci `nextEarliest` ilerletmesi
+ * YALNIZCA `setTimeout` GEC ATESLEDIGINDE bir sey yapar. Bu, iki test
+ * yaklasimini da tek basina yetersiz birakir:
+ *
+ *   GERCEK SAAT ile: gecikme vardir ama OLCULEMEZ. Testin gordugu bosluk
+ *   makine yukune baglidir; `pnpm -r test` bes test surecini ayni CPU'da
+ *   kosturunca olcum araligin altina duser ve test pacer kusursuzken KIRMIZI
+ *   olur. Olculdu.
+ *
+ *   SAHTE SAAT (`vi.useFakeTimers`) ile: `setTimeout` TAM zamaninda atesler,
+ *   yani gecikme HIC OLUSMAZ ve ikinci ilerletme gozlemlenemez hale gelir.
+ *   OLCULDU VE MUTASYONLA KANITLANDI: o satiri silmek, sahte saat altindaki
+ *   70 testin HEPSINI yesil birakti. Sahte saat, kusuru insaen gorunmez kilar.
+ *
+ * Enjekte edilen saat ucuncu secenektir ve ikisinin de kusurunu tasimaz:
+ * gecikme GERCEKTEN olusur (test onu kendisi kurar) ve DETERMINISTIKTIR.
+ * `test/logs.test.ts::virtualClock` gec atesleyen bir zamanlayici kurar; o
+ * testin altinda ayni mutant OLUR.
+ */
+export interface PacerClock {
+  now(): number
+  schedule(fn: () => void, ms: number): void
+}
+
+const REAL_CLOCK: PacerClock = {
+  now: () => Date.now(),
+  schedule: (fn, ms) => {
+    setTimeout(fn, ms)
+  },
+}
+
+/**
  * Arc hem ES ZAMANLI hem ARDISIK istekleri hizlandirinca reddediyor (olculdu:
  * `eth_call`larda). Bu yuzden cekme katmani `Promise.all` YAZAR ama gercekten
  * paralel KOSMAZ: dort sorgu da bu kuyruktan gecer.
@@ -576,9 +698,14 @@ export interface Pacer {
  * `minIntervalMs` istekler ARASINA en az bir bosluk koyar -- ardisik hiz
  * siniri icin gereken sey budur ve es zamanlilik siniri onu VERMEZ.
  */
-export function createPacer(opts?: { concurrency?: number; minIntervalMs?: number }): Pacer {
+export function createPacer(opts?: {
+  concurrency?: number
+  minIntervalMs?: number
+  clock?: PacerClock
+}): Pacer {
   const concurrency = Math.max(1, opts?.concurrency ?? 1)
   const minIntervalMs = Math.max(0, opts?.minIntervalMs ?? 0)
+  const clock = opts?.clock ?? REAL_CLOCK
   let active = 0
   /**
    * EN ERKEN BASLAMA ANI. `lastStart` DEGIL, ve fark olculdu.
@@ -624,15 +751,15 @@ export function createPacer(opts?: { concurrency?: number; minIntervalMs?: numbe
     new Promise<void>((resolve) => {
       const start = (): void => {
         active += 1
-        const now = Date.now()
+        const now = clock.now()
         const at = Math.max(now, nextEarliest)
         nextEarliest = at + minIntervalMs
         const begin = (): void => {
-          nextEarliest = Math.max(nextEarliest, Date.now() + minIntervalMs)
+          nextEarliest = Math.max(nextEarliest, clock.now() + minIntervalMs)
           resolve()
         }
         if (at === now) begin()
-        else setTimeout(begin, at - now)
+        else clock.schedule(begin, at - now)
       }
       if (active < concurrency) start()
       else queue.push(start)
@@ -1156,6 +1283,87 @@ function decodePoolFee(log: RawLog, ref: LogRef): PoolFeeEvent {
   }
 }
 
+/*
+ * ---------------------------------------------------------------------------
+ * BUYBACK COZUCULERI
+ * ---------------------------------------------------------------------------
+ *
+ * `expect(kind, log, topics, words)` HER BIRINDE COZUCUNUN ILK SATIRIDIR ve
+ * bu bir tercih degil: bir olayin `indexed` sayisi degisirse topic'ler KAYAR
+ * ve alanlar sessizce birbirinin yerine gecer. `expect` o kaymayi ADIYLA
+ * bildirir; onsuz `venue` alaninda bir `token` adresi bulunur ve hicbir sey
+ * kirmizi olmaz.
+ */
+
+function decodeBuybackAccrued(log: RawLog, ref: LogRef): BuybackAccruedEvent {
+  expect('buybackAccrued', log, 3, 2)
+  return {
+    kind: 'buybackAccrued',
+    ...ref,
+    treasury: addressOf(log),
+    token: addressFrom(log.topics[1] as Hex),
+    venue: addressFrom(log.topics[2] as Hex),
+    quoteAmount: uint(log.data, 0),
+    pending: uint(log.data, 1),
+  }
+}
+
+function decodeBuybackExecuted(log: RawLog, ref: LogRef): BuybackExecutedEvent {
+  expect('buybackExecuted', log, 2, 2)
+  return {
+    kind: 'buybackExecuted',
+    ...ref,
+    treasury: addressOf(log),
+    token: addressFrom(log.topics[1] as Hex),
+    quoteSpent: uint(log.data, 0),
+    tokensBought: uint(log.data, 1),
+  }
+}
+
+/**
+ * @dev `reason` DINAMIK BIR DIZEDIR, yani `data` UC kelime tasir: tutar,
+ *      dizenin OFSETI, ve dizenin kendisi. `dynamicBytes` ofseti izler --
+ *      ikinci kelimeyi dogrudan okumak ofsetin KENDISINI dize sanardi.
+ */
+function decodeBuybackSkipped(log: RawLog, ref: LogRef): BuybackSkippedEvent {
+  expect('buybackSkipped', log, 2, 2)
+  return {
+    kind: 'buybackSkipped',
+    ...ref,
+    treasury: addressOf(log),
+    token: addressFrom(log.topics[1] as Hex),
+    quoteReturnedToCreator: uint(log.data, 0),
+    reason: hexToString(dynamicBytes('buybackSkipped', log.data, 1)),
+  }
+}
+
+function decodeBuybackLocked(log: RawLog, ref: LogRef): BuybackLockedEvent {
+  expect('buybackLocked', log, 2, 4)
+  return {
+    kind: 'buybackLocked',
+    ...ref,
+    vault: addressOf(log),
+    token: addressFrom(log.topics[1] as Hex),
+    tokenAmount: uint(log.data, 0),
+    vestingStart: uint(log.data, 1),
+    vestingEnd: uint(log.data, 2),
+    totalLocked: uint(log.data, 3),
+  }
+}
+
+function decodeVestingReleased(log: RawLog, ref: LogRef): VestingReleasedEvent {
+  expect('vestingReleased', log, 3, 2)
+  return {
+    kind: 'vestingReleased',
+    ...ref,
+    vault: addressOf(log),
+    token: addressFrom(log.topics[1] as Hex),
+    caller: addressFrom(log.topics[2] as Hex),
+    creatorAmount: uint(log.data, 0),
+    protocolAmount: uint(log.data, 1),
+  }
+}
+
 /**
  * Olay adi -> cozucu. Kapsam testi bu nesnenin ANAHTARLARINI kullanir: bir
  * olay eklenip cozucusu yazilmadiginda, ya da cozucu yazilip hicbir fixture
@@ -1173,6 +1381,11 @@ export const DECODERS: Readonly<Record<EventKind, (log: RawLog, ref: LogRef) => 
     poolSwap: decodePoolSwap,
     poolInitialize: decodePoolInitialize,
     poolFee: decodePoolFee,
+    buybackAccrued: decodeBuybackAccrued,
+    buybackExecuted: decodeBuybackExecuted,
+    buybackSkipped: decodeBuybackSkipped,
+    buybackLocked: decodeBuybackLocked,
+    vestingReleased: decodeVestingReleased,
   })
 
 // ---------------------------------------------------------------------------
