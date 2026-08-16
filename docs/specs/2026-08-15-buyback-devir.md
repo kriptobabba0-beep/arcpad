@@ -568,7 +568,21 @@ karsi** kosuyor -- taklit degil, Arc testnet'te deploy edilmis `0x617321A8...`.
 Uretim yigini HIC kullanilmaz: fabrika, hook, locker, kasa ve hazine testin
 kendi atilabilir kopyalaridir.
 
-**SONRAKI KOMUT** (pencere acilinca, IZINSIZ):
+### PENCERE -- ZINCIRDEN OKUNDU, HESAPLANMADI (16 Agustos 12:05 UTC)
+
+```
+pendingGraduationTarget   0xBBE8EB43380d3572cF0F97BE5A9d6755Dd3c79Aa  (V2 locker)
+graduationTarget          0x0000...0000                              (HENUZ INMEDI)
+pendingGraduationTargetEta        1786914903 = 2026-08-16 21:15:03 UTC   <- ACILIS
+eta + GRADUATION_TARGET_DELAY     1787001303 = 2026-08-17 21:15:03 UTC   <- ONERI DUSER
+```
+
+> Bu devir belgesinin onceki surumu "~23:15 UTC" diyordu ve YANLISTI. Yukaridaki
+> iki sayi `cast call` ile fabrikadan okundu; pencereyi yeniden HESAPLAMA, tekrar
+> OKU:
+> `cast call $ARC_FACTORY "pendingGraduationTargetEta()(uint256)" --rpc-url $ARC_RPC_URL`
+
+**SONRAKI KOMUT** (pencere acilinca, IZINSIZ -- herkes cagirabilir):
 
 ```bash
 cast send 0x7A02759adD7193AD11A0C51914398d366Bf256A3 "applyGraduationTarget()"   --rpc-url "$ARC_RPC_URL" --private-key "$DEPLOYER_PRIVATE_KEY"
@@ -576,6 +590,19 @@ cast send 0x7A02759adD7193AD11A0C51914398d366Bf256A3 "applyGraduationTarget()"  
 
 Sonra: `launchWithBuyback` -> egriyi tamamla -> `locker.graduate` -> havuzda
 swap -> `sweep`. Bu kez BROADCAST ile.
+
+> **UYGULAMADAN ONCE: `graduationTarget()` HALA SIFIR MI DIYE BAK.**
+> `applyGraduationTarget` IZINSIZDIR, yani pencere acildiktan sonra bizden BASKA
+> biri de indirebilir -- ve indirmis olmasi bir ariza degildir. Sifir degilse
+> adim ATLANIR, tekrar onerilmez.
+
+### BU YAYIN ICIN INDEXER'IN BU DALDAN KOSMASI GEREKIR
+
+Uretim VPS'i `phase-1d-deploy` kosuyor. Buyback'in cekme katmani (hazine + kasa
+sorgusu) ve politika olayi YALNIZCA `buyback-v2`de var, yani mezuniyet
+yayinindan sonra sitede buyback rakamlarinin gorunmesi icin indexer'in bu dali
+kosmasi sart. **Bu bir deploy karari ve sahibe aittir** -- bu oturumda
+YAPILMADI.
 
 ## 15. Bu isle ILGISIZ ama bekleyen
 
