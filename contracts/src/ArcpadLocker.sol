@@ -187,11 +187,19 @@ contract ArcpadLocker is IUnlockCallback {
         (uint256 have0, uint256 have1) = baseIsCurrency0 ? (baseAmount, quoteUnits) : (quoteUnits, baseAmount);
 
         // --- 4. HAVUZ. ---
+        // `initialize` acilis tick'ini doner; ONA BAKMIYORUZ ve bu bilinclidir
+        // -- asagidaki 5. adim havuzun GERCEK durumunu geri okur. Donen degere
+        // guvenmek, "dogru hesapladi ama BASKASINI gecirdi" mutantini gormezdi.
+        // slither-disable-next-line unused-return
         poolManager.initialize(key, sqrtPriceX96);
 
         uint128 liquidity = GraduationMath.seedLiquidity(sqrtPriceX96, have0, have1);
         if (liquidity == 0) revert ZeroLiquidity();
 
+        // `unlock` geri cagrinin dondurdugu baytlari verir; likidite sonucu
+        // ORADAN degil `getPositionInfo`dan dogrulanir (5. adim). Bir raporu
+        // degil ETKIYI olcmek, bu fonksiyonun tasarim kurali.
+        // slither-disable-next-line unused-return
         poolManager.unlock(abi.encode(key, liquidity, have0, have1));
 
         // --- 5. GERI OKUMA, YEREL DEGISKENDEN DEGIL `PoolManager`IN KENDI
@@ -201,8 +209,14 @@ contract ArcpadLocker is IUnlockCallback {
         //        ve o mutant yerel bir degiskene bakan bir kontrolde
         //        GORUNMEZ. ---
         PoolId id = key.toId();
+        // Yalnizca fiyat sorulur; tick ve ucret alanlari bu iddianin konusu
+        // degil.
+        // slither-disable-next-line unused-return
         (uint160 actual,,,) = poolManager.getSlot0(id);
         if (actual != sqrtPriceX96) revert PoolPriceMismatch();
+        // Yalnizca likidite sorulur; ucret buyumeleri tohumlama aninda SIFIRDIR
+        // ve onlari okumak yeni bir varsayim eklerdi.
+        // slither-disable-next-line unused-return
         (uint128 seeded,,) = poolManager.getPositionInfo(
             id, address(this), GraduationMath.TICK_LOWER, GraduationMath.TICK_UPPER, bytes32(0)
         );
@@ -227,6 +241,10 @@ contract ArcpadLocker is IUnlockCallback {
         // `salt: bytes32(0)`: pozisyon zaten `poolId` ile ad alanina
         // alinmistir. `hookData: ""`: hook'un likidite bayragi YOKTUR,
         // dolayisiyla hic cagrilmaz.
+        // Ikinci donen deger TAHAKKUK ETMIS UCRETLERDIR ve YENI acilan bir
+        // pozisyonda tanim geregi SIFIRDIR. Onu okuyup kontrol etmek, var
+        // olamayacak bir durumu olcmek olurdu.
+        // slither-disable-next-line unused-return
         (BalanceDelta delta,) = poolManager.modifyLiquidity(
             key,
             ModifyLiquidityParams({

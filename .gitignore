@@ -78,3 +78,8 @@ semboller/
 .agents/
 .claude/
 skills-lock.json
+
+# Denetim kosumunun ciktisi. Bir KOSU kaydidir, bir kaynak degil: her kosuda
+# degisir ve git diffi gurultuyle doldurur. Kalici olmasi gereken bulgular
+# docs/plans/ altina YAZILIR.
+scripts/audit/report-*.json

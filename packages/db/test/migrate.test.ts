@@ -162,6 +162,49 @@ describe('runMigrations', () => {
     )
   })
 
+  it('SATIR SONU ozeti DEGISTIRMEZ: CRLF bir agac LF bir defteri reddettirmez', async () => {
+    /*
+     * OLCULMUS BIR ARIZA, VARSAYIM DEGIL. `.gitattributes` `eol=lf` diyor ama
+     * bu yalnizca CHECKOUT/COMMIT sinirinda gecerlidir: dosyayi yeniden yazan
+     * bir editor ya da betik Windows'ta CRLF birakir ve git onu geri cevirmez.
+     * Depoda gorulen hali (`git ls-files --eol`): `011_head_observed_at.sql`
+     * ve `013_chat.sql` icin `i/lf w/crlf`.
+     *
+     * Ozet ham baytlardan hesaplansaydi, sunucuda (LF) uygulanmis bir
+     * migration bir Windows checkout'undan kosuldugunda "uygulandiktan SONRA
+     * degismis" diye REDDEDILIRDI -- iceriginde tek bayt degismeden, ve tam
+     * olarak dagitim aninda.
+     *
+     * Test GERCEK yolu kullanir: once LF ile uygula, sonra AYNI dosyayi CRLF
+     * yaz ve tekrar kostur. Bir daha uygulanacak sey yoktur (`[]`) VE muhafiz
+     * susar. Sonunda dosya LF'e geri yazilir.
+     */
+    const file = '002_launches.sql'
+    const path = join(MIGRATIONS_DIR, file)
+    const lf = await readFile(path, 'utf8')
+    expect(lf.includes('\r\n')).toBe(false)
+
+    await runMigrations(pool)
+    try {
+      await writeFile(path, lf.replace(/\n/g, '\r\n'))
+      await expect(runMigrations(pool)).resolves.toEqual([])
+    } finally {
+      await writeFile(path, lf)
+    }
+  })
+
+  it('HICBIR migration dosyasi CRLF TASIMAZ', async () => {
+    // Ustteki test ozetin satir sonundan bagimsiz oldugunu ISPATLAR; bu test
+    // depoyu temiz TUTAR. Ikisi ayri sey: birincisi kirilmayi onler, ikincisi
+    // kirilmanin girdigi kapiyi kapatir. Bir dosya CRLF'e donerse `git diff`
+    // sessiz kalir (git commit sinirinda normalize eder) -- yani bunu
+    // yakalayacak baska bir kapi YOK.
+    for (const filename of await migrationFiles()) {
+      const content = await readFile(join(MIGRATIONS_DIR, filename), 'utf8')
+      expect(content.includes('\r'), `${filename} CRLF tasiyor`).toBe(false)
+    }
+  })
+
   // ---------------------------------------------------------------
   // KARSILASTIRMA TAM MI? Ilk hali yalnizca "degismis" dosyayi ariyordu ve
   // uc kacis birakiyordu; ucu de gozden gecirmede olculdu. Hepsi burada.

@@ -347,8 +347,30 @@ export function inventoryObjects(inventory: readonly string[]): string[] {
 /** Envanterin uretebilecegi turler -- `LINE_OBJECT` ile AYNI kume olmalidir. */
 export const INVENTORY_KINDS: readonly string[] = Object.keys(LINE_OBJECT).sort()
 
+/**
+ * OZET, SATIR SONUNDAN BAGIMSIZDIR -- VE BU BIR DUZELTMEDIR.
+ *
+ * `checksum_hex` "bu migration uygulandiktan SONRA degisti mi" sorusunun
+ * cevabidir ve dosyanin BAYTLARINDAN hesaplaniyordu. `.gitattributes`
+ * `eol=lf` diyor, yani git her checkout'ta LF yazar -- ama bir editor ya da
+ * bir betik dosyayi yeniden yazdiginda Windows'ta CRLF birakir, ve git bunu
+ * geri cevirmez (yalnizca checkout/commit sinirinda normalize eder). Depoda
+ * OLCULDU: `011_head_observed_at.sql` ve `013_chat.sql` calisma agacinda
+ * CRLF'ti (`git ls-files --eol`: `i/lf w/crlf`).
+ *
+ * Sonucu sessiz degil GURULTULU bir yanlis alarmdi ve tam olarak en kotu anda
+ * gelirdi: sunucuda (LF) uygulanmis bir migration, bir Windows checkout'undan
+ * kosuldugunda "uygulandiktan SONRA degismis" diye REDDEDILIR ve dagitim
+ * durur. Dosyanin ICERIGI ise bir bayt bile degismemistir.
+ *
+ * Normalizasyon LF checkout'lari icin HICBIR SEYI degistirmez (`\r\n` zaten
+ * yoktur), yani sunucudaki defter gecerli kalir; yalnizca CRLF bir agacin
+ * urettigi ozet artik LF olanla AYNIDIR. Ayni fonksiyon sema parmak izi ve
+ * envanter icin de kullanilir; ikisi de zaten `\n` ile birlestirilmis
+ * dizelerdir, dolayisiyla onlar icin bu bir no-op'tur.
+ */
 function sha256Hex(content: string): string {
-  return createHash('sha256').update(content, 'utf8').digest('hex')
+  return createHash('sha256').update(content.replace(/\r\n/g, '\n'), 'utf8').digest('hex')
 }
 
 /** Envanteri kendi islemi icinde okur (bkz. `schemaInventory`'nin SET LOCAL'i). */

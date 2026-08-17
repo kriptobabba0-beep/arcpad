@@ -205,6 +205,11 @@ contract BuybackVestingVault {
         uint256 before = IERC20(token).balanceOf(address(this));
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
         uint256 received = IERC20(token).balanceOf(address(this)) - before;
+        // `== 0` bir BAKIYE karsilastirmasi degil, OLCULMUS bir farkin sifir
+        // olup olmadigi. DeteĞºtorun uyardigi sey "bakiyeye tam esitlik ile
+        // guvenmek"tir; burada esitlik iki bakiyenin FARKINA uygulaniyor ve
+        // sifir fark "hicbir sey gelmedi" demenin tek yolu.
+        // slither-disable-next-line incorrect-equality
         if (received == 0) return;
 
         LaunchVest storage v = _vests[token];
@@ -291,6 +296,10 @@ contract BuybackVestingVault {
      */
     function _checkpoint(LaunchVest storage v, uint256 nowTs) private {
         uint256 newlyVested = _previewNewlyVested(v, nowTs);
+        // Hesaplanmis bir MIKTARIN sifir olmasi; bir zaman ya da bakiye
+        // esitligi degil. Bu dalin neden SAVUNMACI oldugu yukaridaki (2) ve
+        // (3) notlarinda yazili.
+        // slither-disable-next-line incorrect-equality
         if (newlyVested == 0) return;
         v.unvestedAmount -= newlyVested;
         v.vestedUnreleased += newlyVested;

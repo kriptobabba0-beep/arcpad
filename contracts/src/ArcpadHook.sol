@@ -73,7 +73,7 @@ interface ICurveView {
 ///         tahsil eder.
 ///
 /// @dev IZIN KUMESI `0x20CC`, VE `afterSwap` BAYRAKLARI ZORUNLUDUR. Faz 1d'nin
-///      pinlediği `0x2088` (`beforeInitialize`+`beforeSwap`+delta) spec §5.5'i
+///      pinlediÄŸi `0x2088` (`beforeInitialize`+`beforeSwap`+delta) spec Â§5.5'i
 ///      UYGULAYAMAZ. V4'te `beforeSwap` yalnizca SPECIFIED para birimini bilir
 ///      ve specified taraf `(exactInput == zeroForOne)` iken `currency0`dir.
 ///      Dort swap sekli boylece IKIYE AYRILIR: quote miktari swap'ten ONCE
@@ -127,7 +127,7 @@ contract ArcpadHook is BaseHook {
     error ZeroDependency();
 
     /// @dev TREASURY BIR CONSTRUCTOR ARGUMANI DEGILDIR VE OLMAMALIDIR.
-    ///      Argüman olsaydi tek makul saklama yeri bir kopya olurdu ve kopya
+    ///      ArgÃ¼man olsaydi tek makul saklama yeri bir kopya olurdu ve kopya
     ///      tam olarak kaldirilan kusurdur; "alip dogrula ama okuma" ise
     ///      olu bir arguman birakirdi. Curve'un constructor'i da ayni
     ///      sebeple `protocolTreasury` ALMAZ (`LaunchFactory.sol:746`).
@@ -157,7 +157,7 @@ contract ArcpadHook is BaseHook {
     /// @notice Protokol ucretinin alicisi, HER OKUMADA factory'den CANLI.
     ///
     /// @dev BU FONKSIYON BIR `immutable`IN YERINE GECTI VE GERI DONULMEMELIDIR.
-    ///      Ölculmus kusur: hook treasury'yi constructor'da kopyaliyordu, yani
+    ///      Ã–lculmus kusur: hook treasury'yi constructor'da kopyaliyordu, yani
     ///      governor Safe'inin `setProtocolTreasury` rotasyonu HER CURVE'E
     ///      ulasip HICBIR HAVUZA ulasmiyordu -- graduation sonrasi ucretler
     ///      eski (ya da ele gecirilmis) treasury'ye sonsuza kadar akardi.
@@ -410,6 +410,13 @@ contract ArcpadHook is BaseHook {
         // swap yolunun basinda) bu tek islem icinde ayni sonucu verir, ama
         // deseni bozar ve bir sonraki okuyucuya onbellegin mesru oldugunu
         // soylerdi.
+        // DEGERIN GITTIGI ADRES `escrow`DUR VE `immutable`DIR; `protocolTreasury()`
+        // yalnizca escrow'un ICINDEKI defter anahtaridir, bir ETH hedefi degil.
+        // Slither `deposit`in payable olmasi ve argumaninin dinamik olmasi
+        // yuzunden bunu "keyfi alici" sayiyor; keyfi olan sey KREDININ sahibi,
+        // PARANIN gittigi yer degil. Yonetisim o anahtari degistirebilir --
+        // yetkisi de tam olarak budur ve `NotGovernor` ile korunur.
+        // slither-disable-next-line arbitrary-send-eth
         IFeeEscrow(escrow).deposit{value: GraduationMath.quoteWei(protocolFee)}(protocolTreasury());
         if (creatorFee != 0) {
             _settleCreatorFee(cfg.base, cfg.creator, GraduationMath.quoteWei(creatorFee));
@@ -457,11 +464,19 @@ contract ArcpadHook is BaseHook {
         // `treasury == 0` KAPALI demektir; carpim hic yapilmaz.
         uint256 buybackQuote = treasury == address(0) ? 0 : (creatorWei * lockBps) / 10_000;
 
+        // `treasury` FABRIKANIN `buybackTreasury`SIDIR ve BIR KEZ yazilir
+        // (`setBuybackTreasury` ikinci cagride `HookAlreadySet` ile revert
+        // eder, canli zincirde G6 ile olculdu). Yani hedef ne saldirgan ne de
+        // yonetisim tarafindan DEGISTIRILEBILIR; keyfi degildir.
+        // slither-disable-next-line arbitrary-send-eth
         if (buybackQuote != 0) IBuybackTreasury(treasury).accrue{value: buybackQuote}(token);
 
         uint256 creatorCash = creatorWei - buybackQuote;
         // Kosul KALMALIDIR: `FeeEscrow.deposit` sifir tutarda revert eder ve
         // `lockBps == 10_000` durumunda nakit pay TAM SIFIR olur.
+        // Yine `escrow` (immutable) hedefi; `creator` defter anahtaridir ve
+        // `LaunchToken.creator` `immutable` oldugu icin o da secilemez.
+        // slither-disable-next-line arbitrary-send-eth
         if (creatorCash != 0) IFeeEscrow(escrow).deposit{value: creatorCash}(creator);
     }
 
@@ -485,6 +500,11 @@ contract ArcpadHook is BaseHook {
     ///      (58_783_256_052); testnet buyuklugunde 10^12 artigi yuzunden IKI
     ///      BIRIM ayrisirlar. Ayrisma OLCULMUS ve testte SINIRLANMISTIR.
     function _marketCap(PoolKey calldata key, PoolConfig memory cfg) private view returns (uint256) {
+        // `getSlot0` DORT deger doner; burada anlamli olan YALNIZCA `sqrtP`.
+        // Tick, protokol ucreti ve LP ucreti market cap'e girmez -- okunup
+        // kullanilmayan bir degisken tanimlamak, "bunlar da onemli" diye
+        // yaniltirdi.
+        // slither-disable-next-line unused-return
         (uint160 sqrtP,,,) = poolManager.getSlot0(key.toId());
         // p = (sqrtP / 2^96)^2, ve p = currency1_raw / currency0_raw.
         // Q96 asamali hesaplanir ki ara sonuc tasmasin.

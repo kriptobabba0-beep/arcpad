@@ -292,6 +292,12 @@ contract ArcpadRouter is IUnlockCallback {
             quoting: true
         });
 
+        // CEVAP REVERT'IN ICINDEDIR, donen degerde DEGIL. Quoter deseni budur:
+        // basarili bir donus, quote yolunun revert etmedigi -- yani BOZUK
+        // oldugu -- anlamina gelir ve `QuoteDidNotRevert` ile bildirilir.
+        // Donen baytlari okumak, hicbir zaman ulasilmayan bir dali okumak
+        // olurdu.
+        // slither-disable-next-line unused-return
         try poolManager.unlock(abi.encode(c)) returns (bytes memory) {
             revert QuoteDidNotRevert();
         } catch (bytes memory reason) {

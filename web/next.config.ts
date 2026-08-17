@@ -125,6 +125,15 @@ export const TYPECHECK_ESCAPE_HATCH = 'ARCPAD_E2E_UNSAFE_SKIP_TYPECHECK'
 
 const nextConfig: NextConfig = {
   transpilePackages: ['@arcpad/shared'],
+  /*
+   * `X-Powered-By: Next.js` KAPALI.
+   *
+   * Tek basina bir acik degil, ama bedava bir ipucu: bir tarayana hangi
+   * cerceveyi -- ve dolayisiyla hangi CVE listesini -- deneyecegini soyler.
+   * Karsiliginda hicbir sey vermiyor, bu yuzden kapali olmasi varsayilan
+   * olmali. Canli olcumde acikti (2026-08-17, `HEAD https://outofmind.fun/`).
+   */
+  poweredByHeader: false,
   typescript: {
     ignoreBuildErrors: process.env[TYPECHECK_ESCAPE_HATCH] === '1',
   },

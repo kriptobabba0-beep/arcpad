@@ -85,7 +85,7 @@ contract BuybackTreasury {
     uint256 public constant MIN_SWEEP_WEI = 0.05e18;
 
     /// @notice Anahtarci sessiz kalirsa supurme IZINSIZ hale gelir.
-    /// @dev Fonlarin kalici olarak erisilemez kalmasini engeller (spec §29).
+    /// @dev Fonlarin kalici olarak erisilemez kalmasini engeller (spec Â§29).
     uint256 public constant SWEEP_GRACE = 7 days;
 
     uint256 private constant BPS = 10_000;
@@ -167,6 +167,10 @@ contract BuybackTreasury {
          * andir. Testte yakalandi. Saat parayi ilk gorunce baslar; anahtarci
          * yedi gun boyunca tek yetkilidir, sonra kilit acilir.
          */
+        // `== 0` BURADA BIR SENTINEL, bir zaman karsilastirmasi DEGIL: "bu
+        // token icin saat hic baslamadi" demenin tek yolu. `block.timestamp`
+        // sifir olamayacagi icin yanlis pozitif de uretemez.
+        // slither-disable-next-line incorrect-equality
         if (lastSweepAt[token] == 0) lastSweepAt[token] = block.timestamp;
         emit BuybackAccrued(token, msg.sender, msg.value, next);
     }
@@ -179,13 +183,13 @@ contract BuybackTreasury {
      * @notice Birikmis butceyi guvenli oldugu kadar harcar; kalani creator'a
      *         geri katlar.
      *
-     * @dev ASLA REVERT ETMEZ "piyasa ince" diye. Spec §11: guvenli alim
+     * @dev ASLA REVERT ETMEZ "piyasa ince" diye. Spec Â§11: guvenli alim
      *      yapilamiyorsa para creator'a doner -- protokole GITMEZ, kontratta
      *      KALMAZ.
      *
      * @param minTokensOut Anahtarcinin hesapladigi alt sinir. YALNIZCA alim
      *        GERCEKTEN yapilirken uygulanir; atlanan bir buyback bu yuzden
-     *        butun dagitimi kilitlemez (spec §12).
+     *        butun dagitimi kilitlemez (spec Â§12).
      */
     function sweep(address token, uint256 minTokensOut, uint256 deadline) external {
         if (block.timestamp > deadline) revert DeadlinePassed();
@@ -315,6 +319,8 @@ contract BuybackTreasury {
         // ulasilamazdir; ulasildigi gun ise fon kilitlemek yanlis cevaptir.
         // AYRI BIR SEBEP DIZESI TASIR: "havuz yok" ile "havuz ince" bir
         // operator icin ayni sey degildir.
+        // Yalnizca fiyat sorulur; tick ve iki ucret alani bu hesaba GIRMEZ.
+        // slither-disable-next-line unused-return
         (uint160 sqrtP,,,) = poolManager.getSlot0(key.toId());
         if (sqrtP == 0) return (0, 0, "pool-not-initialized");
 
@@ -351,9 +357,15 @@ contract BuybackTreasury {
         if (msg.sender != address(poolManager)) revert NotPoolManager();
         PoolBuy memory job = abi.decode(data, (PoolBuy));
 
+        // Ikinci donen deger `zeroForOne`dir ve bu cagri yerinde ADRES
+        // SIRASINDAN zaten turetilir; ikinci bir kaynak, ikisinin
+        // ayrisabilecegi bir yer acardi.
+        // slither-disable-next-line unused-return
         (PoolKey memory key,) =
             GraduationMath.poolKey(job.token, IHooks(ITreasuryFactoryView(factory).graduationHook()));
 
+        // Yalnizca fiyat sorulur; tick ve iki ucret alani bu hesaba GIRMEZ.
+        // slither-disable-next-line unused-return
         (uint160 sqrtP,,,) = poolManager.getSlot0(key.toId());
 
         /*
@@ -449,7 +461,7 @@ contract BuybackTreasury {
     uint160 private constant MIN_SQRT_PRICE = 4295128739;
     uint160 private constant MAX_SQRT_PRICE = 1461446703485210103287273052203988822378723970342;
 
-    /// @dev Anahtarci; ya da sessiz kaldiysa (§29) herkes.
+    /// @dev Anahtarci; ya da sessiz kaldiysa (Â§29) herkes.
     function _assertSweeper(address token) private view {
         if (msg.sender == ITreasuryFactoryView(factory).buybackKeeper()) return;
         if (block.timestamp > lastSweepAt[token] + SWEEP_GRACE) return;
@@ -492,7 +504,7 @@ contract BuybackTreasury {
      *      bir egride gercek etkiyi sinirin ustune tasir. Karekok tam sayida
      *      alinir ve TABANA yuvarlanir; yani sinir her zaman guvenli tarafta.
      *
-     * @dev ============ MEZUNIYET REZERVI (§9) ============
+     * @dev ============ MEZUNIYET REZERVI (Â§9) ============
      *
      *      Alim, kullanici alimlariyla AYNI `realTokenReserves` kisitindan
      *      gecer -- ayri bir yol yoktur. Egri tamamlandiysa (`complete`) ya da
@@ -523,7 +535,7 @@ contract BuybackTreasury {
      *      NOT: bu alim da her alim gibi protokol ve creator ucreti oder. Yani
      *      buyback'in kucuk bir kismi (%1,25) ucret olarak geri doner -- bir
      *      kismi ayni creator'a. Bu bilinclidir: buyback GERCEK bir piyasa
-     *      alimidir (§8) ve ayricalikli bir ucret muafiyeti, egriye
+     *      alimidir (Â§8) ve ayricalikli bir ucret muafiyeti, egriye
      *      ayricalikli bir yol acmak demek olurdu.
      */
     function _buyOnCurve(address curve, address token, uint256 amount, uint256 minTokensOut)

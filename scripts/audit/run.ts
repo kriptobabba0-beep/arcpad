@@ -1,4 +1,4 @@
-#!/usr/bin/env tsx
+﻿#!/usr/bin/env tsx
 /**
  * ============================================================================
  *  CANLI DENETIM KAMPANYASI -- giris noktasi
@@ -35,6 +35,7 @@ import { phaseFees } from './phase-fees'
 import { phaseGraduation } from './phase-graduation'
 import { phaseBuyback } from './phase-buyback'
 import { phasePool } from './phase-pool'
+import { phaseAdversarial } from './phase-adversarial'
 import { ARC_TESTNET_CHAIN_ID } from '../../packages/shared/src/chain'
 import {
   bondingCurveAbi,
@@ -211,6 +212,11 @@ async function main(): Promise<void> {
       }
       console.log(`  (havuz tokeni ${poolToken})`)
       await phasePool(c, pub, w, poolToken)
+    } else if (phase === 'adversarial') {
+      const fresh = await freshLaunch(pub, w, tag, true)
+      const advStranger = wallet(derivedKey('audit-stranger'))
+      await fundIfNeeded(pub, w, advStranger.account!.address, 50_000_000_000_000_000n)
+      await phaseAdversarial(c, pub, w, advStranger, fresh.token, fresh.curve)
     } else if (phase.startsWith('--')) {
       // bayrak; faz degil
     } else {
@@ -232,3 +238,4 @@ main().catch((error: unknown) => {
   console.error(error)
   process.exit(1)
 })
+
