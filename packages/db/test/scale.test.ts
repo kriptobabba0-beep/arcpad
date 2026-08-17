@@ -216,22 +216,29 @@ describe(`token_overview, ${TOKENS} token`, () => {
   /**
    * ============ HANGI SIRALAMALARIN INDEKSTEN GELMESI BEKLENIR ============
    *
-   * `marketCap` ve `nearGraduation` BU LISTEDE YOK, ve bu bir gevsetme degil
-   * OLCULMUS bir kayittir (`017_sort_keys.sql` §COZUM):
+   * UC PARA SIRALAMASI BU LISTEDE YOK, ve bu bir gevsetme degil IKI KEZ
+   * OLCULMUS bir kayittir. Ikisinde de ayni hatayi yaptim: `token_stats`in bir
+   * sutununun `launches`taki karsiligini SADIK BIR AYNA sandim. DEGIL --
+   * farkli yazarlari ve farkli fixture'lari var.
    *
-   *   * `marketCap` -- view `market_cap_wei`i `curve_state`ten HESAPLAR. Sakli
-   *     `token_stats.market_cap_wei`e cevirmek denendi ve DOKUZ test dustu:
-   *     `packages/db` o sutunu yalnizca INSERT eder, islemlerde guncelleyen
-   *     INDEXER'dir, yani bu katmanda BAYATLAR. Duzeltmesi bakimi
-   *     `packages/db`ye tasimaktir.
-   *   * `nearGraduation` -- `progress_ppm` `curve_state` x `deployment`ten
-   *     hesaplanir; `token_stats`te bir evi yok.
+   *   1. View'in `market_cap_wei`ini sakli `ts.market_cap_wei`e cevirdim ->
+   *      DOKUZ test dustu. `packages/db`nin `applyLaunch`i o sutunu yalnizca
+   *      INSERT eder; islemlerde guncelleyen INDEXER'in `writeMarketCap`idir,
+   *      yani bu katmanda islemlerden sonra BAYATLAR.
+   *   2. View'in `created_seq`ini `ts.created_seq`e cevirdim (bu sutun
+   *      DEGISMEZ diye guvenli sandim) -> `e2e/db/explore-and-search.spec.ts`
+   *      dustu: "`oldest` must ascend by creation order". Yani e2e fixture'i
+   *      ikisini AYNI yazmiyor.
    *
-   * IKISI DE `it.each`TEN CIKARILMADI, `EXPECTED_INDEXED`E EKLENMEDI: plan
-   * sekilleri yukarida HER KOSUDA basilir, yani ikisinin `Sort=2` oldugu
-   * gorunur kalir. Kirmizi bir kapi degil, GORUNUR bir borc.
+   * Ders tek: bu semada `token_stats` TURETILMIS bir tablodur ve sutunlarinin
+   * `launches`i yansittigi HICBIR YERDE zorlanmiyor. Indeksin onu kosulu bir
+   * performans isi degil, bir DOGRULUK isi: ya bakim `packages/db`ye tasinacak
+   * ya da esitlik bir CHECK/kapi ile zorlanacak.
+   *
+   * UCU DE plan sekli olarak HER KOSUDA basilir, yani `Sort` sayilari gorunur
+   * kalir. Kirmizi bir kapi degil, GORUNUR bir borc.
    */
-  const EXPECTED_INDEXED: readonly SortKey[] = ['recentBuys', 'newest', 'oldest', 'volume']
+  const EXPECTED_INDEXED: readonly SortKey[] = ['recentBuys', 'newest', 'oldest']
 
   it.each(EXPECTED_INDEXED)(
     '%s: hicbir `Sort` dugumu bir SAYFADAN fazlasini islemez',
@@ -273,7 +280,7 @@ describe(`token_overview, ${TOKENS} token`, () => {
    * tasinmasi gerektigini SOYLER. Aksi halde bir duzeltme sessizce olculmemis
    * kalirdi -- ve bu depo tam olarak o sinifi tekrar tekrar odedi.
    */
-  it.each(['marketCap', 'nearGraduation'] as SortKey[])(
+  it.each(['marketCap', 'volume', 'nearGraduation'] as SortKey[])(
     '%s HALA tabloyu siraliyor -- acik borc, ve olculuyor',
     async (sort) => {
       const widest = widestSortInput(await analyze(pageSql(sort)))
