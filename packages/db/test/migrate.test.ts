@@ -261,7 +261,7 @@ describe('runMigrations', () => {
     )
     try {
       await expect(runMigrations(pool, await migrationFiles())).rejects.toThrow(
-        /003a_between\.tmp\.sql: uygulanmamis, ama uygulanmis olan 016_buyback\.sql/,
+        /003a_between\.tmp\.sql: uygulanmamis, ama uygulanmis olan 017_sort_keys\.sql/,
       )
     } finally {
       await unlink(join(MIGRATIONS_DIR, inserted))
@@ -272,10 +272,11 @@ describe('runMigrations', () => {
     // Kapinin fazla siki OLMADIGININ kaniti: normal evrim yolu -- `007_...` --
     // engellenmiyor.
     await runMigrations(pool)
-    // `017_`: son mesru dosya artik `016_buyback.sql`.
-    // `016_appended` onun ONUNE siralanirdi ('a' < 'b') ve kapi onu -- DOGRU
-    // OLARAK -- araya ekleme sayardi.
-    const appended = '017_appended.tmp.sql'
+    // `018_`: son mesru dosya artik `017_sort_keys.sql`, ve `017_appended`
+    // onun ONUNE siralanirdi ('a' < 's') -- kapi onu DOGRU OLARAK araya ekleme
+    // sayardi. Dosya adi son migration'la birlikte ILERLEMEK zorunda; bu
+    // satirin kendisi, kapinin siraya gore calistiginin kanitidir.
+    const appended = '018_appended.tmp.sql'
     await writeFile(
       join(MIGRATIONS_DIR, appended),
       'CREATE TABLE appended_ok (x int PRIMARY KEY);\n',

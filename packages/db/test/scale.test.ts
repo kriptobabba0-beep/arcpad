@@ -128,11 +128,30 @@ function walk(node: PlanNode, visit: (n: PlanNode) => void): void {
   for (const child of node.Plans ?? []) walk(child, visit)
 }
 
-/** Planda EN COK satir isleyen `Sort` dugumu. Yoksa sifir. */
-function widestSort(plan: PlanNode): number {
+/**
+ * Bir `Sort` dugumune GIREN en fazla satir sayisi. `Sort` yoksa sifir.
+ *
+ * ============ `Actual Rows` DUGUMUN CIKTISIDIR, GIRDISI DEGIL ============
+ *
+ * ILK SURUM `Sort` dugumunun kendi `Actual Rows`unu okudu ve YANLIS OLCTU.
+ * CI gosterdi: `marketCap` planinda iki `Sort` dugumu VAR ama ikisinin de
+ * `Actual Rows`u **24**. Sebep Postgres'in `top-N heapsort`u -- 3.000 satiri
+ * OKUR, yalnizca 24'unu VERIR. Yani "en genis Sort 24" sonucu, tabloyu bastan
+ * sona siralayan bir plani MASUM gosteriyordu.
+ *
+ * Olculmesi gereken sey siralamaya GIREN satir sayisidir ve o, dugumun
+ * COCUGUNUN `Actual Rows`udur. Bu duzeltmeden sonra iddia gercekten
+ * "tabloyu siraliyor mu" sorusunu sorar.
+ *
+ * Metrik hala makineden bagimsizdir: bir satir sayisi, bir sure degil.
+ */
+function widestSortInput(plan: PlanNode): number {
   let widest = 0
   walk(plan, (node) => {
-    if (node['Node Type'] === 'Sort') widest = Math.max(widest, node['Actual Rows'] ?? 0)
+    if (node['Node Type'] !== 'Sort') return
+    for (const child of node.Plans ?? []) {
+      widest = Math.max(widest, child['Actual Rows'] ?? 0)
+    }
   })
   return widest
 }
@@ -218,7 +237,7 @@ describe(`token_overview, ${TOKENS} token`, () => {
     '%s: hicbir `Sort` dugumu bir SAYFADAN fazlasini islemez',
     async (sort) => {
       const plan = await analyze(pageSql(sort))
-      const widest = widestSort(plan)
+      const widest = widestSortInput(plan)
       expect(
         widest,
         `"${sort}" siralamasinda bir \`Sort\` dugumu ${widest} satir isledi (sayfa 24). ` +
@@ -257,7 +276,7 @@ describe(`token_overview, ${TOKENS} token`, () => {
   it.each(['marketCap', 'nearGraduation'] as SortKey[])(
     '%s HALA tabloyu siraliyor -- acik borc, ve olculuyor',
     async (sort) => {
-      const widest = widestSort(await analyze(pageSql(sort)))
+      const widest = widestSortInput(await analyze(pageSql(sort)))
       expect(
         widest,
         `"${sort}" artik siralamiyor. Bu IYI haber: EXPECTED_INDEXED'e tasi ve ` + 'bu satiri sil.',
@@ -267,11 +286,14 @@ describe(`token_overview, ${TOKENS} token`, () => {
 
   it('numarali sayfalayicinin `count(*)`i SIRALAMA yapmaz', async () => {
     const plan = await analyze('SELECT count(*)::text AS n FROM token_overview')
-    const widest = widestSort(plan)
+    const widest = widestSortInput(plan)
     console.warn(
       `[scale] count(*) FROM token_overview @ ${TOKENS} satir: ` +
-        `kok dugum ${plan['Node Type']}, en genis Sort ${widest}`,
+        `kok dugum ${plan['Node Type']}, Sort'a giren ${widest}`,
     )
-    expect(widest, `sayim ${widest} satir siraladi -- bir \`count(*)\` siralama YAPMAMALI.`).toBe(0)
+    expect(
+      widest,
+      `sayim ${widest} satiri siralamaya soktu -- bir \`count(*)\` siralama YAPMAMALI.`,
+    ).toBe(0)
   })
 })
