@@ -59,6 +59,47 @@ test.describe('axe', () => {
         await page.setViewportSize({ width: viewport.width, height: viewport.height })
         await page.goto(route.path())
 
+        /*
+         * ==========================================================================
+         *  SAYFANIN OTURMASI BEKLENIR -- VE BEKLEMEMEK BU KAPIYI ZIPLATIYORDU
+         * ==========================================================================
+         *
+         * `goto` DOM'un hazir oldugunu soyler, AKISIN BITTIGINI soylemez. Explore
+         * bir Suspense siniri arkasindan gelir (`(explore)/loading.tsx`), yani
+         * `goto`dan hemen sonra taranan sey ISKELET olabilir.
+         *
+         * OLCULDU (2026-08-17/18, ayni commit): 375px'te gecti, 768px'te
+         * `aria-prohibited-attr` (serious) verdi, 1440px'te `page-has-heading-one`
+         * (moderate) verdi. Uc farkli sonuc, tek fark ZAMANLAMA. Yani bu kapinin
+         * aylardir yesil olmasi bir kanit degil, bir SANS dizisiydi.
+         *
+         * IKI SEY BIRLIKTE DUZELTILDI, VE SIRA ONEMLI:
+         *   1. ISKELETIN KENDISI gecerli hale getirildi -- `<h1>` eklendi ve
+         *      `TokenGridSkeleton`in yasak ARIA'si kaldirildi. Yalnizca burayi
+         *      beklemeye almak, kullanicinin GERCEKTEN gordugu bir durumdaki
+         *      erisilebilirlik bosluklarini SAKLARDI.
+         *   2. Ve tarama artik OTURMUS sayfayi olcer, yani sonuc tekrarlanabilir.
+         *      Bir kapi, kosudan kosuya farkli cevap veriyorsa bir kapi degildir.
+         *
+         * `networkidle` KULLANILMAZ: bu sayfa `LiveRefresh` ile 10 saniyede bir
+         * istek atar, yani ag hicbir zaman "idle" olmaz ve bekleme zaman asimina
+         * duserdi. Beklenen sey OTURMUS ICERIGIN KENDISI: iskelet gitti.
+         *
+         * KAPSAMIN SINIRI, ADIYLA: bu bekleme YALNIZCA `token-card-skeleton`
+         * cizen rotayi (explore) baglar; oteki uc rotada sayim zaten sifirdir ve
+         * bekleme bir NO-OP'tur. Yani `token`/`create`/`search-modal` hala
+         * `goto`dan hemen sonra taranir.
+         *
+         * Bilerek boyle: olculen ariza explore'daydi ve rotadan bagimsiz bir
+         * isaret (`[aria-busy="true"]` sayisinin sifirlanmasi) `search-modal` ile
+         * CAKISIR -- o rota kutuyu KASTEN acar ve kutunun kendi yukleme listesi
+         * mesru olarak `aria-busy` tasir (`SearchDialog.tsx`). Kapsamayan bir
+         * beklemeyi kapsiyormus gibi yazmak, bu dosyanin bulmak icin var oldugu
+         * seyin ta kendisi olurdu. Oteki rotalarda ayni sinif bir ariza cikarsa,
+         * cozum o rotaya KENDI oturma isaretini vermektir.
+         */
+        await expect(page.getByTestId('token-card-skeleton')).toHaveCount(0)
+
         if (route.openSearch === true) {
           // OPENED WITH THE KEYBOARD, because that is the surface being
           // claimed. A click would open the same dialog and would not
