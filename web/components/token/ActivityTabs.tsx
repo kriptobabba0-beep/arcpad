@@ -138,7 +138,11 @@ function hrefFor(
   // SAYFA NUMARASI SIFIRLANIR. Islemlerin 4. sayfasindayken holder sekmesine
   // gecmek, holder'larin 4. sayfasina DUSMEMELI -- muhtemelen yoktur ve
   // kullanici bos bir tabloya bakar.
-  params.delete('p')
+  //
+  // `page`, `p` DEGIL: `<NumberedPager>` `?page=` yazar ve sayfa artik onu
+  // okur. `p` silmek, hicbir zaman var olmayan bir parametreyi siliyordu --
+  // yani sekme degistirmek sayfa numarasini TASIYORDU.
+  params.delete('page')
   return `${basePath}?${params.toString()}`
 }
 
@@ -200,6 +204,20 @@ function TradeTable({
   return (
     <div className="overflow-x-auto rounded-card border border-border">
       <table className="w-full min-w-[640px] border-collapse text-[13px]">
+        {/*
+          ADI OLMAYAN TABLO, BU SAYFADA BELIRSIZ BIR TABLODUR.
+          Token sayfasi UC tablo cizer: bu, holder tablosu, ve grafigin SVG'si
+          icin sr-only metin alternatifi olan tablo (`PriceHistoryChart`,
+          `CurveChart` -- ikisi de `<caption>` tasiyor). Adsiz bir tablo hem bir
+          ekran okuyucuda "table" diye duyulur hem de bir seciciyle
+          ayirt edilemez: bu bolum `<TradesTable>`den buraya tasinirken caption
+          dusmustu ve o kaybi olcen tek kapi (`e2e/db`) o satira hic ULASMAMISTI.
+          Metin `<TradesTable>`in kullandiginin AYNISI -- ad degistirmek, adin
+          yokluğunu duzeltirken baska bir seyi bozmak olurdu.
+        */}
+        <caption className="sr-only">
+          Recent trades, newest first. Amounts are what left or entered the wallet, fees included.
+        </caption>
         <thead>
           <tr className="bg-surface-2 text-left text-[12px] text-muted">
             <Th>Time</Th>
@@ -290,6 +308,10 @@ function HolderTable({
   return (
     <div className="overflow-x-auto rounded-card border border-border">
       <table className="w-full min-w-[560px] border-collapse text-[13px]">
+        {/* Ayni gerekce, ayni metin: `<HoldersTable>`in caption'i. */}
+        <caption className="sr-only">
+          Token holders, largest first. The bonding curve is excluded.
+        </caption>
         <thead>
           <tr className="bg-surface-2 text-left text-[12px] text-muted">
             <Th>#</Th>

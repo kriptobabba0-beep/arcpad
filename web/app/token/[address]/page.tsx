@@ -168,7 +168,24 @@ async function IndexedToken({
   const metric: ChartMetric = 'fdv'
   const shape: ChartShape = one(search['shape']) === 'line' ? 'line' : 'candles'
   const tab = tabOf(one(search['tab']))
-  const pageParam = Number(one(search['p']) ?? '1')
+  /*
+   * `page`, `p` DEGIL -- VE BU BIR ISIM TERCIHI DEGIL, BIR KUSURUN DUZELTMESI.
+   *
+   * `<ActivityTabs>` sayfalari `<NumberedPager>`e cizdirir ve o bilesen
+   * `?page=N` YAZAR (`explore/NumberedPager.tsx`, `href()`). Burada okunan ise
+   * `p` idi. Yani sayfalayici CIZILIYOR, baglantilar URL'i DEGISTIRIYOR, ama
+   * sunucu parametreyi bulamayip her zaman 1. sayfayi veriyordu: 25'ten fazla
+   * islemi (ya da tutucusu) olan her token 25'te KILITLIYDI ve hicbir hata
+   * gorunmuyordu -- tablo aynen yeniden ciziliyordu.
+   *
+   * Bunu yakalayacak kapi VARDI (`e2e/db/explore-and-search.spec.ts`, "the
+   * trades tab pages past 25") ama suit `serial` ve kendisinden ONCEKI bir test
+   * silinmis bir URL sozlesmesini surdugu icin o satira HIC ULASMAMISTI.
+   *
+   * Bu, bu sayfanin IKINCI ayni sinif kusuru: grafik seciciside cagiran yanlis
+   * URL parametresine varsayilan atiyordu. Ad artik TEK: `page`.
+   */
+  const pageParam = Number(one(search['page']) ?? '1')
   const page = Number.isInteger(pageParam) && pageParam >= 1 ? Math.min(pageParam, 10_000) : 1
 
   const [metadata, candles, split24h, splitWindow, tradePage, holderPage, identified, buyback] =

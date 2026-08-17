@@ -511,11 +511,40 @@ test('the token page draws the indexed trade and holder tables', async ({ page }
   await expect(page.getByTestId('unavailable-notice')).toHaveCount(0)
   await expect(page.getByTestId('chain-drawn-launch')).toHaveCount(0)
 
-  await expect(page.getByRole('tab', { name: /Trades/ })).toBeVisible()
-  await expect(page.getByRole('tabpanel').first()).toBeVisible()
+  /*
+   * BU BOLUM ARTIK SEKME DEGIL, IKI BAGLANTI -- VE DEGISIKLIK BILEREK YAPILDI.
+   *
+   * `<ActivityTabs>` `role="tab"` kullanmiyor: `<nav aria-label="Token tables">`
+   * icinde iki `<Link>` var ("Activity" ve "N holders"), aktif olan
+   * `aria-current="page"` tasiyor, ve gecis URL uzerinden olur (`?tab=holders`).
+   * Etiketler de degisti: sayi HOLDER etiketinin ICINDE ("30 holders"), cunku
+   * "Holders (30)" iki sey soyluyordu; ve islem sekmesi sayi TASIMIYOR.
+   *
+   * Sayi bir `<LiveNumber>` oldugu icin secici sayiya BAGLANMAZ: bir regex
+   * sadece kelimeyi arar, yoksa animasyonun ara degerleri testi kirardi.
+   */
+  const tabs = page.getByRole('navigation', { name: 'Token tables' })
+  const activity = tabs.getByRole('link', { name: 'Activity', exact: true })
+  const holders = tabs.getByRole('link', { name: /holders?$/ })
 
-  await page.getByRole('tab', { name: /Holders/ }).click()
-  await expect(page.getByRole('tabpanel').first()).toBeVisible()
+  await expect(activity, 'islem sekmesi varsayilan olarak aciktir').toHaveAttribute(
+    'aria-current',
+    'page',
+  )
+  await expect(page.getByRole('table', { name: /Recent trades/ })).toBeVisible()
+
+  await holders.click()
+  // URL ICERIKTEN ONCE beklenir: iki farkli kusuru ayirir (gezinme hic olmadi,
+  // ya da oldu ve yanlisini cizdi) ve bir sayim iddiasi ikisini ayirt edemez.
+  await page.waitForURL((u) => u.searchParams.get('tab') === 'holders', { timeout: 30_000 })
+  await expect(holders).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByRole('table', { name: /Token holders/ })).toBeVisible()
+  /*
+   * VE ISLEM TABLOSU GIDER. Sunucuda cizilen iki tablodan yalnizca BIRI vardir;
+   * ikisini birden cizmek (ya da birini `hidden` ile saklamak) sekme gecisini
+   * bir gorunurluk numarasina cevirirdi ve yukaridaki iddia yine gecerdi.
+   */
+  await expect(page.getByRole('table', { name: /Recent trades/ })).toHaveCount(0)
 })
 
 test('a token with NO trades shows the empty state, not a zero', async ({ page }) => {
@@ -536,23 +565,31 @@ test('a token with NO trades shows the empty state, not a zero', async ({ page }
 
 /**
  * =========================================================================
- *  THE TOKEN PAGE'S "LOAD MORE" — THE HALF NO UNIT TEST COULD SEE.
+ *  THE TOKEN PAGE'S PAGING — THE HALF NO UNIT TEST COULD SEE, TWICE.
  * =========================================================================
  *
- * `<TradesTable>` and `<HoldersTable>` had working keyset paging and tests
- * that drove `loadMore` directly. Both were green for the whole of Phase 4
- * while `app/token/[address]/page.tsx` PASSED NEITHER PROP, so the button did
- * not exist on any real page and the product was capped at 25 trades and 25
- * holders. A component test cannot see that: it supplies the prop itself.
+ * FIRST TIME: `<TradesTable>` and `<HoldersTable>` had working keyset paging
+ * and tests that drove `loadMore` directly. Both were green for the whole of
+ * Phase 4 while `app/token/[address]/page.tsx` PASSED NEITHER PROP, so the
+ * button did not exist on any real page and the product was capped at 25 trades
+ * and 25 holders. A component test cannot see that: it supplies the prop
+ * itself.
  *
- * This is the same failure mode as `<TradePanel>` — written, tested, and
- * rendered by nothing — and it is why this assertion lives in a browser
- * against a real server action rather than in jsdom.
+ * SECOND TIME, FOUND BY THESE TESTS ON THEIR FIRST RUN: the model was rewritten
+ * to `<NumberedPager>` and wired to the WRONG PARAMETER — the pager writes
+ * `?page=`, the page read `?p=`. Capped at 25 again, and again invisibly,
+ * because the control was present and the table redrew identically.
+ *
+ * Both are the same failure mode as `<TradePanel>` — written, tested, and
+ * rendered by nothing — and it is why these assertions live in a browser
+ * against a real server render rather than in jsdom. A component test would
+ * pass in both eras; only the URL can be wrong, and only a browser has one.
  *
  * EVERY NUMBER BELOW COMES FROM THE DATABASE. The page size (25) is the only
  * literal, and it is asserted to be smaller than the row count before anything
- * is clicked; otherwise "the button appeared" would be a claim about a button
- * that had nothing to fetch.
+ * is clicked; otherwise "the pager appeared" would be a claim about a control
+ * that had nothing to fetch. If the constant ever drifts, the very next
+ * assertion (page one holds exactly this many rows) says so with both numbers.
  */
 const TOKEN_PAGE_SIZE = 25
 
@@ -561,7 +598,27 @@ async function countOf(sql: string, token: string): Promise<number> {
   return Number(rows[0]!.n)
 }
 
-test('the trades tab pages past 25, and the tab label counts what is DRAWN', async ({ page }) => {
+/*
+ * =========================================================================
+ *  AND THIS TEST FOUND THE DEFECT IT WAS WRITTEN FOR -- ON ITS FIRST RUN.
+ * =========================================================================
+ *
+ * The paging model changed: "Load more" (a keyset button that accumulated rows
+ * client-side) became `<NumberedPager>`, driven by the URL. And the rewrite
+ * wired it to the WRONG PARAMETER: the pager writes `?page=N`
+ * (`explore/NumberedPager.tsx`) while `app/token/[address]/page.tsx` read
+ * `?p=`. So the pager rendered, its links changed the address, and the server
+ * always answered with page one -- **every token with more than 25 trades or
+ * 25 holders was capped at 25, silently**, because the table simply redrew.
+ *
+ * The gate existed. It never ran: this suite is `serial` and a test above it
+ * drove a URL contract Explore had deleted, so the run always stopped earlier.
+ *
+ * This is the SECOND defect of this class on this page -- the chart's picker
+ * had a caller defaulting a different URL parameter. The name is now one:
+ * `page`.
+ */
+test('the trades table pages past 25, over the URL', async ({ page }) => {
   const deep = fixture!.deep
   const total = await countOf('SELECT count(*)::text AS n FROM trades WHERE token = $1', deep)
   expect(total, 'the fixture must exceed one page or this test proves nothing').toBeGreaterThan(
@@ -573,23 +630,50 @@ test('the trades tab pages past 25, and the tab label counts what is DRAWN', asy
   // NAMED, not `getByRole('table')`. The curve chart draws its own <table> as
   // the sr-only text alternative for the SVG, so an unnamed locator counts a
   // row that is not a trade -- measured here as 27 where 26 was expected.
+  //
+  // AND THE NAME ITSELF WAS A FINDING: moving this section into
+  // `<ActivityTabs>` dropped the `<caption>` from both tables, so the page
+  // shipped two unnamed tables among three. Restored to the same text
+  // `<TradesTable>` used.
   const bodyRows = page.getByRole('table', { name: /Recent trades/ }).getByRole('row')
   // The header row is a row too; the page size plus it.
   await expect(bodyRows).toHaveCount(TOKEN_PAGE_SIZE + 1)
-  await expect(page.getByRole('tab', { name: `Trades (${TOKEN_PAGE_SIZE})` })).toBeVisible()
+  const firstPage = await bodyRows.allInnerTexts()
 
-  const more = page.getByRole('button', { name: 'Load more trades' })
-  await expect(more, 'a next cursor exists, so the button must be reachable').toBeVisible()
-  await more.click()
+  /*
+   * THE PAGER EXISTS *BECAUSE* THE TOTAL EXCEEDS A PAGE, and that was asserted
+   * from the database above -- `<ActivityTabs>` draws it only when
+   * `total > pageSize`, so "the pager is visible" is a claim about the read
+   * having found more rows, not about a control that is always there.
+   */
+  const pager = page.getByRole('navigation', { name: 'Trade pages' })
+  await expect(pager).toBeVisible()
 
-  // EVERY remaining row arrives, and the LABEL moves with the table. A label
-  // read from the server's first page would still say (25) here — the defect
-  // the fix itself introduced, and the reason the paging state was lifted.
-  await expect(bodyRows).toHaveCount(total + 1)
-  await expect(page.getByRole('tab', { name: `Trades (${total})` })).toBeVisible()
-  // The cursor is exhausted, so the button goes away rather than fetching
-  // an empty page forever.
-  await expect(more).toHaveCount(0)
+  // `Next` is a <span aria-hidden> when disabled, so `toHaveCount(1)` also
+  // asserts it is LIVE.
+  const next = pager.getByRole('link', { name: 'Next', exact: true })
+  await expect(next, 'a second page exists, so Next must be a real link').toHaveCount(1)
+  await next.click()
+  await page.waitForURL((u) => u.searchParams.get('page') === '2', { timeout: 30_000 })
+
+  // PAGE TWO IS THE REMAINDER, AND IT IS DERIVED -- not typed in.
+  await expect(bodyRows).toHaveCount(total - TOKEN_PAGE_SIZE + 1, { timeout: 30_000 })
+  const secondPage = await bodyRows.allInnerTexts()
+
+  /*
+   * FORWARD MUST NOT REPEAT. This is the assertion the broken parameter would
+   * have failed: reading `p` while the link wrote `page` served page ONE again,
+   * and a count assertion alone could not tell that apart from a short last
+   * page -- here it can, because the rows themselves are compared.
+   */
+  expect(
+    secondPage.filter((row) => firstPage.includes(row)),
+    'page two must not repeat page one',
+  ).toEqual([])
+
+  // The last page has no Next; an offset past the end is not reachable through
+  // the control.
+  await expect(next).toHaveCount(0)
 })
 
 test('the holders tab pages past 25, and no wallet is repeated across the tie', async ({
@@ -616,27 +700,54 @@ test('the holders tab pages past 25, and no wallet is repeated across the tie', 
   expect(Number(tied[0]!.n), 'the fixture must contain tied balances').toBeGreaterThan(0)
 
   await page.goto(url(`/token/${deep}`))
-  await page.getByRole('tab', { name: /Holders/ }).click()
+  await page
+    .getByRole('navigation', { name: 'Token tables' })
+    .getByRole('link', { name: /holders?$/ })
+    .click()
+  await page.waitForURL((u) => u.searchParams.get('tab') === 'holders', { timeout: 30_000 })
 
   const table = page.getByRole('table', { name: /Token holders/ })
+  const wallets = async (): Promise<string[]> =>
+    table
+      .locator('tbody tr td:nth-child(2)')
+      .evaluateAll((cells) => cells.map((cell) => cell.textContent ?? ''))
+
   await expect(table.getByRole('row')).toHaveCount(TOKEN_PAGE_SIZE + 1)
+  const firstPage = await wallets()
+  expect(firstPage, 'page one must be full').toHaveLength(TOKEN_PAGE_SIZE)
 
-  const more = page.getByRole('button', { name: 'Load more holders' })
-  await expect(more).toBeVisible()
-  await more.click()
+  /*
+   * PAGING IS NOW OFFSET-BASED, WHICH MAKES THE TIE MORE DANGEROUS, NOT LESS.
+   *
+   * A keyset cursor at least carried the tie-break with it. `OFFSET` carries
+   * nothing: if `ORDER BY` is not TOTAL, the same equal-balance group can be
+   * ordered differently between the two requests and a wallet appears on both
+   * pages -- or on neither. The fixture puts the boundary inside a tied group
+   * on purpose (asserted above), so this is the exact case that fails.
+   */
+  const pager = page.getByRole('navigation', { name: 'Holder pages' })
+  const next = pager.getByRole('link', { name: 'Next', exact: true })
+  await expect(next, 'a second page of holders exists').toHaveCount(1)
+  await next.click()
+  await page.waitForURL((u) => u.searchParams.get('page') === '2', { timeout: 30_000 })
+  await expect(table.getByRole('row')).toHaveCount(total - TOKEN_PAGE_SIZE + 1, { timeout: 30_000 })
+  const secondPage = await wallets()
 
-  await expect(table.getByRole('row')).toHaveCount(total + 1)
-  await expect(page.getByRole('tab', { name: `Holders (${total})` })).toBeVisible()
-
-  // NO DUPLICATES. The rank column is positional, so a repeated wallet would
-  // show the same shortened address twice with two different numbers beside
-  // it — and the percentages already do not sum to 100, so nothing else on
-  // screen would give it away.
-  const shown = await table
-    .getByRole('row')
-    .locator('td:nth-child(2)')
-    .evaluateAll((cells) => cells.map((c) => c.textContent ?? ''))
-  expect(new Set(shown).size, 'a wallet must not appear on both pages').toBe(shown.length)
+  /*
+   * NO WALLET ON BOTH PAGES. The rank column is positional, so a repeated
+   * wallet would show the same shortened address twice with two different
+   * numbers beside it -- and the percentages already do not sum to 100, so
+   * nothing else on screen would give it away.
+   *
+   * The two pages are compared to EACH OTHER rather than concatenated into a
+   * set: a set over the union hides WHICH side repeated, and with an offset
+   * pager the answer to that is the difference between "the order is not total"
+   * and "the page size and offset disagree".
+   */
+  const both = secondPage.filter((wallet) => firstPage.includes(wallet))
+  expect(both, `these wallets appeared on BOTH pages: ${JSON.stringify(both)}`).toEqual([])
+  // And nothing repeats WITHIN a page either.
+  expect(new Set(secondPage).size, 'page two must not repeat itself').toBe(secondPage.length)
 })
 
 /**
@@ -702,65 +813,92 @@ test('a lagging indexer says so, on BOTH pages, and the trade panel says it is u
 
 /**
  * =========================================================================
- *  THE CHART'S REALISED LAYER, WHICH NO PAGE HAD EVER DRAWN.
+ *  THE INDEXED PAGE'S CHART -- AND A LAYER THAT IS NOW OUT OF REACH.
  * =========================================================================
  *
- * `<CurveChart>`'s `trades` prop is optional and defaults to `[]`, and the
- * token page never passed it. So `realisedSeries([])` was always empty,
- * `realised.length > 1` was always false, and the `curve-realised` path never
- * entered the DOM on any real page — while the component's own tests passed
- * `trades` themselves and drew it happily. Third instance in this file of one
- * failure mode: A PROP THE COMPONENT TESTS SUPPLY AND THE PAGE DOES NOT.
+ * THIS TEST USED TO ASSERT `<CurveChart>` GEOMETRY, AND THAT CHART IS NO LONGER
+ * ON THIS BRANCH. The indexed token page draws `<PriceChart>` (candles from
+ * `candleRows`); `<CurveChart>` reaches the DOM only through
+ * `<TokenPriceChart>`, which the page renders on the CHAIN-ONLY branch. That
+ * branch is already covered by `e2e/local/launch-and-trade.spec.ts` (reference
+ * path present, realised path absent -- there is no indexed history there).
  *
- * The fixture was hiding it a second way: `realisedSeries` keeps the LAST
- * trade per BLOCK, and all 28 deep trades were written into ONE block, so even
- * a page that passed them would have had a single point and drawn nothing.
- * They are one-per-block now.
+ * WHICH MEANS THE ORIGINAL FINDING HAS RETURNED IN A NEW FORM, and it is
+ * recorded here rather than papered over. The old defect was "`trades` is
+ * optional and the page never passed it, so `curve-realised` never entered the
+ * DOM while the component's own tests drew it happily". Today
+ * `<TokenPriceChart>` does not take `trades` either, and it is the only caller
+ * left -- so `CurveChart`'s realised layer is **unreachable in production**,
+ * and its component tests still pass because they supply the prop themselves.
+ * That is the same failure mode a third time, and it is now DEAD CODE rather
+ * than a missing prop. Removing it is a product call, not a test's to make.
+ *
+ * SO THIS TEST ASSERTS WHAT THE INDEXED PAGE ACTUALLY CLAIMS: that the chart is
+ * drawn FROM THE INDEX rather than falling back to its empty state. That is the
+ * same class of claim the geometry version made -- "a layer no page had ever
+ * drawn" -- against the component that is actually rendered.
+ *
+ * The geometry itself is not re-asserted on a canvas: `<PriceChart>` renders
+ * through `lightweight-charts`, so its testable surface is the accessible one
+ * (`role="img"` plus its name), which is also the surface a screen-reader user
+ * gets.
  */
-test('the curve chart draws the realised layer, and it lies ON the reference curve', async ({
+test('the indexed token page draws its chart FROM THE INDEX, not the empty state', async ({
   page,
 }) => {
   const deep = fixture!.deep
+
+  /*
+   * PRECONDITION FROM THE DATABASE, AND IT IS THE RIGHT ONE FOR CANDLES: the
+   * chart buckets by time, and bucketing can only MERGE blocks, never split
+   * them. So the number of blocks carrying trades is an upper bound on the
+   * number of points, and "more than one block" is what makes a line possible
+   * at all.
+   */
   const { rows } = await pool!.query<{ n: string }>(
     'SELECT count(DISTINCT block_number)::text AS n FROM trades WHERE token = $1',
     [deep],
   )
-  expect(
-    Number(rows[0]!.n),
-    'the realised layer needs trades in MORE THAN ONE block to exist at all',
-  ).toBeGreaterThan(1)
+  const blocks = Number(rows[0]!.n)
+  expect(blocks, 'a chart needs trades in MORE THAN ONE block to draw a line').toBeGreaterThan(1)
 
   await page.goto(url(`/token/${deep}`))
-
-  const reference = page.locator('[data-testid="curve-reference"]')
-  const realised = page.locator('[data-testid="curve-realised"]')
-  await expect(reference).toHaveCount(1)
-  await expect(realised, 'the realised overlay must be in the DOM of a real page').toHaveCount(1)
-
-  const parse = (d: string) =>
-    [...d.matchAll(/[ML]([\d.]+) ([\d.]+)/g)].map((m) => ({ x: Number(m[1]), y: Number(m[2]) }))
-
-  const curve = parse((await reference.getAttribute('d')) ?? '')
-  const points = parse((await realised.getAttribute('d')) ?? '')
-  expect(points.length, 'more than one point, or there is no line').toBeGreaterThan(1)
+  // The indexed branch, said on screen.
+  await expect(page.getByTestId('unavailable-notice')).toHaveCount(0)
+  await expect(page.getByTestId('chain-drawn-launch')).toHaveCount(0)
 
   /*
-   * ON A BONDING CURVE THE REALISED PRICE IS A FUNCTION OF TOKENS SOLD, so
-   * every realised point MUST sit on the reference curve. Positioned by index
-   * — which is what the code did — they do not, and the chart shows a price
-   * history that this curve cannot produce.
+   * THE MUTANT THIS KILLS: a page that renders the chart's EMPTY state while the
+   * index holds trades. That is the shape of every defect this section
+   * documents -- the control is present, nothing is obviously broken, and the
+   * data never arrives. `price-chart-empty` and `price-chart` are exclusive
+   * branches, so both are asserted: the absence alone would also hold on a page
+   * that failed to render any chart at all.
    */
-  for (const point of points) {
-    const seg = curve.find((_, i) => i > 0 && curve[i - 1]!.x <= point.x && point.x <= curve[i]!.x)
-    const prev = seg === undefined ? undefined : curve[curve.indexOf(seg) - 1]
-    expect(seg !== undefined && prev !== undefined, `x=${point.x} is off the reference curve`).toBe(
-      true,
-    )
-    const t = seg!.x === prev!.x ? 0 : (point.x - prev!.x) / (seg!.x - prev!.x)
-    expect(Math.abs(point.y - (prev!.y + t * (seg!.y - prev!.y)))).toBeLessThan(1)
-  }
+  await expect(
+    page.getByTestId('price-chart-empty'),
+    'the index has trades, so the empty branch must NOT be taken',
+  ).toHaveCount(0)
 
-  // AND THE CAPTION NAMES THE AXIS IT ACTUALLY USES. It said "the x axis is
-  // blocks", which was false before the fix and after it.
-  await expect(page.getByText(/x axis is tokens sold/i)).toBeVisible()
+  const chart = page.getByTestId('price-chart')
+  await expect(chart).toBeVisible()
+
+  /*
+   * THE POINT COUNT IS READ FROM THE ACCESSIBLE NAME, and that is deliberate on
+   * two counts: it is the only surface `lightweight-charts` exposes without
+   * reaching into a canvas, and it is exactly what a screen-reader user is told.
+   * A chart that drew a line but announced "0 points" would be a defect this
+   * assertion catches and a geometry assertion would not.
+   */
+  const name = (await chart.getAttribute('aria-label')) ?? ''
+  const points = Number(/(\d+) points?/.exec(name)?.[1] ?? '-1')
+  expect(points, `the chart must name its point count. It said: "${name}"`).toBeGreaterThan(0)
+  expect(
+    points,
+    `bucketing can only merge blocks, so points (${points}) cannot exceed blocks (${blocks})`,
+  ).toBeLessThanOrEqual(blocks)
+
+  // And the O/H/L/C/V read-out exists, which only renders when a candle is
+  // actually selected -- i.e. the series reached the client, not just the DOM.
+  await expect(page.getByTestId('candle-summary')).toBeVisible()
 })

@@ -57,7 +57,7 @@ export const VOLUME_TF_PARAM = 'vf'
 /**
  * `?tf=` ve `?metric=` DISINDAKI parametreler KORUNUR.
  *
- * Sayfa bir sekme (`?tab=`) ve bir sayfa numarasi (`?p=`) da tasiyor. Zaman
+ * Sayfa bir sekme (`?tab=`) ve bir sayfa numarasi (`?page=`) da tasiyor. Zaman
  * dilimini degistirmek kullanicinin actigi holder sekmesini kapatmamali --
  * yeni bir `URLSearchParams` kurup yalnizca bir anahtari yazmak, geri kalan
  * her seyi SESSIZCE silmenin klasik yoludur.
