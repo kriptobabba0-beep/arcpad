@@ -803,9 +803,22 @@ test('a lagging indexer says so, on BOTH pages, and the trade panel says it is u
     const onExplore = page.getByTestId('stale-notice')
     await expect(onExplore).toBeVisible()
     await expect(onExplore).toContainText('Prices and volumes may be out of date')
-    // The LAG ITSELF, formatted by `describeLag`: 540s -> "9m ago". A notice
-    // that appeared but reported "0s ago" would be worse than none.
-    await expect(onExplore).toContainText('9m ago')
+    /*
+     * THE LAG ITSELF -- AND THE ASSERTION NOW QUOTES THE PAGE, NOT THE HELPER.
+     *
+     * It expected `"9m ago"`, which is what `describeLag` RETURNS. The notice
+     * never renders that: it composes a sentence and strips the suffix
+     * (`age.replace(/ ago$/, '')`), so the page reads "has not reported for 9m".
+     * The old assertion was written against the helper's output rather than the
+     * rendered text -- the same shape as every other defect this suite found
+     * today, one layer down.
+     *
+     * The whole phrase is asserted rather than just "9m": a bare "9m" could be
+     * matched by any number on the page, and what matters is that the notice
+     * reports the REAL lag. A notice that appeared but said "0m" would be worse
+     * than none, and that is exactly what this must catch.
+     */
+    await expect(onExplore).toContainText('has not reported for 9m')
     // AND the sentence a user needs in order to act: the number they sign
     // against is read from the chain, not from this index.
     await expect(onExplore).toContainText('Trading reads reserves straight from the chain')
