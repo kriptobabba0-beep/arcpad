@@ -264,16 +264,92 @@ bulgusu, ve hicbiri bu turda yapilan degisikliklerden kaynaklanmiyor.
 > varilamiyor — ve bu, testin hic kosmamis olmasindan gizlenmis ONCEDEN VAR
 > OLAN bir durum.
 
-| # | Bulgu | Olculen deger | Not |
+| # | Bulgu | Olculen | Durum |
 |---|---|---|---|
-| **E-1** | **JS butcesi asildi.** Token rotasi **340,3 kB gz**, butce 300 kB (`348.433` vs `307.200` bayt). | %13,4 asim | `budget.spec.ts:76`. Tek bir rakam, ama tahminle degil **olcumle** kapatilmali: hangi parca buyuttu (grafik? yeni buyback paneli?) once `@next/bundle-analyzer` ile gorulmeli. |
-| **E-2** | **Renk kontrasti (serious).** `span[data-testid="slippage-auto-badge"]` uc goruntu genisliginde de (375 / 768 / 1440) axe'in esigini gecemiyor. | axe `color-contrast`, impact `serious` | TEK eleman, uc vaka. Muhtemelen tek satirlik bir renk degisikligi -- ama token sayfasinin a11y kapisini TEK BASINA kirmizi tutan sey bu. |
-| **E-3** | **Arama modali `role="dialog"` bildirmiyor.** `getByRole('dialog')` 15 sn bekleyip bulamadi. | — | Ya modal acilmiyor ya rolu yok. Ikincisiyse GERCEK bir a11y kusuru: ekran okuyucu bir modal oldugunu soylemez, ve odak tuzagi/Escape sozlesmesi de rolsuz anlamsizlasir. Once HANGISI oldugu belirlenmeli. |
-| **E-4** | **%3 slipaj on ayari Tab ile ULASILAMIYOR.** Tutar alanindan 30 Tab basimi icinde odak oraya hic gelmiyor. | `keyboard.spec.ts:165` | Testin kendi yorumu bu boslugu ADIYLA anlatiyor: "bir kontrolu locator ile bulup Enter'a basmak, handler'in calistigini kanitlar ve klavye kullanicisinin oraya VARABILDIGI hakkinda HICBIR SEY kanitlamaz." |
+| **E-1** | Token rotasi JS butcesini asiyor: **340,3 kB gz** / 300 kB | %13,4 asim | ✅ **286,9 kB** — grafik kutuphanesi tembel yuklendi |
+| **E-2** | axe `color-contrast` (**serious**), `slippage-auto-badge`, 375/768/1440 px | 4,33:1 / esik 4,5 | ✅ yeni token + **kapinin kor noktasi kapatildi** |
+| **E-3** | Arama modali `getByRole('dialog')`e cevap vermiyor | 15 sn zaman asimi | ✅ rol ZATEN vardi — **hidrasyon yarisi**; dort spec tek yardimciya baglandi |
+| **E-4** | %3 slipaj on ayarina Tab ile ulasilamiyor | 30 basimda hic | ✅ o kontrol **hic var olmamis**; iddia gercek yola cevrildi ve **gercek bir kusur** cikardi |
 
-**Sira onerisi:** E-2 (tek satir) → E-3 (once teshis) → E-4 → E-1 (olcum
-gerektirir). Dordu de `e2e:audit`in kendi kapilariyla dogrulanabilir ve o
-suite bu makinede ~2 dakikada kosuyor.
+### E-2 — bulunan sey bir renk degil, bir KOR NOKTAYDI
+
+`--color-muted` HER token zemininde kapiyi geciyordu (sayfada 5,70, kartta
+5,34, surface-2'de 4,94). Ama arayuzde bir **cip** deseni var (`bg-white/6`,
+`bg-white/8`) ve cipin zemini bir token DEGIL bir **bilesiktir**. Kapi
+(`contrast.test.ts`) yalnizca token-uzerine-token olcuyordu ve saydam bir
+zemini acikca REDDEDIYORDU (`zemin saydam olamaz`), yani bu sinifi GOREMEZDI.
+
+Olculdu — ve tek rozet degil, **dort yer**:
+
+| Zemin | `--color-muted` | Durum |
+|---|---|---|
+| `white/8` + surface | **4,33:1** | ✗ (axe'in yakaladigi) |
+| `white/8` + surface-2 | **3,93:1** | ✗ daha kotu |
+| `white/6` + surface-2 | **4,16:1** | ✗ |
+| `white/6` + surface | 4,61:1 | ✓ kil payi |
+
+Ucuncu satir varsayimsal degil: `Card` etkilesimliyse `hover:bg-surface-2`
+uygular. Duzeltme `--color-muted-raised: #9a9a9a` (en kotu zeminde **4,83:1**)
+ve dort cip sitesi ona cevrildi. **Ve kapi genisletildi**: `over(overlay,
+surface)` ile alti bilesik cift tabloya girdi — ucu REDDEDILEN halleri
+kaydediyor, cunku bir daha yazan biri karsisinda olculmus bir sayi bulmali.
+Kapi kendi kosusunda benim aritmetigimi iki ondalikta duzeltti (4,82 → 4,83).
+
+### E-4 — test var olmayan bir kontrolu ariyordu, ve GERCEK kusur baska yerdeydi
+
+`aria-pressed` tasiyan bir `3%` on ayar dugmesi `SlippageRow`da **hic
+olmadi**: `git log -S aria-pressed` bos doner, spec'te de yok. Test hayali bir
+arayuze yazilmis ve hic kosulmadigi icin bu gorunmemis.
+
+Iddia SILINMEDI, konusu duzeltildi — urunun gercek yolu bir kalem dugmesi + bir
+metin alanidir. Ve o yola bakinca **gercek bir kusur** cikti: alan mevcut
+degerle on dolu acilir ama metin SECILI DEGILDIR, yani ilk tus vurusu degeri
+degistirmez **ONA EKLER**.
+
+```
+varsayilan %2,5 -> alan "2.5" ile acilir -> kullanici 3 yazar -> %2,53
+```
+
+Ikinci yol daha kotu: "%10'u %5 yapayim" diyen biri `105` uretir ve muhafiz
+(`percent > 100`) SESSIZCE hicbir sey yazmaz — ekranda 105 durur, imzalanacak
+deger eski deger kalir. **Ekran ile calldata ayrisir, ve burasi para yolu.**
+Duzeltme `onFocus={e => e.currentTarget.select()}`.
+
+Birim suiti bunu neden gormemisti: mevcut test yazmadan ONCE
+`user.clear()` cagiriyordu — yani kullanicinin yapmadigi bir adimi varsayarak
+geciyordu. Yeni test secim araligini olcer (`selectionStart`/`selectionEnd`);
+"yazmak yerine koyar" iddiasi gercek klavye olaylari gerektirdigi icin e2e'de
+durur (`userEvent.type` yazmadan once TIKLAR ve secimi dagitir — bu bir
+kutuphane mekanigi, urun davranisi degil).
+
+### E-1 — tahminle degil olcumle: en agir parca grafik kutuphanesiydi
+
+Butce kirildiginda NEYIN kirdigini soylemiyordu; ilk is dokumu iddia mesajina
+eklemek oldu. Sonuc:
+
+```
+[budget] token JS: 340.3 kB gz across 15 files (budget 300 kB)
+  92.3 kB  1fi-xta05kw8s.js   <- lightweight-charts
+  69.3 kB  3xwl9jkbryit_.js   <- react-dom
+  39.5 kB  27w0yp-ahm5n_.js
+  28.1 kB  0rim5q0tojopj.js   <- viem
+  20.1 kB  0s68-8vxiszv8.js   <- wagmi
+```
+
+Parcalar `grep` ile parmak izlendi. En agiri **tek basina rotanin %27'si** ve
+statik import ediliyordu. `next/dynamic` ile BUTUN bileseni sarmak yanlis
+olurdu: `ssr: false` OHLCV basligini, `controls`u ve bos-durum kutusunu da
+sunucu ciziminden cikarir, ve yer ayirmayan bir yer tutucu CLS uretir. Yerine
+**yalnizca cizim motoru** `useEffect` icinde `await import(...)` ile alindi;
+bilesenin iskeleti sunucuda kalir.
+
+**Sonuc, olculdu:** token **340,3 → 286,9 kB gz** (−53,4), explore 226,6 kB,
+**CLS 0,0000** iki rotada da, LCP 268 ms (4x CPU kisitli). Butce
+YUKSELTILMEDI.
+
+Bedeli: grafik artik asenkron kuruluyor, yani 10 birim testi senkron iddia
+ediyordu. Paylasilan bir `renderChart` yardimcisi eklendi (30/30 yesil) —
+testler artik gercekligi yansitiyor.
 
 ### F-1. Diger
 

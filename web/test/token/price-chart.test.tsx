@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -82,33 +82,55 @@ function candle(minute: number, open: bigint, close: bigint): CandleRow {
   }
 }
 
+/**
+ * ============ GRAFIK ARTIK ASENKRON KURULUR ============
+ *
+ * `PriceChart` `lightweight-charts`i `await import(...)` ile TEMBEL yukler
+ * (gerekce o dosyanin basinda: kutuphane token rotasinin %27'siydi ve JS
+ * butcesini asiyordu). Efekt artik senkron bitmiyor: import bir mikro gorevde
+ * cozulur, grafik ondan SONRA kurulur.
+ *
+ * Yani `render(...)` donduginde `createChart` HENUZ CAGRILMAMISTIR. Bu
+ * yardimci o bekleyisi TEK YERDE tutar; her testin kendi `waitFor`unu yazmasi
+ * biri unuttugunda sessizce yaris kazanan bir test uretirdi.
+ */
+async function renderChart(ui: React.ReactElement) {
+  const result = render(ui)
+  await waitFor(() => {
+    expect(addSeries).toHaveBeenCalled()
+  })
+  return result
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
 })
 
 describe('<PriceChart>', () => {
-  it('MUM secildiginde mum serisi, CIZGI secildiginde alan serisi kurulur', () => {
+  it('MUM secildiginde mum serisi, CIZGI secildiginde alan serisi kurulur', async () => {
     const rows = [candle(0, 10n * USDC, 12n * USDC), candle(5, 12n * USDC, 11n * USDC)]
 
-    const { unmount } = render(<PriceChart candles={rows} metric="fdv" shape="candles" />)
+    const { unmount } = await renderChart(
+      <PriceChart candles={rows} metric="fdv" shape="candles" />,
+    )
     expect(addSeries.mock.calls.map((c) => c[0])).toContain('candles-series')
     unmount()
 
     vi.clearAllMocks()
-    render(<PriceChart candles={rows} metric="fdv" shape="line" />)
+    await renderChart(<PriceChart candles={rows} metric="fdv" shape="line" />)
     const kinds = addSeries.mock.calls.map((c) => c[0])
     expect(kinds).toContain('area-series')
     expect(kinds, 'the line chart still drew candles').not.toContain('candles-series')
   })
 
-  it('WEI DEGIL USDC gecirilir -- ham wei `number`da sessizce yuvarlanirdi', () => {
+  it('WEI DEGIL USDC gecirilir -- ham wei `number`da sessizce yuvarlanirdi', async () => {
     /*
      * Kutuphane `number` ister. `Number(4_820_000_000_000_000_000n)` hala
      * guvenli araligin (9.007e15) COK uzerinde; olcegi once dusurmeden
      * gecirmek, kucuk mumlarin acilis ve kapanisini AYNI sayiya yuvarlar --
      * yani her mum yeniden bir doji olurdu.
      */
-    render(
+    await renderChart(
       <PriceChart
         candles={[candle(0, 4n * USDC + USDC / 2n, 5n * USDC)]}
         metric="fdv"
@@ -119,19 +141,19 @@ describe('<PriceChart>', () => {
     expect(points?.[0]).toMatchObject({ open: 4.5, close: 5 })
   })
 
-  it('FIYAT MODU degerleri 1e9`a boler -- eksen ile baslik ayni seyi okumali', () => {
+  it('FIYAT MODU degerleri 1e9`a boler -- eksen ile baslik ayni seyi okumali', async () => {
     /*
      * Fiyat, market cap`in tam olarak 1e9`da biri (`007_views.sql`: N = 1e27).
      * Bolme yapilmasaydi grafik "fiyat" yazip market cap cizerdi.
      */
-    render(
+    await renderChart(
       <PriceChart candles={[candle(0, 2n * USDC, 2n * USDC)]} metric="price" shape="candles" />,
     )
     const points = setData.mock.calls.map((c) => c[0]).find((d) => d[0]?.['open'] !== undefined)
     expect(points?.[0]?.['open']).toBeCloseTo(2 / 1e9, 12)
   })
 
-  it('AYNI SANIYE IKI KEZ GECMEZ -- tekrar eden damga grafigi komple dusururdu', () => {
+  it('AYNI SANIYE IKI KEZ GECMEZ -- tekrar eden damga grafigi komple dusururdu', async () => {
     /*
      * `lightweight-charts` artan ve BENZERSIZ zaman ister; tekrar eden bir
      * damga "data must be asc ordered by time" ile ATAR ve o hata bir mumu
@@ -139,30 +161,30 @@ describe('<PriceChart>', () => {
      * kaybettirmeli.
      */
     const dupe = [candle(0, USDC, USDC), candle(0, 2n * USDC, 2n * USDC), candle(5, USDC, USDC)]
-    render(<PriceChart candles={dupe} metric="fdv" shape="candles" />)
+    await renderChart(<PriceChart candles={dupe} metric="fdv" shape="candles" />)
     const points = setData.mock.calls.map((c) => c[0]).find((d) => d[0]?.['open'] !== undefined)
     expect(points).toHaveLength(2)
   })
 
-  it('HACIM KENDI OLCEGINDE -- fiyat olcegini paylassaydi mumlari ezerdi', () => {
-    render(<PriceChart candles={[candle(0, USDC, USDC)]} metric="fdv" shape="candles" />)
+  it('HACIM KENDI OLCEGINDE -- fiyat olcegini paylassaydi mumlari ezerdi', async () => {
+    await renderChart(<PriceChart candles={[candle(0, USDC, USDC)]} metric="fdv" shape="candles" />)
     const histogram = addSeries.mock.calls.find((c) => c[0] === 'histogram-series')
     expect(histogram?.[1]).toMatchObject({ priceScaleId: '' })
   })
 
-  it('BOS VERI grafigi kurmaz, bir metin yazar', () => {
+  it('BOS VERI grafigi kurmaz, bir metin yazar', async () => {
     render(<PriceChart candles={[]} metric="fdv" shape="candles" emptyLabel="No trades yet." />)
     expect(screen.getByTestId('price-chart-empty')).toHaveTextContent('No trades yet.')
     expect(screen.queryByTestId('price-chart')).toBeNull()
   })
 
-  it('IMLEC ABONELIGI BIR KEZ KURULUR -- veri yenilendikce cogalmaz', () => {
+  it('IMLEC ABONELIGI BIR KEZ KURULUR -- veri yenilendikce cogalmaz', async () => {
     /*
      * `LiveRefresh` on saniyede bir yeni bir `candles` dizisi getiriyor.
      * Abonelik veriye bagli olsaydi her yenilemede bir yenisi eklenir ve
      * dinleyiciler birikirdi.
      */
-    const { rerender } = render(
+    const { rerender } = await renderChart(
       <PriceChart candles={[candle(0, USDC, USDC)]} metric="fdv" shape="candles" />,
     )
     rerender(<PriceChart candles={[candle(0, USDC, 2n * USDC)]} metric="fdv" shape="candles" />)
@@ -170,9 +192,11 @@ describe('<PriceChart>', () => {
     expect(subscribeCrosshairMove).toHaveBeenCalledTimes(1)
   })
 
-  it('OHLCV BASLIGI son mumu okur ve OLCUYU izler', () => {
+  it('OHLCV BASLIGI son mumu okur ve OLCUYU izler', async () => {
     const rows = [candle(0, USDC, USDC), candle(5, 3n * USDC, 7n * USDC)]
-    const { rerender } = render(<PriceChart candles={rows} metric="fdv" shape="candles" />)
+    const { rerender } = await renderChart(
+      <PriceChart candles={rows} metric="fdv" shape="candles" />,
+    )
     expect(screen.getByTestId('candle-summary')).toHaveTextContent('C $7.00')
 
     // Fiyat modunda ayni mum 1e9`da bir okunur; baslik eksenle ayni dili
@@ -181,18 +205,18 @@ describe('<PriceChart>', () => {
     expect(screen.getByTestId('candle-summary')).not.toHaveTextContent('C $7.00')
   })
 
-  it('ICERIGE SIGDIRIR -- kutuphane cubuk genisligini SABIT tutar', () => {
+  it('ICERIGE SIGDIRIR -- kutuphane cubuk genisligini SABIT tutar', async () => {
     /*
      * `lightweight-charts` icerige gore yaymaz: on uc mum, genislik ne olursa
      * olsun sagda dar bir seride durur. Kullanicinin "mumlar bir kosede
      * sikismis" sikayeti, mum VERISI duzeldikten sonra bile bu yuzden devam
      * etti.
      */
-    render(<PriceChart candles={[candle(0, USDC, USDC)]} metric="fdv" shape="candles" />)
+    await renderChart(<PriceChart candles={[candle(0, USDC, USDC)]} metric="fdv" shape="candles" />)
     expect(fitContent).toHaveBeenCalled()
   })
 
-  it('AMA HER YENILEMEDE SIFIRLAMAZ -- yoksa zoom on saniyede bir kaybolur', () => {
+  it('AMA HER YENILEMEDE SIFIRLAMAZ -- yoksa zoom on saniyede bir kaybolur', async () => {
     /*
      * `LiveRefresh` sunucu bilesenlerini on saniyede bir yeniden calistiriyor.
      * Her veri degisiminde sigdirmak, kullanicinin yakinlastirmasini surekli
@@ -200,7 +224,9 @@ describe('<PriceChart>', () => {
      * yalnizca dizinin BASI degisince sifirlanir.
      */
     const first = candle(0, USDC, 2n * USDC)
-    const { rerender } = render(<PriceChart candles={[first]} metric="fdv" shape="candles" />)
+    const { rerender } = await renderChart(
+      <PriceChart candles={[first]} metric="fdv" shape="candles" />,
+    )
     const afterMount = fitContent.mock.calls.length
 
     rerender(
@@ -226,8 +252,8 @@ describe('<PriceChart>', () => {
     expect(fitContent.mock.calls.length).toBeGreaterThan(afterMount)
   })
 
-  it('KONTROLLER BASLIGIN ICINDE cizilir', () => {
-    render(
+  it('KONTROLLER BASLIGIN ICINDE cizilir', async () => {
+    await renderChart(
       <PriceChart
         candles={[candle(0, USDC, USDC)]}
         metric="fdv"
@@ -263,8 +289,8 @@ describe('<PriceChart>', () => {
   // 2026-03-09T14:30:00Z
   const MARCH = Date.UTC(2026, 2, 9, 14, 30) / 1000
 
-  it('EKSEN AYI YAZAR -- ciplak gun numarasi iki ay onceyi dunden ayirmaz', () => {
-    render(
+  it('EKSEN AYI YAZAR -- ciplak gun numarasi iki ay onceyi dunden ayirmaz', async () => {
+    await renderChart(
       <PriceChart
         candles={[candle(0, USDC, USDC)]}
         metric="fdv"
@@ -279,8 +305,8 @@ describe('<PriceChart>', () => {
     expect(label).toMatch(/\d{2}:\d{2}/)
   })
 
-  it('GUNLUK KOVADA SAAT YOK -- her etiket "00:00" ise saat bilgi tasimaz', () => {
-    render(
+  it('GUNLUK KOVADA SAAT YOK -- her etiket "00:00" ise saat bilgi tasimaz', async () => {
+    await renderChart(
       <PriceChart
         candles={[candle(0, USDC, USDC)]}
         metric="fdv"
@@ -300,13 +326,13 @@ describe('<PriceChart>', () => {
    * iki kumede toplanmisti ve her kume 1H kovasina da 24H kovasina da tek
    * basina siğiyordu. Veriyi uydurmak yerine ekran bunu SOYLER.
    */
-  it('IKI MUMDAN AZKEN SEBEBINI SOYLER', () => {
-    render(<PriceChart candles={[candle(0, USDC, USDC)]} metric="fdv" shape="candles" />)
+  it('IKI MUMDAN AZKEN SEBEBINI SOYLER', async () => {
+    await renderChart(<PriceChart candles={[candle(0, USDC, USDC)]} metric="fdv" shape="candles" />)
     expect(screen.getByTestId('candle-scarcity')).toHaveTextContent(/1 candle at this timeframe/i)
   })
 
-  it('UC VE UZERINDE NOT YOK -- surekli bir dipnot gurultudur', () => {
-    render(
+  it('UC VE UZERINDE NOT YOK -- surekli bir dipnot gurultudur', async () => {
+    await renderChart(
       <PriceChart
         candles={[candle(0, USDC, USDC), candle(60, USDC, USDC), candle(120, USDC, USDC)]}
         metric="fdv"
@@ -320,7 +346,7 @@ describe('<PriceChart>', () => {
 /* ========================================================================== */
 
 describe('<SlippageRow>', () => {
-  it('VARSAYILAN %2.5 -- %1 bir bonding curve`de gereksiz yere reddettiriyordu', () => {
+  it('VARSAYILAN %2.5 -- %1 bir bonding curve`de gereksiz yere reddettiriyordu', async () => {
     /*
      * Fiyat HER islemle hareket eder ve rezervler iki saniyede bir yenilenir;
      * kullanicinin gordugu kota, imzaladigi an birkac blok eskimis olabilir.
@@ -345,13 +371,13 @@ describe('<SlippageRow>', () => {
     expect(onChange).toHaveBeenCalledWith(DEFAULT_SLIP_BPS, true)
   })
 
-  it('AUTO`dayken donus dugmesi YOK -- zaten oradasin', () => {
+  it('AUTO`dayken donus dugmesi YOK -- zaten oradasin', async () => {
     render(<SlippageRow value={DEFAULT_SLIP_BPS} auto onChange={() => {}} />)
     expect(screen.queryByTestId('slippage-auto-reset')).toBeNull()
     expect(screen.getByTestId('slippage-auto-badge')).toBeInTheDocument()
   })
 
-  it('GENIS TOLERANS UYARIR -- ve uyari bir metin, bir renk degil', () => {
+  it('GENIS TOLERANS UYARIR -- ve uyari bir metin, bir renk degil', async () => {
     render(<SlippageRow value={900} auto={false} onChange={() => {}} />)
     expect(screen.getByRole('status')).toHaveTextContent(/high slippage/i)
   })
@@ -376,7 +402,7 @@ describe('<SlippageRow>', () => {
     expect(slipSeverity(bps)).toBe(severity)
   })
 
-  it('%5 KEHRIBAR "High slippage" -- bir tercih, bir kaza degil', () => {
+  it('%5 KEHRIBAR "High slippage" -- bir tercih, bir kaza degil', async () => {
     render(<SlippageRow value={HIGH_SLIP_BPS} auto={false} onChange={() => {}} />)
     const warning = screen.getByTestId('slippage-warning')
     expect(warning).toHaveTextContent('High slippage')
@@ -385,7 +411,7 @@ describe('<SlippageRow>', () => {
     expect(warning.className).not.toContain('text-negative')
   })
 
-  it('%20 KIRMIZI "Very high slippage"', () => {
+  it('%20 KIRMIZI "Very high slippage"', async () => {
     render(<SlippageRow value={VERY_HIGH_SLIP_BPS} auto={false} onChange={() => {}} />)
     const warning = screen.getByTestId('slippage-warning')
     expect(warning).toHaveTextContent('Very high slippage')
@@ -393,13 +419,13 @@ describe('<SlippageRow>', () => {
     expect(warning.className).not.toContain('text-caution')
   })
 
-  it('VARSAYILANDA HIC UYARI YOK -- her acilista bir unlem, unlemi degersizlestirir', () => {
+  it('VARSAYILANDA HIC UYARI YOK -- her acilista bir unlem, unlemi degersizlestirir', async () => {
     render(<SlippageRow value={DEFAULT_SLIP_BPS} auto onChange={() => {}} />)
     expect(screen.queryByTestId('slippage-warning')).toBeNull()
     expect(screen.getByTestId('slippage-value').className).not.toContain('text-caution')
   })
 
-  it('DEGERIN KENDISI DE RENKLENIR -- goz once sayiya gider', () => {
+  it('DEGERIN KENDISI DE RENKLENIR -- goz once sayiya gider', async () => {
     render(<SlippageRow value={HIGH_SLIP_BPS} auto={false} onChange={() => {}} />)
     expect(screen.getByTestId('slippage-value').className).toContain('text-caution')
   })

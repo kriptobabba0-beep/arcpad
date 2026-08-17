@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
-import { auditRoutes } from './routes'
+import { auditRoutes, openSearchWithKeyboard } from './routes'
 
 /**
  * THE HOST SET, AND THE CSP THAT IS SUPPOSED TO ENFORCE IT.
@@ -97,8 +97,7 @@ test('every request on every route goes to us or the RPC — and nowhere else', 
     expect(csp).toContain("frame-ancestors 'none'")
 
     if (route.openSearch === true) {
-      await page.keyboard.press('ControlOrMeta+k')
-      await expect(page.getByRole('dialog')).toBeVisible()
+      await openSearchWithKeyboard(page)
       // Type, so the modal's own fetch happens and its host is counted.
       await page.getByRole('combobox').fill('e2e')
       await page.waitForTimeout(600)

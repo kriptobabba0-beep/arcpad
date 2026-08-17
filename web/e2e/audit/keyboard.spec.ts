@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
-import { auditToken } from './routes'
+import { auditToken, openSearchWithKeyboard } from './routes'
 
 /**
  * THE WHOLE PRODUCT, WITHOUT A MOUSE.
@@ -84,7 +84,10 @@ test('⌘K opens from the keyboard, traps Tab, and gives focus back on Escape', 
   const trigger = await focused(page)
   expect(trigger.label).toBe('Search tokens')
 
-  await page.keyboard.press('ControlOrMeta+k')
+  // Ayni yaris burada da var (`SearchTrigger` dinleyicisini hidrasyonda
+  // baglar), o yuzden ayni yardimciyi kullanir. Iddia degismedi: modal
+  // KLAVYEDEN acilir.
+  await openSearchWithKeyboard(page)
   const dialog = page.getByRole('dialog')
   await expect(dialog).toBeVisible()
 
@@ -149,27 +152,55 @@ test('the trade panel is fillable with the keyboard alone, slippage included', a
 
   await expect(page.getByTestId('quote-breakdown')).toBeVisible()
 
-  // THE SLIPPAGE CONTROL IS REACHED BY TABBING, not by a locator. Reaching a
-  // control by locator and then pressing Enter proves the handler works and
-  // proves NOTHING about whether a keyboard user can arrive there.
-  let reached = false
-  for (let i = 0; i < 30 && !reached; i += 1) {
+  /*
+   * ============ SLIPAJ, GERCEK KONTROLU UZERINDEN ============
+   *
+   * BU BLOK 2026-08-17'DE YENIDEN YAZILDI, VE ONCEKI HALI VAR OLMAYAN BIR
+   * KONTROLU IDDIA EDIYORDU. Eski hal `aria-pressed` tasiyan bir `3%` on ayar
+   * dugmesi ariyordu ve `SlippageRow`da boyle bir dugme HIC OLMADI:
+   * `git log -S aria-pressed -- SlippageRow.tsx` BOS doner, spec'te de yoktur.
+   * Yani test hayali bir arayuze yazilmisti ve hicbir zaman kosulmadigi icin
+   * bu gorunmedi (bkz. C-11).
+   *
+   * IDDIA SILINMEDI, KONUSU DUZELTILDI. "Klavye kullanicisi slipaji
+   * degistirebilir" mesru ve DOGRULANMAMIS bir iddiaydi; urunun gercek yolu
+   * bir kalem dugmesi + bir metin alanidir, ve o yolun kendine ozgu riski var:
+   * alan `autoFocus` ile acilir, `onBlur` onu KAPATIR, Enter/Escape de kapatir
+   * -- yani klavye kullanicisi degeri kaybedebilir ya da alana sikisabilir.
+   * Test artik tam olarak onu yurur.
+   */
+  let reachedEdit = false
+  for (let i = 0; i < 30 && !reachedEdit; i += 1) {
     await page.keyboard.press('Tab')
     const here = await focused(page)
-    if (here.label === '3%') {
-      await expectVisibleFocus(page, 'the 3% slippage button')
+    if (here.label === 'Edit max slippage') {
+      await expectVisibleFocus(page, 'the edit-slippage button')
       await page.keyboard.press('Enter')
-      reached = true
+      reachedEdit = true
     }
   }
-  expect(reached, 'the 3% slippage preset must be reachable by Tab from the amount field').toBe(
-    true,
-  )
-  await expect(page.getByRole('button', { name: '3%' })).toHaveAttribute('aria-pressed', 'true')
+  expect(
+    reachedEdit,
+    'the slippage edit control must be reachable by Tab from the amount field',
+  ).toBe(true)
 
-  // And the quote followed the change: a control that is reachable but inert
-  // is the same defect wearing a different hat.
+  // `autoFocus` ODAGI GERCEKTEN TASIYOR MU: bir alan acilip odagi almazsa
+  // klavye kullanicisi onu goremez ve yazdigi yer baska bir yerdir.
+  const inField = await focused(page)
+  expect(inField.tag, 'opening the editor must move focus INTO the input').toBe('input')
+
+  await page.keyboard.type('3')
+  await page.keyboard.press('Enter')
+
+  // Deger yazildi, alan kapandi, ve TEKLIF onu izledi. Ucuncusu olmadan
+  // "ulasilabilir ama etkisiz" bir kontrol yesil kalirdi.
+  await expect(page.getByTestId('slippage-value')).toHaveText('3%')
   await expect(page.getByTestId('quote-breakdown')).toContainText('slippage 3%')
+
+  // VE `Auto`YA DONUS YOLU EKRANDA KALDI. Elle bir deger girildikten sonra
+  // rozet bir DUGMEYE doner; donmezse kullanici Auto'ya sayfayi yenilemeden
+  // donemez -- `SlippageRow`un kendi yorumunun adiyla anlattigi kusur.
+  await expect(page.getByTestId('slippage-auto-reset')).toBeVisible()
 })
 
 test('the launch form is completable with the keyboard alone', async ({ page }) => {

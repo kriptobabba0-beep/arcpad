@@ -1,4 +1,4 @@
-import { expect } from '@playwright/test'
+import { expect, type Page } from '@playwright/test'
 
 /**
  * THE FOUR SURFACES EVERY AUDIT SPEC WALKS, AND THE THREE VIEWPORTS.
@@ -57,4 +57,38 @@ export function auditRoutes(): readonly AuditRoute[] {
     { name: 'create', path: () => '/create' },
     { name: 'search-modal', path: () => '/', openSearch: true },
   ]
+}
+
+/**
+ * ============ ⌘K'YI HIDRASYONLA YARISMADAN BASAR ============
+ *
+ * TEK YERDE, UC SPEC ICIN, VE BU DOSYANIN KENDI GEREKCESIYLE AYNI: a11y,
+ * network ve responsive spec'lerinin ucu de ayni uc satiri kopyalamisti ve
+ * ucu de ayni yarisi tasiyordu.
+ *
+ * YARIS OLCULDU. `page.goto` `load`ta cozulur; `SearchTrigger`in `keydown`
+ * dinleyicisi ise bir `useEffect` icinde, yani HIDRASYONDAN SONRA baglanir.
+ * Aradaki pencerede basilan tus, dinleyicisi olmadigi icin SESSIZCE kaybolur.
+ *
+ * Sonucu 2026-08-17'de goruldu ve iki kez farkli davrandi: CI'da
+ * `getByRole('dialog')` 15 saniye bekleyip DUSTU, ayni suite yerelde GECTI.
+ * Modalin `role="dialog"`u ZATEN VAR (`ui/Dialog.tsx:157`) -- eksik olan rol
+ * degil, tusun varis anıydı. Ve bazen gecen bir kapi, tutarli dusenden
+ * KOTUDUR: birine guvenilemez, otekine bakilir.
+ *
+ * TEKRAR, KORLUK DEGIL. Her denemeden ONCE gorunurluk sinanir, yani acilmis
+ * bir modal ikinci bir basimla KAPATILMAZ (`setOpen(c => !c)` bir anahtardir).
+ * Ve deneme sayisi SINIRLIDIR: gercekten olu bir kisayol yine kirmizi olur,
+ * yalnizca mesaji artik "yavas" ile "yok"u ayirir.
+ */
+export async function openSearchWithKeyboard(page: Page): Promise<void> {
+  const dialog = page.getByRole('dialog')
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await page.keyboard.press('ControlOrMeta+k')
+    if (await dialog.isVisible()) return
+    // Hidrasyon henuz dinleyiciyi baglamamis olabilir; kisa bir soluk ver.
+    await page.waitForTimeout(150)
+    if (await dialog.isVisible()) return
+  }
+  await expect(dialog, 'on denemede de ⌘K modali acmadi -- kisayol YAVAS degil, OLU').toBeVisible()
 }

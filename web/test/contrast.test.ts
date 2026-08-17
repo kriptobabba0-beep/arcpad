@@ -131,6 +131,32 @@ function measure(fg: string, bg: string): number {
   return Math.round(contrast(fg, bg) * 100) / 100
 }
 
+/**
+ * ============ BILESIK BIR ZEMIN URETIR -- VE BU KAPININ KOR NOKTASIYDI ============
+ *
+ * `composite()` yukarida ON PLANI zemine basar; `contrast()` ise saydam bir
+ * ZEMINI acikca REDDEDER (`zemin saydam olamaz`). Ikisi birlikte tek bir seyi
+ * ifade edemiyordu: **arayuzdeki cip deseni**, yani `bg-white/6` /
+ * `bg-white/8`in altindaki yuzeyin uzerine basilmis hali.
+ *
+ * Sonucu olculdu, ve kapi degil AXE yakaladi (2026-08-17, `e2e:audit`):
+ * `--color-muted` her TOKEN zemininde geciyordu, ama bir cipin BILESIK
+ * zemininde 4,33:1'e (kartta) ve 3,93:1'e (surface-2'de) dusuyordu. Kapi
+ * yesildi cunku o zemin tabloda YOKTU -- olculmeyen bir sey, gecmis sayilir.
+ *
+ * `over` bu yuzden bir kolaylik degil bir KAPSAM genislemesidir: cip zeminleri
+ * artik token ciftleri kadar birinci sinif.
+ */
+function over(overlay: string, surface: string): string {
+  const solid = composite(parseColor(overlay), parseColor(surface))
+  const hex = (n: number): string => Math.round(n).toString(16).padStart(2, '0')
+  return `#${hex(solid.r)}${hex(solid.g)}${hex(solid.b)}`
+}
+
+/** Arayuzun kullandigi iki cip yogunlugu. Tailwind sinifiyla BIREBIR. */
+const WHITE_6 = 'rgb(255 255 255 / 6%)'
+const WHITE_8 = 'rgb(255 255 255 / 8%)'
+
 // ---------------------------------------------------------------------------
 // Cift tablosu
 // ---------------------------------------------------------------------------
@@ -236,6 +262,58 @@ const PAIRS: readonly Pair[] = [
     ratio: 1.19,
     verdict: 'fails-non-text',
   },
+
+  // -------------------------------------------------------------------------
+  // CIP ZEMINLERI -- bileşik, ve bu kapiya 2026-08-17'de EKLENDI.
+  //
+  // Ilk uc satir REDDEDILEN halleri kaydeder ve silinmemeleri kasitli:
+  // `--color-muted`in bir cipte kullanilmasi bir kez YAPILDI ve axe onu canli
+  // sayfada buldu. Reddedilen bir kombinasyonu tabloda TUTMAK, onu yeniden
+  // yazan birinin karsisina olculmus bir sayi koyar -- `#ffffff` on `primary`
+  // satirinin ayni gerekcesi.
+  // -------------------------------------------------------------------------
+  {
+    what: 'REDDEDILEN: ikincil metin, kart uzerindeki cipte (axe: serious)',
+    fg: resolve('--color-muted'),
+    bg: over(WHITE_8, resolve('--color-surface')),
+    ratio: 4.33,
+    verdict: 'fails-normal',
+  },
+  {
+    what: 'REDDEDILEN: ayni cip, kart HOVER zemininde (daha kotu)',
+    fg: resolve('--color-muted'),
+    bg: over(WHITE_8, resolve('--color-surface-2')),
+    ratio: 3.93,
+    verdict: 'fails-normal',
+  },
+  {
+    what: 'REDDEDILEN: ince cip (white/6), hover zemininde',
+    fg: resolve('--color-muted'),
+    bg: over(WHITE_6, resolve('--color-surface-2')),
+    ratio: 4.16,
+    verdict: 'fails-normal',
+  },
+  {
+    what: 'cip metni, EN KOTU zemin (white/8 + surface-2)',
+    fg: resolve('--color-muted-raised'),
+    bg: over(WHITE_8, resolve('--color-surface-2')),
+    ratio: 4.83,
+    verdict: 'passes-normal',
+  },
+  {
+    what: 'cip metni, kart zemininde (white/8)',
+    fg: resolve('--color-muted-raised'),
+    bg: over(WHITE_8, resolve('--color-surface')),
+    ratio: 5.31,
+    verdict: 'passes-normal',
+  },
+  {
+    what: 'cip metni, ince cip (white/6) hover zemininde',
+    fg: resolve('--color-muted-raised'),
+    bg: over(WHITE_6, resolve('--color-surface-2')),
+    ratio: 5.1,
+    verdict: 'passes-normal',
+  },
 ]
 
 describe('kontrast kapisi', () => {
@@ -258,8 +336,38 @@ describe('kontrast kapisi', () => {
     expect(resolve('--color-primary-hover')).toBe(resolve('--color-accent'))
   })
 
-  it('on cift ve hover durumu olculuyor', () => {
-    expect(PAIRS).toHaveLength(11)
+  /**
+   * TABLONUN BOYU BIR IDDIADIR: bir cifti SILMEK, onu degistirmek kadar
+   * gorunur olmali. Sayi 11'den 17'ye 2026-08-17'de cikti -- alti bileşik
+   * cip zemini eklendi (bkz. `over`).
+   */
+  it('on yedi cift, hover durumu ve cip zeminleri dahil, olculuyor', () => {
+    expect(PAIRS).toHaveLength(17)
+  })
+
+  /**
+   * CIP DESENI TABLODA TEMSIL EDILIYOR -- ve bu, sayidan AYRI bir iddia:
+   * biri alti cifti silip yerine alti token cifti koysa `toHaveLength(17)`
+   * yine gecerdi. Bileşik zeminlerin VARLIGI ayrica olculur.
+   */
+  it('bileşik cip zeminleri tabloda VAR', () => {
+    const chipBackgrounds = new Set([
+      over(WHITE_6, resolve('--color-surface')),
+      over(WHITE_6, resolve('--color-surface-2')),
+      over(WHITE_8, resolve('--color-surface')),
+      over(WHITE_8, resolve('--color-surface-2')),
+    ])
+    const measured = PAIRS.filter((pair) => chipBackgrounds.has(pair.bg))
+    expect(measured.length).toBeGreaterThanOrEqual(6)
+
+    // Ve `--color-muted-raised` yalnizca cipte kullanilir: token zeminlerinde
+    // `--color-muted` zaten geciyor ve ikisini karistirmak hiyerarsiyi silerdi.
+    const raised = PAIRS.filter((pair) => pair.fg === resolve('--color-muted-raised'))
+    expect(raised.length).toBeGreaterThan(0)
+    for (const pair of raised) {
+      expect(chipBackgrounds.has(pair.bg), `${pair.what} bir cip zemini degil`).toBe(true)
+      expect(pair.verdict).toBe('passes-normal')
+    }
   })
 })
 

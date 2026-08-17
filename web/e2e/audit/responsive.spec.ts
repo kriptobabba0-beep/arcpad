@@ -1,6 +1,6 @@
 import { expect, type Page, test } from '@playwright/test'
 import { ARC_TESTNET_CHAIN_ID, getArcChain } from '@arcpad/shared/browser'
-import { auditRoutes, auditToken, VIEWPORTS } from './routes'
+import { auditRoutes, auditToken, openSearchWithKeyboard, VIEWPORTS } from './routes'
 
 /**
  * THE RESPONSIVE MATRIX -- BEHAVIOUR, NOT SCREENSHOTS.
@@ -29,8 +29,7 @@ for (const viewport of VIEWPORTS) {
       await page.setViewportSize({ width: viewport.width, height: viewport.height })
       await page.goto(route.path(), { waitUntil: 'networkidle' })
       if (route.openSearch === true) {
-        await page.keyboard.press('ControlOrMeta+k')
-        await expect(page.getByRole('dialog')).toBeVisible()
+        await openSearchWithKeyboard(page)
       }
 
       const { scrollWidth, clientWidth } = await scrollWidths(page)

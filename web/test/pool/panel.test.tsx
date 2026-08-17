@@ -338,6 +338,53 @@ describe('slippage and the deadline are visible, and the deadline follows the ch
     expect(t.q.getByTestId('pool-quote-bound').textContent).toContain('16.490000')
   })
 
+  /**
+   * ============ TEMIZLEMEDEN YAZMAK -- KULLANICININ YAPTIGI SEY ============
+   *
+   * USTTEKI TEST `user.clear()` CAGIRIYOR VE TAM O SATIR KUSURU GIZLEDI.
+   * Gercek bir kullanici alani temizlemez: kalemi acar ve yazar. Alan mevcut
+   * degerle ON DOLU acildigi icin (`setText((value / 100).toString())`), metin
+   * SECILI degilse ilk tus vurusu degeri degistirmez ONA EKLER.
+   *
+   * OLCULDU (2026-08-17, `e2e:audit`in ilk kosusu): varsayilan %2,5, alan
+   * "2.5" ile acilir, kullanici `3` yazar ve sonuc **%2,53** olur. Birim suiti
+   * yesildi cunku testi once temizliyordu -- yani kapi, kullanicinin
+   * yapmadigi bir adimi varsayarak gecmisti.
+   *
+   * Daha kotu ikinci yol: "%10'u %5 yapayim" diyen biri `105` uretir ve
+   * `SlippageRow`un muhafizi (`percent > 100`) SESSIZCE hicbir sey yazmaz --
+   * ekranda 105 durur, imzalanacak deger eski deger kalir. Ekran ile calldata
+   * ayrisir, ve burasi para yolu.
+   *
+   * Duzeltme `onFocus={e => e.currentTarget.select()}`. Bu test onun bekcisi.
+   */
+  it('kalem acildiginda on dolu metin TAMAMEN SECILI gelir', async () => {
+    const t = setup()
+    await t.user.type(t.field(), '1')
+    expect(t.q.getByTestId('slippage-value').textContent).toBe('2.5%')
+
+    await t.user.click(t.q.getByTestId('slippage-edit'))
+    const field = t.q.getByLabelText(/max slippage, percent/i) as HTMLInputElement
+
+    /*
+     * OLCULEN SEY SECIM ARALIGI, "yazmak degistirir mi" DEGIL -- VE BU AYRIM
+     * BIR OLCUM HATASINDAN OGRENILDI.
+     *
+     * Ilk hal `user.type(field, '3')` yazip sonucun '3' olmasini bekliyordu ve
+     * `2.53` gordu. Sebep urun DEGILDI: `userEvent.type` yazmadan ONCE elemana
+     * TIKLAR, tiklama da imleci yerlestirip SECIMI DAGITIR. Yani o test
+     * jsdom + testing-library mekanigini olcuyordu, urunu degil -- ve gercek
+     * tarayicida ayni adimlar GECIYOR (`e2e/audit/keyboard.spec.ts`).
+     *
+     * Burada dogru olculebilen sey `onFocus`un yaptigi seyin ta kendisidir:
+     * alan acildiginda metin bastan sona secilidir. "Yazmak yerine koyar"
+     * iddiasi gercek klavye olaylarini gerektirir ve orada, e2e'de durur.
+     */
+    expect(field.value, 'alan mevcut degerle on dolu acilmali').toBe('2.5')
+    expect(field.selectionStart, 'secim bastan baslamali').toBe(0)
+    expect(field.selectionEnd, 'secim sonuna kadar gitmeli').toBe(field.value.length)
+  })
+
   it('the quote line says the fee is already taken out', async () => {
     // A separate "fee" row would be a SECOND implementation of a rule that has
     // already run on chain -- the router's amounts are net of the hook.

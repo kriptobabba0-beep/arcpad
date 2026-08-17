@@ -124,7 +124,7 @@ function StatusPill({ enabled }: { enabled: boolean }) {
       data-testid="buyback-status"
       className={
         'rounded-pill px-2.5 py-1 text-[12px] font-medium ' +
-        (enabled ? 'bg-[#4ade80]/12 text-[#4ade80]' : 'bg-white/8 text-muted')
+        (enabled ? 'bg-[#4ade80]/12 text-[#4ade80]' : 'bg-white/8 text-muted-raised')
       }
     >
       {enabled ? 'On' : 'Off'}

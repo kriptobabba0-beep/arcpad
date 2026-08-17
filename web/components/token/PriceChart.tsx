@@ -2,17 +2,31 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { formatUsdcCompact } from '@arcpad/shared/browser'
-import {
-  AreaSeries,
-  CandlestickSeries,
-  createChart,
-  HistogramSeries,
-  type IChartApi,
-  type ISeriesApi,
-  type Time,
-  type UTCTimestamp,
-} from 'lightweight-charts'
+import type { IChartApi, ISeriesApi, Time, UTCTimestamp } from 'lightweight-charts'
 import type { CandleRow } from '@/lib/read'
+
+/**
+ * ============ KUTUPHANE TEMBEL YUKLENIR, TIPLER STATIK KALIR ============
+ *
+ * `import type` DERLEMEDE SILINIR, yani bu satir paket boyutuna hicbir sey
+ * eklemez; asagidaki `await import('lightweight-charts')` ise kutuphaneyi
+ * KENDI parcasina alir ve ilk yukte GONDERMEZ.
+ *
+ * OLCULDU, VE SEBEP TAM OLARAK BUYDU (2026-08-17, `e2e:audit`): token rotasi
+ * 340,3 kB gz gonderiyordu, butce 300 kB. Parca dokumu -- ki o dokumu
+ * `budget.spec.ts`e bu turda EKLEDIK, cunku esik kirildiginda NEYIN kirdigini
+ * soylemiyordu -- en agir parcanin **92,3 kB gz** oldugunu ve icinde
+ * `lightweight-charts` bulundugunu gosterdi: tek basina rotanin %27'si.
+ *
+ * NICIN `next/dynamic` ILE BUTUN BILESEN DEGIL. `ssr: false` ile sarmak
+ * baslikta duran OHLCV satirlarini, `controls`u ve bos-durum kutusunu da
+ * sunucu ciziminden CIKARIRDI -- yani hem token sayfasinin JS'siz/dogrudan
+ * cizim yolunu zayiflatir hem de yer ayirmayan bir yer tutucuyla CLS
+ * uretirdi (`perf.spec.ts` CLS butcesi 0,05). Bilesenin ISKELETI sunucuda
+ * kalir; yalnizca CIZIM MOTORU sonradan gelir, ve kutunun yuksekligi
+ * (`h-[320px] sm:h-[380px]`) zaten sabit oldugu icin hicbir sey kaymaz.
+ */
+type ChartModule = typeof import('lightweight-charts')
 
 /**
  * ============================================================================
@@ -111,6 +125,13 @@ export function PriceChart({
 }: PriceChartProps) {
   const boxRef = useRef<HTMLDivElement | null>(null)
   const chartRef = useRef<IChartApi | null>(null)
+  /**
+   * Tembel yuklenen kutuphane. Seri kurucularina (`CandlestickSeries`,
+   * `AreaSeries`) IKINCI efekt de ihtiyac duyar, o yuzden modul bir ref'te
+   * saklanir -- ikinci kez `import` etmek gerekmez, ES modulleri onbelleklidir
+   * ama bir ref niyeti de acikca yazar.
+   */
+  const modRef = useRef<ChartModule | null>(null)
   const priceRef = useRef<ISeriesApi<'Candlestick'> | ISeriesApi<'Area'> | null>(null)
   const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null)
   /*
@@ -162,71 +183,90 @@ export function PriceChart({
     // `hasData` degistigi icin YENIDEN calisir ve grafigi o an kurar.
     if (node === null || !hasData) return
 
-    const chart = createChart(node, {
-      autoSize: true,
-      layout: {
-        background: { color: 'transparent' },
-        textColor: '#8a8a8a',
-        fontFamily: 'inherit',
-        attributionLogo: false,
-      },
-      grid: {
-        // Cok soluk: bir okuma yardimcisi, bir desen degil.
-        vertLines: { color: 'rgba(255,255,255,0.04)' },
-        horzLines: { color: 'rgba(255,255,255,0.04)' },
-      },
-      rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)' },
-      timeScale: {
-        borderColor: 'rgba(255,255,255,0.08)',
-        timeVisible: true,
-        secondsVisible: false,
-        // `bucketRef` uzerinden okunur, dogrudan `bucketSeconds` DEGIL: bu
-        // efekt yalnizca `hasData` degistiginde kosar, yani zaman dilimi
-        // degistiginde kapanis (closure) eski degeri tasirdi.
-        tickMarkFormatter: (time: number) => tickLabel(time, bucketRef.current),
-      },
-      crosshair: {
-        // `Magnet`: imlec en yakin mumun degerine YAPISIR. Bir fiyat
-        // grafiginde kullanici bir NOKTAYA degil bir MUMA bakar.
-        mode: 1,
-        vertLine: { color: 'rgba(255,255,255,0.25)', labelBackgroundColor: '#2a2a2a' },
-        horzLine: { color: 'rgba(255,255,255,0.25)', labelBackgroundColor: '#2a2a2a' },
-      },
-      localization: {
-        // LOCALE ACIKCA VERILIR -- bu depodaki her tarih/sayi bicimi gibi.
-        locale: 'en-US',
-      },
-    })
-    chartRef.current = chart
-
     /*
-     * HACIM KENDI OLCEGINDE, ALTTA.
-     *
-     * `priceScaleId: ''` ayri bir olcek demek; `scaleMargins` onu alt %20'ye
-     * sikistirir. Ayni olcegi paylassalardi hacim cubuklari fiyat eksenini
-     * ezer ve mumlar ekranin ustunde bir seride sikisirdi.
+     * EFEKT ASENKRON BIR GOVDE SARAR, VE IPTAL BAYRAGI ZORUNLUDUR: import
+     * cozulmeden once bilesen sokulebilir (`hasData` degisir ya da kullanici
+     * sayfadan cikar) ve o durumda grafigi kurmak, temizligi hic kosmayacak
+     * bir grafik birakmak olurdu.
      */
-    const volume = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: 'volume' },
-      priceScaleId: '',
-    })
-    volume.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
-    volumeRef.current = volume
+    let chart: IChartApi | null = null
+    let cancelled = false
 
-    /*
-     * OHLCV BASLIGI IMLECI TAKIP EDER -- TradingView'de oldugu gibi.
-     *
-     * Onceki hal baslikta HER ZAMAN son mumu gosteriyordu; yani grafikte
-     * geriye bakan biri gordugu mumun degerlerini OKUYAMIYORDU. Imlec
-     * grafikten cikinca (`param.time === undefined`) baslik son muma doner.
-     */
-    chart.subscribeCrosshairMove((param) => {
-      setHoverTime(typeof param.time === 'number' ? param.time : null)
-    })
+    void (async () => {
+      const mod: ChartModule = await import('lightweight-charts')
+      if (cancelled || boxRef.current === null) return
+      modRef.current = mod
 
-    setReady(true)
+      chart = mod.createChart(node, {
+        autoSize: true,
+        layout: {
+          background: { color: 'transparent' },
+          textColor: '#8a8a8a',
+          fontFamily: 'inherit',
+          attributionLogo: false,
+        },
+        grid: {
+          // Cok soluk: bir okuma yardimcisi, bir desen degil.
+          vertLines: { color: 'rgba(255,255,255,0.04)' },
+          horzLines: { color: 'rgba(255,255,255,0.04)' },
+        },
+        rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)' },
+        timeScale: {
+          borderColor: 'rgba(255,255,255,0.08)',
+          timeVisible: true,
+          secondsVisible: false,
+          // `bucketRef` uzerinden okunur, dogrudan `bucketSeconds` DEGIL: bu
+          // efekt yalnizca `hasData` degistiginde kosar, yani zaman dilimi
+          // degistiginde kapanis (closure) eski degeri tasirdi.
+          tickMarkFormatter: (time: number) => tickLabel(time, bucketRef.current),
+        },
+        crosshair: {
+          // `Magnet`: imlec en yakin mumun degerine YAPISIR. Bir fiyat
+          // grafiginde kullanici bir NOKTAYA degil bir MUMA bakar.
+          mode: 1,
+          vertLine: { color: 'rgba(255,255,255,0.25)', labelBackgroundColor: '#2a2a2a' },
+          horzLine: { color: 'rgba(255,255,255,0.25)', labelBackgroundColor: '#2a2a2a' },
+        },
+        localization: {
+          // LOCALE ACIKCA VERILIR -- bu depodaki her tarih/sayi bicimi gibi.
+          locale: 'en-US',
+        },
+      })
+      chartRef.current = chart
+
+      /*
+       * HACIM KENDI OLCEGINDE, ALTTA.
+       *
+       * `priceScaleId: ''` ayri bir olcek demek; `scaleMargins` onu alt %20'ye
+       * sikistirir. Ayni olcegi paylassalardi hacim cubuklari fiyat eksenini
+       * ezer ve mumlar ekranin ustunde bir seride sikisirdi.
+       */
+      const volume = chart.addSeries(mod.HistogramSeries, {
+        priceFormat: { type: 'volume' },
+        priceScaleId: '',
+      })
+      volume.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
+      volumeRef.current = volume
+
+      /*
+       * OHLCV BASLIGI IMLECI TAKIP EDER -- TradingView'de oldugu gibi.
+       *
+       * Onceki hal baslikta HER ZAMAN son mumu gosteriyordu; yani grafikte
+       * geriye bakan biri gordugu mumun degerlerini OKUYAMIYORDU. Imlec
+       * grafikten cikinca (`param.time === undefined`) baslik son muma doner.
+       */
+      chart.subscribeCrosshairMove((param) => {
+        setHoverTime(typeof param.time === 'number' ? param.time : null)
+      })
+
+      setReady(true)
+    })()
+
     return () => {
-      chart.remove()
+      cancelled = true
+      // `chart` asenkron govdede atanir; import cozulmeden sokulursa hala
+      // `null`dur ve kaldirilacak bir sey yoktur.
+      if (chart !== null) chart.remove()
       chartRef.current = null
       priceRef.current = null
       volumeRef.current = null
@@ -237,7 +277,11 @@ export function PriceChart({
   /* SEKIL DEGISINCE seri degisir -- mum ile cizgi ayri seri turleri. */
   useEffect(() => {
     const chart = chartRef.current
-    if (chart === null || !ready) return
+    // `mod` `ready` ile BIRLIKTE dolar (ikisi de ilk efektin asenkron
+    // govdesinde yazilir), ama kontrol acikca yapilir: tip guvenligi bir
+    // sıralama varsayimina dayanmamali.
+    const mod = modRef.current
+    if (chart === null || mod === null || !ready) return
 
     if (priceRef.current !== null) {
       chart.removeSeries(priceRef.current)
@@ -246,7 +290,7 @@ export function PriceChart({
 
     priceRef.current =
       shape === 'candles'
-        ? chart.addSeries(CandlestickSeries, {
+        ? chart.addSeries(mod.CandlestickSeries, {
             upColor: '#4ade80',
             downColor: '#f87171',
             borderUpColor: '#4ade80',
@@ -254,7 +298,7 @@ export function PriceChart({
             wickUpColor: '#4ade80',
             wickDownColor: '#f87171',
           })
-        : chart.addSeries(AreaSeries, {
+        : chart.addSeries(mod.AreaSeries, {
             lineColor: '#c6f24e',
             topColor: 'rgba(198,242,78,0.28)',
             bottomColor: 'rgba(198,242,78,0.02)',

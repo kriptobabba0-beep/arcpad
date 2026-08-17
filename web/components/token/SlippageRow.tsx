@@ -93,6 +93,26 @@ export function SlippageRow({
             <input
               id="slippage-custom"
               autoFocus
+              /*
+               * ============ ON DOLU METIN SECILI ACILIR ============
+               *
+               * `onClick` alani mevcut degerle DOLDURUR
+               * (`setText((value / 100).toString())`) ve bu dogrudur -- kullanici
+               * neyi degistirdigini gormeli. Ama secili DEGILSE ilk tus vurusu
+               * degeri DEGISTIRMEZ, ONA EKLER.
+               *
+               * OLCULDU (2026-08-17, `e2e:audit`): varsayilan 2,5%, alan "2.5"
+               * ile acilir, kullanici 3 yazar ve sonuc **2,53%** olur. Yani
+               * "%3 istiyorum" diyen biri %2,53 alir; "%10'u %5 yapayim" diyen
+               * biri "105" uretir ve YUKARIDAKI muhafiz (`percent > 100`)
+               * sessizce HICBIR SEY yazmaz -- ekranda 105 durur, imzalanacak
+               * deger ise eski deger kalir. Ikisi de para yolunda.
+               *
+               * `select()` standart deger-duzenleme davranisidir ve ilk tus
+               * vurusunu YERINE KOYMA yapar; ekranda gorunen sayi ile
+               * `onChange`in yazdigi sayi ilk andan itibaren ayni olur.
+               */
+              onFocus={(event) => event.currentTarget.select()}
               value={text}
               onChange={(event) => {
                 const next = event.target.value
@@ -130,7 +150,14 @@ export function SlippageRow({
             */}
             {auto ? (
               <span
-                className="rounded-pill bg-white/8 px-2 py-0.5 text-[11px] leading-none text-muted"
+                /*
+                 * `text-muted-raised`, `text-muted` DEGIL: zemin bir TOKEN
+                 * degil bir BILESIK (`bg-white/8` + altindaki yuzey) ve orada
+                 * `--color-muted` 4,33:1 verir. Axe bunu canli sayfada
+                 * yakaladi; gerekcenin tamami `globals.css`'te, olculmus
+                 * ciftler `contrast.test.ts`te.
+                 */
+                className="rounded-pill bg-white/8 px-2 py-0.5 text-[11px] leading-none text-muted-raised"
                 data-testid="slippage-auto-badge"
               >
                 Auto

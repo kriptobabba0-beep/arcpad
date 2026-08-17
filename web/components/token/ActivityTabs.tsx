@@ -345,11 +345,7 @@ function Td({ children, className }: { children: React.ReactNode; className?: st
 }
 
 function Tag({ children }: { children: React.ReactNode }) {
-  return (
-    <span className="rounded-full border border-white/12 bg-white/6 px-1.5 py-0.5 text-[11px] leading-none text-muted">
-      {children}
-    </span>
-  )
+  return <span className="rounded-full ${1}text-muted-raised">{children}</span>
 }
 
 /**

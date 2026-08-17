@@ -1,6 +1,6 @@
 import AxeBuilder from '@axe-core/playwright'
 import { expect, type Page, test } from '@playwright/test'
-import { auditRoutes, VIEWPORTS } from './routes'
+import { auditRoutes, openSearchWithKeyboard, VIEWPORTS } from './routes'
 
 /**
  * AXE ON FOUR ROUTES AT THREE VIEWPORTS -- ON THE BUILT SERVER.
@@ -63,8 +63,10 @@ test.describe('axe', () => {
           // OPENED WITH THE KEYBOARD, because that is the surface being
           // claimed. A click would open the same dialog and would not
           // exercise the shortcut the trigger advertises on its own face.
-          await page.keyboard.press('ControlOrMeta+k')
-          await expect(page.getByRole('dialog')).toBeVisible()
+          //
+          // The press is retried by `openSearchWithKeyboard` because the
+          // listener attaches on hydration, not on load -- see its comment.
+          await openSearchWithKeyboard(page)
         }
 
         const violations = await scan(page)

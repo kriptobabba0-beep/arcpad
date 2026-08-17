@@ -82,7 +82,7 @@ export function IdentityBadge({
   children: React.ReactNode
 }) {
   const palette = {
-    info: 'border-white/12 bg-white/6 text-muted',
+    info: 'border-white/12 bg-white/6 text-muted-raised',
     accent: 'border-accent/30 bg-accent/12 text-accent',
     warn: 'border-negative/30 bg-negative/12 text-negative',
     /*
