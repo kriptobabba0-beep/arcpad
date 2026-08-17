@@ -226,12 +226,67 @@ aramasi -- iki eleman buluyordu. `> summary` (cocuk birlesticisi) kullanildi;
 `.first()` de calisirdi ama DOM sirasina guvenmek, ic ice iki acilirdan
 hangisinin once geldigini gorunmez bir varsayim yapardi.
 
+### H-6. `local-db` SUITI SILINMIS BIR URL SOZLESMESINI TEST EDIYORDU
+
+`e2e-local` bacagi bir kapi daha actı: `e2e/db/explore-and-search.spec.ts`,
+Explore'un **eski** URL sozlesmesine gore yazilmisti.
+
+Uc test `/?sort=oldest`, `/?age=1` ve `?after=` yazan bir `Next` baglantisini
+suruyordu. **Ucu de yok.** `parseExploreParams` yalnizca `tab` ve `page` okur;
+siralamayi ve yas penceresini `TABS`'tan TURETIR (bilerek: bir gorunumun tam
+olarak bir kanonik adresi olsun diye), ve buradaki sayfalayici `?page=` yazan
+`NumberedPager`'dir. Yani bes `?sort=` URL'i de VARSAYILAN sekmeyi ciziyordu.
+
+| Ne | Eski (silinmis) sozlesme | Bugunku sozlesme |
+|---|---|---|
+| Siralama | `?sort=` (bes anahtar) | `?tab=` (dort gorunum), `TABS`'tan turetilir |
+| Yas | `?age=all\|1\|7` | sekmenin kendi `ageDays`i |
+| Sayfalama | `KeysetPager` → `?after=` | `NumberedPager` → `?page=`, `PAGE_SIZE` 48 |
+
+**NEDEN BUGUNE KADAR GORUNMEDI:** suit `serial` ve ilk hatada duruyor, ve bu
+satira ULASAN ilk CI kosusu onu dusuren kosu oldu. Bir suit, ustundeki bir sey
+once durdugu surece silinmis bir sozlesmeyi suresiz tasiyabilir.
+
+**VE GECEN YARISI DAHA OGRETICI.** Varsayilan sekme `trending`, yani
+`search_key(volume_24h_wei, created_seq) DESC`. Fixture'in hacimleri
+ESITTIR, dolayisiyla o ifade `created_seq DESC`'e yozlasir — tam olarak
+`newest` iddiasinin aradigi sira. **Yesil bir iddia, baska bir siralamayi
+olcuyordu.** (`widestSortInput`'un `Actual Rows`'u yanlis okumasiyla ayni
+sinif: dogru gorunen bir olcum, yanlis sey uzerinde.)
+
+Uc test dogru evlerine tasindi:
+
+1. **Dort sekme dort gorunumdur** — ve fall-through mutantini olduren sey SIRA
+   degil **SATIR SAYISI**: esitlik altinda iki sekme ayni SIRAYI paylasabilir,
+   ama ayni SAYIYI paylasamaz (`new` yedi gunluk pencere tasir, `trending`
+   tasimaz). `trending` = `SEEDED`, `new` = `SEEDED - OLD`. `PAGE_SIZE` ve
+   `TAB_KEYS` artik **ice aktariliyor**, yazilmiyor — ikisi de bir kez zaten
+   tasindi.
+2. **`oldest` ve yas suzgeci arama rotasinda** — cunku orada YASIYORLAR:
+   `oldest` ⌘K'nin bir pill'i ve `/api/search?sort=oldest`e gider; hicbir sekme
+   `ageDays: 1` kullanmaz, `SEARCH_AGE_LABELS` kullanir.
+3. **`?page=` OFFSET'e ulasir** — 30 satir 48'lik sayfaya sigdigi icin "ileri
+   tekrar etmemeli" BU fixture'da ulasilamaz ve iddia EDILMEZ; onun yerine
+   sonun otesindeki bir offset'in BOS olmasi olculur (yok sayilan bir `page`
+   otuz satiri yeniden cizerdi). Genislik muhafizinin (`/^\d{1,6}$/`) yedi
+   basamakta **birinci sayfaya** dusmesi de artik yazili.
+
+**VE YAZARKEN AYNI TUZAGIN UCUNCUSUNU YAKALADIM.** Yas suzgeci icin ilk
+yazdigim iddia `all.length - day.length === OLD` idi. `SEARCH_LIMIT` **20**:
+`age=all` 30 satir eslesir, `age=1` 24 — **ikisi de 20'ye kirpilir**, yani
+uzunluklar AYNIDIR. O iddia CALISAN bir suzgecte duserdi. Kirpmanin
+saklayamadigi sey HANGI satirlarin geldigidir, bu yuzden iddia uzunluk degil
+**uyelik**: ayni siralama, ayni ilk sayfa, eski satirlar pencereli olanda YOK.
+
 ### CI'in kapi kapi durumu
 
 `forge` **843/843** (41 suite, 37 dk), `fork` **29/29**, `slither`, `check`
 (db **406**, indexer **333**, shared 308, keeper 371, scripts 19, web 1311),
 `release-gate`, `abi-parity`, `chain-differential` — **yedisi de yesil**.
 Kalan tek kapi `e2e-local`.
+
+`e2e-local`'in ic durumu: `e2e:local` **7/7**, `e2e:audit` **41/41**,
+`e2e:db` H-6'dan sonra ilk kez 3. testin OTESINE geciyor.
 
 ### E2E'YI CI'A SORMAYI BIRAK — YERELDE KOSUYOR
 

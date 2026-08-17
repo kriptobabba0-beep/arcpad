@@ -1,5 +1,15 @@
 import { expect, type Page, test } from '@playwright/test'
 import type { Pool } from '../../../packages/db/src/pool'
+// THE PAGE SIZE AND THE TAB LIST ARE IMPORTED, NOT TYPED IN. Both are product
+// decisions that have already moved once (`PAGE_SIZE` 24 -> 48, five sorts ->
+// four tabs), and a copy of either in this file is a copy that can go stale
+// without failing -- which is precisely what happened to the tests below.
+// `explore/params` is safe to import here: its only dependency is a TYPE
+// (`SortKey`), which the transform erases. `search/params` is NOT imported for
+// exactly that reason -- it pulls `SEARCH_SORT_KEYS` at RUNTIME through the
+// `@/` alias, no e2e file resolves that alias today, and a module that fails to
+// load takes all fourteen tests with it.
+import { PAGE_SIZE, TAB_KEYS, type TabKey, tabHref } from '../../components/explore/params'
 import { openPool, OLD, reset, SEEDED, seed, type Seeded } from '../fixtures/db'
 
 /**
@@ -140,33 +150,134 @@ test('Explore draws the indexed list, and the empty-state branches are NOT taken
   await expect(page.getByText(/could not be read/i)).toHaveCount(0)
 })
 
-test('the five sorts are five different orders, not five different URLs', async ({ page }) => {
-  const orders = new Map<string, string[]>()
-  for (const sort of ['recentBuys', 'newest', 'oldest', 'marketCap', 'volume']) {
-    await page.goto(url(`/?sort=${sort}`))
+/** `Fixture 07` -> 7. The fixture's own creation index, and therefore its order. */
+function fixtureIndex(name: string): number {
+  return Number(/Fixture (\d+)/.exec(name)?.[1] ?? '-1')
+}
+
+/*
+ * THE NEXT THREE TESTS WERE REWRITTEN AGAINST THE URL THIS PAGE ACTUALLY HAS,
+ * AND THE STORY IS WORTH KEEPING.
+ *
+ * They drove `/?sort=oldest`, `/?age=1` and a `Next` link that writes `?after=`.
+ * NONE of those three exist on Explore. `parseExploreParams` reads `tab` and
+ * `page` and DERIVES the sort and the age window from `TABS` -- deliberately,
+ * so that one view has exactly one canonical address -- and the pager here is
+ * `NumberedPager`, which writes `?page=`.
+ *
+ * So every one of those URLs rendered the DEFAULT tab, and the suite reported
+ * "`oldest` must ascend by creation order": a TRUE observation of a list nobody
+ * had asked for.
+ *
+ * WHY IT SURVIVED: this suite is `serial` and fail-fast, and the first CI run
+ * ever to reach this line is the run that failed it. A suite can encode a
+ * deprecated contract indefinitely as long as something above it stops first.
+ *
+ * AND THE HALF THAT PASSED IS THE MORE USEFUL LESSON. The default tab is
+ * `trending`, which sorts by `search_key(volume_24h_wei, created_seq) DESC`;
+ * the fixture's volumes TIE, so that expression degenerates to `created_seq
+ * DESC` -- exactly the order the `newest` assertion was looking for. A green
+ * assertion measuring a different sort.
+ */
+
+/**
+ * THE ROW COUNT IS WHAT KILLS THE FALL-THROUGH MUTANT, NOT THE ORDER.
+ *
+ * Same reason as the coincidence above: under ties two tabs can share an
+ * ORDER, but they cannot share a COUNT, because `new` carries a seven-day
+ * window and `trending` carries none. The counts are derived from the fixture's
+ * own constants, so a fixture change moves the expectation with it.
+ */
+test('the four tabs are four views, not four URLs', async ({ page }) => {
+  expect(OLD, 'the fixture must hold rows outside the 7-day window').toBeGreaterThan(0)
+  expect(
+    SEEDED,
+    'these counts are whole lists, so the fixture must fit one page',
+  ).toBeLessThanOrEqual(PAGE_SIZE)
+
+  const orders = new Map<TabKey, string[]>()
+  for (const tab of TAB_KEYS) {
+    // `tabHref` is the product's own function: the default tab is `/`, not
+    // `/?tab=trending`, and hard-coding the latter would test a URL the
+    // FilterBar never emits.
+    await page.goto(url(tabHref(tab)))
     const names = await cardNames(page)
-    expect(names.length, `${sort} returned nothing`).toBeGreaterThan(0)
-    orders.set(sort, names)
+    expect(names.length, `${tab} returned nothing`).toBeGreaterThan(0)
+    orders.set(tab, names)
   }
 
   /*
-   * THE ASSERTION THAT MATTERS, AND WHY IT IS MONOTONICITY RATHER THAN
-   * "`oldest` IS `newest` REVERSED".
-   *
-   * The reversal claim was the first version and it is FALSE for a paged list:
-   * the fixture holds 30 rows and a page holds 24, so `newest` returns 29..06
-   * and `oldest` returns 00..23. Reversing the first gives 06..29, which is a
-   * different set — the test would have reported a defect in a correct pager.
-   *
-   * Monotonicity in the fixture's own index is the property that actually
-   * holds, at any page size, and it still kills the mutant that matters: a
-   * `sort` parameter falling through to the default would give five identical
-   * lists and one of these two directions would be violated.
+   * THE WINDOW BELONGS TO THE TAB. `trending` has none, `new` has seven days,
+   * and the fixture's last `OLD` rows are dated seven days AND some minutes
+   * back (`ageDays * 86_400_000 + i * 60_000`), so the exclusion is a margin
+   * rather than a boundary coin-flip.
    */
-  const index = (name: string): number => Number(/Fixture (\d+)/.exec(name)?.[1] ?? '-1')
-  const newest = orders.get('newest')!.map(index)
-  const oldest = orders.get('oldest')!.map(index)
-  expect(newest.every((n) => n >= 0) && oldest.every((n) => n >= 0)).toBe(true)
+  expect(orders.get('trending')!.length, '`trending` must filter no rows by age').toBe(SEEDED)
+  expect(orders.get('new')!.length, '`new` must exclude the rows older than 7 days').toBe(
+    SEEDED - OLD,
+  )
+
+  // AND SO DOES THE ORDER: `new` is `created_seq DESC`.
+  const fresh = orders.get('new')!.map(fixtureIndex)
+  expect(
+    fresh.every((n) => n >= 0),
+    'every card must carry a fixture name',
+  ).toBe(true)
+  for (let i = 1; i < fresh.length; i += 1) {
+    expect(fresh[i]!, '`new` must descend by creation order').toBeLessThan(fresh[i - 1]!)
+  }
+
+  /*
+   * `nearGraduation` IS THE ONE LIST THE FIXTURE CANNOT TIE WITH `new`, AND IT
+   * HOLDS EITHER WAY THE PROGRESS FALLS.
+   *
+   * `new`'s top is deterministic: `created_seq DESC` over the rows inside the
+   * window, so it is index `SEEDED - OLD - 1` = 23 -- and 23 % 3 = 2, so that
+   * row carries NO trades.
+   *
+   * If progress VARIES (trades land on every third token) the top of this list
+   * is therefore a DIFFERENT, traded row. If progress TIES the packed key
+   * degenerates to `created_seq DESC` and the top is the newest row overall,
+   * which is inside `OLD` and therefore excluded from `new`. Both branches
+   * differ from `new`'s top, so this witness does not rest on a fixture detail
+   * that could quietly change.
+   */
+  expect(
+    orders.get('nearGraduation')![0],
+    '`nearGraduation` must not open on the same row as `new`',
+  ).not.toBe(orders.get('new')![0])
+})
+
+/**
+ * `oldest`, `recentBuys` AND THE AGE FILTER LIVE ON SEARCH, NOT ON EXPLORE.
+ *
+ * `SORT_KEYS` holds five keys and the tabs expose four views; `oldest` is a
+ * pill in ⌘K (`SEARCH_SORT_LABELS`) and reaches `/api/search?sort=oldest`.
+ * `recentBuys` is absent from the pills on purpose -- it is the empty-`q`
+ * fallback, and an empty `q` draws no rows at all. The 24-hour window is the
+ * same story: no tab uses `ageDays: 1`, `SEARCH_AGE_LABELS` does.
+ *
+ * So the direction and the exclusion are asserted against the surface that
+ * HONOURS the parameter, over the real query.
+ */
+test('`oldest` and `newest` are opposite directions on the search route, and `age` excludes', async ({
+  page,
+}) => {
+  const read = async (query: string): Promise<number[]> => {
+    const response = await page.request.get(url(`/api/search?q=Fixture&${query}`))
+    expect(response.status(), `${query} must answer`).toBe(200)
+    const body = (await response.json()) as { rows: { name: string }[] }
+    expect(body.rows.length, `${query} returned nothing`).toBeGreaterThan(0)
+    const seq = body.rows.map((row) => row.name).map(fixtureIndex)
+    expect(
+      seq.every((n) => n >= 0),
+      'every row must carry a fixture name',
+    ).toBe(true)
+    return seq
+  }
+
+  const newest = await read('sort=newest')
+  const oldest = await read('sort=oldest')
 
   for (let i = 1; i < newest.length; i += 1) {
     expect(newest[i]!, '`newest` must descend by creation order').toBeLessThan(newest[i - 1]!)
@@ -174,82 +285,97 @@ test('the five sorts are five different orders, not five different URLs', async 
   for (let i = 1; i < oldest.length; i += 1) {
     expect(oldest[i]!, '`oldest` must ascend by creation order').toBeGreaterThan(oldest[i - 1]!)
   }
-  // And the two are genuinely different pages, not one order printed twice.
-  expect(newest[0], '`newest` and `oldest` must not start at the same row').not.toBe(oldest[0])
+  // A `sort` falling through to the default would print one direction twice.
+  expect(newest[0], '`newest` and `oldest` must not open on the same row').not.toBe(oldest[0])
+
+  /*
+   * THE EXCLUSION IS ASSERTED BY MEMBERSHIP, NOT BY LENGTH -- AND THAT IS THE
+   * WHOLE POINT OF THIS BLOCK.
+   *
+   * `SEARCH_LIMIT` is 20 (`components/search/params.ts`). `age=all` matches 30
+   * rows and `age=1` matches 24, so BOTH come back capped at 20 and the lengths
+   * are IDENTICAL: "the 24h list is shorter" is not merely weak here, it is
+   * FALSE. A length comparison would have failed on a WORKING filter -- the same
+   * mistake as the one this file just made, in the opposite direction.
+   *
+   * What the cap cannot hide is WHICH rows arrive. Same sort, same first page:
+   * the old rows are present without the window and absent with it. That holds
+   * at any `SEEDED`, any `OLD` and any page size, so the cap is named here for
+   * the reader but nothing below DEPENDS on its value -- if it ever shrank far
+   * enough to hide the old rows, the first assertion is what would say so.
+   */
+  const OLD_FROM = SEEDED - OLD
+  expect(OLD, 'the fixture must hold rows older than a day').toBeGreaterThan(0)
+
+  const all = await read('age=all&sort=newest')
+  expect(
+    all.some((n) => n >= OLD_FROM),
+    'without a window, `newest` must reach the fixture’s old rows',
+  ).toBe(true)
+
+  const day = await read('age=1&sort=newest')
+  expect(
+    day.some((n) => n >= OLD_FROM),
+    'with a 24h window, not one row older than a day may appear',
+  ).toBe(false)
 })
 
-test('the three age filters actually exclude, and the exclusion is the fixture’s own', async ({
+/**
+ * `?page=` REACHES THE QUERY'S OFFSET, AND AN OFFSET PAST THE END IS EMPTY.
+ *
+ * WHAT THIS FIXTURE CAN PROVE, AND WHAT IT CANNOT. `PAGE_SIZE` is 48 and the
+ * fixture holds 30, so there is no second page of ROWS to compare against the
+ * first: "forward must not repeat" is not reachable here and is NOT asserted.
+ * The keyset behaviour it used to assert did not vanish with the pager -- it is
+ * exercised on the token page's trade and holder tables below, which still use
+ * `KeysetPager`, and `pageNumbers` carries its own property test.
+ *
+ * An offset past the end is the honest witness for the wiring: page two of a
+ * one-page list must be EMPTY. An ignored `page` parameter would redraw all
+ * thirty rows, which is exactly the mutant this test exists for.
+ */
+test('`?page=` reaches the OFFSET, and its width guard falls back to page one', async ({
   page,
 }) => {
-  // PRECONDITION: the fixture contains rows OUTSIDE the 24h window. Without
-  // it, "the 24h list is shorter" could hold because the page broke.
-  expect(OLD, 'the fixture must contain rows older than a day').toBeGreaterThan(0)
+  expect(SEEDED, 'this test is written for a fixture that fits one page').toBeLessThanOrEqual(
+    PAGE_SIZE,
+  )
 
-  await page.goto(url('/?age=all'))
-  const all = await cardNames(page)
-  await page.goto(url('/?age=7'))
-  const week = await cardNames(page)
-  await page.goto(url('/?age=1'))
-  const day = await cardNames(page)
-
-  expect(day.length, 'a 24h filter must exclude the week-old rows').toBeLessThan(all.length)
-  expect(week.length).toBeGreaterThanOrEqual(day.length)
-})
-
-test('the keyset pager goes forward to NEW rows and back to the SAME ones', async ({ page }) => {
-  await page.goto(url('/?sort=newest'))
-  const first = await cardNames(page)
-  expect(first.length, 'page one must be full enough to have a second').toBeGreaterThan(0)
+  await page.goto(url('/'))
+  expect(await cardNames(page), 'page one must carry the whole fixture').toHaveLength(SEEDED)
 
   /*
-   * EACH NAVIGATION WAITS FOR ITS OWN CARD COUNT, NOT FOR `networkidle`.
-   *
-   * MEASURED. After a client-side navigation the PREVIOUS page's grid is still
-   * mounted while the next one streams in, so every "wait for the grid" check
-   * is satisfied by stale content and the comparison runs against the page the
-   * test just left. That produced a failure claiming "going back must land on
-   * the SAME rows" while showing page TWO's six rows -- a true observation of
-   * the wrong moment. `toHaveCount` auto-waits, and the counts are DERIVED
-   * (page size, and the fixture's remainder) rather than typed in.
+   * The empty branch is chosen by `ageDays`, not by the row count: the default
+   * tab filters no age, so this is the PRODUCT-empty text rather than the
+   * FILTER-empty one. Asserting the wrong one of the two would pass on a page
+   * that told the user their filter was too narrow.
    */
-  const remainder = SEEDED - first.length
-  expect(remainder, 'the fixture must spill onto a second page').toBeGreaterThan(0)
+  await page.goto(url('/?page=2'))
+  await expect(
+    page.getByText('No launches yet.'),
+    'an offset past the end must draw the empty state, not page one again',
+  ).toBeVisible()
+  await expect(grid(page).getByRole('link'), 'and it must draw no cards').toHaveCount(0)
+
+  // The clamp is reachable: 6 digits parse, then `MAX_PAGE` caps at 10,000.
+  await page.goto(url('/?page=999999'))
+  await expect(
+    page.getByText('No launches yet.'),
+    'a clamped page is still past the end',
+  ).toBeVisible()
 
   /*
-   * THE URL IS WAITED FOR BEFORE THE CONTENT, AND THAT ORDER IS THE FIX.
-   *
-   * Waiting only on the card count was FLAKY -- it passed one run and hung on
-   * the next with the previous page's rows still mounted. The two possible
-   * causes are different defects and a count assertion cannot tell them apart:
-   * the navigation never happened (a `<Link>` clicked before hydration), or it
-   * happened and rendered the wrong page. Waiting for the URL first splits
-   * them, so a failure names which one it was.
+   * AND THE WIDTH GUARD FAILS OPEN TO PAGE ONE, WHICH IS THE DOCUMENTED
+   * BEHAVIOUR RATHER THAN AN ACCIDENT: `/^\d{1,6}$/` rejects seven digits
+   * outright, so `?page=9999999` is not a clamped page — it is no page at all,
+   * and the fallback is 1. A user editing the URL by hand gets the list, not an
+   * error page.
    */
-  const next = page.getByRole('link', { name: 'Next', exact: true })
-  await expect(next, 'the fixture must be larger than one page').toHaveCount(1)
-  await next.click()
-  await page.waitForURL((u) => u.searchParams.has('after'), { timeout: 30_000 })
-  await expect(grid(page).getByRole('link')).toHaveCount(remainder, { timeout: 30_000 })
-  const second = await cardNames(page)
-
-  // FORWARD MUST NOT REPEAT. A cursor that failed to advance would show page
-  // one again and a naive "the second page rendered" check would pass.
-  expect(second.length).toBeGreaterThan(0)
+  await page.goto(url('/?page=9999999'))
   expect(
-    second.some((name) => first.includes(name)),
-    'the two pages must not overlap',
-  ).toBe(false)
-
-  // `Prev`, not `Previous` -- that is the control's accessible name, and this
-  // is exactly the kind of drift a locator built from an accessible name is
-  // supposed to catch. The disabled state renders a `<span aria-hidden>`
-  // rather than a link, so `toHaveCount(1)` also asserts the button is LIVE.
-  const previous = page.getByRole('link', { name: 'Prev', exact: true })
-  await expect(previous).toHaveCount(1)
-  await previous.click()
-  await page.waitForURL((u) => !u.searchParams.has('after'), { timeout: 30_000 })
-  await expect(grid(page).getByRole('link')).toHaveCount(first.length, { timeout: 30_000 })
-  expect(await cardNames(page), 'going back must land on the SAME rows').toEqual(first)
+    await cardNames(page),
+    'a page number too wide to parse must fall back to page one',
+  ).toHaveLength(SEEDED)
 })
 
 test('⌘K resolves a PASTED ADDRESS from the index, and refuses one that is not a launch', async ({

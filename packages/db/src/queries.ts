@@ -398,26 +398,44 @@ export const SORTS = {
   newest: { key: 'created_seq', desc: true },
   oldest: { key: 'created_seq', desc: false },
   /*
-   * IFADE DEGISMEDI, VIEW'IN SUTUN KAYNAGI DEGISTI (`017_sort_keys.sql`).
+   * BU SIRALAMA INDEKSTEN GELMIYOR, VE BU OLCULMUS BIR BORCTUR.
    *
-   * OLCULDU (CI, 3.000 token): bu siralama uc `Seq Scan` + 3.000 satirlik bir
-   * `Sort` uretiyordu ve `LIMIT 24` onu KURTARMIYORDU -- `Sort` once butun
-   * satirlari uretmek zorunda. Bedel `LiveRefresh` yuzunden gorunur kullanici
-   * basina 10 saniyede bir odeniyordu.
+   * OLCULDU (CI, 3.000 token -- `packages/db/test/scale.test.ts`): uc `Seq
+   * Scan`, iki 3.000 satirlik hash join, 3.000 satirlik bir `Sort`, ve ancak
+   * ondan sonra `LIMIT`. **`LIMIT` hicbir seyi KURTARMAZ**: `Sort` once butun
+   * satirlari uretmek zorunda. Bedel `LiveRefresh` yuzunden GORUNUR kullanici
+   * basina 10 saniyede bir odenir.
    *
-   * Sebep ifade DEGILDI: `market_cap_wei` view'de `curve_state`ten yeniden
-   * hesaplaniyordu, `created_seq` ise `launches`tan geliyordu -- TABLOLAR ARASI
-   * bir ifadeye hicbir indeks hizmet edemez. Migration ikisini de
-   * `token_stats`e cevirdi (market cap ZATEN orada saklaniyor ve ayni ifadeyle
-   * yaziliyordu), boylece `token_stats (search_key(market_cap_wei,
-   * created_seq) DESC)` ifade indeksi bu ifadeye TAM eslesir.
+   * SEBEP IFADE DEGIL, SUTUNUN KAYNAGI: `market_cap_wei` view'de
+   * `curve_state`ten yeniden hesaplanir, `created_seq` ise `launches`tan gelir
+   * -- TABLOLAR ARASI bir ifadeye hicbir indeks hizmet edemez. (`token_stats`
+   * uzerindeki `token_stats_mcap_idx` bu yuzden bugune kadar hic KULLANILMADI.)
+   *
+   * DUZELTMESI BIR PERFORMANS ISI DEGIL, BIR DOGRULUK ISI -- ve iki kez
+   * denendi, ikisi de testlerle yanlislandi:
+   *
+   *   1. View `ts.market_cap_wei`e cevrildi: `Sort` 2 -> 0, yani kazanc GERCEK.
+   *      Ama `packages/db`'nin `applyLaunch`i o sutunu yalnizca INSERT eder;
+   *      guncelleyen indexer'in `writeMarketCap`idir. Yani db katmaninda deger
+   *      BAYATLAR -- 9 test hakli olarak dustu.
+   *   2. Yalnizca `ts.created_seq`e cevrildi: `volume` icin `Sort` 0 oldu, ama
+   *      `e2e/db/explore-and-search.spec.ts` "`oldest` yaratilis sirasina gore
+   *      ARTMALI" diyerek dustu -- e2e fixture'i `ts.created_seq` ile
+   *      `l.created_seq`i AYNI yazmiyor.
+   *
+   * Iki denemede de ayni varsayim vardi: "`token_stats`in bir sutunu
+   * `launches`taki karsiliginin sadik bir aynasidir". DEGIL, ve bunu zorlayan
+   * hicbir sey yok. Acmanin sarti ikisinden biri: `market_cap_wei` bakimini
+   * `packages/db`'ye (`applyTrade`in CTE'sine, ayni islem, ayni muhafiz)
+   * tasimak, YA DA `ts.created_seq = l.created_seq` esitligini bir CHECK ile
+   * zorlamak ve fixture'i ona uydurmak.
    *
    * PAKETLEME BURADA GORUNUR KALIR ve bu `ordering.test.ts`in sart kostugu
    * sey: bag-bozma anahtarini sorguyu okuyan gormeli. Onceden paketlenmis bir
    * view sutunu (`sort_mcap_key`) denendi ve kapi -- hakli olarak -- reddetti.
    */
   marketCap: { key: 'search_key(market_cap_wei, created_seq)', desc: true },
-  /* Ayni gerekce, ayni migration. */
+  /* Ayni gerekce, ayni olculmus borc. */
   volume: { key: 'search_key(volume_24h_wei, created_seq)', desc: true },
   /**
    * GRADUATION'A EN YAKIN ONCE.
