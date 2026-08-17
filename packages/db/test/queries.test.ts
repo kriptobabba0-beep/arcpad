@@ -14,14 +14,16 @@ import {
   listTrades,
 } from '../src/queries'
 import { putDeployment } from '../src/deployment'
-import { noteAlive, noteHead, replayRange, setCursor } from '../src/apply'
+import { applyTrade, noteAlive, noteHead, replayRange, setCursor } from '../src/apply'
 import { pool, resetSchema } from './setup'
 import {
   ALICE,
   BOB,
+  BUY,
   CREATOR,
   CURVE,
   DEPLOYMENT,
+  hash32,
   hashFor,
   LAUNCH,
   PROFILE,
@@ -29,6 +31,7 @@ import {
   RANGE_TO,
   TOKEN,
 } from './fixtures'
+import { toSeq } from '../src/seq'
 
 /** Uretim profili: V = 4_292e18. Testnet ile TEK farki budur (tam 1000x). */
 const PRODUCTION_V = 4_292n * 10n ** 18n
@@ -105,23 +108,56 @@ describe('token_overview', () => {
     expect(o.marketCapWei / 1_000_000_000n).toBe(o.priceWeiPerTok)
   })
 
-  it('progress_ppm kenar degerleri', async () => {
+  /**
+   * ============================================================================
+   *  KENAR DEGERLER, ARTIK BAKIM YOLUNDAN SURULEREK
+   * ============================================================================
+   *
+   * BU TEST `curve_state`e ELLE YAZIYORDU ve `019_progress_ppm.sql` onu
+   * gecersiz kildi: `progress_ppm` artik `token_stats`te SAKLANIR, yani
+   * `curve_state`e yazmak onu OYNATMAZ (ayni gerekce market cap icin de gecerli,
+   * bkz. yukaridaki "BAKILAN" testi).
+   *
+   * FORMULUN KENDISI HALA OLCULUR VE IDDIA GUCLENDI: dort kenar degeri artik
+   * `applyTrade`ten geciyor, yani hem FORMUL hem de BAKIM yolu olculuyor. Eski
+   * hali yalnizca view'in ifadesini olcuyordu ve o ifade artik YOK.
+   *
+   * Korunan asil ozellik yukari yuvarlamadir: bir wei kalmis bir curve
+   * **%99,9999** gostermeli, %100 DEGIL -- asagi yuvarlamak, kapanmamis bir
+   * curve'u kapanmis gibi gostermek olurdu ve "graduation'a en yakin"
+   * listesinin en ustunde yanlis satiri verirdi.
+   *
+   * Her adim ARTAN bir `event_seq` tasir: `applyTrade`in muhafizi
+   * `event_seq > last_trade_seq`tir, yani ayni seq ile ikinci bir adim SESSIZCE
+   * hicbir sey yazmazdi ve test kendi kendini vakuma sokardi.
+   */
+  it('progress_ppm kenar degerleri -- `applyTrade` uzerinden', async () => {
     await seed()
     await replayRange(pool, launchWith(TESTNET_V), RANGE_TO, hashFor(RANGE_TO), hashFor(0n))
 
-    await setReserves({ real_token_reserves_tok: S })
-    expect((await overview()).progressPpm).toBe(0)
+    let nth = 0
+    const atRealReserves = async (real: bigint): Promise<number> => {
+      nth += 1
+      const block = 9_000_000n + BigInt(nth)
+      const inserted = await applyTrade(pool, {
+        ...BUY,
+        eventSeq: toSeq(block, 0),
+        blockNumber: block,
+        logIndex: 0,
+        txHash: hash32(0xbee000 + nth),
+        realTokenReservesTok: real,
+      })
+      // ON KOSUL: islem GERCEKTEN yazildi. Yazilmamis bir islem hicbir sey
+      // guncellemez ve asagidaki esitlik onceki adimin degeriyle gecerdi.
+      expect(inserted, 'islem yazilmali, yoksa iddia onceki adimi olcer').toBe(1)
+      return (await overview()).progressPpm
+    }
 
-    await setReserves({ real_token_reserves_tok: S / 2n })
-    expect((await overview()).progressPpm).toBe(500_000)
-
-    // BIR WEI kaldi: 999.999, 1.000.000 DEGIL. Asagi yuvarlamak curve
-    // kapanmadan %100 gostermek olurdu.
-    await setReserves({ real_token_reserves_tok: 1n })
-    expect((await overview()).progressPpm).toBe(999_999)
-
-    await setReserves({ real_token_reserves_tok: 0n })
-    expect((await overview()).progressPpm).toBe(1_000_000)
+    expect(await atRealReserves(S), 'hicbir sey satilmadi').toBe(0)
+    expect(await atRealReserves(S / 2n), 'yarisi satildi').toBe(500_000)
+    // BIR WEI kaldi: 999.999, 1.000.000 DEGIL.
+    expect(await atRealReserves(1n), 'bir wei kalmis bir curve KAPANMAMISTIR').toBe(999_999)
+    expect(await atRealReserves(0n), 'hepsi satildi').toBe(1_000_000)
   })
 
   /**

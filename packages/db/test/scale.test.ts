@@ -247,6 +247,7 @@ describe(`token_overview, ${TOKENS} token`, () => {
     'oldest',
     'volume',
     'marketCap',
+    'nearGraduation',
   ]
 
   it.each(EXPECTED_INDEXED)(
@@ -282,23 +283,34 @@ describe(`token_overview, ${TOKENS} token`, () => {
    * yalnizca kirildiginda gorunen bir sayi, ilk kirildiginda yukseltilir.
    */
   /**
-   * ACIK BORC OLCULUR, VARSAYILMAZ.
+   * ============ ACIK BORC KALMADI, VE KAPI BUNU SABITLER ============
    *
-   * `marketCap` ve `nearGraduation` bugun tabloyu siraliyor. Bu test o
-   * durumu SABITLER: biri duzeltilirse test kirilir ve `EXPECTED_INDEXED`e
-   * tasinmasi gerektigini SOYLER. Aksi halde bir duzeltme sessizce olculmemis
-   * kalirdi -- ve bu depo tam olarak o sinifi tekrar tekrar odedi.
+   * Burada bir "hala siraliyor" testi VARDI ve gorevini yapti: `marketCap` ile
+   * `nearGraduation`i olculmus borc olarak kirmizi tuttu, ve ikisi de
+   * duzeltilince kirilip "EXPECTED_INDEXED'e tasi" dedi. Artik listeleyecek borc
+   * olmadigi icin yerini DAHA GUCLU bir iddia aldi.
+   *
+   * NICIN BU IDDIA: `EXPECTED_INDEXED` elle yazilan bir listedir. Yarin `SORTS`a
+   * yeni bir siralama eklenirse, o siralama bu listeye eklenmedigi surece hicbir
+   * test ondan HABERDAR OLMAZ -- yani indekssiz bir siralama sessizce urune
+   * girer. Kapsamin kendisi olculursa bu mumkun degildir: yeni anahtar ya
+   * listeye girer (ve indeks iddiasi onun icin de kosar) ya da bu test duser.
+   *
+   * `SORTS`tan OKUNUR, sayi YAZILMAZ: "alti" yazmak, altinci eklendiginde
+   * guncellenmesi gereken ikinci bir yer olurdu.
    */
-  it.each(['nearGraduation'] as SortKey[])(
-    '%s HALA tabloyu siraliyor -- acik borc, ve olculuyor',
-    async (sort) => {
-      const widest = widestSortInput(await analyze(pageSql(sort)))
-      expect(
-        widest,
-        `"${sort}" artik siralamiyor. Bu IYI haber: EXPECTED_INDEXED'e tasi ve ` + 'bu satiri sil.',
-      ).toBeGreaterThan(PAGE)
-    },
-  )
+  it('HER `SORTS` anahtari indeks iddiasinin KAPSAMINDA -- kapsam olculur', () => {
+    const all = Object.keys(SORTS) as SortKey[]
+    const missing = all.filter((k) => !EXPECTED_INDEXED.includes(k))
+    expect(
+      missing,
+      `bu siralamalar hicbir iddianin kapsaminda degil: ${missing.join(', ')}. ` +
+        'Ya indeksten geldiklerini gosterip `EXPECTED_INDEXED`e ekle, ya da ' +
+        'olculmus borc olarak ayri bir iddia yaz -- kapsamsiz birakma.',
+    ).toEqual([])
+    // Ve liste UYDURULMUS anahtar tasimaz (yeniden adlandirma sonrasi artik).
+    expect(EXPECTED_INDEXED.filter((k) => !all.includes(k))).toEqual([])
+  })
 
   it('numarali sayfalayicinin `count(*)`i SIRALAMA yapmaz', async () => {
     const plan = await analyze('SELECT count(*)::text AS n FROM token_overview')

@@ -237,11 +237,20 @@ export async function applyLaunch(db: Queryable, e: LaunchEvent): Promise<number
         * cagrilmadan once) ve sutun NOT NULL. Boyle bir durumda launch YINE
         * yazilir; market cap'i ilk islem duzeltir.
         */
-       INSERT INTO token_stats (token, market_cap_wei, ath_market_cap_wei, created_seq, created_at)
+       INSERT INTO token_stats
+         (token, market_cap_wei, ath_market_cap_wei, progress_ppm, created_seq, created_at)
        SELECT
          i.token,
          COALESCE(div($12::numeric * d.total_supply_tok, $11::numeric), 0),
          COALESCE(div($12::numeric * d.total_supply_tok, $11::numeric), 0),
+         -- ACILIS ILERLEMESI. Normalde 0'dir (\`real = saleSupply\`) ama SIFIR
+         -- YAZILMAZ, HESAPLANIR: bir launch profili satisa arzin bir kismini
+         -- ayirmis olarak baslarsa sifir YANLIS olurdu, ve o yanlis ancak ilk
+         -- islemde duzelirdi.
+         COALESCE(
+           (1000000 - ceil($13::numeric * 1000000::numeric / d.sale_supply_tok))::integer,
+           0
+         ),
          i.created_seq,
          i.created_at
        FROM ins i LEFT JOIN deployment d ON true
@@ -337,7 +346,14 @@ export async function applyTrade(db: Queryable, e: TradeEvent): Promise<number> 
            THEN GREATEST(s.ath_market_cap_wei,
                          div(i.virtual_quote_reserves_wei * d.total_supply_tok,
                              i.virtual_token_reserves_tok))
-           ELSE s.ath_market_cap_wei END
+           ELSE s.ath_market_cap_wei END,
+         -- ILERLEME DE MUTLAK VE SIRA ILE KORUNMUS. Girdisi GERCEK token
+         -- rezervi: satisa arzin ne kadari egriden cikti.
+         progress_ppm = CASE
+           WHEN i.event_seq > coalesce(s.last_trade_seq, 0) AND d.sale_supply_tok IS NOT NULL
+           THEN (1000000 - ceil(i.real_token_reserves_tok * 1000000::numeric
+                                / d.sale_supply_tok))::integer
+           ELSE s.progress_ppm END
        -- \`LEFT JOIN ... ON true\`, \`CROSS JOIN\` DEGIL -- VE BU FARK ONEMLI.
        -- \`deployment\` EN FAZLA bir satirdir (\`CHECK (id = 1)\`) ama EN AZ bir
        -- satir DEGILDIR: \`putDeployment\` cagrilmadan once BOSTUR. \`CROSS JOIN\`
@@ -468,18 +484,46 @@ export async function applyPoolSwap(db: Queryable, e: PoolSwapEvent): Promise<nu
 }
 
 export async function applyCompleted(db: Queryable, e: CompletedEvent): Promise<number> {
-  // `NOT complete` muhafizi bunu idempotent yapar: ikinci oynatimda WHERE
-  // hicbir satir secmez. Bir defter tablosu yoktur cunku `Completed` ayri bir
-  // olgu tasimaz -- kendisi bir durum gecisidir.
-  const { rowCount } = await db.query(
-    `UPDATE curve_state SET
-       complete                = true,
-       completed_seq           = $2,
-       pool_seed_supply_tok    = $3,
-       real_quote_reserves_wei = $4,
-       real_token_reserves_tok = 0,
-       last_seq                = GREATEST(last_seq, $2)
-     WHERE token = $1 AND NOT complete`,
+  /*
+   * `NOT complete` muhafizi bunu idempotent yapar: ikinci oynatimda WHERE
+   * hicbir satir secmez. Bir defter tablosu yoktur cunku `Completed` ayri bir
+   * olgu tasimaz -- kendisi bir durum gecisidir.
+   *
+   * ILERLEME BURADA DA BAKILIR, VE ATLANMASI SESSIZ BIR KUSUR OLURDU.
+   *
+   * Bu ifade `real_token_reserves_tok = 0` yazar, yani ilerlemeyi %100'e tasiyan
+   * sey TAM OLARAK BURADIR. `019_progress_ppm.sql` ile `progress_ppm`
+   * `token_stats`te saklandigi icin, burada guncellenmezse tamamlanmis bir curve
+   * son islemin biraktigi yuzdede DONAR -- ve "graduation'a en yakin" listesi
+   * kendi en ust satirini kaybeder. (Market cap'te bu sorun YOK: bu ifade SANAL
+   * rezervlere dokunmaz.)
+   *
+   * `st` AYRI BIR CTE OLABILIR cunku `token_stats`e dokunan baska bir CTE YOK --
+   * Postgres'in "ayni satiri iki kez guncelleme" kisiti burada devreye girmez.
+   * `applyTrade`ta girer, ve orada bakim mevcut CTE'nin ICINDEDIR.
+   *
+   * Donen sayi hala GECISIN olup olmadigidir: `count(*) FROM cs`, yani ikinci
+   * oynatimda 0.
+   */
+  return affected(
+    db,
+    `WITH cs AS (
+       UPDATE curve_state SET
+         complete                = true,
+         completed_seq           = $2,
+         pool_seed_supply_tok    = $3,
+         real_quote_reserves_wei = $4,
+         real_token_reserves_tok = 0,
+         last_seq                = GREATEST(last_seq, $2)
+       WHERE token = $1 AND NOT complete
+       RETURNING token
+     ),
+     st AS (
+       UPDATE token_stats s SET progress_ppm = 1000000
+       FROM cs WHERE s.token = cs.token
+       RETURNING 1
+     )
+     SELECT count(*)::int AS n FROM cs`,
     [
       lower(e.token),
       e.eventSeq.toString(),
@@ -487,7 +531,6 @@ export async function applyCompleted(db: Queryable, e: CompletedEvent): Promise<
       e.realQuoteReservesWei.toString(),
     ],
   )
-  return rowCount ?? 0
 }
 
 /**

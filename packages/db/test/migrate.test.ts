@@ -38,12 +38,13 @@ const EXPECTED = [
   '016_buyback.sql',
   '017_sort_keys.sql',
   '018_market_cap_source.sql',
+  '019_progress_ppm.sql',
 ]
 
 describe('runMigrations', () => {
   beforeEach(dropSchema)
 
-  it('diskteki migration listesi tam olarak beklenen on sekiz dosyadir', async () => {
+  it('diskteki migration listesi tam olarak beklenen on dokuz dosyadir', async () => {
     // Sirali ve TAM. Bir testin gecici olarak yazdigi bozuk dosya temizlenmemis
     // olsaydi burasi kirmizi olurdu -- yani sizinti sessiz kalamaz.
     await expect(migrationFiles()).resolves.toEqual(EXPECTED)
@@ -262,7 +263,7 @@ describe('runMigrations', () => {
     )
     try {
       await expect(runMigrations(pool, await migrationFiles())).rejects.toThrow(
-        /003a_between\.tmp\.sql: uygulanmamis, ama uygulanmis olan 018_market_cap_source\.sql/,
+        /003a_between\.tmp\.sql: uygulanmamis, ama uygulanmis olan 019_progress_ppm\.sql/,
       )
     } finally {
       await unlink(join(MIGRATIONS_DIR, inserted))
@@ -273,12 +274,11 @@ describe('runMigrations', () => {
     // Kapinin fazla siki OLMADIGININ kaniti: normal evrim yolu -- `007_...` --
     // engellenmiyor.
     await runMigrations(pool)
-    // `019_`: son mesru dosya artik `018_market_cap_source.sql`, ve
-    // `018_appended` onun ONUNE siralanirdi ('a' < 'm') -- kapi onu DOGRU
-    // OLARAK araya ekleme sayardi. Dosya adi son migration'la birlikte
-    // ILERLEMEK zorunda; bu satirin kendisi, kapinin siraya gore calistiginin
-    // kanitidir. (Iki kez ilerledi: `017_` -> `018_` -> `019_`.)
-    const appended = '019_appended.tmp.sql'
+    // `020_`: son mesru dosya artik `019_progress_ppm.sql`, ve `019_appended`
+    // onun ONUNE siralanirdi ('a' < 'p') -- kapi onu DOGRU OLARAK araya ekleme
+    // sayardi. Dosya adi son migration'la birlikte ILERLEMEK zorunda; bu satirin
+    // kendisi, kapinin siraya gore calistiginin kanitidir.
+    const appended = '020_appended.tmp.sql'
     await writeFile(
       join(MIGRATIONS_DIR, appended),
       'CREATE TABLE appended_ok (x int PRIMARY KEY);\n',

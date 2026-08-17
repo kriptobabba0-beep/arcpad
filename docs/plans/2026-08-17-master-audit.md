@@ -302,7 +302,7 @@ Sunucuda olculdu (`/root/arcpad-buyback`, 3.000 token, **421/421**, 91 s):
 ```
 recentBuys       Sort=0        marketCap        Sort=2   <- D-14, urun karari
 newest           Sort=0        volume           Sort=0   <- GERI GETIRILDI
-oldest           Sort=0        nearGraduation   Sort=2   <- cozulebilir
+oldest           Sort=0        nearGraduation   Sort=2   <- H-9'da KAPANDI
 ```
 
 `volume` Explore'un **varsayilan** sekmesidir (`trending`), yani en cok okunan
@@ -556,12 +556,50 @@ o testler bugunku anlami kodluyordu, yani hakliydilar.)
 Karar verilene kadar `scale.test.ts` bunu **olculmus borc** olarak kirmizi
 tutar.
 
-`nearGraduation` ise **cozulebilir ve karar gerektirmez**: `progress_ppm` bir
-egri kavramidir, mezuniyette %100'de donar, `_ppm` zaten bildirilmis bir sonek.
-Tek yapisal kisit: bakim `applyTrade`'in **mevcut** `st` CTE'sine katilmali —
-Postgres tek ifadede ayni satiri iki kez guncellemeyi desteklemez ve ayri bir
-`mc AS (UPDATE token_stats ...)` ya hacim sayaclarini ya da yeni sutunu
-**sessizce** dusururdu.
+### H-9. `nearGraduation` DA KAPANDI -- VE MARKET CAP'TE OLMAYAN BIR TUZAK VARDI
+
+`019_progress_ppm.sql`. Olculdu: **`Sort=2 -> 0`**. Alti siralamanin **altisi**
+da artik indeksten geliyor.
+
+`progress_ppm` `token_stats`te saklanir ve **uc** yerde bakilir:
+
+| Yer | Ne yapar |
+|---|---|
+| `applyLaunch` | acilis degeri **hesaplanir**, sifir yazilmaz -- satisa arzin bir kismini ayirmis bir profil sifirla yanlis baslardi |
+| `applyTrade` | her egri islemi, **sira ile korunmus** |
+| `applyCompleted` | **%100** -- ve bu, market cap'te olmayan madde |
+
+**UCUNCUSUNUN ATLANMASI SESSIZ BIR KUSUR OLURDU.** `applyCompleted` sanal
+rezervlere dokunmaz (o yuzden market cap'i etkilemez) ama
+`real_token_reserves_tok = 0` yazar -- yani ilerlemeyi %100'e tasiyan yer tam
+olarak orasidir. Bakilmasaydi tamamlanmis bir curve **son islemin biraktigi
+yuzdede donar** ve "graduation'a en yakin" listesi kendi **en ust satirini**
+kaybederdi. (`applyPoolSwap` bilerek disarida: ilerleme bir **egri** kavramidir
+ve mezuniyette biter.)
+
+`applyCompleted` bu yuzden tek bir `UPDATE`ten bir CTE'ye cevrildi. Burada
+**ayri** bir CTE mesru: `token_stats`e dokunan baska bir CTE yok, yani
+Postgres'in "ayni satiri iki kez guncelleme" kisiti devreye girmez --
+`applyTrade`'ta girer, ve orada bakim mevcut CTE'nin **icindedir**.
+
+Indeks ifadesi **birebir** `SORTS.nearGraduation`in anahtaridir
+(`search_key(progress_ppm::numeric, created_seq)`, **acik** `::numeric` cast
+dahil); farkli yazilsa planlayici indeksi kullanmaz ve olcum sessizce eski
+haline donerdi.
+
+**Iki kapi dogru sekilde degisti:**
+
+* `queries.test.ts`'in kenar-deger testi (`0 / 500.000 / 999.999 / 1.000.000`)
+  `curve_state`'e elle yaziyordu; artik **`applyTrade` uzerinden** suruluyor,
+  yani hem formul hem **bakim yolu** olculuyor -- eski hali yalnizca view'in
+  artik var olmayan ifadesini olcuyordu. Korunan asil ozellik yukari
+  yuvarlamadir: bir wei kalmis bir curve **%99,9999** gostermeli, %100 degil.
+* `scale.test.ts`'in "hala siraliyor" borc testi gorevini bitirdi ve yerine
+  **daha guclu** bir iddia geldi: her `SORTS` anahtarinin indeks iddiasinin
+  **kapsaminda** oldugu. Yarin yeni bir siralama eklenirse ya kapsama girer ya
+  da kapi duser -- indekssiz bir siralama sessizce urune giremez.
+
+**Sunucuda olculdu:** `@arcpad/db` **423/423**, `@arcpad/indexer` **333/333**.
 
 ### C-2 (HSTS) — HEMEN ACILABILIR, KADEMELI
 

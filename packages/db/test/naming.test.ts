@@ -523,6 +523,7 @@ const EXPECTED_INVENTORY = [
   'public:r:token_stats.last_trade_at',
   'public:r:token_stats.last_trade_seq',
   'public:r:token_stats.market_cap_wei',
+  'public:r:token_stats.progress_ppm',
   'public:r:token_stats.token',
   'public:r:token_stats.trade_count',
   'public:r:token_stats.volume_24h_refreshed_at',
