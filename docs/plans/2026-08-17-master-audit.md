@@ -251,6 +251,32 @@ hic kosmadigi icin arayuzden SESSIZCE kopmus.
 
 ## F. KALAN IS
 
+### F-0. E2E AUDIT BACAGININ ACIGA CIKARDIGI DORT URUN BULGUSU
+
+`pnpm --filter @arcpad/web e2e:audit` ILK KEZ kosuldu (2026-08-17, yerel):
+**35 gecti, 6 dustu**. Dusenler seciciyle ilgili DEGIL — dordu de gercek urun
+bulgusu, ve hicbiri bu turda yapilan degisikliklerden kaynaklanmiyor.
+
+> **BENIM DEGISIKLIGIM SUCLU DEGIL, VE BU OLCULDU**: klavye testi 165.
+> satirda (`3% slippage preset must be reachable`) dustu; bu turda EKLENEN
+> iddia (`the Details disclosure must be reachable`) ondan ONCE gelir ve
+> GECTI. Yani acilir klavyeyle acilabiliyor, 3% dugmesine Tab ile
+> varilamiyor — ve bu, testin hic kosmamis olmasindan gizlenmis ONCEDEN VAR
+> OLAN bir durum.
+
+| # | Bulgu | Olculen deger | Not |
+|---|---|---|---|
+| **E-1** | **JS butcesi asildi.** Token rotasi **340,3 kB gz**, butce 300 kB (`348.433` vs `307.200` bayt). | %13,4 asim | `budget.spec.ts:76`. Tek bir rakam, ama tahminle degil **olcumle** kapatilmali: hangi parca buyuttu (grafik? yeni buyback paneli?) once `@next/bundle-analyzer` ile gorulmeli. |
+| **E-2** | **Renk kontrasti (serious).** `span[data-testid="slippage-auto-badge"]` uc goruntu genisliginde de (375 / 768 / 1440) axe'in esigini gecemiyor. | axe `color-contrast`, impact `serious` | TEK eleman, uc vaka. Muhtemelen tek satirlik bir renk degisikligi -- ama token sayfasinin a11y kapisini TEK BASINA kirmizi tutan sey bu. |
+| **E-3** | **Arama modali `role="dialog"` bildirmiyor.** `getByRole('dialog')` 15 sn bekleyip bulamadi. | — | Ya modal acilmiyor ya rolu yok. Ikincisiyse GERCEK bir a11y kusuru: ekran okuyucu bir modal oldugunu soylemez, ve odak tuzagi/Escape sozlesmesi de rolsuz anlamsizlasir. Once HANGISI oldugu belirlenmeli. |
+| **E-4** | **%3 slipaj on ayari Tab ile ULASILAMIYOR.** Tutar alanindan 30 Tab basimi icinde odak oraya hic gelmiyor. | `keyboard.spec.ts:165` | Testin kendi yorumu bu boslugu ADIYLA anlatiyor: "bir kontrolu locator ile bulup Enter'a basmak, handler'in calistigini kanitlar ve klavye kullanicisinin oraya VARABILDIGI hakkinda HICBIR SEY kanitlamaz." |
+
+**Sira onerisi:** E-2 (tek satir) → E-3 (once teshis) → E-4 → E-1 (olcum
+gerektirir). Dordu de `e2e:audit`in kendi kapilariyla dogrulanabilir ve o
+suite bu makinede ~2 dakikada kosuyor.
+
+### F-1. Diger
+
 1. **C-2 (HSTS)** — operator karari. Sertifika yasi bu makineden OLCULEMEDI:
    yerel Kaspersky TLS'i araya giriyor (okunan sertifika
    `CN=Kaspersky Anti-Virus Personal Root Certificate`) ve `openssl` kurulu
