@@ -312,6 +312,41 @@ Ve bu tur bir **is akisi kazanci** da getirdi: db suitini sunucuda kosturmak
 (415 -> 421 test, **92 saniye**) bir CI turunun yerini aliyor. Bu degisiklik
 gonderilmeden once orada dogrulandi.
 
+### H-8. SUIT ILERLEDIKCE IKI GERCEK URUN KUSURU DAHA CIKTI
+
+H-6'nin duzeltmesi suiti 3. testten 9. teste tasidi, ve orada bekleyen sey test
+kaymasi degil **urun kusuruydu**.
+
+**1. Token sayfasinin islem/tutucu sayfalayicisi OLU idi.**
+`<ActivityTabs>` sayfalari `<NumberedPager>`e cizdirir; o bilesen **`?page=N`
+yazar**. `app/token/[address]/page.tsx` ise **`?p=` okuyordu**. Sonuc: sayfalayici
+ciziliyor, baglantilar adresi degistiriyor, sunucu parametreyi bulamayip her
+zaman 1. sayfayi veriyor.
+
+> **25'ten fazla islemi ya da tutucusu olan HER token 25'te kilitliydi** — ve
+> hicbir hata gorunmuyordu, cunku tablo aynen yeniden ciziliyordu.
+
+`hrefFor` da hicbir zaman var olmayan bir parametreyi (`p`) siliyordu, yani
+sekme degistirmek sayfa numarasini **tasiyordu**. Bu, bu sayfanin **ikinci** ayni
+sinif kusuru (ilki grafik secicisiydi). Ad artik tek: `page`.
+
+**2. Iki tablo erisilebilir adini kaybetmisti.** Bolum
+`<TradesTable>`/`<HoldersTable>`den `<ActivityTabs>`e tasinirken `<caption>`lar
+dusmus. Token sayfasi **uc** tablo cizer (ikisi grafiklerin sr-only metin
+alternatifi), yani adsiz bir tablo ekran okuyucuda belirsiz ve seciciyle ayirt
+edilemez. Specin kendi basligi tam bunu yakalamayi vaat ediyordu.
+
+**Ucuncu bulgu, duzeltilmedi ama kayda gecti:** `CurveChart`in **gerceklesen
+katmani artik uretimde ulasilamaz**. Tek cagirani `<TokenPriceChart>` ve o da
+`trades` prop'unu gecmiyor. Yani bir zamanlar "prop gecilmiyor" olan kusur bugun
+**olu kod**, ve bilesen testleri prop'u kendileri verdigi icin hala yesil.
+Silmek bir urun karari.
+
+**HEPSININ ORTAK SEBEBI AYNI:** kapilar VARDI, ama suit `serial` ve kendisinden
+onceki bir test silinmis bir URL sozlesmesini surdugu icin o satirlara hic
+ULASMAMISTI. Bir suitin yesil olmasi, "suitin o satira kadar gelip durdugu"
+anlamina da gelebilir.
+
 ### CI'in kapi kapi durumu
 
 `forge` **843/843** (41 suite, 37 dk), `fork` **29/29**, `slither`, `check`
