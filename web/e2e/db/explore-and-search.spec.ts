@@ -786,13 +786,34 @@ test('the holders tab pages past 25, and no wallet is repeated across the tie', 
 test('a lagging indexer says so, on BOTH pages, and the trade panel says it is unaffected', async ({
   page,
 }) => {
-  const before = await pool!.query<{ n: string }>(
-    "SELECT count(*)::text AS n FROM sync_state WHERE id = 1 AND now() - updated_at > interval '30 seconds'",
-  )
-  expect(
-    Number(before.rows[0]!.n),
-    'PRECONDITION: the fixture must start FRESH, or this test proves nothing',
-  ).toBe(0)
+  /*
+   * ==========================================================================
+   *  THE PRECONDITION IS NOW ESTABLISHED, NOT ASSERTED -- IT WAS A TIME BOMB.
+   * ==========================================================================
+   *
+   * It used to ASSERT that `sync_state` was fresh (`now() - updated_at <= 30s`)
+   * and that assertion depended on WALL CLOCK: the row is stamped when the
+   * fixture is seeded, the threshold is 30 seconds, and this test is the
+   * thirteenth in a serial suite. So it only held if the whole suite reached
+   * this line within half a minute of seeding.
+   *
+   * MEASURED: it passed in CI (which got here in ~48s of test time on a warm
+   * runner) and FAILED locally at 1.5 minutes -- same code, same fixture, only
+   * slower. It would have started failing in CI too, on the day the suite grew
+   * or a runner ran cold, and the failure would have read as "the stale notice
+   * is broken" rather than "this test is a stopwatch".
+   *
+   * The fix makes freshness TRUE BY CONSTRUCTION and then proves the fresh
+   * branch, which is strictly stronger than the old count: a notice that is
+   * ALWAYS on would satisfy "the notice appeared" below, and only this absence
+   * check rules it out.
+   */
+  await pool!.query('UPDATE sync_state SET updated_at = now() WHERE id = 1')
+  await page.goto(url('/'))
+  await expect(
+    page.getByTestId('stale-notice'),
+    'a FRESH index must draw no notice -- otherwise "it appeared" below is vacuous',
+  ).toHaveCount(0)
 
   try {
     await pool!.query(
