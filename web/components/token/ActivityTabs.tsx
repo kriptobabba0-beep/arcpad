@@ -328,7 +328,22 @@ function HolderTable({
             return (
               <tr key={row.holder} className="border-t border-border">
                 <Td className="text-muted tabular-nums">
-                  {isCurve ? <span aria-label="not ranked">&ndash;</span> : index + 1}
+                  {/*
+                    TIRE DEKORATIF, ANLAM METINDE -- VE ONCESI YASAK BIR ARIA'YDI.
+                    Burada `<span aria-label="not ranked">` vardi: rolsuz bir
+                    `<span>`in ortuk rolu `generic`tir ve `aria-label` orada
+                    YASAKTIR (`aria-prohibited-attr`, serious). Nitelik sessizce
+                    yok sayilir, yani ekran okuyucu yalnizca bir tire duyardi.
+                    Bolunerek cozulur: tire gorsel, kelimeler sr-only.
+                  */}
+                  {isCurve ? (
+                    <>
+                      <span aria-hidden="true">&ndash;</span>
+                      <span className="sr-only">not ranked</span>
+                    </>
+                  ) : (
+                    index + 1
+                  )}
                 </Td>
                 <Td>
                   <span className="inline-flex items-center gap-2">

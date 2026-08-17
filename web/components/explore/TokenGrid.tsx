@@ -52,9 +52,27 @@ export function TokenGrid({
  * Kart izgarasiyla AYNI geometride iskelet. Farkli geometri = icerik gelince
  * ziplama, ve o ziplama tam olarak iskeletin onlemesi gereken sey.
  */
+/*
+ * `role="status"` ZORUNLU, VE EKSIKLIGI CIDDI BIR IHLALDI.
+ *
+ * Burada rolsuz bir `<div>` vardi ve uzerinde `aria-label` tasiyordu. Rolsuz bir
+ * `<div>`in ortuk rolu `generic`tir ve `aria-label` orada YASAKTIR -- axe bunu
+ * `aria-prohibited-attr` (serious) olarak bildirir. Yani iskelet, bir ekran
+ * okuyucuya adini VEREMIYORDU: nitelik sessizce yok sayilir.
+ *
+ * NEDEN GORUNMEDI: ihlal yalnizca axe taramasi iskelet HALA EKRANDAYKEN
+ * yakalarsa gorunur. Explore akisla gelir (`(explore)/loading.tsx` bir Suspense
+ * siniri acar), yani iskeletin ne kadar yasadigi kosuya baglidir. Ayni commit'te
+ * 375px'te YAKALANMADI, 768px'te YAKALANDI. Yani onceki "41/41" bir kanit degil
+ * bir SANSTI -- ve bu, bu deponun tekrar tekrar odedigi sinifin ta kendisi.
+ *
+ * `role="status"`: adlandirmaya izin verir ve dogru anlami tasir -- bu bir liste
+ * degil, "bir sey yukleniyor" diyen bir durum bolgesi. `aria-busy` ile birlikte
+ * hem adi hem durumu duyurulur.
+ */
 export function TokenGridSkeleton({ count = 10 }: { count?: number }): ReactNode {
   return (
-    <div className={GRID_CLASS} aria-busy="true" aria-label="Loading launches">
+    <div className={GRID_CLASS} role="status" aria-busy="true" aria-label="Loading launches">
       {Array.from({ length: count }, (_, index) => (
         <div
           key={index}
