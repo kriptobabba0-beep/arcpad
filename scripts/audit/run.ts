@@ -36,6 +36,7 @@ import { phaseGraduation } from './phase-graduation'
 import { phaseBuyback } from './phase-buyback'
 import { phasePool } from './phase-pool'
 import { phaseAdversarial } from './phase-adversarial'
+import { phaseStress } from './phase-stress'
 import { ARC_TESTNET_CHAIN_ID } from '../../packages/shared/src/chain'
 import {
   bondingCurveAbi,
@@ -143,6 +144,16 @@ async function main(): Promise<void> {
       const fresh = await freshLaunch(pub, w, tag, false)
       console.log(`  (taze egri ${fresh.curve})`)
       await phaseCurve(c, pub, w, fresh.token, fresh.curve)
+    } else if (phase === 'stress') {
+      /*
+       * TAZE BIR EGRI ZORUNLUDUR. Stres fazi her adimda planlayiciyi zincire
+       * karsi tutar; rezervleri onceki bir kosudan kalmis bir egride ilk adim
+       * dogru, dizi ise ANLAMSIZ olurdu -- birikimli sapma iddiasi ancak
+       * BILINEN bir baslangictan olculebilir.
+       */
+      const fresh = await freshLaunch(pub, w, tag, false)
+      console.log(`  (stres egrisi ${fresh.curve})`)
+      await phaseStress(c, pub, w, fresh.token, fresh.curve)
     } else if (phase === 'fees') {
       // Once bir islem yaparak ucret URET: bos bir escrow'da C1 "talep
       // edilecek ucret yok" der ve faz kendi on kosulunu saglamadigi icin

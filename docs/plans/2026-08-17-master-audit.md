@@ -114,15 +114,101 @@ ACAMAZ, `buybackTreasury`yi ikinci kez yazamaz.
 | **C-2** | Dusuk | Canli sitede **HSTS yok**. `http://` → `https://` 301 var (olculdu), ama ilk ciplak istek strip edilebilir. | ⚠️ ACIK — sertifika en az bir kez otomatik yenilendikten sonra ac; `nginx-arcpad.conf`taki gerekce gecerli. |
 | **C-5** | Bilgi | Addressbook'ta `buybackTreasury`/`buybackVault` yok. | ✅ **TASARIM GEREGI** — `setBuybackTreasury` BIR KEZ yazilir, yani fabrikanin `buybackTreasury()` gorunumu degistirilemez kaynaktir. Supurucu onu oradan okur; defterde ikinci bir kopya, zincirden sapabilecek bir kopya olurdu. |
 | **C-4** | Bilgi | `ArcpadLocker`ta toz: 6.23e18 token + 3.69e11 wei, supurme yolu yok. | ✅ KASITLI — bir `sweep` fonksiyonu "yakilmis pozisyon" garantisini delerdi. |
+| **C-11** | **YUKSEK (surec)** | **CI bu kodun HICBIRINI gormedi.** Son is akisi kosusu **2026-07-30**, Faz 0 PR'inda. O gunden beri **349 commit** birikti ve `contracts.yml`/`node.yml`/`slither.yml` yalnizca `push: [main]` ve `pull_request` ile tetikleniyor; `buyback-v2` icin acik bir PR YOK. Yani depo dort kapi (forge, slither, node, e2e) insa etti ve o kapilar bugunku kodun **sifirini** dogruladi. | ⚠️ **KULLANICI KARARI** — dali itmek/PR acmak disa donuk bir eylemdir, izinsiz yapilmadi. Bu turda kapilarin hepsi YERELDE kosuldu (bkz. §G). |
 
 ---
 
-## E. KALAN IS
+## E. STRES VE OLASILIK — FAZ H
 
-1. **Stres / olasilik** — canli zincirde: ardisik N alim/satim, ayni blokta
-   cakisan islemler, curve tavanina dayanma, supurme yarisi.
-2. **C-8'in havuz kolu canli kanit bekliyor** — bkz. §F.
-3. **C-2** — sertifika yasi olculdukten sonra karar.
+`scripts/audit/phase-stress.ts`. Faz B'den **farki** ve neden ikisi de gerekli:
+
+* **Faz B** SECILMIS islemleri planlayiciya karsi tutar. Iddiasi "bu islem
+  dogru hesaplaniyor" — degerli, ama TEK islem hakkinda.
+* **Faz H** RASTGELE bir DIZI kosar. Iddiasi "yuzlerce islemden sonra da
+  zincir ile model AYNI yerde duruyor" — yani **birikimli** hata. Her adimda
+  bir wei'lik yuvarlama sapmasi kirk adim sonra gorunur; tek islemlik hicbir
+  test onu goremez.
+
+Tutarlar **logaritmik** dagitilir (10⁻³ … 10⁻⁰·⁸ USDC): dogrusal bir dagilim
+neredeyse hep orta buyuklukte islem uretir ve yuvarlamanin GERCEKTEN yasadigi
+kucuk tutarlari hic ziyaret etmez. Tohum `ARC_STRESS_SEED` ile sabitlenir ve
+her kosuda BASILIR — yeniden uretilemeyen bir kirmizi, bir gozlem degil bir
+hikayedir.
+
+Her adimdan sonra **dort degismez** canli zincirde olculur:
+
+1. **Odeme gucu** — `balance(curve) >= realQuoteReserves` (`>=`, cunku Arc'ta
+   ucuncu taraf bakiyeyi kod calistirmadan sisirebilir).
+2. **Ucret defteri geri gitmez** — escrow'da borc yalnizca artar.
+3. **Yon** — alim quote'u artirir/token rezervini azaltir; satim tersi.
+4. **Sabit carpim kuculmez** — `k = vq·vt` yuvarlamayla BUYUYEBILIR (hep
+   protokol lehine) ama KUCULMESI egriden deger sizmasi demektir. Bu, tek
+   islemde gorunmeyecek kadar kucuk, kirk islemde gorunecek kadar birikimli
+   olan tam olarak o seydir.
+
+### Faz H'nin kendi urettigi iki yanlis kirmizi — ikisi de KOSUM hatasiydi
+
+| # | Belirti | Gercek sebep |
+|---|---|---|
+| 1 | `sellExactTokensIn` `0xfb8f41b2` ile dustu; viem selector'u COZEMEDI (BondingCurve ABI'sinde yok) | `ERC20InsufficientAllowance`. Egride satis `transferFrom` yapar; kosum izin vermiyordu. **Urun kusuru degil**, satis yolunun gercek on kosulu. Duzeltme: donguden ONCE tek ve sinirsiz izin (satis basina dar izin dongu ortasinda tukenir — bu depoda havuz supurmesinde bir kez olculdu). |
+| 2 | "planlayici 0 wei, zincir 179454853928888644" | `TradePlan.value` `msg.value`dir ve satimda **tanimi geregi sifirdir**. Net gelir `args[1]`dir (`slipDown(netOut, 0)` = tam `netOut`); `curveAmount` ise ucret ONCESI hasilat, o da yanlis alan. |
+
+Ikisi de bu deponun tekrar odedigi ayni sinifin ornegidir: **dogrulanan seyi
+dogrulayanin modeli kirik**. Ikisi de yorumda kayitli.
+
+### Sonuc (tohum `20260817`, 30 dongu, canli Arc)
+
+```
+=== TOPLAM: 31 gecti, 0 dustu, 0 atlandi (harcanan 0.173504866473840103 USDC) ===
+  H-ozet dizi boyunca SIFIR birikimli sapma -- 20 alim + 10 satim
+```
+
+**Otuz rastgele islemin otuzunda da planlayici ile zincir WEI'SI WEI'SINE
+ayni**, ve dort degismez her adimda tuttu. Tutarlar 0,001 USDC'den 0,156
+USDC'ye kadar bes buyukluk mertebesine yayildi; satimlar bakiyenin %10–%90'i
+arasindaydi.
+
+Bu, arayuz icin de bir ifadedir: `useTrade.ts` islemi `plan.args`tan
+KELIMESI KELIMESINE kurar (`web/components/token/useTrade.ts:149-156`), yani
+kullaniciya gosterilen sayi ile zincirin verdigi sayi ayni koddan gelir ve
+otuz adim boyunca ayrismadi.
+
+---
+
+## G. BU TURDA YERELDE KOSULAN KAPILAR
+
+CI bugunku kodu hic gormedigi icin (C-11) her kapi ELLE kosuldu ve sonucu
+buraya yazildi. "Kosulmadi" satirlari da burada — kosulmamis bir kapiyi
+kosulmus saymak, C-11'in kendisini tekrar etmek olurdu.
+
+| Kapi | Sonuc |
+|---|---|
+| `forge test` (fork disi) | **843 / 843**, 41 suite |
+| `make slither` (`--fail-medium`) | **cikis kodu 0** — 0 High, 0 Medium |
+| `@arcpad/shared` | **308 / 308** |
+| `@arcpad/web` vitest | **1311 / 1311** |
+| `@arcpad/web` typecheck | temiz |
+| `@arcpad/keeper` | **371 / 371** (16'si yeni) |
+| `@arcpad/keeper` typecheck | temiz |
+| Canli kampanya (Faz A–G) | 81 vaka, hepsi yesil (onceki tur) |
+| Canli Faz H (stres) | bkz. §E |
+| `@arcpad/db` (404) | ⏸ **KOSULMADI** — bu makinede Postgres yok; sunucuda kosar |
+| `@arcpad/indexer` (333) | ⏸ **KOSULMADI** — ayni sebep (11 dosya `DATABASE_URL` ister) |
+| Playwright e2e (local-chain / db / audit) | ⏸ **KOSULMADI** — yerel zincir + Postgres + tarayici ister |
+| `forge test test/fork/*` | ⏸ **KOSULMADI** — canli RPC'ye fork acar |
+
+---
+
+## F. KALAN IS
+
+1. **C-2 (HSTS)** — operator karari. Sertifika yasi bu makineden OLCULEMEDI:
+   yerel Kaspersky TLS'i araya giriyor (okunan sertifika
+   `CN=Kaspersky Anti-Virus Personal Root Certificate`) ve `openssl` kurulu
+   degil. Somut oneri: sunucuda `certbot certificates` ciktisindaki
+   `Expiry Date` en az bir kez OTOMATIK yenilenmisse (yani ilk duzenlemeden
+   >60 gun gecmisse), `nginx-arcpad.conf`taki `Strict-Transport-Security`
+   satirini `max-age=63072000; includeSubDomains` ile ac. Geri alinamaz bir
+   karardir; erken acmak riskli, gec acmak degil.
 
 ---
 
