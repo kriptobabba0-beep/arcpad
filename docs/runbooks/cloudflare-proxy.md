@@ -1,10 +1,9 @@
 # Cloudflare proxy'sini acmak — sirali, her adimi geri alinabilir
 
-> Durum: **FAZ 0 UYGULANDI VE DOGRULANDI (2026-08-17).** A kaydi hala
-> `DNS only`; sirada FAZ 1-2 var ve ikisi de Cloudflare panelinde, yani
-> depo sahibinin elinde.
->
-> Butun olcumler 2026-08-17'de CANLI sunucuda yapildi.
+> Durum: **FAZ 0–3 UYGULANDI VE DOGRULANDI (2026-08-17).** `A` kaydi
+> `Proxied`, origin guvenlik duvari Cloudflare aralıklarina kisildi, sertifika
+> yenilemesi o kisitin ARKASINDAN dogrulandi. Sirada FAZ 4 (HSTS, kademeli) ve
+> istege bagli FAZ 5 var. Olculmus kanit: §10.
 
 ## 0. Neden acmak istiyoruz
 
@@ -292,3 +291,82 @@ degistirmek, bir arizanin sahibini belirsiz kilar.
 5. **FAZ 3** (guvenlik duvari; zamanlanmis geri alma ile)
 6. **FAZ 4** (HSTS kademeli)
 7. **FAZ 5** (Origin CA — istege bagli)
+
+
+---
+
+## 10. UYGULAMA KANITI (2026-08-17)
+
+Her satir bir OLCUMDUR; "yapildi" yazan hicbir satir yok.
+
+### FAZ 1–2 — panel + proxy
+
+| Kontrol | Sonuc |
+|---|---|
+| Cloudflare yolda | `Server: cloudflare`, `CF-RAY … -AMS`, DNS → `172.67.165.230` |
+| **Gercek IP geri yukleniyor** | log'daki IP = istemcinin gercek IPv6'si, **birebir** |
+| HTML onbelleklenmiyor | `cf-cache-status: DYNAMIC` (iki istekte de), `Cache-Control: private, no-cache, no-store` korunmus |
+| Rocket Loader kapali | HTML'de **0** enjeksiyon (`/cdn-cgi/scripts`, `data-cf-settings` arandi) |
+| `certbot renew --dry-run` | "all simulated renewals succeeded" |
+
+**429 fırtinasi YOK.** Log'da 32 tane 429 vardi ve hepsi **cevirmeden ONCE**,
+**tek bir IP'den**: `/.env`, `/db_backup.sql`, `/.git/description`,
+`secret_token.rb` arayan bir kimlik bilgisi tarayicisi. Hız limiti onu
+amaclandigi gibi kesmis. O yollarin servis EDILMEDIGI ayrica dogrulandi —
+dordu de **404**.
+
+### FAZ 3 — guvenlik duvari
+
+Uygulama sirasi, ve her adimin gerekcesi:
+
+1. **Geri alma ONCE kuruldu.** `at` bu makinede **YOK**; `systemd-run
+   --on-active=600 --unit=arcpad-fw-revert --collect` kullanildi — gecici bir
+   timer, oturumdan BAGIMSIZ yasar. Betik yarida olse, baglanti kopsa ya da
+   kural yanlis olsa bile 10 dakikada 80/443 kosulsuz geri acilir.
+2. **22 Cloudflare kurali eklendi** (15 v4 + 7 v6), aralıklar **nginx'in kendi
+   dosyasindan** turetildi.
+3. **Sonra** genis `80/tcp` ve `443/tcp` kurallari kaldirildi. Bu sira kapali
+   bir pencere olusmamasini garanti eder.
+4. SSH (22) hic dokunulmadi.
+
+| Dogrulama | Sonuc |
+|---|---|
+| Cloudflare uzerinden site | **200** |
+| **Origin IP'ye DOGRUDAN** | **zaman asimi** (443 ve 80) — asil kazanc |
+| SSH | calisiyor, `22/tcp ALLOW Anywhere` |
+| `certbot renew --dry-run` **kisitin arkasindan** | "all simulated renewals succeeded" |
+
+Hepsi gectikten SONRA geri alma iptal edildi. Bir tanesi gecmeseydi hicbir sey
+yapilmayacakti — sistem kendini geri acardi.
+
+### FAZ 3b — SESSIZ BIR SURUKLENME KAPATILDI
+
+Uygulama sirasinda bulundu: gunluk `arcpad-cf-ranges.timer` **nginx'in**
+listesini guncelliyordu ama **ufw'yi guncellemiyordu**. Cloudflare yeni bir
+aralik ekledigi gun nginx onu ogrenir, ufw ogrenmez — ve o kenardan gelen
+kullanicilar **sert bir zaman asimi** alir. Cografi, kismi, ve rastgele gorunen
+bir ariza; kimse sebebini baglamaz.
+
+`arcpad-cf-ranges` artik ufw'yi de **ayni listeden uzlastiriyor**:
+
+* `$3` alani ayristirilir — v6 kurallari da ayni bicimde gorunur (olculdu:
+  `80,443/tcp  ALLOW  2c0f:f248::/32`), yani tek ayristirma ikisini kapsar;
+* **once EKLE, sonra SIL** — tersi, iki adim arasinda bir kenari kapatir;
+* **FAIL-OPEN MUHAFIZI**: uzlastirmadan sonra 10'dan az kural kalirsa kapi
+  ACIK birakilir ve journal'a yuksek sesle yazilir. Yanlis bir **kilit**, yanlis
+  bir **aciklıktan** pahalidir — siteyi tamamen erisilemez yapar, sebebi
+  gorunmez, ve kimse bakmiyorsa gunlerce surer. Yanlis aciklik ise bizi bir saat
+  oncesinin haline dondurur (CDN, ama kapi acik). Secim zorunluysa **servis
+  kazanir**.
+
+Kurulmadan once mantik **kuru** denendi: mevcut durumda eklenecek/silinecek
+hicbir aralik onermedi (22 = 22), yani no-op oldugu OLCULDU. Sonra gercekten
+kosturuldu: cikis 0, kural sayisi 22, fail-open tetiklenmedi, `nginx -t`
+gecerli. Aslin yedegi `/root/arcpad-cf-ranges.bak.<ts>`.
+
+### HALA ACIK OLAN
+
+**Origin IP kamuya aciktir ve DNS gecmisinde arsivlidir.** Guvenlik duvari onu
+artik erisilemez kiliyor, ama IP'nin kendisi sir degil. Bir saldirgan onu
+biliyor; yalnizca kullanamiyor. FAZ 5 (Origin CA) bunu bir adim ileri tasir ama
+zorunlu degil.

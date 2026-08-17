@@ -642,38 +642,43 @@ kendiliginden duzelir. Her adimda dogrulama: `nginx -t`, sonra
 SSH anahtari (`~/.ssh/arcpad_keeper_ed25519`) PAROLA KORUMALIDIR; parola bu
 oturumda yok. Karar verilmis ve adimlar yazili; kalan tek sey erisim.
 
-### C-12 (Cloudflare proxy) — PLANLANDI, SIRAYA KONDU
+### C-12 (Cloudflare proxy) — FAZ 0-3 UYGULANDI VE DOGRULANDI
 
-Proxy bugun KAPALI (`DNS only`) ve acilmasi bir guvenlik kazancidir (DDoS
-emilimi, origin IP'nin gizlenmesi, statik varliklarin kenardan servisi). Ama
-BUGUN acmak siteyi bozar, ve sebebi olculdu: nginx hiz sinirini
-`$binary_remote_addr` ile anahtarliyor ve konfigurasyonda `set_real_ip_from`
-**hicbir yerde yok**. Proxy acilirsa butun trafik tek kovaya duser ve gercek
-kullanicilar 429 yer -- "binlerce kullanici" hedefinin tam tersi.
+Tam kanit: **`docs/runbooks/cloudflare-proxy.md` §10**. Ozet:
 
-Iki risk ise OLCULEREK ELENDI:
+| Faz | Durum |
+|---|---|
+| 0 — sunucu hazirligi (real-IP) | ✅ uygulandi, sahtecilik testiyle olculdu |
+| 1 — panel ayarlari | ✅ sahibi yapti (Full strict, TLS 1.2, Rocket Loader KAPALI) |
+| 2 — `A` kaydi `Proxied` | ✅ bes kontrol gecti |
+| 3 — origin'i CF aralıklarina kapat | ✅ zamanlanmis geri alma ile uygulandi |
+| 4 — HSTS kademeli | ⬜ sirada |
+| 5 — Origin CA | ⬜ istege bagli |
 
-* **HTML onbellege alinmaz** -- canli olcum
-  `Cache-Control: private, no-cache, no-store`. Proxy'nin en korkutucu riski
-  (bir kullanicinin sayfasini baskasina servis etmek) yok.
-* **Yukleme 100 saniyeye takilmaz** -- `/api/metadata` iki pin cagrisi yapar,
-  her birinin tavani `AbortSignal.timeout(20_000)`, yani gercek tavan ~40s.
-  (Yine de nginx'in o rotadaki `120s`i Cloudflare'in sinirindan UZUN; 90s'ye
-  inecek ki hata bizim mesajimiz olsun, onun 524'u degil.)
+**En onemli iki olcum.** Gercek IP: proxy'den gecen bir istegin log'a dustugu IP,
+istemcinin gercek IPv6'sinin **birebir aynisi** — yani hız limitleri kullanici
+basina calisiyor, herkes tek kovaya dusmuyor. Origin: `--resolve` ile IP'ye
+**doğrudan** gitmek artik **zaman asimina** ugruyor; tarayicilar Cloudflare'i
+atlayamiyor. (Uygulamadan once log'da CensysInspect ve ham TLS sondalarinin
+dogrudan origin'e vurdugu GORULDU.)
 
-Tam sirali plan, her adimin geri alma yoluyla:
-**`docs/runbooks/cloudflare-proxy.md`**. Ozet sira: sunucu hazirligi (gorunur
-etkisi sifir) → panel ayarlari → proxy → guvenlik duvari (zamanlanmis otomatik
-geri alma ile) → HSTS kademeli → istege bagli Origin CA.
+**Ve `certbot renew --dry-run` iki kez kosuldu** — bir kez proxy acildiktan
+sonra, bir kez de guvenlik duvari kisildiktan sonra. Ikisi de gecti. Bu adim
+zorunluydu: ACME artik Cloudflare'den geciyor ve buradaki bir hata sertifikayi
+90 gun sonra **sessizce** oldururdu.
 
-Iki madde ayrica kayda deger:
+**FAZ 3b — uygulama sirasinda bulunan sessiz bir suruklenme kapatildi.** Gunluk
+timer nginx'in aralik listesini guncelliyordu ama **ufw'yi guncellemiyordu**:
+Cloudflare yeni bir aralik ekledigi gun nginx onu ogrenir, ufw ogrenmez, ve o
+kenardan gelen kullanicilar sert bir zaman asimi alir — cografi, kismi, rastgele
+gorunen bir ariza. `arcpad-cf-ranges` artik ufw'yi de ayni listeden uzlastiriyor,
+**once ekleyip sonra silerek** (tersi bir kenari kapatir) ve bir **fail-open
+muhafiziyla**: uzlastirmadan sonra 10'dan az kural kalirsa kapi acik birakilir ve
+journal'a yazilir. Yanlis bir kilit, yanlis bir aciklıktan pahalidir.
 
-* **Guvenlik duvari adimi OLMADAN proxy bir guvenlik onlemi DEGIL, yalnizca
-  bir CDN'dir.** Origin IP'si bugun aciktadir ve gecmis DNS kayitlarinda
-  arsivlenmistir; saldirgan Cloudflare'i atlayip dogrudan vurabilir.
-* **Rocket Loader ve Auto Minify KAPALI kalmali.** Ikisi de gonderdigimiz
-  JS/HTML'i yeniden yazar; CSP'miz `script-src 'self' 'unsafe-inline'` ve
-  cuzdan enjeksiyonu sayfa yasam dongusune baglidir.
+Mantik kurulmadan **kuru** denendi (22 = 22, sifir degisiklik onerdi), sonra
+gercekten kosturuldu: cikis 0, 22 kural, fail-open tetiklenmedi, `nginx -t`
+gecerli.
 
 ### C-1 (`/api/metadata`) — KABUL, VE NEDEN
 
