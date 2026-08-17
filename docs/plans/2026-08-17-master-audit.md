@@ -394,6 +394,39 @@ kendiliginden duzelir. Her adimda dogrulama: `nginx -t`, sonra
 SSH anahtari (`~/.ssh/arcpad_keeper_ed25519`) PAROLA KORUMALIDIR; parola bu
 oturumda yok. Karar verilmis ve adimlar yazili; kalan tek sey erisim.
 
+### C-12 (Cloudflare proxy) — PLANLANDI, SIRAYA KONDU
+
+Proxy bugun KAPALI (`DNS only`) ve acilmasi bir guvenlik kazancidir (DDoS
+emilimi, origin IP'nin gizlenmesi, statik varliklarin kenardan servisi). Ama
+BUGUN acmak siteyi bozar, ve sebebi olculdu: nginx hiz sinirini
+`$binary_remote_addr` ile anahtarliyor ve konfigurasyonda `set_real_ip_from`
+**hicbir yerde yok**. Proxy acilirsa butun trafik tek kovaya duser ve gercek
+kullanicilar 429 yer -- "binlerce kullanici" hedefinin tam tersi.
+
+Iki risk ise OLCULEREK ELENDI:
+
+* **HTML onbellege alinmaz** -- canli olcum
+  `Cache-Control: private, no-cache, no-store`. Proxy'nin en korkutucu riski
+  (bir kullanicinin sayfasini baskasina servis etmek) yok.
+* **Yukleme 100 saniyeye takilmaz** -- `/api/metadata` iki pin cagrisi yapar,
+  her birinin tavani `AbortSignal.timeout(20_000)`, yani gercek tavan ~40s.
+  (Yine de nginx'in o rotadaki `120s`i Cloudflare'in sinirindan UZUN; 90s'ye
+  inecek ki hata bizim mesajimiz olsun, onun 524'u degil.)
+
+Tam sirali plan, her adimin geri alma yoluyla:
+**`docs/runbooks/cloudflare-proxy.md`**. Ozet sira: sunucu hazirligi (gorunur
+etkisi sifir) → panel ayarlari → proxy → guvenlik duvari (zamanlanmis otomatik
+geri alma ile) → HSTS kademeli → istege bagli Origin CA.
+
+Iki madde ayrica kayda deger:
+
+* **Guvenlik duvari adimi OLMADAN proxy bir guvenlik onlemi DEGIL, yalnizca
+  bir CDN'dir.** Origin IP'si bugun aciktadir ve gecmis DNS kayitlarinda
+  arsivlenmistir; saldirgan Cloudflare'i atlayip dogrudan vurabilir.
+* **Rocket Loader ve Auto Minify KAPALI kalmali.** Ikisi de gonderdigimiz
+  JS/HTML'i yeniden yazar; CSP'miz `script-src 'self' 'unsafe-inline'` ve
+  cuzdan enjeksiyonu sayfa yasam dongusune baglidir.
+
 ### C-1 (`/api/metadata`) — KABUL, VE NEDEN
 
 Rota kimlik istemez, yani internetteki herkes bizim pinning kotamiza 5 MiB'a
