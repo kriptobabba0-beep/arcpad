@@ -107,15 +107,29 @@ chown root:arcpad /etc/arcpad/web.env && chmod 0640 /etc/arcpad/web.env
 echo "web.env yenilendi"
 
 say "5. INDEXER ENV'INDEKI FABRIKAYI GUNCELLE"
-# Indexer fabrikayi KENDI env'inden okur; web.env'i yenilemek onu etkilemez.
-BOOK_FACTORY="$(pnpm addressbook --env-only | grep -iE '^[A-Z_]*FACTORY[A-Z_]*=' | head -1 | cut -d= -f2 | tr -d '"')"
+# Indexer fabrikayi KENDI env'inden okur; web.env'i yenilemek onu ETKILEMEZ.
+#
+# ANAHTAR ADI `ARC_FACTORY_ADDRESS`, `FACTORY_ADDRESS` DEGIL -- VE BU FARK BU
+# BETIGI BIR KEZ SESSIZCE YARIM BIRAKTI (2026-08-17). Ilk surum
+# `s|^(FACTORY_ADDRESS=).*|` ile eslesme ariyordu; boyle bir satir yok, sed
+# HICBIR SEY degistirmedi ve `sed -i` yine 0 dondu. Sonuc: web yeni fabrikaya
+# gecti, indexer ESKISINDE kaldi, ve hicbir sey sikayet etmedi.
+#
+# DERS, VE ASAGIDAKI MUHAFIZIN SEBEBI: bir `sed -i`nin cikis kodu "degistirdim"
+# demez, "patlamadim" der. Degisikligi OLCMEK zorundasin.
+BOOK_FACTORY="$(pnpm addressbook --env-only | grep -E '^ARC_FACTORY_ADDRESS=' | head -1 | cut -d= -f2 | tr -d '"')"
 case "$BOOK_FACTORY" in
   0x????????????????????????????????????????) : ;;
   *) echo "defterden gecerli bir fabrika adresi okunamadi: '$BOOK_FACTORY'"; exit 1 ;;
 esac
+grep -qE '^ARC_FACTORY_ADDRESS=' /etc/arcpad/indexer.env \
+  || { echo "indexer.env icinde ARC_FACTORY_ADDRESS satiri YOK -- elle bak, duruyorum"; exit 1; }
 cp -a /etc/arcpad/indexer.env "/root/indexer.env.bak.$(date +%s)"
-sed -i -E "s|^(FACTORY_ADDRESS=).*|\1${BOOK_FACTORY}|" /etc/arcpad/indexer.env
-grep -E '^FACTORY_ADDRESS=' /etc/arcpad/indexer.env
+sed -i -E "s|^(ARC_FACTORY_ADDRESS=).*|\1${BOOK_FACTORY}|" /etc/arcpad/indexer.env
+# DEGISIKLIK OLCULUR, VARSAYILMAZ.
+grep -qE "^ARC_FACTORY_ADDRESS=${BOOK_FACTORY}$" /etc/arcpad/indexer.env \
+  || { echo "sed yazmadi -- indexer.env yedegi /root/indexer.env.bak.*, duruyorum"; exit 1; }
+grep -E '^ARC_FACTORY_ADDRESS=' /etc/arcpad/indexer.env
 
 say "6. WEB'I YENIDEN DERLE -- \`&&\` ZINCIRI, YENI SATIR DEGIL"
 # DUSEN BIR BUILD systemd'YE ULASMAMALI. Olculdu (bu makine, 2026-08-11): build
