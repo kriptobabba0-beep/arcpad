@@ -432,9 +432,7 @@ contract GraduationCycleLiveForkTest is Test {
         assertEq(vault.totalLocked(token), bought, "alinan token kasaya kilitlenmedi");
 
         // MUHASEBE: hazinede muhasebesiz wei kalmaz.
-        assertEq(
-            address(treasury).balance, treasury.pendingQuote(token), "hazinede muhasebesiz bakiye var"
-        );
+        assertEq(address(treasury).balance, treasury.pendingQuote(token), "hazinede muhasebesiz bakiye var");
 
         // FIYAT ETKISI SINIRI CANLI HAVUZDA DA BAGLAYICI.
         (uint160 sqrtAfter,,,) = pm.getSlot0(key.toId());
@@ -468,17 +466,12 @@ contract GraduationCycleLiveForkTest is Test {
 
         assertGt(treasury.cumulativeQuoteSpent(token), 0, "alim olmadi -- muafiyet olculemez");
         assertEq(
-            IEscrowView(liveEscrow).owed(DISPOSABLE_TREASURY),
-            protocolBefore,
-            "hazinenin alimi protokole ucret odedi"
+            IEscrowView(liveEscrow).owed(DISPOSABLE_TREASURY), protocolBefore, "hazinenin alimi protokole ucret odedi"
         );
     }
 
     /// @dev `_launchAndBuyOut`un buyback ACIK ikizi.
-    function _launchAndBuyOutWithBuyback(string memory name)
-        internal
-        returns (address token, address payable curve)
-    {
+    function _launchAndBuyOutWithBuyback(string memory name) internal returns (address token, address payable curve) {
         vm.prank(CREATOR);
         (address t, address c) = factory.launchWithBuyback(name, "ARC", "ipfs://x", true);
         token = t;

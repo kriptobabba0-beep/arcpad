@@ -150,7 +150,7 @@ test('the trade panel is fillable with the keyboard alone, slippage included', a
 test('the launch form is completable with the keyboard alone', async ({ page }) => {
   await page.goto('/create')
 
-  const name = page.getByLabel('Name')
+  const name = page.getByLabel('Name', { exact: true })
   await name.focus()
   await expectVisibleFocus(page, 'the name field')
   await page.keyboard.type('Keyboard Only')
@@ -161,7 +161,7 @@ test('the launch form is completable with the keyboard alone', async ({ page }) 
   const afterName = await focused(page)
   expect(afterName.tag, 'the field after Name must be the Symbol input').toBe('input')
   await page.keyboard.type('KBD')
-  await expect(page.getByLabel('Symbol')).toHaveValue('KBD')
+  await expect(page.getByLabel('Ticker', { exact: true })).toHaveValue('KBD')
 
   // The submit button is reachable without a mouse, and it says what it wants.
   let sawSubmit = false

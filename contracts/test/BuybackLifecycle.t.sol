@@ -181,9 +181,8 @@ contract BuybackLifecycleTest is Test {
         returns (address token, address payable curve)
     {
         vm.prank(creator);
-        (address tk, address cv) = buyback
-            ? factory.launchWithBuyback(name, "ARC", "ipfs://x", true)
-            : factory.launch(name, "ARC", "ipfs://x");
+        (address tk, address cv) =
+            buyback ? factory.launchWithBuyback(name, "ARC", "ipfs://x", true) : factory.launch(name, "ARC", "ipfs://x");
         return (tk, payable(cv));
     }
 

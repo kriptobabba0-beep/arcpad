@@ -76,8 +76,7 @@ contract BuybackTreasuryHandler is CommonBase, StdUtils {
         factory = new MockFactory();
         vault = new BuybackVestingVault(address(factory));
         poolManager = new MockPoolManager();
-        treasury =
-            new BuybackTreasury(address(factory), address(escrow), vault, IPoolManager(address(poolManager)));
+        treasury = new BuybackTreasury(address(factory), address(escrow), vault, IPoolManager(address(poolManager)));
         factory.set(PROTOCOL, address(treasury), HOOK, KEEPER);
 
         curveA = new MockCurve();

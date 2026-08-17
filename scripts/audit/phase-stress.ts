@@ -195,11 +195,13 @@ export async function phaseStress(
   c.phase('FAZ H -- stres ve olasilik (canli egri)')
 
   const me = w.account!.address
-  const seed = Number(process.env['ARC_STRESS_SEED'] ?? (Date.now() % 2147483647))
+  const seed = Number(process.env['ARC_STRESS_SEED'] ?? Date.now() % 2147483647)
   const next = rng(seed)
   const fees = await feeBps(pub, curve)
 
-  console.log(`  (tohum ${seed}, ${CYCLES} dongu, ucretler ${fees.protocolFeeBps}/${fees.creatorFeeBps})`)
+  console.log(
+    `  (tohum ${seed}, ${CYCLES} dongu, ucretler ${fees.protocolFeeBps}/${fees.creatorFeeBps})`,
+  )
 
   /*
    * ============ TEK VE SINIRSIZ IZIN, DONGUDEN ONCE ============
@@ -249,11 +251,17 @@ export async function phaseStress(
       const valueWei = BigInt(Math.floor(10 ** exp * 1e18))
       if (valueWei < 1_000_000n) continue
 
-      const plan = planBuyExactQuoteIn(before.state, {
-        virtualTokenReserves: before.state.virtualTokenReserves,
-        virtualQuoteReserves: before.state.virtualQuoteReserves,
-        saleSupply: before.state.realTokenReserves,
-      }, fees, valueWei, 0)
+      const plan = planBuyExactQuoteIn(
+        before.state,
+        {
+          virtualTokenReserves: before.state.virtualTokenReserves,
+          virtualQuoteReserves: before.state.virtualQuoteReserves,
+          saleSupply: before.state.realTokenReserves,
+        },
+        fees,
+        valueWei,
+        0,
+      )
 
       await send(pub, w, {
         address: curve,
@@ -272,8 +280,6 @@ export async function phaseStress(
         if (drift > maxDriftTok) maxDriftTok = drift
       }
       assertInvariants(before, after, true)
-
-      // eslint-disable-next-line no-await-in-loop
       await c.check(`H${i} alim ${valueWei} wei`, () => {
         must(got === plan.tokens, `planlayici ${plan.tokens}, zincir ${got} (sapma ${drift})`)
         return Promise.resolve(`${got} token, k korundu`)
@@ -286,11 +292,17 @@ export async function phaseStress(
 
       let plan
       try {
-        plan = planSellExactTokensIn(before.state, {
-          virtualTokenReserves: before.state.virtualTokenReserves,
-          virtualQuoteReserves: before.state.virtualQuoteReserves,
-          saleSupply: before.state.realTokenReserves,
-        }, fees, tokensIn, 0)
+        plan = planSellExactTokensIn(
+          before.state,
+          {
+            virtualTokenReserves: before.state.virtualTokenReserves,
+            virtualQuoteReserves: before.state.virtualQuoteReserves,
+            saleSupply: before.state.realTokenReserves,
+          },
+          fees,
+          tokensIn,
+          0,
+        )
       } catch (error) {
         // PLANLAYICI REDDETTI. Bu bir ariza degil bir CEVAPTIR ve zincirin de
         // reddetmesi beklenir; ayri bir vaka olarak kaydedilir.
@@ -332,8 +344,6 @@ export async function phaseStress(
         if (drift > maxDriftTok) maxDriftTok = drift
       }
       assertInvariants(before, after, false)
-
-      // eslint-disable-next-line no-await-in-loop
       await c.check(`H${i} satim ${tokensIn} token`, () => {
         must(
           after.tokenBalance === before.tokenBalance - tokensIn,

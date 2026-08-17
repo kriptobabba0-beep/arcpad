@@ -160,13 +160,16 @@ export async function phaseAdversarial(
   //
   // Aksi halde herhangi biri kasaya token kilitleyip vesting takvimini
   // (agirlikli baslangic) ILERI iterek gercek kilidi geciktirebilirdi.
-  await c.expectRevert('G8 yabanci kasaya kilit koyamaz NotBuybackTreasury', 'NotBuybackTreasury', () =>
-    send(pub, stranger, {
-      address: vault,
-      abi: VAULT_ABI,
-      functionName: 'lock',
-      args: [token, 1n, other],
-    }),
+  await c.expectRevert(
+    'G8 yabanci kasaya kilit koyamaz NotBuybackTreasury',
+    'NotBuybackTreasury',
+    () =>
+      send(pub, stranger, {
+        address: vault,
+        abi: VAULT_ABI,
+        functionName: 'lock',
+        args: [token, 1n, other],
+      }),
   )
 
   // ------------------------------------------------------------------
@@ -262,11 +265,7 @@ export async function phaseAdversarial(
       functionName: 'graduationTarget',
     })
     mustEqual(escrow.toLowerCase(), b.feeEscrow.toLowerCase(), 'escrow')
-    mustEqual(
-      protocolTreasury.toLowerCase(),
-      b.protocolTreasury.toLowerCase(),
-      'protocolTreasury',
-    )
+    mustEqual(protocolTreasury.toLowerCase(), b.protocolTreasury.toLowerCase(), 'protocolTreasury')
     mustEqual(governor.toLowerCase(), b.governor.toLowerCase(), 'governor')
     mustEqual(gradTarget.toLowerCase(), b.arcpadLocker.toLowerCase(), 'graduationTarget')
     return 'escrow/hazine/governor/hedef -- dordu de defterle ayni'

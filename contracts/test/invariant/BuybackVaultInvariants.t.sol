@@ -119,9 +119,7 @@ contract BuybackVaultInvariantsTest is Test {
         for (uint256 i = 0; i < 2; i++) {
             address t = tokens[i];
             assertEq(vault.totalLocked(t), handler.ghostLocked(t), "totalLocked ghost'tan ayrildi");
-            assertEq(
-                vault.totalReleased(t), handler.ghostReleased(t), "totalReleased ghost'tan ayrildi"
-            );
+            assertEq(vault.totalReleased(t), handler.ghostReleased(t), "totalReleased ghost'tan ayrildi");
         }
     }
 

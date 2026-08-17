@@ -44,6 +44,18 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # SUBMODULE'LAR ZORUNLU, VE BU BIR NODE ISI OLDUGU HALDE.
+          #
+          # `web/test/errors/reconcile.test.ts` hata imzalarini GERCEK
+          # kaynaktan uzlastirir ve o kaynagin bir parcasi OpenZeppelin'dir
+          # (`contracts/lib/openzeppelin-contracts/.../ERC20.sol`). Submodule
+          # olmadan bes vaka `ENOENT` ile duser -- ve ariza YALNIZCA CI'da
+          # gorunur, cunku her gelistirici checkout'unda o dizin zaten vardir.
+          #
+          # Testi "dosya yoksa atla" yapmak YANLIS cozumdur: atlayan bir
+          # uzlastirma testi yesil gorunur ve hicbir sey uzlastirmaz.
+          submodules: recursive
 
       - uses: actions/setup-node@v4
         with:
@@ -321,6 +333,9 @@ jobs:
           # `git show HEAD:<path>` decides whether an open cell has expired, so
           # the gate needs a real commit, not a synthetic merge with no history.
           fetch-depth: 2
+          # Bu kapi `check`in kostugu web suitini de kosar; ayni submodule
+          # bagimliligi (bkz. `check`in checkout'undaki gerekce).
+          submodules: recursive
 
       - uses: actions/setup-node@v4
         with:

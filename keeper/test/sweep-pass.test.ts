@@ -328,8 +328,6 @@ describe('runSweepPass', () => {
     const { chain } = fakeChain()
     const result = await run(chain, [TREASURY_TOKEN])
 
-    expect(result.sent).toEqual([
-      { token: TREASURY_TOKEN, hash: '0xfeed', outcome: OK_RECEIPT },
-    ])
+    expect(result.sent).toEqual([{ token: TREASURY_TOKEN, hash: '0xfeed', outcome: OK_RECEIPT }])
   })
 })

@@ -804,7 +804,9 @@ contract FixtureGenTest is Test {
         // -- dogru olarak -- kirmizi olur; burada ADIYLA yakalanir.
         assertTrue(_hasTopic(logs, keccak256("BuybackAccrued(address,address,uint256,uint256)")), "BuybackAccrued yok");
         assertTrue(_hasTopic(logs, keccak256("BuybackExecuted(address,uint256,uint256)")), "BuybackExecuted yok");
-        assertTrue(_hasTopic(logs, keccak256("BuybackLocked(address,uint256,uint256,uint256,uint256)")), "BuybackLocked yok");
+        assertTrue(
+            _hasTopic(logs, keccak256("BuybackLocked(address,uint256,uint256,uint256,uint256)")), "BuybackLocked yok"
+        );
         assertTrue(
             _hasTopic(logs, keccak256("VestingReleased(address,address,uint256,uint256)")), "VestingReleased yok"
         );
@@ -842,9 +844,7 @@ contract FixtureGenTest is Test {
         treasury.sweep(token, 0, block.timestamp + 600);
         Vm.Log[] memory logs = vm.getRecordedLogs();
 
-        assertTrue(
-            _hasTopic(logs, keccak256("BuybackSkipped(address,uint256,string)")), "BuybackSkipped yayilmadi"
-        );
+        assertTrue(_hasTopic(logs, keccak256("BuybackSkipped(address,uint256,string)")), "BuybackSkipped yayilmadi");
         _dump("buyback-skipped", logs);
     }
 

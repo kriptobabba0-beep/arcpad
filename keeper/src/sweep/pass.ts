@@ -60,7 +60,8 @@ export type SendOutcome = {
   readonly transactionHash: Hex
 }
 
-export type SimulateOutcome = { readonly ok: true } | { readonly ok: false; readonly detail: string }
+export type SimulateOutcome =
+  { readonly ok: true } | { readonly ok: false; readonly detail: string }
 
 /**
  * Gecisin zincirle konustugu TEK yuzey. Icinde KARAR YOKTUR -- `chainReader`
@@ -158,10 +159,7 @@ const DEFAULT_MAX_PER_PASS = 4
  * tukendiginde hep AYNI tokenlar one gecmez -- cagiran donduren kumeyi
  * kaydirabilir.
  */
-export function candidates(
-  known: Iterable<Address>,
-  fresh: Iterable<Address>,
-): readonly Address[] {
+export function candidates(known: Iterable<Address>, fresh: Iterable<Address>): readonly Address[] {
   const set = new Set<Address>()
   for (const a of known) set.add(a.toLowerCase() as Address)
   for (const a of fresh) set.add(a.toLowerCase() as Address)

@@ -182,7 +182,21 @@ test.describe('the eight-step chain scenario', () => {
     await page.goto('/create')
     await connectWallet(page)
 
-    const name = page.getByLabel('Name')
+    /*
+     * ============ `exact` ZORUNLU, VE ALANIN ADI `Ticker` ============
+     *
+     * `getByLabel` VARSAYILAN OLARAK ALT DIZE ESLESTIRIR ve formun ilk
+     * bolumu `aria-labelledby` ile "Name and ticker" adini tasir -- yani
+     * `getByLabel('Name')` IKI eleman bulur (alan ve bolum) ve Playwright
+     * strict mode ile duser. Bu, CI'in ilk kosusunda olculdu.
+     *
+     * Ikinci seciciyi ise UI kaydirdi: alanin etiketi artik `Symbol` degil
+     * `Ticker`. Eski secici HICBIR SEY bulmuyordu.
+     *
+     * Ikisi de ancak CI kosunca gorunurdu ve bu suite CI'da bugune kadar HIC
+     * kosmadi (son is akisi kosusu 2026-07-30, Faz 0).
+     */
+    const name = page.getByLabel('Name', { exact: true })
     await name.fill(NAME)
     // The counter counts BYTES, not code points. A rocket is one character and
     // four bytes; a UI that counted `.length` would print 6/32 here and let a
@@ -191,7 +205,7 @@ test.describe('the eight-step chain scenario', () => {
       new RegExp(`${NAME_BYTES}\\s*/\\s*32`),
     )
 
-    await page.getByLabel('Symbol').fill(SYMBOL)
+    await page.getByLabel('Ticker', { exact: true }).fill(SYMBOL)
 
     const before = (await chainClient().readContract({
       address: FACTORY,

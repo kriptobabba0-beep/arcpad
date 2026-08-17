@@ -140,7 +140,26 @@ contract GovernanceForkTest is Test {
         assertEq(f.VIRTUAL_TOKEN_RESERVES(), 1_073_000_000e18, "T");
         assertEq(f.VIRTUAL_QUOTE_RESERVES(), 4_292e15, "V -- 4292e15 is testnet; 4292e18 would be production");
         assertEq(f.SALE_SUPPLY(), 793_100_000e18, "S");
-        assertEq(f.graduationTarget(), address(0), "graduationTarget must still be unset");
+
+        /*
+         * HEDEF ARTIK AYARLI -- VE BU SATIR IKINCI KEZ ANLAM DEGISTIRDI.
+         *
+         * Ustteki NatSpec bu testin Task 6'da nasil "iki adres HALA BOS"tan
+         * "iki adres DOLU ve icindekiler plandaki degerler"e dondugunu
+         * anlatiyor. Ayni sey `graduationTarget` icin 2026-08-16'da oldu:
+         * `applyGraduationTarget()` penceresi icinde uygulandi ve ilk gercek
+         * havuz uretim fabrikasinda acildi.
+         *
+         * DEGISIKLIGIN MESRU TEK SEKLI IDDIAYI GUCLENDIRMEKTIR. `== address(0)`
+         * bir YOKLUK iddiasiydi ve yokluk bir kez doldugunda hicbir sey
+         * soylemez. Yerine gecen sey defterin locker'ina ESITLIKTIR:
+         * `applyGraduationTarget` IZINSIZDIR, yani hedefi uygulayan taraf
+         * governor OLMAK ZORUNDA DEGIL -- ama uygulanan degerin governor'in
+         * ONERDIGI locker olmasi zorunludur, ve yanlis bir adrese uygulanmis
+         * bir hedef ancak burada gorunur.
+         */
+        address locker = vm.parseJsonAddress(vm.readFile("deploy/addresses.5042002.json"), ".arcpadLocker");
+        assertEq(f.graduationTarget(), locker, "graduationTarget is not the locker this book names");
     }
 
     /// DEPLOY EDEN EOA, DEPLOY ETTIGI SEY UZERINDE HICBIR YETKI TUTMUYOR.

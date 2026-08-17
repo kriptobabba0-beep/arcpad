@@ -23,7 +23,7 @@
   "escrowInitcodeHash": "0xd99a4f910483ee8e40e4898fee5ef732462b55888427cd00c89697b0bff435e8",
   "factoryInitcodeHash": "0xf695d1fadff5a009f65be0dfe01b72f45f03820f5d87d8071ab950e4f5be50b4",
   "routerInitcodeHash": "0xda739885b44559ecc8e41b489ef8e1662cecce9300f3b64dc700ca47de20eb35",
-  "commit": "3f3e081e4557d82aefc645d41067c859b1f47e22",
-  "smokeToken": "0x5D29F2E569070D31f4AAf229BA7318b676Ee850e",
-  "smokeCurve": "0x398f2f3D546C6483E495A2726A15Ea465A559f6e"
+  "commit": "0a984194b3d82102c2d70f2383e141ede933f25e",
+  "smokeToken": "0xE721ef447247103934225cE1BF47AFBada101244",
+  "smokeCurve": "0x26DD9EAe03c029CBfEd58725d5eBFbE4C661f5ed"
 }

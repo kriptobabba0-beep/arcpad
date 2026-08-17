@@ -170,14 +170,27 @@ contract ArcV4ForkTest is Test {
         assertEq(f.SALE_SUPPLY(), 793_100_000e18, "S");
     }
 
-    /// TASK 8 HENUZ HEDEFI ISARET ETMEDI, VE BU TEST O SINIRIN BEKCISIDIR.
+    /// HEDEF ARTIK AYARLI, VE DEFTERIN LOCKER'INI GOSTERIYOR.
     ///
-    /// @dev Kirmizi olmasi "bir sey bozuldu" demek DEGIL, "graduation hedefi
-    ///      artik ayarli" demektir -- yani hook adresi ilk havuzla birlikte
-    ///      DONMUS olabilir ve yeniden madencilik ARTIK MUMKUN DEGILDIR. O an
-    ///      bu testin guncellenmesi INCELENMIS bir karardir.
-    function test_theGraduationTargetIsStillUnset() public view {
-        assertEq(IFactoryView(factory).graduationTarget(), address(0), "graduationTarget is set -- re-mining is gone");
+    /// @dev BU TEST 2026-08-17'DE TERSINE CEVRILDI, VE ONCEKI HALI KENDI
+    ///      DEGISME KOSULUNU YAZMISTI: "Kirmizi olmasi 'bir sey bozuldu' demek
+    ///      DEGIL, 'graduation hedefi artik ayarli' demektir... O an bu testin
+    ///      guncellenmesi INCELENMIS bir karardir." O an geldi:
+    ///      `applyGraduationTarget()` 2026-08-16'da penceresi icinde uygulandi
+    ///      ve ilk gercek havuz uretim fabrikasinda acildi. Hook adresi artik
+    ///      DONMUSTUR; yeniden madencilik mumkun degildir.
+    ///
+    /// @dev YENI IDDIA ESKISINDEN GUCLUDUR ve bu, cevirmenin tek mesru
+    ///      sekildir. `== address(0)` yalnizca "henuz kimse isaret etmedi"
+    ///      diyordu -- bir YOKLUK, ve yokluk bir kere doldugunda hicbir sey
+    ///      soylemez. Bunun yerine hedefin DEFTERDEKI locker OLDUGU iddia
+    ///      edilir: yanlis bir adrese uygulanmis bir hedef (ki
+    ///      `applyGraduationTarget` IZINSIZDIR, yani herkes cagirabilir)
+    ///      burada ADIYLA yakalanir.
+    function test_theGraduationTargetIsTheBooksLocker() public view {
+        address target = IFactoryView(factory).graduationTarget();
+        assertTrue(target != address(0), "graduationTarget is unset -- graduation is impossible");
+        assertEq(target, locker, "graduationTarget is not the locker this book names");
     }
 
     /// @dev `launchCount == 0` BURADA IDDIA EDILMEZ VE ILK YAZIMDA EDILIYORDU.

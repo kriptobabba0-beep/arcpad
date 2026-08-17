@@ -147,13 +147,11 @@ contract BuybackTreasuryInvariantsTest is Test {
         // yazmayan bir `accrue` burada kirmizi olur.
         if (handler.accruals() > 0) {
             assertGt(
-                handler.ghostAccrued(ts[0]) + handler.ghostAccrued(ts[1]),
-                0,
-                "tahakkuk sayildi ama ghost defteri bos"
+                handler.ghostAccrued(ts[0]) + handler.ghostAccrued(ts[1]), 0, "tahakkuk sayildi ama ghost defteri bos"
             );
             assertGt(
-                treasury.pendingQuote(ts[0]) + treasury.pendingQuote(ts[1])
-                    + handler.ghostRemoved(ts[0]) + handler.ghostRemoved(ts[1]),
+                treasury.pendingQuote(ts[0]) + treasury.pendingQuote(ts[1]) + handler.ghostRemoved(ts[0])
+                    + handler.ghostRemoved(ts[1]),
                 0,
                 "tahakkuk sayildi ama kontrat defteri hicbir sey gormedi"
             );
