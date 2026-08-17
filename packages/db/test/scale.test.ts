@@ -41,6 +41,11 @@ import { pool, resetSchema } from './setup'
 /** Planlayicinin indeksi seri taramaya tercih etmesi icin yeterli satir. */
 const TOKENS = 3_000
 
+/** Explore'un sayfa boyu. Bir `Sort` bundan fazlasini islerse maliyet TOKEN
+ *  SAYISIYLA buyur -- iddia tam olarak bu. `listTokens`in varsayilani 50, ama
+ *  Explore 24 ile cagirir; olculen sey urunun kullandigi sayidir. */
+const PAGE = 24
+
 const T0 = new Date('2026-08-17T00:00:00.000Z')
 
 function launch(i: number): LaunchEvent {
@@ -84,12 +89,52 @@ function pageSql(sort: SortKey): string {
   const where = sort === 'recentBuys' ? 'WHERE last_buy_seq IS NOT NULL' : ''
   return `SELECT *, (${key})::text AS cursor_key FROM token_overview
           ${where}
-          ORDER BY ${key} ${desc ? 'DESC' : 'ASC'} LIMIT 24`
+          ORDER BY ${key} ${desc ? 'DESC' : 'ASC'} LIMIT ${PAGE}`
 }
 
 async function planOf(sql: string): Promise<string> {
   const { rows } = await pool.query<{ 'QUERY PLAN': string }>(`EXPLAIN ${sql}`)
   return rows.map((r) => r['QUERY PLAN']).join('\n')
+}
+
+type PlanNode = {
+  'Node Type': string
+  'Actual Rows'?: number
+  Plans?: PlanNode[]
+}
+
+/**
+ * `EXPLAIN (ANALYZE, FORMAT JSON)` -- ve NICIN metin plani yetmiyor.
+ *
+ * Metin planinda "`Sort` var mi" diye bakmak KABA bir olcuttur: kucuk bir
+ * `Sort` (ornegin 24 satirlik bir birlestirme) zararsizdir, tabloyu bastan
+ * sona siralayan bir `Sort` ise her sayfa yuklenisinde token sayisi kadar is
+ * demektir. Ikisini ayiran sey dugumun ISLEDIGI SATIR SAYISIDIR.
+ *
+ * Bu, makineden ve kosucu hizindan BAGIMSIZ bir olcumdur -- bir sure butcesi
+ * degildir. CI kosucusu yavaslarsa sayi degismez.
+ */
+async function analyze(sql: string): Promise<PlanNode> {
+  const { rows } = await pool.query<{ 'QUERY PLAN': [{ Plan: PlanNode }] }>(
+    `EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`,
+  )
+  const plan = rows[0]?.['QUERY PLAN']?.[0]?.Plan
+  if (plan === undefined) throw new Error('EXPLAIN JSON plani okunamadi')
+  return plan
+}
+
+function walk(node: PlanNode, visit: (n: PlanNode) => void): void {
+  visit(node)
+  for (const child of node.Plans ?? []) walk(child, visit)
+}
+
+/** Planda EN COK satir isleyen `Sort` dugumu. Yoksa sifir. */
+function widestSort(plan: PlanNode): number {
+  let widest = 0
+  walk(plan, (node) => {
+    if (node['Node Type'] === 'Sort') widest = Math.max(widest, node['Actual Rows'] ?? 0)
+  })
+  return widest
 }
 
 describe(`token_overview, ${TOKENS} token`, () => {
@@ -150,14 +195,44 @@ describe(`token_overview, ${TOKENS} token`, () => {
    * maliyet TOKEN SAYISIYLA buyur ve her sayfa yuklenisinde odenir.
    */
   it.each(Object.keys(SORTS) as SortKey[])(
-    '%s siralamasi bir INDEKSTEN gelir (planda `Sort` yok)',
+    '%s: hicbir `Sort` dugumu bir SAYFADAN fazlasini islemez',
     async (sort) => {
-      const plan = await planOf(pageSql(sort))
+      const plan = await analyze(pageSql(sort))
+      const widest = widestSort(plan)
       expect(
-        plan,
-        `"${sort}" siralamasi tabloyu siraliyor -- ${TOKENS} satirda bu her sayfa ` +
-          `yuklenisinde odenir ve token sayisiyla buyur. Plan:\n${plan}`,
-      ).not.toMatch(/\bSort\b/)
+        widest,
+        `"${sort}" siralamasinda bir \`Sort\` dugumu ${widest} satir isledi (sayfa 24). ` +
+          `${TOKENS} satirda bu, LIMIT ne kadar kucuk olursa olsun HER sayfa ` +
+          'yuklenisinde odenir ve token sayisiyla buyur -- siralama anahtari bir ' +
+          'indeksten GELMIYOR demektir.',
+      ).toBeLessThanOrEqual(PAGE)
     },
   )
+
+  /**
+   * ============ EXPLORE'UN GERCEK ISTEK MALIYETI: SAYFA **VE** SAYIM ============
+   *
+   * `app/(explore)/page.tsx` `withTotal: true` gecer, cunku numarali sayfalayici
+   * kac sayfa cizecegini bilmek zorunda. Yani her istek IKI sorgu kosar ve
+   * ikincisi `count(*) FROM token_overview` -- BES TABLONUN JOIN'I uzerinde.
+   *
+   * Ve bu istek basina bir kez DEGIL: `LiveRefresh` gorunur her sekmede on
+   * saniyede bir `router.refresh()` cagirir, yani sayim gorunur kullanici
+   * basina 10 saniyede bir tekrarlanir. (Arka plan sekmeleri bedava --
+   * `document.hidden` iken zamanlayici durur.)
+   *
+   * Bu test sayimi YASAKLAMAZ: urun onu istiyor. Olctugu sey, sayimin
+   * SIRALAMA yapmadigi -- yani sayfa sorgusunun ustune ikinci bir tam siralama
+   * BINMEDIGI. Maliyetin kendisi (kac satir taranir) rapora yazilir, cunku
+   * yalnizca kirildiginda gorunen bir sayi, ilk kirildiginda yukseltilir.
+   */
+  it('numarali sayfalayicinin `count(*)`i SIRALAMA yapmaz', async () => {
+    const plan = await analyze('SELECT count(*)::text AS n FROM token_overview')
+    const widest = widestSort(plan)
+    console.warn(
+      `[scale] count(*) FROM token_overview @ ${TOKENS} satir: ` +
+        `kok dugum ${plan['Node Type']}, en genis Sort ${widest}`,
+    )
+    expect(widest, `sayim ${widest} satir siraladi -- bir \`count(*)\` siralama YAPMAMALI.`).toBe(0)
+  })
 })

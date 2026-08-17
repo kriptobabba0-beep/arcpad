@@ -36,12 +36,13 @@ const EXPECTED = [
   // dosyanin anmadigi bir tabloyla birakirdi.
   '015_drop_limit_orders.sql',
   '016_buyback.sql',
+  '017_sort_keys.sql',
 ]
 
 describe('runMigrations', () => {
   beforeEach(dropSchema)
 
-  it('diskteki migration listesi tam olarak beklenen on alti dosyadir', async () => {
+  it('diskteki migration listesi tam olarak beklenen on yedi dosyadir', async () => {
     // Sirali ve TAM. Bir testin gecici olarak yazdigi bozuk dosya temizlenmemis
     // olsaydi burasi kirmizi olurdu -- yani sizinti sessiz kalamaz.
     await expect(migrationFiles()).resolves.toEqual(EXPECTED)
