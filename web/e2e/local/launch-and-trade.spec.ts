@@ -165,7 +165,19 @@ async function withWallet(page: Page) {
 async function openBreakdown(page: Page): Promise<void> {
   const details = page.getByTestId('trade-details')
   if (await details.evaluate((el) => (el as HTMLDetailsElement).open)) return
-  await details.locator('summary').click()
+  /*
+   * `> summary`, `summary` DEGIL -- VE FARK OLCULDU.
+   *
+   * `QuoteBreakdown` da bir `<details>`tir ve `trade-details`in ICINDE durur,
+   * yani `locator('summary')` -- bir TORUN aramasi -- IKI eleman bulur ve
+   * Playwright strict mode ile duser. Cocuk birlesticisi disaridaki acilirin
+   * kendi ozetini secer.
+   *
+   * `.first()` de calisirdi ve YANLIS olurdu: DOM sirasina guvenmek, ic ice
+   * iki acilirdan hangisinin once geldigini gorunmez bir varsayim haline
+   * getirirdi.
+   */
+  await details.locator('> summary').click()
 }
 
 test.beforeAll(() => {

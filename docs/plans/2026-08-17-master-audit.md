@@ -220,6 +220,19 @@ yalnizca `toBeVisible()` cagrilarini silmek suiti yesile cevirir ve geriye
 aciliyor; klavye testinde ise TIKLAMAYLA degil **Tab + Enter** ile, boylece
 acilirin kendisinin klavyeyle ulasilabilir oldugu da olculuyor.
 
+Acilirin kendisi bir tur daha aldi: `QuoteBreakdown` DA bir `<details>`tir ve
+`trade-details`in ICINDE durur, yani `locator('summary')` -- bir TORUN
+aramasi -- iki eleman buluyordu. `> summary` (cocuk birlesticisi) kullanildi;
+`.first()` de calisirdi ama DOM sirasina guvenmek, ic ice iki acilirdan
+hangisinin once geldigini gorunmez bir varsayim yapardi.
+
+### CI'in kapi kapi durumu (3. kosu, 6fcae8e)
+
+`forge` **843/843** (41 suite, 37 dk), `fork`, `slither`, `check`
+(db **406**, indexer **333**, shared 308, keeper 371, scripts 19, web 1311),
+`release-gate`, `abi-parity`, `chain-differential` — **yedisi de yesil**.
+Kalan tek kapi `e2e-local`.
+
 ---
 
 ## F. KALAN IS

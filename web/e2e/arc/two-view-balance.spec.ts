@@ -471,7 +471,9 @@ test.describe('Arc testnet', () => {
      */
     const details = page.getByTestId('trade-details')
     if (!(await details.evaluate((el) => (el as HTMLDetailsElement).open))) {
-      await details.locator('summary').click()
+      // `> summary`: `QuoteBreakdown` da bir `<details>`tir ve bunun ICINDE
+      // durur, yani torun aramasi IKI ozet bulur ve strict mode ile duser.
+      await details.locator('> summary').click()
     }
     await expect(page.getByTestId('gas-reserve-note')).toBeVisible()
     await expect(page.getByTestId('gas-reserve-note')).toContainText(/leaves .* for gas/i)
