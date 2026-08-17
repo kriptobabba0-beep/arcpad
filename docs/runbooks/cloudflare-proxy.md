@@ -2,8 +2,9 @@
 
 > Durum: **FAZ 0–3 UYGULANDI VE DOGRULANDI (2026-08-17).** `A` kaydi
 > `Proxied`, origin guvenlik duvari Cloudflare aralıklarina kisildi, sertifika
-> yenilemesi o kisitin ARKASINDAN dogrulandi. Sirada FAZ 4 (HSTS, kademeli) ve
-> istege bagli FAZ 5 var. Olculmus kanit: §10.
+> yenilemesi o kisitin ARKASINDAN dogrulandi. **FAZ 4'un 1. kademesi de canli**
+> (`max-age=300`). Kalan: FAZ 4'un 2-3. kademeleri (zaman gerektirir) ve istege
+> bagli FAZ 5. Olculmus kanit: §10.
 
 ## 0. Neden acmak istiyoruz
 
@@ -370,3 +371,39 @@ gecerli. Aslin yedegi `/root/arcpad-cf-ranges.bak.<ts>`.
 artik erisilemez kiliyor, ama IP'nin kendisi sir degil. Bir saldirgan onu
 biliyor; yalnizca kullanamiyor. FAZ 5 (Origin CA) bunu bir adim ileri tasir ama
 zorunlu degil.
+
+### FAZ 4 — 1. KADEME CANLI (`max-age=300`)
+
+nginx'te HSTS **hic yapilandirilmamisti**: tek satir, YORUM icindeki bir sablon
+blogundaydi (`max-age=63072000; includeSubDomains`). Yani "eklenmis ama
+calismiyor" degil, hic yoktu.
+
+**IKI YERE eklendi, ve ikincisi bir nginx tuzagi:** `location /_next/static/`
+kendi `add_header`ini (Cache-Control) tasiyor, ve nginx bir blokta `add_header`
+varsa `server` seviyesindeki basliklarin tamamini **degistirir** — eklemez.
+Tekrar edilmeseydi statik varlik cevaplari HSTS tasimazdi ve fark yalnizca bir
+tarayici denetiminde gorunurdu. Olculdu:
+
+| Cevap | `Strict-Transport-Security` |
+|---|---|
+| `/` (HTML) | `max-age=300` ✅ |
+| `/_next/static/chunks/*.js` | `max-age=300` ✅ (ve `Cache-Control` korundu) |
+
+**HTTP (80) blogua EKLENMEDI**: HSTS bir HTTP cevabinda tarayici tarafindan yok
+sayilir; oraya koymak yanlis bir guven verirdi.
+
+**MERDIVENIN KALANI, VE HER KADEMENIN SARTI:**
+
+| `max-age` | Ne zaman | Neden |
+|---|---|---|
+| **300** (5 dk) | ✅ **simdi** | bir hata 5 dakikada kendini siler |
+| 86400 (1 gun) | 300 sorunsuz gozlendikten sonra | ilk kademe gercek trafikte dogrulanmis olur |
+| 63072000 (2 yil) | **yenileme BIR KEZ otomatik dondukten** sonra | bugun yalnizca `--dry-run` gecti; gercek bir yenileme henuz olmadi |
+
+`includeSubDomains` ve `preload` **bilerek yok**. Birincisi her alt alan adini
+HTTPS'e zorlar (gecerli sertifikasi olmayan bir alt alan adi o anda erisilemez
+olur — ve "yok sandigimiz" bir tanesi tam bu sinifin arizasidir). Ikincisi
+pratikte **geri alinamaz**: preload listesinden cikma talebi aylar surer ve eski
+tarayicilarda hic silinmez.
+
+Aslin yedegi: `/root/arcpad.nginx.bak.<ts>`. `nginx -t` reload'dan ONCE gecti.
