@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest'
 
-import { applyLaunch } from '../src/apply'
-import type { LaunchEvent } from '../src/apply'
+import { applyLaunch, applyTrade } from '../src/apply'
+import type { LaunchEvent, TradeEvent } from '../src/apply'
 import { putDeployment } from '../src/deployment'
 import { toHexBytes } from '../src/hex'
 import { SORTS, type SortKey } from '../src/queries'
@@ -74,6 +74,44 @@ function launch(i: number): LaunchEvent {
     virtualQuoteReservesWei: DEPLOYMENT.virtualQuoteReservesWei,
     realTokenReservesTok: DEPLOYMENT.saleSupplyTok,
     realQuoteReservesWei: 0n,
+  }
+}
+
+/**
+ * `launch(i)`nin curve'unde bir ALIM.
+ *
+ * MIKTAR `i` ILE DEGISIR, ve bu kasitli: sabit bir miktar butun satirlara ayni
+ * `volume_24h_wei` ve `market_cap_wei`i yazardi, yani `volume`/`marketCap`
+ * planlari TAMAMEN ESIT degerler uzerinde olculurdu. Esitlik altinda paketlenmis
+ * anahtar `created_seq`e yozlasir ve olcum, gercek bir dagilimda ne olacagini
+ * SOYLEMEZ. Modulo ile sinirli tutulur (`% 97`), yoksa 3.000. tokenin rezervi
+ * satis arzini asardi.
+ */
+function trade(i: number): TradeEvent {
+  const block = 60_000_000n + BigInt(i)
+  const step = BigInt((i % 97) + 1)
+  const tokens = step * 1_000_000n * 10n ** 18n
+  const quote = step * 28_000_000_000_000n
+  return {
+    kind: 'trade',
+    // logIndex 1: launch AYNI blokta logIndex 0'da, yani `event_seq` cakismaz.
+    eventSeq: toSeq(block, 1),
+    blockNumber: block,
+    logIndex: 1,
+    txHash: hash32(0x7ade0000 + i),
+    blockTime: new Date(T0.getTime() + i * 1_000 + 500),
+    token: addr(0x100000 + i),
+    curve: addr(0x200000 + i),
+    trader: addr(0xa11ce),
+    isBuy: true,
+    tokenAmountTok: tokens,
+    quoteAmountWei: quote,
+    protocolFeeWei: quote / 80n,
+    creatorFeeWei: quote / 250n,
+    virtualTokenReservesTok: DEPLOYMENT.virtualTokenReservesTok - tokens,
+    virtualQuoteReservesWei: DEPLOYMENT.virtualQuoteReservesWei + quote,
+    realTokenReservesTok: DEPLOYMENT.saleSupplyTok - tokens,
+    realQuoteReservesWei: quote,
   }
 }
 
@@ -169,6 +207,30 @@ describe(`token_overview, ${TOKENS} token`, () => {
     try {
       await client.query('BEGIN')
       for (let i = 0; i < TOKENS; i += 1) await applyLaunch(client, launch(i))
+      /*
+       * ============ ISLEMLER DE TOHUMLANIR, VE BU BIR DUZELTMEDIR ============
+       *
+       * ONCEKI HALI YALNIZCA LAUNCH TOHUMLUYORDU VE `recentBuys` OLCUMU BOSTU.
+       *
+       * O siralamanin sorgusu `WHERE last_buy_seq IS NOT NULL` suzer (bkz.
+       * `pageSql`). Hic islem yoksa `last_buy_seq` her satirda NULL'dur, yani
+       * sorgu SIFIR satir dondurur -- ve "hicbir `Sort` bir sayfadan fazlasini
+       * islemez" iddiasi BOS KUMEDE bedava gecer. Kapi aylarca dogru sebeple
+       * gecmis gibi gorundu.
+       *
+       * OLCUMLE YAKALANDI, okumayla degil: `pg_stat_user_indexes` uzerinde
+       * `token_stats_last_buy_idx` **sifir tarama** gosterdi -- oysa `recentBuys`
+       * `Sort=0` veriyordu. Bir siralamanin indeksten gelmesi ama indeksin hic
+       * taranmamasi celiskidir, ve celiskiyi coozen sey sorgunun bos donmesiydi.
+       *
+       * ALTIDA BIRINE islem verilir: 500 satirda `last_buy_seq` dolu olur --
+       * planlayicinin indeksi secmesini MESRU kilacak kadar cok, ve "hic islem
+       * gormemis token" dalini korumaya yetecek kadar az. Yan etkisi de
+       * iyilestirmedir: `volume_24h_wei` ve `market_cap_wei` artik DEGISIR, yani
+       * `volume`/`marketCap` planlari tamamen esit degerler uzerinde degil
+       * gercekci bir dagilim uzerinde olculur.
+       */
+      for (let i = 0; i < TOKENS; i += 6) await applyTrade(client, trade(i))
       await client.query('COMMIT')
     } catch (error) {
       await client.query('ROLLBACK')
@@ -180,6 +242,22 @@ describe(`token_overview, ${TOKENS} token`, () => {
     // on kosulu, bir suslemesi degil.
     await pool.query('ANALYZE')
   }, 300_000)
+
+  /**
+   * `recentBuys` OLCUMUNUN ON KOSULU: sorgu GERCEKTEN satir donduruyor.
+   *
+   * Bu iddia olmadan asagidaki `Sort` olcumu bos kumede gecerdi -- ve tam olarak
+   * oyle geciyordu. Bir olcumun on kosulu, olcumun kendisi kadar onemlidir.
+   */
+  it('`recentBuys` sorgusu BOS DONMUYOR -- yoksa plan olcumu vakumda gecer', async () => {
+    const { rows } = await pool.query<{ n: string }>(
+      'SELECT count(*)::text AS n FROM token_overview WHERE last_buy_seq IS NOT NULL',
+    )
+    const n = Number(rows[0]?.n)
+    expect(n, '`last_buy_seq` dolu satir olmali, yoksa `recentBuys` hicbir sey olcmez').toBe(
+      Math.ceil(TOKENS / 6),
+    )
+  })
 
   it('tohumlama gercekten uc bin satir uretti', async () => {
     const { rows } = await pool.query<{ n: string }>(
@@ -195,12 +273,30 @@ describe(`token_overview, ${TOKENS} token`, () => {
    * Bu yuzden yedi siralamanin plan sekli her kosuda basilir ve iddia ayri
    * durur.
    */
-  it('yedi siralamanin PLAN SEKLI kayda gecer', async () => {
+  /**
+   * ============ RAPOR INDEKS ADLARINI DA YAZAR, VE BU BIR DUZELTMEDIR ============
+   *
+   * Onceki hali yalnizca `Sort=N` basiyordu ve o sayi TEK BASINA yetersizdir:
+   * `Sort=0`, "siralama bir indeksten geldi" demek de olabilir, "sorgu SIFIR
+   * satir dondurdu" demek de. Ikisi ayni satiri uretir.
+   *
+   * VE IKINCISI GERCEKTEN OLDU: `recentBuys` hic islem tohumlanmadigi icin bos
+   * donuyordu ve `Sort=0` bedava geciyordu (bkz. `beforeAll`). Indeks adlarini
+   * basmak o durumu ANINDA ele verir -- bos bir sonucta hicbir indeks gorunmez.
+   *
+   * Yani bu satir bir susleme degil, olcumun KENDISININ kanitidir.
+   */
+  it('siralama planlari VE kullanilan indeksler kayda gecer', async () => {
     const lines: string[] = []
     for (const sort of Object.keys(SORTS) as SortKey[]) {
       const plan = await planOf(pageSql(sort))
       const sorts = (plan.match(/\bSort\b/g) ?? []).length
-      lines.push(`${sort.padEnd(16)} Sort=${sorts}`)
+      // `EXPLAIN`in metin cikti bicimi: "Index Scan using <ad> on <tablo>".
+      const used = [...plan.matchAll(/using ([a-z0-9_]+)/g)].map((m) => m[1])
+      const uniq = [...new Set(used)]
+      lines.push(
+        `${sort.padEnd(16)} Sort=${sorts}  indeks=${uniq.length === 0 ? '(YOK)' : uniq.join(',')}`,
+      )
     }
     console.warn(`[scale] token_overview siralama planlari:\n  ${lines.join('\n  ')}`)
     expect(lines).toHaveLength(Object.keys(SORTS).length)

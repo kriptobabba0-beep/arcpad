@@ -1,18 +1,41 @@
 name: contracts
 
+# ============================================================================
+#  POZITIF `paths:` FILTRESI -- VE BU BIR MALIYET DUZELTMESIDIR, USLUP DEGIL
+# ============================================================================
+#
+# OLCULDU (2026-08-17): hesabin 2.000 dakikalik aylik Actions kotasi TAMAMEN
+# tukendi ve butun isler runner alamaz hale geldi (`runner_name` bos, adim
+# sayisi 0, log'lar `BlobNotFound`). O gunun en uzun bes kosusu SIRASIYLA
+# 48,8 / 48,7 / 48,6 / 33 / 23 dakikaydi -- BESI DE bu is akisi.
+#
+# SEBEP: burada yalnizca `paths-ignore` vardi, yani "docs disinda HER SEY"
+# demekti. `web/` ya da `packages/db/` icinde tek satir degisince 48 dakikalik
+# Solidity test suiti bastan kosuyordu. O gun web ve db onlarca kez degisti.
+#
+# `forge` ve `fork` YALNIZCA Solidity'yi test eder; bir TypeScript degisikligi
+# onlarin sonucunu DEGISTIREMEZ. ABI ile TS baglayicilarinin uyumunu olcen sey
+# `abi-parity`dir ve o `node.yml`de durur -- yani bu filtre onu ETKILEMEZ.
+#
+# MARKDOWN `paths` ICINDE NEGATIF DESENLE ATILIR, `paths-ignore` ILE DEGIL:
+# GitHub ayni olay icin IKISINI BIRDEN kabul etmez, biri digerini dislar. Negatif
+# desen (`!`) `paths` icinde mesrudur ve SIRA baglayicidir -- sonraki desen
+# oncekini ezer, yani `!contracts/**/*.md` `contracts/**`ten SONRA gelmeli.
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - ".gitignore"
+    paths:
+      - "contracts/**"
+      - "!contracts/**/*.md"
+      - ".gitmodules"
+      - ".github/workflows/contracts.yml"
   pull_request:
     # GitHub Actions YAML anchor/alias desteklemez; liste bilerek tekrarlanir.
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-      - ".gitignore"
+    paths:
+      - "contracts/**"
+      - "!contracts/**/*.md"
+      - ".gitmodules"
+      - ".github/workflows/contracts.yml"
 
 # Ayni dal icin yeni bir kosu basladiginda eskisini iptal et. Ard arda iki
 # push yapildiginda birincinin kosusu sonuna kadar calisip Actions dakikasi
