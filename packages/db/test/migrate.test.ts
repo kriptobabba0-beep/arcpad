@@ -37,12 +37,13 @@ const EXPECTED = [
   '015_drop_limit_orders.sql',
   '016_buyback.sql',
   '017_sort_keys.sql',
+  '018_market_cap_source.sql',
 ]
 
 describe('runMigrations', () => {
   beforeEach(dropSchema)
 
-  it('diskteki migration listesi tam olarak beklenen on yedi dosyadir', async () => {
+  it('diskteki migration listesi tam olarak beklenen on sekiz dosyadir', async () => {
     // Sirali ve TAM. Bir testin gecici olarak yazdigi bozuk dosya temizlenmemis
     // olsaydi burasi kirmizi olurdu -- yani sizinti sessiz kalamaz.
     await expect(migrationFiles()).resolves.toEqual(EXPECTED)
@@ -261,7 +262,7 @@ describe('runMigrations', () => {
     )
     try {
       await expect(runMigrations(pool, await migrationFiles())).rejects.toThrow(
-        /003a_between\.tmp\.sql: uygulanmamis, ama uygulanmis olan 017_sort_keys\.sql/,
+        /003a_between\.tmp\.sql: uygulanmamis, ama uygulanmis olan 018_market_cap_source\.sql/,
       )
     } finally {
       await unlink(join(MIGRATIONS_DIR, inserted))
@@ -272,11 +273,12 @@ describe('runMigrations', () => {
     // Kapinin fazla siki OLMADIGININ kaniti: normal evrim yolu -- `007_...` --
     // engellenmiyor.
     await runMigrations(pool)
-    // `018_`: son mesru dosya artik `017_sort_keys.sql`, ve `017_appended`
-    // onun ONUNE siralanirdi ('a' < 's') -- kapi onu DOGRU OLARAK araya ekleme
-    // sayardi. Dosya adi son migration'la birlikte ILERLEMEK zorunda; bu
-    // satirin kendisi, kapinin siraya gore calistiginin kanitidir.
-    const appended = '018_appended.tmp.sql'
+    // `019_`: son mesru dosya artik `018_market_cap_source.sql`, ve
+    // `018_appended` onun ONUNE siralanirdi ('a' < 'm') -- kapi onu DOGRU
+    // OLARAK araya ekleme sayardi. Dosya adi son migration'la birlikte
+    // ILERLEMEK zorunda; bu satirin kendisi, kapinin siraya gore calistiginin
+    // kanitidir. (Iki kez ilerledi: `017_` -> `018_` -> `019_`.)
+    const appended = '019_appended.tmp.sql'
     await writeFile(
       join(MIGRATIONS_DIR, appended),
       'CREATE TABLE appended_ok (x int PRIMARY KEY);\n',
@@ -584,9 +586,23 @@ describe('runMigrations', () => {
   const nameHolding: [string, string, string][] = [
     // [alan, hazirlik, DEGISIM -- nesnenin adi degismeden]
     [
+      /*
+       * HEDEF `fee_events.amount_wei`, `token_stats.market_cap_wei` DEGIL -- VE
+       * SEBEBI OLCULDU.
+       *
+       * `018_market_cap_source.sql`ten sonra `token_overview`
+       * `ts.market_cap_wei`i DOGRUDAN seciyor, yani Postgres o sutunun tipini
+       * degistirmeyi REDDEDIYOR ("cannot alter type of a column used by a
+       * view"). Yani ALTER'in kendisi patliyordu ve test parmak izini HIC
+       * olcmuyordu -- gecmesi de dusmesi de yanlis sebeptendi.
+       *
+       * `fee_events.amount_wei` ayni seyi olcer (bir PARA sutununun olcegi) ve
+       * hicbir view ona bagli degil; bagimliligi olmayan sutunlar sorguyla
+       * bulundu, tahmin edilmedi.
+       */
       'col: atttypmod -- numeric(78,0) vs (78,6), yani PARANIN SEKLI',
       '',
-      'ALTER TABLE token_stats ALTER COLUMN market_cap_wei TYPE numeric(78,6)',
+      'ALTER TABLE fee_events ALTER COLUMN amount_wei TYPE numeric(78,6)',
     ],
     [
       'col: attidentity -- ALWAYS mi BY DEFAULT mi',

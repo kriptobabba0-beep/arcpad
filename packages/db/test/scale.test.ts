@@ -241,7 +241,13 @@ describe(`token_overview, ${TOKENS} token`, () => {
    * bir URL sozlesmesinden geliyordu. `test/sort-keys.test.ts` artik dayandigi
    * esitligi burada, arayuzden bagimsiz olarak zorluyor.
    */
-  const EXPECTED_INDEXED: readonly SortKey[] = ['recentBuys', 'newest', 'oldest', 'volume']
+  const EXPECTED_INDEXED: readonly SortKey[] = [
+    'recentBuys',
+    'newest',
+    'oldest',
+    'volume',
+    'marketCap',
+  ]
 
   it.each(EXPECTED_INDEXED)(
     '%s: hicbir `Sort` dugumu bir SAYFADAN fazlasini islemez',
@@ -283,7 +289,7 @@ describe(`token_overview, ${TOKENS} token`, () => {
    * tasinmasi gerektigini SOYLER. Aksi halde bir duzeltme sessizce olculmemis
    * kalirdi -- ve bu depo tam olarak o sinifi tekrar tekrar odedi.
    */
-  it.each(['marketCap', 'nearGraduation'] as SortKey[])(
+  it.each(['nearGraduation'] as SortKey[])(
     '%s HALA tabloyu siraliyor -- acik borc, ve olculuyor',
     async (sort) => {
       const widest = widestSortInput(await analyze(pageSql(sort)))

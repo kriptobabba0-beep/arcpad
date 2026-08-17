@@ -635,9 +635,19 @@ test('the trades table pages past 25, over the URL', async ({ page }) => {
   // `<ActivityTabs>` dropped the `<caption>` from both tables, so the page
   // shipped two unnamed tables among three. Restored to the same text
   // `<TradesTable>` used.
-  const bodyRows = page.getByRole('table', { name: /Recent trades/ }).getByRole('row')
-  // The header row is a row too; the page size plus it.
-  await expect(bodyRows).toHaveCount(TOKEN_PAGE_SIZE + 1)
+  const table = page.getByRole('table', { name: /Recent trades/ })
+  /*
+   * `tbody tr`, `getByRole('row')` DEGIL -- VE BU FARK BU TESTI BIR KEZ YANLIS
+   * KIRMIZI YAPTI.
+   *
+   * `<thead>`in basligi da BIR SATIRDIR ve HER sayfada aynidir, yani iki
+   * sayfanin metinlerini karsilastiran asagidaki iddia onu bir TEKRAR olarak
+   * bildirdi ("Time Trade Value FIX03 Price Trader"). Urun dogruydu; olcum
+   * baslikla veriyi ayirt etmiyordu. Govde satirlari sayilinca `+ 1` duzeltmesi
+   * de gereksizlesir, yani sayi artik dogrudan SAYFA BOYUDUR.
+   */
+  const bodyRows = table.locator('tbody tr')
+  await expect(bodyRows).toHaveCount(TOKEN_PAGE_SIZE)
   const firstPage = await bodyRows.allInnerTexts()
 
   /*
@@ -657,7 +667,7 @@ test('the trades table pages past 25, over the URL', async ({ page }) => {
   await page.waitForURL((u) => u.searchParams.get('page') === '2', { timeout: 30_000 })
 
   // PAGE TWO IS THE REMAINDER, AND IT IS DERIVED -- not typed in.
-  await expect(bodyRows).toHaveCount(total - TOKEN_PAGE_SIZE + 1, { timeout: 30_000 })
+  await expect(bodyRows).toHaveCount(total - TOKEN_PAGE_SIZE, { timeout: 30_000 })
   const secondPage = await bodyRows.allInnerTexts()
 
   /*

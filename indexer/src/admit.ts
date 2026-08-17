@@ -300,12 +300,22 @@ export async function admit(
     realQuoteReservesWei: 0n,
   })
 
-  // ACILIS MARKET CAP'I. `applyLaunch` `token_stats`i sifir market cap'le
-  // kurar ve o sifir bir SIRALAMA ANAHTARIDIR: Explore'un "market cap'e gore
-  // sirala" beslemesinde hic ticaret gormemis bir token en dibe duserdi, oysa
-  // acilis degeri (testnet profilinde tam 4 USDC) sifir DEGILDIR. Deger,
-  // Task 10'un `token_overview` view'iyle AYNI ifadeden gelir, yani saklanan
-  // anahtar ile gosterilen sayi ayrisamaz.
+  /*
+   * ACILIS MARKET CAP'I -- ARTIK BU CAGRI GEREKSIZ, VE BILEREK BIRAKILDI.
+   *
+   * `018_market_cap_source.sql` ile bakim `packages/db`ye tasindi: `applyLaunch`
+   * acilis market cap'ini KENDI yazar (eskiden 0 yaziyordu ve o sifir bir
+   * SIRALAMA ANAHTARIYDI -- "market cap'e gore sirala" beslemesinde hic ticaret
+   * gormemis bir token en dibe duserdi, oysa acilis degeri testnet profilinde
+   * tam 4 USDC'dir).
+   *
+   * Buradaki cagri ayni degeri, ayni ifadeyle, ayni muhafizla yazar
+   * (`admit.ts` `LaunchEvent`i `deployment`in acilis rezervleriyle kurar), yani
+   * IDEMPOTENT'tir ve bir ayrisma uretemez. Kaldirmak temizlik olur ama
+   * indexer'in kendi kapilariyla dogrulanacak AYRI bir turdur; iki yazicinin
+   * AYNI degeri yazmasi bir kusur degildir, tek yazicinin YANLIS deger yazmasi
+   * kusurdur.
+   */
   if (inserted > 0) {
     await writeMarketCap(
       db,

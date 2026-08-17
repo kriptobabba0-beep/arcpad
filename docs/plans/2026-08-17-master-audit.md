@@ -477,7 +477,54 @@ testler artik gercekligi yansitiyor.
 
 ### J-1. Diger
 
-### D-14 (`marketCap` siralamasi) — BIR URUN KARARI BEKLIYOR, PERFORMANS ISI DEGIL
+### D-14 (`marketCap` siralamasi) — KARAR VERILDI: CANLI HAVUZ FIYATI
+
+> **KARAR (sahibi, 2026-08-17):** mezun bir token'in market cap'i **havuzla
+> hareket eder**. Uygulandi: `018_market_cap_source.sql` + bakim
+> `packages/db/src/apply.ts`e tasindi. Olculdu: `marketCap Sort=2 -> 0`.
+
+Uygulamanin uc parcasi ve her birinin sebebi:
+
+| Yer | Ne yapar |
+|---|---|
+| `applyLaunch` | acilis market cap'ini yazar (eskiden **0** yaziyordu, ve o sifir bir siralama anahtariydi) |
+| `applyTrade` | egri islemlerinde mutlak yazar, **sira ile korunmus** |
+| `applyPoolSwap` | mezuniyetten sonra **havuz** fiyatindan yazar |
+
+**Ucu de MEVCUT CTE'nin icinde.** Postgres tek ifadede ayni satiri iki kez
+guncellemeyi desteklemez ve ikinci etki **sessizce** kaybolur — ayri bir
+`mc AS (UPDATE token_stats …)` ya hacim sayaclarini ya da market cap'i
+dusururdu, ve hangisini dusurdugu gorunmezdi.
+
+**`LEFT JOIN deployment d ON true`, `CROSS JOIN` DEGIL.** `deployment` en fazla
+bir satirdir (`CHECK (id = 1)`) ama **en az** bir satir degildir. `CROSS JOIN`
+bos bir `deployment`ta hic satir uretir — yani market cap eklemek, onunla ilgisi
+olmayan **hacim sayaclarini** sessizce durdururdu.
+
+**Saklanan deger bayatlayamaz, ve bu olculdu:** sanal rezervleri (market cap'in
+girdilerini) yazan yalnizca bu uc yoldur; `applyCompleted` yalnizca *gercek*
+rezervleri, `applyGraduated` yalnizca bayraklari yazar; ve reorg **onarilmaz** —
+`ReorgDetected` ingest'i durdurur, yani rezervleri islem olmadan geri saran bir
+yol yok.
+
+**Iki test dogru sekilde degisti, ve ikisi de zayiflatilmadi:**
+
+* `queries.test.ts`'in "view saklamaz" testi **ikiye bolundu**: hesaplanan
+  sutunlarin (`price_wei_per_tok`) hala aninda degistigi, ve bakilan sutunun
+  elle yazilan bir `curve_state`ten etkilenmedigi — ikincisi ayrica acilis
+  degerinin **sifir olmadigini** iddia eder, yoksa esitlik vakumda gecerdi.
+* `migrate.test.ts`'in `atttypmod` mutanti **hedef degistirdi**: view artik
+  `ts.market_cap_wei`e bagli oldugu icin Postgres o sutunun tipini degistirmeyi
+  reddediyor, yani `ALTER`in kendisi patliyor ve test parmak izini **hic
+  olcmuyordu**. Yeni hedef `fee_events.amount_wei` — ayni seyi olcer (bir para
+  sutununun olcegi) ve hicbir view'in bagli olmadigi sutunlar **sorguyla**
+  bulundu, tahmin edilmedi.
+
+Indexer'in `writeMarketCap` cagrilari **kaldi**: ayni degeri, ayni ifadeyle,
+ayni muhafizla yazarlar (idempotent). Kaldirmak temizlik olur ama indexer'in
+kendi kapilariyla dogrulanacak ayri bir tur.
+
+### D-14'UN ESKI HALI (karar oncesi gerekce, kayit icin)
 
 Explore'un uc para siralamasindan `volume` artik indeksten geliyor
 (`017_sort_keys.sql`, olculdu `Sort=2 -> 0`). `marketCap` gelmiyor, ve sebebi

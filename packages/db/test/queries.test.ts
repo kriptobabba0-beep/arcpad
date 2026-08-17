@@ -140,13 +140,60 @@ describe('token_overview', () => {
     expect((await overview()).graduationRaiseWei).toBe(12_161_433_369_060_378_706n)
   })
 
-  it('view saklamaz -- rezervler degisince degerler ANINDA degisir', async () => {
+  /**
+   * ============================================================================
+   *  VIEW HESAPLADIGI SEYI SAKLAMAZ -- AMA `market_cap_wei` ARTIK HESAPLANMIYOR
+   * ============================================================================
+   *
+   * BU TEST `marketCapWei` UZERINDEN YAZILMISTI VE `018_market_cap_source.sql`
+   * ONU GECERSIZ KILDI. Sebep bir gerileme degil, bir URUN KARARI (denetim
+   * defteri D-14): mezuniyetten sonra market cap HAVUZUN fiyatidir, ve egri
+   * mezuniyette DONAR -- yani egriden hesaplanan bir deger mezun bir token icin
+   * son eger fiyatta kalirdi. Sutun artik `token_stats`te BAKILIR
+   * (`applyLaunch` / `applyTrade` / `applyPoolSwap`), view onu okur.
+   *
+   * ONUN YERINE ISPAT IKIYE BOLUNDU, cunku iddia iki ayri sey soyluyor:
+   *
+   *   1. HESAPLANAN sutunlar GERCEKTEN hesaplanir -- `price_wei_per_tok` ve
+   *      `progress_ppm` `curve_state`e dokunulunca ANINDA degisir. Bu, "view bir
+   *      onbellek degildir" iddiasinin hala GECERLI olan yarisi.
+   *   2. BAKILAN sutun, bakilmayan bir yoldan degismez -- `curve_state`e elle
+   *      yazmak market cap'i OYNATMAZ. Bu bir kusur DEGIL, saklanan bir sutunun
+   *      tanimi; ve bayatlayamamasinin sebebi YAPISAL:
+   *
+   *        * sanal rezervleri (market cap'in girdilerini) yazan YALNIZCA
+   *          `applyLaunch`, `applyTrade` ve `applyPoolSwap`tir -- ucu de ayni
+   *          ifadeyle sutunu bakar;
+   *        * `applyCompleted` yalnizca GERCEK rezervleri, `applyGraduated`
+   *          yalnizca bayraklari yazar;
+   *        * reorg ONARILMAZ -- `ReorgDetected` ingest'i DURDURUR, yani
+   *          rezervleri islem olmadan geri saran bir yol yok.
+   *
+   *      Bu maddeler olculdu, varsayilmadi.
+   */
+  it('HESAPLANAN sutunlar ANINDA degisir -- view bir onbellek degil', async () => {
     await seed()
     await replayRange(pool, launchWith(TESTNET_V), RANGE_TO, hashFor(RANGE_TO), hashFor(0n))
     const before = await overview()
     await setReserves({ virtual_quote_reserves_wei: TESTNET_V * 2n })
     const after = await overview()
-    expect(after.marketCapWei).toBe(before.marketCapWei * 2n)
+    // Fiyat = div(Vq * 1e18, Vt). Vq ikiye katlandi.
+    expect(after.priceWeiPerTok).toBe(before.priceWeiPerTok * 2n)
+  })
+
+  it('BAKILAN `market_cap_wei` elle yazilan bir `curve_state`ten ETKILENMEZ', async () => {
+    await seed()
+    await replayRange(pool, launchWith(TESTNET_V), RANGE_TO, hashFor(RANGE_TO), hashFor(0n))
+    const before = await overview()
+    await setReserves({ virtual_quote_reserves_wei: TESTNET_V * 2n })
+    const after = await overview()
+    expect(
+      after.marketCapWei,
+      'sutun `token_stats`te bakilir; onu oynatan sey bir OLAYDIR, elle yazilan bir satir degil',
+    ).toBe(before.marketCapWei)
+    // VE DEGER SIFIR DEGIL: `applyLaunch` acilis market cap'ini yazar. Sifir
+    // olsaydi yukaridaki esitlik VAKUMDA gecerdi.
+    expect(before.marketCapWei, 'acilis market cap i yazilmis olmali').toBeGreaterThan(0n)
   })
 
   it('fee_creator devirden sonra GUNCEL aliciyi verir', async () => {

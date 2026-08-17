@@ -225,8 +225,26 @@ export async function applyLaunch(db: Queryable, e: LaunchEvent): Promise<number
        RETURNING 1
      ),
      st AS (
+       /*
+        * ACILIS MARKET CAP'I BURADA YAZILIR, SIFIR DEGIL.
+        *
+        * View \`market_cap_wei\`i artik \`token_stats\`ten okur (D-14), yani sifir
+        * yazmak "yeni acilan her token'in market cap'i 0" demek olurdu -- ve o
+        * degeri sonradan dolduran sey INDEXER'in \`admit.ts\`iydi, yani bu
+        * paketin kendi testlerinde deger BOSTU. Kusur tam olarak buydu.
+        *
+        * \`COALESCE(..., 0)\`: \`deployment\` bos olabilir (\`putDeployment\`
+        * cagrilmadan once) ve sutun NOT NULL. Boyle bir durumda launch YINE
+        * yazilir; market cap'i ilk islem duzeltir.
+        */
        INSERT INTO token_stats (token, market_cap_wei, ath_market_cap_wei, created_seq, created_at)
-       SELECT token, 0, 0, created_seq, created_at FROM ins
+       SELECT
+         i.token,
+         COALESCE(div($12::numeric * d.total_supply_tok, $11::numeric), 0),
+         COALESCE(div($12::numeric * d.total_supply_tok, $11::numeric), 0),
+         i.created_seq,
+         i.created_at
+       FROM ins i LEFT JOIN deployment d ON true
        RETURNING 1
      )
      SELECT count(*)::int AS n FROM ins`,
@@ -287,6 +305,12 @@ export async function applyTrade(db: Queryable, e: TradeEvent): Promise<number> 
        -- \`event_seq > last_seq\` muhafizina TABI DEGILDIR: gec gelen eski bir
        -- islem hacme ve sayaclara dogru sekilde katilir. Yalnizca "en son"
        -- alanlari sira ile korunur.
+       --
+       -- MARKET CAP DE BURADA YAZILIR, AYRI BIR CTE'DE DEGIL -- VE BU BIR USLUP
+       -- TERCIHI DEGIL, POSTGRES'IN KURALI: tek bir ifadede AYNI satiri iki kez
+       -- guncellemek desteklenmez ve ikinci etki SESSIZCE kaybolur. Ayri bir
+       -- \`mc AS (UPDATE token_stats ...)\` ya yukaridaki sayaclari ya da market
+       -- cap'i dusururdu, ve hangisini dusurdugu gorunmezdi.
        UPDATE token_stats s SET
          volume_total_wei = s.volume_total_wei + i.quote_amount_wei,
          trade_count      = s.trade_count + 1,
@@ -298,8 +322,30 @@ export async function applyTrade(db: Queryable, e: TradeEvent): Promise<number> 
                                  THEN GREATEST(coalesce(s.last_buy_seq, 0), i.event_seq)
                                  ELSE s.last_buy_seq END,
          last_buy_at      = CASE WHEN i.is_buy AND i.event_seq > coalesce(s.last_buy_seq, 0)
-                                 THEN i.block_time ELSE s.last_buy_at END
-       FROM ins i WHERE s.token = i.token
+                                 THEN i.block_time ELSE s.last_buy_at END,
+         -- MUTLAK yazim, SIRA ile korunmus: market cap bir toplam DEGIL bir
+         -- anlik durumdur, yani gec gelen ESKI bir islem onu geri ceviremez.
+         -- Ifade view'in kullandiginin AYNISI (\`div(Vq * N, Vt)\`) -- ayri bir
+         -- kopya, iki degeri sessizce ayristirmanin en kolay yoluydu.
+         market_cap_wei = CASE
+           WHEN i.event_seq > coalesce(s.last_trade_seq, 0) AND d.total_supply_tok IS NOT NULL
+           THEN div(i.virtual_quote_reserves_wei * d.total_supply_tok,
+                    i.virtual_token_reserves_tok)
+           ELSE s.market_cap_wei END,
+         ath_market_cap_wei = CASE
+           WHEN i.event_seq > coalesce(s.last_trade_seq, 0) AND d.total_supply_tok IS NOT NULL
+           THEN GREATEST(s.ath_market_cap_wei,
+                         div(i.virtual_quote_reserves_wei * d.total_supply_tok,
+                             i.virtual_token_reserves_tok))
+           ELSE s.ath_market_cap_wei END
+       -- \`LEFT JOIN ... ON true\`, \`CROSS JOIN\` DEGIL -- VE BU FARK ONEMLI.
+       -- \`deployment\` EN FAZLA bir satirdir (\`CHECK (id = 1)\`) ama EN AZ bir
+       -- satir DEGILDIR: \`putDeployment\` cagrilmadan once BOSTUR. \`CROSS JOIN\`
+       -- o durumda hic satir uretmez, yani hacim ve sayaclar SESSIZCE durur --
+       -- market cap'i eklemek, onunla ilgisi olmayan alanlari bozardi. Boyle,
+       -- \`d.total_supply_tok\` NULL olur ve yalnizca market cap yazilmaz.
+       FROM ins i LEFT JOIN deployment d ON true
+       WHERE s.token = i.token
        RETURNING 1
      )
      SELECT count(*)::int AS n FROM ins`,
@@ -357,6 +403,16 @@ export async function applyPoolSwap(db: Queryable, e: PoolSwapEvent): Promise<nu
        RETURNING *
      ),
      st AS (
+       /*
+        * MEZUNIYETTEN SONRAKI MARKET CAP HAVUZUN FIYATIDIR -- BU BIR URUN
+        * KARARIDIR (denetim defteri D-14) VE BURADA UYGULANIR.
+        *
+        * Egri mezuniyette DONAR, yani egriden hesaplanan bir market cap mezun
+        * bir token icin son eger fiyatta kalirdi. Kullanicinin gordugu deger
+        * artik havuzla hareket eder. Ifade AYNI (\`div(Vq * N, Vt)\`); degisen
+        * sey, hangi venue'nun rezervlerinin geldigi -- ve o secim cagirana
+        * aittir, buraya degil.
+        */
        UPDATE token_stats s SET
          volume_total_wei = s.volume_total_wei + i.quote_amount_wei,
          trade_count      = s.trade_count + 1,
@@ -368,8 +424,24 @@ export async function applyPoolSwap(db: Queryable, e: PoolSwapEvent): Promise<nu
                                  THEN GREATEST(coalesce(s.last_buy_seq, 0), i.event_seq)
                                  ELSE s.last_buy_seq END,
          last_buy_at      = CASE WHEN i.is_buy AND i.event_seq > coalesce(s.last_buy_seq, 0)
-                                 THEN i.block_time ELSE s.last_buy_at END
-       FROM ins i WHERE s.token = i.token
+                                 THEN i.block_time ELSE s.last_buy_at END,
+         market_cap_wei = CASE
+           WHEN i.event_seq > coalesce(s.last_trade_seq, 0) AND d.total_supply_tok IS NOT NULL
+           THEN div(i.virtual_quote_reserves_wei * d.total_supply_tok,
+                    i.virtual_token_reserves_tok)
+           ELSE s.market_cap_wei END,
+         -- ATH MEZUNIYETTEN SONRA DA YASAR: havuz islemleri disarida kalsa,
+         -- mezuniyetten sonraki her zirve kaybedilirdi.
+         ath_market_cap_wei = CASE
+           WHEN i.event_seq > coalesce(s.last_trade_seq, 0) AND d.total_supply_tok IS NOT NULL
+           THEN GREATEST(s.ath_market_cap_wei,
+                         div(i.virtual_quote_reserves_wei * d.total_supply_tok,
+                             i.virtual_token_reserves_tok))
+           ELSE s.ath_market_cap_wei END
+       -- \`LEFT JOIN\`in gerekcesi \`applyTrade\`dekiyle AYNI: bos bir
+       -- \`deployment\` sayaclari durdurmamali.
+       FROM ins i LEFT JOIN deployment d ON true
+       WHERE s.token = i.token
        RETURNING 1
      )
      SELECT count(*)::int AS n FROM ins`,
