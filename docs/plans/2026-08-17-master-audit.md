@@ -766,3 +766,76 @@ TAMAMINI dusurdu: butcesi esigi gecmis, zaten BILINEN bir token, alakasiz bir
 KESIF arizasi yuzunden supurulmeden kaldi. Kesif artik `try/catch` icinde:
 duserse imlec ilerlemez, `discovery-failed` kaydedilir ve gecis bilinen kumeyle
 DEVAM eder. Ikinci kosu (yukaridaki) bu duzeltmeden sonradir.
+
+
+---
+
+## K. URETIM: YENI FABRIKAYA GECILDI (2026-08-17)
+
+Bugune kadar bu daldaki **hicbir sey canlida degildi**: uretim
+`phase-1d-deploy` dalinda, `c816be2`'de, `buyback-v2`'den **48 commit** geride --
+187 dosya, ~24.000 satir. Buyback ozelliginin tamami, supurucu sureci, token
+sayfasi yeniden tasarimi ve bugunun butun duzeltmeleri canlida yoktu.
+
+### K-1. DAGITIM BIR SECIM CIKARDI, VE SECIM OLCULEREK SUNULDU
+
+| | Canlinin fabrikasi | Defterin fabrikasi |
+|---|---|---|
+| Adres | `0x5CA1…6B47` | `0x7A02…56A3` |
+| Token | **98** | 27 |
+| `buybackTreasury()` | **revert** -- fonksiyon YOK, ozellikten eski surum | kurulu (`0xeC111Bc3…e9DD`) |
+
+Runbook "env'i **defterden** yeniden uret" diyor -- ama defter YENI bir fabrikaya
+tasinmis. O talimati harfiyen uygulamak, canli sitenin 98 tokenini gorunmez
+kilardi. Eski fabrikaya buyback EKLENEMEZ de: `setBuybackTreasury` o surumde yok.
+
+Sahibi **canli havuz fabrikasini** secti (secenek B). Bedeli olculerek sunuldu:
+iki fabrika ayni escrow'u paylasir, dolayisiyla `start_block` da aynidir
+(54661437), yani yeniden tarama ~2,84 milyon blok yurur ve site o sure boyunca
+BOS gorunur. **Geri getirilemez veri kaybi yok**: `chat_messages` 0 satir (ve
+yedeklendi), gerisi zincirden turetilir.
+
+### K-2. UC TUZAK, UCU DE UYGULAMADAN ONCE OLCULDU
+
+1. **`DROP SCHEMA` yapilmadi.** `arcpad_web` rolunun yetkileri **elle**
+   verilmis (`web-vps.md` §2) ve **hicbir migration `GRANT` icermiyor**. Semayi
+   silmek yetkileri de silerdi, site izin hatasiyla olurdu, ve hicbir migration
+   onu geri getirmezdi. Veri tablolari bosaltildi; `schema_migrations` ve
+   `schema_state` korundu.
+2. **Tablo listesi katalogdan uretildi.** Elle yazilmis bir liste yeni bir tablo
+   eklendigi gun eksik kalir ve iki dagitimin verisi karisir -- ki
+   `ensureDeployment`'in yorumu tam bundan uyariyor.
+3. **Build zinciri `&&` ile.** Bu makinede olculmus (2026-08-11): build dustu,
+   restart yine kostu, `next start` yarim bir `.next` bulup cikti, ve
+   `Restart=always` bunu **dort dakikada 146 kez** yaptı.
+
+### K-3. VE BIR SESSIZ `sed` BETIGI YARIM BIRAKTI
+
+Betik migration'lari (15 -> **19**), tablo bosaltmayi, `web.env` yenilemeyi ve
+web build'ini **basariyla** yapti. 5. adim ise **hicbir sey yapmadi**:
+`s|^(FACTORY_ADDRESS=).*|` ile eslesme araniyordu, oysa `indexer.env`'in anahtari
+**`ARC_FACTORY_ADDRESS`**. Boyle bir satir olmadigi icin `sed` hicbir seyi
+degistirmedi -- **ve `sed -i` yine 0 dondu.**
+
+Sonuc: web yeni fabrikaya gecti, indexer **eskisinde kaldi**, ve hicbir sey
+sikayet etmedi.
+
+> **Bir `sed -i`'nin cikis kodu "degistirdim" demez, "patlamadim" der.**
+
+Iki muhafiz eklendi: satirin **var oldugu** once dogrulanir, ve yazimdan **sonra**
+beklenen deger geri okunur. Ikisi de duserse betik DURUR.
+
+### K-4. NIHAI DOGRULAMA
+
+| Kontrol | Sonuc |
+|---|---|
+| Kayitli fabrika | `0x7a02759a…bf256a3` -- **yeni olan** |
+| Migration | **19** (`019_progress_ppm.sql`) |
+| Servisler | web · indexer · keeper-graduate · keeper-window -- **dordu aktif** |
+| Web derlemesi | `arcpad-stale-build`: calisan surec diskteki derlemeyi sunuyor; `NRestarts=0` |
+| Site | **200** |
+| Tarama | ilerliyor; log satirinda artik `buyback=` alani var (yeni kod), ve paylasilan escrow'un gecmisinden 8 ucret olayi bulundu |
+
+**BEKLEYEN:** tarama zincir basina yetisene kadar site bos gorunur. Bu ariza
+degil. Sunucu ayrica bir `System restart required` bildiriyor -- tarama bittikten
+sonra yapilmali, once yapmak taramayi gereksizce geciktirir.
