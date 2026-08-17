@@ -76,8 +76,32 @@ jobs:
       - name: Typecheck
         run: pnpm -r typecheck
 
+      # ====================================================================
+      #  `--workspace-concurrency=1` ZORUNLU: UC SUIT AYNI VERITABANINI PAYLASIR
+      # ====================================================================
+      #
+      # OLCULDU (2026-08-17, bu kapi): `indexer` bir test dustu ve sebep bir urun
+      # kusuru DEGILDI --
+      #
+      #   error: deadlock detected
+      #     ❯ resetSchema test/db.ts:35   DROP SCHEMA IF EXISTS public CASCADE
+      #
+      # `pnpm -r` paketleri PARALEL kosar. `@arcpad/db` ve `indexer` kurulumlarinda
+      # AYNI veritabaninda `DROP SCHEMA public CASCADE` yapar, `web` de ayni
+      # baglantiyi okur. Ikisi ayni anda semayi dusurunce Postgres deadlock verir.
+      #
+      # BU KAPI BUGUNE KADAR SANSLA GECTI. `fileParallelism: false` bir paketin
+      # ICINDEKI dosyalari korur; paketler ARASINDA hicbir sey korumaz. Ayni sinif
+      # daha once de olculmustu: iki tam kosu ust uste binince `migrate.test.ts`te
+      # 32 HAYALET ariza uretmisti.
+      #
+      # Neden ayri veritabani degil: paket basina farkli bir `DATABASE_URL` vermek
+      # pnpm'de temiz degil, ve bir dosya daha (DB olusturma adimi) eklerdi.
+      # Serilestirmenin bedeli olculdu ve KUCUK: DB'ye bagli uc suit zaten
+      # birbiriyle cekisiyordu (db ~90s, indexer ~68s, web ~60s), yani paralellik
+      # gorunurde kalandan azini kazandiriyordu.
       - name: Test
-        run: pnpm -r test
+        run: pnpm -r --workspace-concurrency=1 test
         env:
           DATABASE_URL: postgres://arcpad:arcpad@localhost:5432/arcpad
 
