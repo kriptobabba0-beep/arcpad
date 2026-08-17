@@ -4,9 +4,7 @@
 > `DNS only`; sirada FAZ 1-2 var ve ikisi de Cloudflare panelinde, yani
 > depo sahibinin elinde.
 >
-> Olcumler 2026-08-17'de yapildi. "Sunucuda dogrula" diye isaretli satirlar bu
-> makineden okunamadi (SSH bu oturumda kapali) ve uygulamadan ONCE
-> dogrulanmalidir.
+> Butun olcumler 2026-08-17'de CANLI sunucuda yapildi.
 
 ## 0. Neden acmak istiyoruz
 
@@ -77,23 +75,39 @@ Aralıklar DEGISIR. Bayat bir liste iki yonde de zarar verir: yeni bir CF IP
 guvenilmezse o ziyaretcilerin gercek IP'si geri gelmez (ve tek kovaya
 duserler); liste elle yazilirsa bir gun sessizce eksik kalir.
 
-```bash
-# /usr/local/bin/arcpad-cf-ranges
+Sevkedilen hali (`/usr/local/bin/arcpad-cf-ranges`):
+
+```sh
 #!/bin/sh
 set -eu
-tmp="$(mktemp)"
-{ curl -fsS https://www.cloudflare.com/ips-v4
-  curl -fsS https://www.cloudflare.com/ips-v6
-} | awk 'NF {print "set_real_ip_from " $0 ";"}' > "$tmp"
-# CEKME DUSERSE ESKI DOSYA KALIR. Bos bir dosya yazmak, butun ziyaretcilerin
-# gercek IP'sini kaybetmek demekti.
-test -s "$tmp"
-mv "$tmp" /etc/nginx/cloudflare-ranges.conf
-nginx -t && systemctl reload nginx
+# NORMALIZASYON ZORUNLU: v4 listesinin SON satirinda newline YOKTUR, yani iki
+# ciktiyi dogrudan birlestirmek v6'nin ilk satirini ona YAPISTIRIR. `nginx -t`
+# bunu yakaladi (bkz. 0d-i). `tr` her bosluk turunu satir sonuna cevirerek
+# sinifi kokunden kapatir: CRLF, bosluk, eksik newline -- hepsi ayni.
+tmp_cidr="$(mktemp)"; tmp_conf="$(mktemp)"
+{ curl -fsS --max-time 20 https://www.cloudflare.com/ips-v4; printf '
+'
+  curl -fsS --max-time 20 https://www.cloudflare.com/ips-v6; printf '
+'
+} | tr -s '[:space:]' '
+' | awk 'NF' > "$tmp_cidr"
+
+# HER SATIR BIR CIDR OLMAK ZORUNDA. Bicimi dogrulanmamis bir liste, `nginx -t`i
+# her gun dusuren bir timer demektir -- ve o an eski konfig kalir, yani SESSIZ
+# bir donma.
+grep -qvE '^[0-9a-fA-F:.]+/[0-9]{1,3}$' "$tmp_cidr" && { echo "CIDR olmayan satir" >&2; exit 1; }
+test "$(wc -l < "$tmp_cidr")" -ge 10
+
+awk 'NF {print "set_real_ip_from " $0 ";"}' "$tmp_cidr" > "$tmp_conf"
+# CEKME DUSERSE ESKI DOSYALAR KALIR: bos bir liste, butun ziyaretcilerin gercek
+# IP'sini kaybetmek (ve hepsini tek kovaya dusurmek) demekti.
+mv "$tmp_conf" /etc/nginx/cloudflare-ranges.conf
+mv "$tmp_cidr" /etc/arcpad/cf-cidrs.txt
 ```
 
-Bir `systemd` timer'i gunde bir kez kostursun (`certbot.timer` ile ayni
-desen). **Sunucuda dogrula:** ilk kosudan sonra dosya dolu olmali.
+`arcpad-cf-ranges.timer` gunde bir kez kosar (`RandomizedDelaySec=1h`,
+`Persistent=true`) ve `ExecStartPost` yalnizca `nginx -t` GECERSE reload eder --
+bozuk bir konfigurasyonla reload siteyi dusururdu.
 
 **0b. nginx'e gercek IP'yi geri ver.**
 
@@ -133,8 +147,7 @@ icin v6'nin ilki ona yapisti:
 [emerg] host not found in set_real_ip_from "131.0.72.0/222400:cb00::/32"
 ```
 
-Site el DEGMEDI (reload kosmadi). Betik `tr -s '[:space:]' '
-'` ile normalize
+Site el DEGMEDI (reload kosmadi). Betik `tr` ile normalize
 edildi ve **her satirin CIDR oldugu dogrulanir** -- bicimi kontrol edilmeyen
 bir liste, `nginx -t`i her gun dusuren bir timer demekti. Simdi 22 aralik,
 iki dosya birebir tutuyor.
