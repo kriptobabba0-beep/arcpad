@@ -114,7 +114,7 @@ ACAMAZ, `buybackTreasury`yi ikinci kez yazamaz.
 | **C-2** | Dusuk | Canli sitede **HSTS yok**. `http://` → `https://` 301 var (olculdu), ama ilk ciplak istek strip edilebilir. | ⚠️ ACIK — sertifika en az bir kez otomatik yenilendikten sonra ac; `nginx-arcpad.conf`taki gerekce gecerli. |
 | **C-5** | Bilgi | Addressbook'ta `buybackTreasury`/`buybackVault` yok. | ✅ **TASARIM GEREGI** — `setBuybackTreasury` BIR KEZ yazilir, yani fabrikanin `buybackTreasury()` gorunumu degistirilemez kaynaktir. Supurucu onu oradan okur; defterde ikinci bir kopya, zincirden sapabilecek bir kopya olurdu. |
 | **C-4** | Bilgi | `ArcpadLocker`ta toz: 6.23e18 token + 3.69e11 wei, supurme yolu yok. | ✅ KASITLI — bir `sweep` fonksiyonu "yakilmis pozisyon" garantisini delerdi. |
-| **C-11** | **YUKSEK (surec)** | **CI bu kodun HICBIRINI gormedi.** Son is akisi kosusu **2026-07-30**, Faz 0 PR'inda. O gunden beri **349 commit** birikti ve `contracts.yml`/`node.yml`/`slither.yml` yalnizca `push: [main]` ve `pull_request` ile tetikleniyor; `buyback-v2` icin acik bir PR YOK. Yani depo dort kapi (forge, slither, node, e2e) insa etti ve o kapilar bugunku kodun **sifirini** dogruladi. | ⚠️ **KULLANICI KARARI** — dali itmek/PR acmak disa donuk bir eylemdir, izinsiz yapilmadi. Bu turda kapilarin hepsi YERELDE kosuldu (bkz. §G). |
+| **C-11** | **YUKSEK (surec)** | **CI bu kodun HICBIRINI gormemisti.** Son is akisi kosusu **2026-07-30**, Faz 0 PR'inda. O gunden beri **349 commit** birikti ve `contracts.yml`/`node.yml`/`slither.yml` yalnizca `push: [main]` ve `pull_request` ile tetikleniyor; `buyback-v2` icin acik bir PR yoktu. | ✅ **PR #2 ACILDI** — dort kapi ilk kez bu kod uzerinde kostu ve **bes ariza buldu**; hepsi duzeltildi. Bkz. §H. |
 
 ---
 
@@ -192,10 +192,33 @@ kosulmus saymak, C-11'in kendisini tekrar etmek olurdu.
 | `@arcpad/keeper` typecheck | temiz |
 | Canli kampanya (Faz A–G) | 81 vaka, hepsi yesil (onceki tur) |
 | Canli Faz H (stres) | bkz. §E |
-| `@arcpad/db` (404) | ⏸ **KOSULMADI** — bu makinede Postgres yok; sunucuda kosar |
-| `@arcpad/indexer` (333) | ⏸ **KOSULMADI** — ayni sebep (11 dosya `DATABASE_URL` ister) |
-| Playwright e2e (local-chain / db / audit) | ⏸ **KOSULMADI** — yerel zincir + Postgres + tarayici ister |
-| `forge test test/fork/*` | ⏸ **KOSULMADI** — canli RPC'ye fork acar |
+| `forge test test/fork/*` | **29 / 29** (canli Arc RPC) |
+| `@arcpad/db` | ⏸ yerelde kosamaz (Postgres yok) → **CI'da 406 / 406** |
+| `@arcpad/indexer` | ⏸ yerelde kosamaz → **CI'da 333 / 333** |
+| Playwright e2e | ⏸ yerelde kosamaz (zincir + Postgres + tarayici) → CI, bkz. §H |
+
+---
+
+## H. CI'IN BULDUKLARI (PR #2, 2026-08-17)
+
+Dort kapi ilk kez bu kod uzerinde kostu. `slither` **ilk denemede** yesil
+gecti — C-10'un LF duzeltmesi Linux'ta da tutuyor. Gerisi bes ariza cikardi,
+ve **ucu YALNIZCA CI kosunca gorunurdu**:
+
+| # | Ariza | Neden yerelde gorunmezdi | Duzeltme |
+|---|---|---|---|
+| 1 | Bicim kapisi (benim dosyalarim + onceden bozuk dort dosya) | — | `forge fmt` + prettier |
+| 2 | Iki fork testi `graduationTarget == 0` diyordu | Fork testleri elle kosulur; kimse kosmamisti | Iddia TERSINE cevrildi ve GUCLENDIRILDI: artik defterin locker'ina esitlik. `applyGraduationTarget` izinsiz oldugu icin yanlis adrese uygulanmis bir hedef ancak boyle gorunur |
+| 3 | Defterin smoke cifti tamamlanmamis bir egriyi gosteriyordu | Ayni | Test hakliydi, DEFTER yanlisti. Elle duzeltilmedi — jenerator mezun ciftle yeniden kosuldu |
+| 4 | `check` ve `release-gate` submodule cekmiyordu → `reconcile.test.ts` OpenZeppelin kaynagini bulamiyordu | **Her gelistirici checkout'unda o dizin ZATEN var** | `submodules: recursive`. Testi "dosya yoksa atla" yapmak yanlis olurdu: atlayan bir uzlastirma testi hicbir sey uzlastirmaz |
+| 5 | Uc e2e secicisi arayuzden kopmustu | e2e yerelde kosulamiyor | `getByLabel('Name')` bolum basligiyla cakisiyordu (`exact: true`); alan adi `Symbol` degil `Ticker`; ve `quote-*` dokumleri artik kapali bir `<details>` icinde |
+
+5'in son maddesi ayrica bir **iddia guclendirmesidir**: Playwright'in
+`toContainText`i `textContent` okur ve GIZLI bir elemanda da gecer — yani
+yalnizca `toBeVisible()` cagrilarini silmek suiti yesile cevirir ve geriye
+"kullanicinin GORMEDIGI metni dogrulayan" iddialar birakirdi. Acilir artik
+aciliyor; klavye testinde ise TIKLAMAYLA degil **Tab + Enter** ile, boylece
+acilirin kendisinin klavyeyle ulasilabilir oldugu da olculuyor.
 
 ---
 

@@ -148,6 +148,26 @@ async function withWallet(page: Page) {
   })
 }
 
+/**
+ * DOKUM BIR ACILIRIN ICINDE, VE TESTIN ONU ACMASI GEREKIR.
+ *
+ * `TradeCard.DetailsSection` `open` TASIMAYAN bir `<details>`tir, yani
+ * `quote-*` dokumlerinin tamami baslangicta `hidden`dir. Bu suite CI'da bugune
+ * kadar hic kosmadi (son is akisi kosusu 2026-07-30) ve arayuz o gunden beri
+ * dokumu bir aciliriin ardina aldi; test eski dunyayi olcuyordu.
+ *
+ * ACMAK, GORUNMEZLIGI YOK SAYMAKTAN IYIDIR. Playwright'in `toContainText`i
+ * `textContent` okur ve GIZLI bir elemanda da gecer -- yani yalnizca
+ * `toBeVisible()` cagrilarini silmek suiti yesile cevirirdi ve geriye
+ * "kullanicinin GORMEDIGI bir metni dogrulayan" iddialar kalirdi. Acilir
+ * aciliyor ki her iddia ekranda gercekten duran sey hakkinda olsun.
+ */
+async function openBreakdown(page: Page): Promise<void> {
+  const details = page.getByTestId('trade-details')
+  if (await details.evaluate((el) => (el as HTMLDetailsElement).open)) return
+  await details.locator('summary').click()
+}
+
 test.beforeAll(() => {
   // A MISCONFIGURED RUN FAILS, IT DOES NOT SKIP. A skipped gate reads exactly
   // like a passing one, and this suite's whole value is that it ran.
@@ -312,6 +332,7 @@ test.describe('the eight-step chain scenario', () => {
     })
 
     await page.getByLabel('Amount to spend').fill('1')
+    await openBreakdown(page)
     await expect(page.getByTestId('quote-breakdown')).toBeVisible()
     await expect(page.getByTestId('quote-curve')).toContainText(usdcDown(expected.net))
     await expect(page.getByTestId('quote-protocolFee')).toContainText(usdcUp(expected.protocolFee))
@@ -486,6 +507,7 @@ test.describe('the eight-step chain scenario', () => {
     expect(stillTakeable, 'the budget must exceed what the curve can absorb').toBeLessThan(budget)
 
     await page.getByLabel('Amount to spend').fill('20')
+    await openBreakdown(page)
     /*
      * THE CLAMP AND THE REFUND ARE SHOWN BEFORE THE TRANSACTION.
      *

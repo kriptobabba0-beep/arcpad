@@ -122,6 +122,31 @@ test('the trade panel is fillable with the keyboard alone, slippage included', a
   await amount.focus()
   await expectVisibleFocus(page, 'the amount field')
   await page.keyboard.type('0.5')
+
+  /*
+   * DOKUM BIR ACILIRIN ARDINDA, VE ONU DA KLAVYEYLE ACMAK GEREKIR.
+   *
+   * `TradeCard.DetailsSection` `open` tasimayan bir `<details>`tir, yani
+   * `quote-breakdown` baslangicta `hidden`dir. Bu testte acilir bir TIKLAMAYLA
+   * ACILAMAZ -- iddianin tamami "klavye tek basina yeter"dir.
+   *
+   * Bu yuzden ozete TAB ILE varilir ve Enter ile acilir, ve boylece test
+   * ESKISINDEN GUCLU hale gelir: acilirin kendisinin klavyeyle ULASILABILIR
+   * oldugunu da olcer. Bir `<summary>` varsayilan olarak odaklanabilirdir, ama
+   * "varsayilan olarak oyle" ile "bu sayfada oyle" ayni sey degildir.
+   */
+  let opened = false
+  for (let i = 0; i < 20 && !opened; i += 1) {
+    await page.keyboard.press('Tab')
+    const here = await focused(page)
+    if (here.tag === 'summary' && here.label.includes('Details')) {
+      await expectVisibleFocus(page, 'the Details disclosure')
+      await page.keyboard.press('Enter')
+      opened = true
+    }
+  }
+  expect(opened, 'the Details disclosure must be reachable by Tab from the amount field').toBe(true)
+
   await expect(page.getByTestId('quote-breakdown')).toBeVisible()
 
   // THE SLIPPAGE CONTROL IS REACHED BY TABBING, not by a locator. Reaching a

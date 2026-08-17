@@ -461,6 +461,19 @@ test.describe('Arc testnet', () => {
      * interface says why. The panel renders that sentence; assert it, because
      * "MAX is smaller" without a reason is the same screen as a rounding error.
      */
+    /*
+     * ACILIR ACILIR, VE BU BIR KOZMETIK DUZELTME DEGILDIR. Not
+     * `DetailsSection`in icindedir ve o `<details>` `open` TASIMAZ, yani
+     * baslangicta `hidden`dir. Playwright'in `toContainText`i `textContent`
+     * okur ve GIZLI bir elemanda da GECER -- yani bu iddia acilir olmadan da
+     * yesildi ve "kullanici sebebi goruyor" degil "sebep DOM'da var" diyordu.
+     * Iddianin konusu ekranda duran seydir.
+     */
+    const details = page.getByTestId('trade-details')
+    if (!(await details.evaluate((el) => (el as HTMLDetailsElement).open))) {
+      await details.locator('summary').click()
+    }
+    await expect(page.getByTestId('gas-reserve-note')).toBeVisible()
     await expect(page.getByTestId('gas-reserve-note')).toContainText(/leaves .* for gas/i)
     expect(wallet.sent().length, 'MAX must not send anything on its own').toBe(0)
   })
