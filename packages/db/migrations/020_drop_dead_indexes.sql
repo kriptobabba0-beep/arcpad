@@ -1,0 +1,65 @@
+-- ==================================================================
+--  IKI OLU INDEKS DUSURULUR -- VE "OLU" OLDUKLARI OLCULDU
+-- ==================================================================
+--
+-- ============ NEDEN ============
+--
+-- `token_stats` HER ISLEMDE guncellenir (`applyTrade` / `applyPoolSwap`), yani
+-- o tablodaki her indeks her alim ve her satista bakim maliyeti oder. Hicbir
+-- sorgunun kullanmadigi bir indeks, o maliyeti KARSILIKSIZ oder.
+--
+-- ============ NASIL OLCULDU ============
+--
+-- `scale.test.ts` raporu artik her siralamanin KULLANDIGI INDEKSIN ADINI basar
+-- (3.000 token, sunucu, 2026-08-17):
+--
+--   recentBuys       Sort=0  indeks=token_stats_last_buy_idx
+--   newest           Sort=0  indeks=token_stats_created_idx
+--   oldest           Sort=0  indeks=token_stats_created_idx
+--   marketCap        Sort=0  indeks=token_stats_sort_mcap_idx
+--   volume           Sort=0  indeks=token_stats_sort_volume_idx
+--   nearGraduation   Sort=0  indeks=token_stats_sort_progress_idx
+--
+-- Alti siralamanin ALTISI da adlandirilmis bir indeksten geliyor, ve o listede
+-- asagidaki ikisi YOK.
+--
+-- ============ NEDEN YAPISAL OLARAK OLULER ============
+--
+-- Urun bu iki kolona gore ASLA ciplak siralamaz; PAKETLENMIS anahtarla siralar:
+--
+--   marketCap : search_key(market_cap_wei,  created_seq)
+--   volume    : search_key(volume_24h_wei,  created_seq)
+--
+-- Paketleme, ayni degere sahip iki token'in sayfa sinirinda birbirini ATLAMASINI
+-- onler (bir bonding curve'de esitlik siktir: ayni miktar toplanmis iki curve
+-- ayni yerdedir). `(market_cap_wei DESC)` uzerindeki bir indeks o ifadeye hizmet
+-- EDEMEZ -- ifade indeksi olan `token_stats_sort_mcap_idx` eder, ve olcum onu
+-- gosteriyor.
+--
+-- Yani bunlar "bugun kullanilmiyor" degil, "kullanilamaz": onlari canlandirmak
+-- icin urunun paketlenmis anahtardan VAZGECMESI gerekirdi, ki o bir gerileme
+-- olurdu (`ordering.test.ts` bag-bozmanin sorguda GORUNUR olmasini sart kosar).
+--
+-- ============ BIR YANLISIN DUZELTMESI, KAYIT ICIN ============
+--
+-- Ilk taramada UC indeks olu sanildi; ucuncusu `token_stats_last_buy_idx`ti ve
+-- `pg_stat_user_indexes` onu sifir taramayla gosteriyordu. Sebep indeksin olu
+-- olmasi DEGIL, `recentBuys` sorgusunun BOS donmesiydi (olcek testi hic islem
+-- tohumlamiyordu, ve o sorgu `WHERE last_buy_seq IS NOT NULL` suzer). Islemler
+-- tohumlaninca indeks plana GIRDI. O yuzden asagida IKI indeks var, uc degil --
+-- ve sayaca degil PLANA bakmak farki tam olarak buydu.
+--
+-- ============ GERI ALMA ============
+--
+-- Bir indeksi geri eklemek verisiz ve tek satirdir (asagidaki `CREATE` ifadeleri
+-- yorumda birakildi). Bu, migration'in tek yonlu olmasina ragmen bedelinin
+-- DUSUK oldugu bir durum: kaybedilen sey veri degil, bir plan secenegi.
+--
+--   CREATE INDEX token_stats_mcap_idx  ON token_stats (market_cap_wei DESC);
+--   CREATE INDEX token_stats_vol24_idx ON token_stats (volume_24h_wei DESC);
+
+-- `IF EXISTS`: bu migration'in iki kez kosmasi (ya da indeksin elle dusurulmus
+-- olmasi) bir hata DEGIL. `runMigrations` hep-ya-hic oldugu icin, gereksiz bir
+-- hata butun zinciri geri alirdi.
+DROP INDEX IF EXISTS token_stats_mcap_idx;
+DROP INDEX IF EXISTS token_stats_vol24_idx;

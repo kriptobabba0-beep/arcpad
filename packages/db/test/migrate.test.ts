@@ -39,12 +39,13 @@ const EXPECTED = [
   '017_sort_keys.sql',
   '018_market_cap_source.sql',
   '019_progress_ppm.sql',
+  '020_drop_dead_indexes.sql',
 ]
 
 describe('runMigrations', () => {
   beforeEach(dropSchema)
 
-  it('diskteki migration listesi tam olarak beklenen on dokuz dosyadir', async () => {
+  it('diskteki migration listesi tam olarak beklenen yirmi dosyadir', async () => {
     // Sirali ve TAM. Bir testin gecici olarak yazdigi bozuk dosya temizlenmemis
     // olsaydi burasi kirmizi olurdu -- yani sizinti sessiz kalamaz.
     await expect(migrationFiles()).resolves.toEqual(EXPECTED)
@@ -263,7 +264,7 @@ describe('runMigrations', () => {
     )
     try {
       await expect(runMigrations(pool, await migrationFiles())).rejects.toThrow(
-        /003a_between\.tmp\.sql: uygulanmamis, ama uygulanmis olan 019_progress_ppm\.sql/,
+        /003a_between\.tmp\.sql: uygulanmamis, ama uygulanmis olan 020_drop_dead_indexes\.sql/,
       )
     } finally {
       await unlink(join(MIGRATIONS_DIR, inserted))
@@ -274,11 +275,11 @@ describe('runMigrations', () => {
     // Kapinin fazla siki OLMADIGININ kaniti: normal evrim yolu -- `007_...` --
     // engellenmiyor.
     await runMigrations(pool)
-    // `020_`: son mesru dosya artik `019_progress_ppm.sql`, ve `019_appended`
-    // onun ONUNE siralanirdi ('a' < 'p') -- kapi onu DOGRU OLARAK araya ekleme
-    // sayardi. Dosya adi son migration'la birlikte ILERLEMEK zorunda; bu satirin
-    // kendisi, kapinin siraya gore calistiginin kanitidir.
-    const appended = '020_appended.tmp.sql'
+    // `021_`: son mesru dosya artik `020_drop_dead_indexes.sql`, ve
+    // `020_appended` onun ONUNE siralanirdi ('a' < 'd') -- kapi onu DOGRU OLARAK
+    // araya ekleme sayardi. Dosya adi son migration'la birlikte ILERLEMEK
+    // zorunda; bu satirin kendisi, kapinin siraya gore calistiginin kanitidir.
+    const appended = '021_appended.tmp.sql'
     await writeFile(
       join(MIGRATIONS_DIR, appended),
       'CREATE TABLE appended_ok (x int PRIMARY KEY);\n',
