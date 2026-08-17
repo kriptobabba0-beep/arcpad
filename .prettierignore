@@ -1,0 +1,10 @@
+# Vendored / generated -- Prettier'in bu proje icin gorevi yalnizca TypeScript.
+contracts/
+node_modules/
+.next/
+dist/
+out/
+coverage/
+*.tsbuildinfo
+pnpm-lock.yaml
+web/next-env.d.ts

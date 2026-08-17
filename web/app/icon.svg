@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="arcpad">
+  <!--
+    Isaret bir harf degil, urunun kendisi: bagli egri. Her launch bu egri
+    uzerinde baslar ve tamamlandiginda tepedeki noktaya varir. 16 pikselde de
+    okunur olsun diye tek bir stroke ve tek bir nokta; palet §7.3'un paleti.
+  -->
+  <rect width="32" height="32" rx="8" fill="#0B0B0B" />
+  <path
+    d="M6 25C13.5 25 18.5 21 21.5 10"
+    fill="none"
+    stroke="#C6F24E"
+    stroke-width="3.25"
+    stroke-linecap="round"
+  />
+  <circle cx="23.5" cy="7.5" r="3.25" fill="#C6F24E" />
+</svg>

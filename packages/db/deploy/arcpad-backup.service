@@ -1,0 +1,67 @@
+; arcpad -- the nightly backup of the one table no chain can rebuild.
+;
+; WHY ONE TABLE. Everything else here is derived from logs the chain still
+; holds: reset the cursor and the indexer rebuilds it. That costs hours, which
+; is an availability problem. `chat_messages` exists nowhere but this disk.
+;
+; IT HAS ITS OWN CREDENTIAL, STRICTLY NARROWER THAN THE SITE'S. `arcpad_backup`
+; may SELECT `chat_messages` and its identity sequence. That is the entire
+; grant: not the other fourteen tables, not INSERT anywhere, and nothing that
+; owns a schema.
+;
+; THE SEQUENCE GRANT IS NOT DECORATION, and this unit first shipped without it.
+; `pg_dump` emits `setval(...)` so a restore does not hand out a key that
+; already exists, which means it must read `last_value` -- and INSERT on the
+; table does not confer that. The first hand-run failed with
+; `permission denied for sequence chat_messages_message_seq_seq`; had the dump
+; skipped it silently instead, the restored table would have restarted its keys
+; at 1 and collided with an existing row at the first message after recovery.
+;
+; `Type=oneshot` with a timer, NOT `Restart=`. A failed backup must stay
+; failed and visible in `systemctl list-units --failed`; retrying it in a loop
+; would hide a broken dump behind an eventual success and burn the disk while
+; doing it.
+;
+; Install:  /etc/systemd/system/arcpad-backup.service   (with the .timer)
+
+[Unit]
+Description=arcpad backup -- chat_messages
+Documentation=file:///opt/arcpad/docs/runbooks/web-vps.md
+After=postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=arcpad
+Group=arcpad
+WorkingDirectory=/opt/arcpad
+ExecStart=/usr/bin/env node --import tsx packages/db/src/cli/backup.ts
+; NOT `web.env`, and NOT `db.env`. See the header: this identity reads one
+; table and its sequence.
+EnvironmentFile=/etc/arcpad/backup.env
+Environment=ARCPAD_BACKUP_DIR=/var/lib/arcpad/backups
+Environment=ARCPAD_BACKUP_KEEP_DAYS=30
+; A dump that has not finished in ten minutes is not going to.
+TimeoutStartSec=600
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+ReadWritePaths=/var/lib/arcpad/backups

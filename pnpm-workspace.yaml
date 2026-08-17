@@ -1,0 +1,52 @@
+packages:
+  - packages/*
+  - indexer
+  - keeper
+  - web
+  # `scripts/` is a package so that `pnpm -r typecheck` and `pnpm -r test`
+  # REACH it. Until 2026-08-09 it was a bare directory at the repo root, which
+  # meant the address-book generator -- the tool that decides every address the
+  # product ships with -- sat outside every gate this repo believes it has: no
+  # tsc program ever included it, and no vitest run ever found it.
+  - scripts
+# Tedarik zinciri kapisi: bir paket ancak yayinlandiktan 1440 dakika (24 saat)
+# sonra kurulabilir. Bu, pnpm 11'in yerlesik varsayilanidir; burada acikca
+# yazilmasinin nedeni bir okuyucunun bu kurali gormesini saglamak ve gelecekte
+# bir pnpm major surumu varsayilani degistirirse bu kararin sessizce
+# buharlasmamasidir.
+minimumReleaseAge: 1440
+allowBuilds:
+  # esbuild's install script places its platform binary; vitest and tsx depend
+  # on it for TypeScript compilation. Without this, tests and tsx cannot run.
+  esbuild: true
+  # sharp is an optional dependency of next, used only for image processing.
+  # Phase 0 renders no images and never calls next/image, so its install script
+  # -- which downloads and links prebuilt native libvips binaries -- buys us
+  # nothing today. Recording `false` resolves pnpm's pending state without
+  # granting the script. Revisit when token artwork lands (Phase 4).
+  sharp: false
+
+# ============================================================================
+#  GUVENLIK YAMALARI -- HEPSI GELISTIRME/BUILD ZINCIRINDE
+# ============================================================================
+#
+# Denetim (2026-08-13) `pnpm audit`in on bulgusunun tamamini inceledi ve
+# HICBIRI saldirgan kontrolundeki girdiye ulasmiyor:
+#
+#   postcss, nanoid   -> next/vitest'in BUILD zamani. Islenen CSS bizim.
+#   js-yaml, brace-*  -> eslint. Uretimde hic calismaz.
+#   sharp             -> `next/image` YALNIZCA kendi `/usdc.svg`imize
+#                        uygulanir; kullanici gorselleri duz `<img>` ile ham
+#                        bayt olarak servis edilir, yani libvips kullanici
+#                        baytini HIC gormez. Ustelik `allowBuilds: sharp:false`
+#                        oldugu icin native derlemesi zaten calismiyor.
+#
+# Yine de yamalaniyor: "ulasilamaz" bir gun degisebilecek bir ifadedir,
+# yamalanmis bir surum ise degismez. Hepsi YAMA seviyesi -- API degisikligi
+# yok, dolayisiyla kirilma riski en dusuk olan duzeltme bicimi.
+overrides:
+  postcss: '>=8.5.23'
+  nanoid: '>=3.3.18'
+  js-yaml: '>=4.3.1'
+  # Uc surum hatti da yamali; tek aralik hepsini kapsar.
+  brace-expansion: '>=1.1.18 <2 || >=2.0.2 <5 || >=5.0.9'

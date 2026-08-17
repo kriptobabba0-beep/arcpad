@@ -1,0 +1,275 @@
+@import 'tailwindcss';
+
+/*
+ * ARCPAD'IN TASARIM TOKENLARI.
+ *
+ * Spec §7.3'un yedi rengi ve iki yaricapi ASAGIDA BIREBIR DURUYOR; Task 6
+ * onlari degistirmedi, tamamladi. Eklenen her token ya yeni bir yuzey adi
+ * (surface-2), ya yonu olan bir isaret (negative/positive), ya da olculmus bir
+ * kontrast kapisinin tutamagidir (primary-fg / primary-hover).
+ *
+ * Kontrast bir yorumda degil bir kapida durur: `web/test/contrast.test.ts` bu
+ * dosyayi okur, asagidaki cift tablosunu cozer ve her ciftin WCAG 2.2 esigini
+ * iddia eder. Bir token karardiginda test kirilir.
+ */
+@theme {
+  /* --- §7.3, degismedi --- */
+  --color-bg: #0b0b0b;
+  --color-surface: #141414;
+  --color-border: rgb(255 255 255 / 8%);
+  --color-text: #fafafa;
+  --color-muted: #8a8a8a;
+  --color-accent: #c6f24e;
+  --color-primary: #7e8f2e;
+
+  --radius-card: 20px;
+  --radius-input: 14px;
+
+  /* --- Task 6 eklemeleri --- */
+
+  /* Girdi ve ic yuzey. surface'in uzerinde bir kademe daha, cunku bir kartin
+     icindeki input kartla ayni renk oldugunda alan sinirlari kayboluyor. */
+  --color-surface-2: #1c1c1c;
+
+  --color-negative: #ff5a5a;
+  --color-positive: var(--color-accent);
+
+  /*
+   * UYARI -- "DIKKAT" ILE "TEHLIKE" AYNI RENK DEGILDIR.
+   *
+   * Slipaj uyarilari icin eklendi ve gerekcesi bir olcumdur: %5 ile %50 ayni
+   * kirmizi ile yazildiginda kullanici ikisini de ayni agirlikta okur, yani
+   * kirmizi ANLAMINI KAYBEDER. Kehribar "genis ama bilincli bir secim",
+   * kirmizi "buradan sonrasi bir kaza" demek icin ayrilmistir.
+   *
+   * `--color-negative` ile karistirilmamali: o YON tasir (satis, dusus) ve
+   * bir uyari degildir. Bu token yalnizca uyari icindir.
+   */
+  --color-caution: #f5b944;
+
+  /*
+   * DEVIASYON 1 (S10). Referans arayuz zeytin `#7E8F2E` zemin uzerine BEYAZ
+   * metin koyuyor; olculdu, 3,59:1 -- WCAG AA'nin normal metin icin istedigi
+   * 4,5:1'in altinda. Ayni zeminde `#0B0B0B` metin 5,49:1 verir.
+   *
+   * Bu iki token yeni bir renk GETIRMEZ, mevcut paletin iki uyesine ad verir.
+   * Ada ihtiyac var cunku kontrast kapisi bir HEX degil bir TOKEN CIFTI olcer:
+   * birincil butonun metnini `#FAFAFA` yapan mutant ancak metin rengi bir
+   * token oldugunda `contrast.test.ts`'i kirmizi yapar.
+   */
+  --color-primary-fg: var(--color-bg);
+  --color-primary-hover: var(--color-accent);
+
+  /*
+   * DEVIASYON 2 -- YARI SAYDAM BIR CIP UZERINDEKI IKINCIL METIN.
+   *
+   * `--color-muted` sayfa zemininde 5,70:1, kartta 5,34:1 verir ve kapiyi
+   * GECER. Ama arayuzde bir "cip" deseni var (`bg-white/6`, `bg-white/8`) ve o
+   * cipin zemini bir TOKEN DEGIL, bir BILESIKTIR: beyazin yuzde altisi ya da
+   * sekizi, altindaki yuzeyin uzerine basilmis. Bileşik zemin daha ACIK olur,
+   * yani ayni metin rengi orada DAHA AZ kontrast verir.
+   *
+   * OLCULDU, VE AXE ONU CANLI SAYFADA YAKALADI (2026-08-17, `e2e:audit`,
+   * `span[data-testid="slippage-auto-badge"]`, uc goruntu genisliginde de
+   * `color-contrast` / serious):
+   *
+   *     muted  on  white/8 over surface     -> 4,33:1   ESIGIN ALTINDA
+   *     muted  on  white/8 over surface-2   -> 3,93:1   DAHA KOTU
+   *     muted  on  white/6 over surface-2   -> 4,16:1   ESIGIN ALTINDA
+   *
+   * Ucuncu satir varsayimsal DEGIL: `Card` etkilesimliyse `hover:bg-surface-2`
+   * uygular, yani cip fareyle uzerine gelindiginde tam o zemine oturur.
+   *
+   * NICIN `--color-text` DEGIL. #fafafa her cipte 15:1'in uzerinde gecerdi ve
+   * o yuzden yanlis olurdu: cip IKINCIL bir bilgidir ve govde metniyle ayni
+   * agirlikta okunmasi hiyerarsiyi silerdi. Bu token hiyerarsiyi korur ve
+   * esigi gecer -- en kotu zeminde 4,82:1.
+   *
+   * KAPI DA GENISLETILDI. `contrast.test.ts` bu satiri EKLEMEDEN once
+   * yalnizca token-uzerine-token olcuyordu; bileşik bir zemini ifade edecek
+   * bir yolu YOKTU, dolayisiyla bu kusur sinifini goremiyordu. Artik
+   * `over(...)` ile uc cip zemini de tabloda.
+   */
+  --color-muted-raised: #9a9a9a;
+
+  --radius-pill: 999px;
+  --ring: 2px;
+  --ring-offset: 2px;
+
+  /*
+   * Tipografi: serif wordmark + geometrik sans govde (§7.3, S14). Iki yuz de
+   * `next/font/local` ile KENDI SUNUCUMUZDAN gelir (bkz. `app/fonts.ts`) --
+   * ucuncu taraf istegi yok, CSP daralabilir, ve fontun gelmedigi aglarda urun
+   * yine kendisi gibi gorunur.
+   *
+   * `*-Ext` aileleri asagidaki @font-face bloklarindan gelir ve yalnizca
+   * latin-ext glifleri icin devreye girer; tarayici font yedegini GLIF BASINA
+   * yapar, dolayisiyla "Şirket" gibi bir token adi da dogru yuzle cizilir.
+   */
+  --font-sans:
+    var(--font-space-grotesk), 'Space Grotesk Ext', ui-sans-serif, system-ui, 'Segoe UI', Helvetica,
+    Arial, sans-serif;
+  --font-serif:
+    var(--font-instrument-serif), 'Instrument Serif Ext', ui-serif, Georgia, 'Times New Roman',
+    serif;
+}
+
+/*
+ * latin-ext yedekleri. `next/font/local` bir @font-face basina tek bir dosya
+ * alir ve `unicode-range` tasimaz, bu yuzden ikinci altkume burada, dogrudan
+ * `public/fonts/` altindan servis edilir. Sirali fallback listesinde durduklari
+ * icin latin glifleri yine next/font'un hash'li dosyasindan gelir.
+ */
+@font-face {
+  font-family: 'Space Grotesk Ext';
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+  src: url('/fonts/space-grotesk-latin-ext.woff2') format('woff2');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'Instrument Serif Ext';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/instrument-serif-latin-ext.woff2') format('woff2');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329,
+    U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F,
+    U+A720-A7FF;
+}
+
+@layer base {
+  /*
+   * TEK TEMA VE BUNU TARAYICIYA SOYLUYORUZ. `color-scheme: dark` olmadan
+   * tarayicinin KENDI cizdigi seyler -- <select>, tarih secici, kaydirma
+   * cubugu, otomatik doldurma zemini -- acik temada cizilir. Koyu bir sayfada
+   * beyaz bir <select> tam olarak "sablondan cikmis" izlenimi verir ve bu,
+   * bu urunun kacinmak zorunda oldugu tek izlenimdir.
+   */
+  :root {
+    color-scheme: dark;
+  }
+
+  /*
+   * ============ ZEMIN: UC KATMAN, HICBIRI DIKKAT CEKMEZ ============
+   *
+   * Bir launchpad'de ekranin buyuk cogunlugu KARTLARLA dolar ve kartlarin
+   * her biri renkli bir gorsel tasir. Zemin bu yuzden SESSIZ olmak zorunda:
+   * desenli ya da parlak bir arkaplan, yuzlerce kucuk gorselle yarisir ve
+   * goz nereye bakacagini bilemez. Ama duz siyah da bir sey soylemez -- sayfa
+   * "yuklenmemis" gibi durur.
+   *
+   * Uc katman, hepsi `background-attachment: fixed` (kaydirirken zemin
+   * SABIT kalir, yani hareket eden tek sey icerik olur):
+   *
+   *   1. Ustte, ortadan asagi dogru sonen bir vurgu parlamasi. Marka rengi
+   *      YALNIZCA burada ve %4 opaklikta; daha fazlasi arayuzu bir tema
+   *      haline getirirdi.
+   *   2. Sol ustte cok genis, cok soluk ikinci bir parlama -- tek bir isik
+   *      kaynagi duz bir yuzeyi hacimli gosterir.
+   *   3. 32px'lik cok soluk bir izgara. Boyutu bilincli: kart araligiyla
+   *      (16px) uyumlu ve moire uretmeyecek kadar iri. `%1,8` opaklikta,
+   *      yani bakinca gorulmez ama olmadigi hemen anlasilir.
+   *
+   * HAREKET YOK. Animasyonlu bir arkaplan, sayfanin kendisi hareket ederken
+   * (sayilar akiyor, kartlar yeniden siralaniyor) ikinci bir hareket kaynagi
+   * olurdu ve `prefers-reduced-motion` icin ayri bir dal gerektirirdi.
+   */
+  body {
+    background-color: var(--color-bg);
+    background-image:
+      radial-gradient(
+        1200px 600px at 50% -10%,
+        color-mix(in oklab, var(--color-accent) 4%, transparent),
+        transparent 70%
+      ),
+      radial-gradient(900px 700px at 8% 0%, rgb(255 255 255 / 3%), transparent 65%),
+      linear-gradient(rgb(255 255 255 / 1.8%) 1px, transparent 1px),
+      linear-gradient(90deg, rgb(255 255 255 / 1.8%) 1px, transparent 1px);
+    background-size:
+      100% 100%,
+      100% 100%,
+      32px 32px,
+      32px 32px;
+    background-attachment: fixed;
+    color: var(--color-text);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /*
+   * ODAK HALKASI VURGU RENGIDIR, KENARLIK RENGI DEGIL. `--color-border`
+   * (rgb(255 255 255 / 8%)) zemin uzerine BASILDIGINDA 1,19:1 verir; bir odak
+   * gostergesi icin WCAG 3:1 ister. (Faz 4 planinin tablosu bu cift icin
+   * 1,25 yaziyor; WCAG 2.2'nin sRGB kompozitiyle yeniden olculdu ve 1,19
+   * cikti -- karar degismiyor, sayi degisiyor.) Kapi bu cifti de olcer ve
+   * DUSUK oldugunu iddia eder,
+   * boylece "kenarligi odak halkasi olarak kullanalim" bir gun onerildiginde
+   * cevap bir yorum degil kirmizi bir test olur.
+   */
+  :focus-visible {
+    outline: var(--ring) solid var(--color-accent);
+    outline-offset: var(--ring-offset);
+  }
+
+  ::selection {
+    background-color: var(--color-accent);
+    color: var(--color-bg);
+  }
+
+  /* Sayfa govdesi hicbir zaman yatay kaymaz; genis olan seyi kendi kutusu kaydirir. */
+  html {
+    overflow-x: hidden;
+  }
+}
+
+@layer components {
+  /*
+   * Klavyeyle gezenlerin basligi her sayfada bastan gecmesini engelleyen tek
+   * bag. Gorunurdur -- gizli birakilirsa varligi kanitlanamaz -- ama yalnizca
+   * odak aldiginda.
+   */
+  .skip-link {
+    position: fixed;
+    top: 0.75rem;
+    left: 0.75rem;
+    z-index: 100;
+    display: inline-flex;
+    align-items: center;
+    border-radius: var(--radius-input);
+    background-color: var(--color-accent);
+    color: var(--color-bg);
+    padding: 0.5rem 0.875rem;
+    font-size: 0.875rem;
+    font-weight: 600;
+    transform: translateY(-250%);
+    transition: transform 150ms ease;
+  }
+
+  .skip-link:focus-visible {
+    transform: translateY(0);
+  }
+}
+
+/*
+ * ERISILEBILIRLIK GEREGI, TERCIH DEGIL. Isletim sisteminde hareket azaltma
+ * aciksa BUTUN gecisler ve animasyonlar durur -- grafik animasyonlari, iskelet
+ * parlamasi, modal acilisi dahil. Bir bilesenin kendi `transition`'ini burada
+ * unutmasi mumkun olmasin diye kural evrensel secici uzerindedir.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}

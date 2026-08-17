@@ -1,0 +1,296 @@
+'use client'
+
+import {
+  CurveMathError,
+  formatPriceWeiPerToken,
+  formatTokenAmount,
+  formatUsdcAmount,
+  priceWeiPerToken,
+} from '@arcpad/shared/browser'
+import type { TradeRow } from '@/components/read/types'
+import { Address } from '@/components/ui/Address'
+import { buttonClassName } from '@/components/ui/Button'
+import { cx } from '@/components/ui/cx'
+import { Money } from '@/components/ui/Money'
+import { relativeAge } from '@/components/ui/relativeAge'
+import { Pill } from '@/components/ui/Pill'
+import { VisuallyHidden } from '@/components/ui/VisuallyHidden'
+import {
+  BODY_ROW_CLASS,
+  Cell,
+  HeadCell,
+  LoadMoreFooter,
+  TABLE_CLASS,
+  TableNotice,
+  TBODY_CLASS,
+  THEAD_CLASS,
+  useKeysetRows,
+  type KeysetRows,
+  type LoadMore,
+} from './tableShell'
+import { VENUE_LABEL, VENUE_NOUN, venueOf, type Venue } from './venue'
+import { feeBreakdown, walletDeltaWei } from './walletDelta'
+
+export type TradesTableProps = {
+  readonly rows: readonly TradeRow[]
+  readonly nextCursor: string | null
+  /** Miktar kolonunun basligina konur: "Amount (PEPE)". */
+  readonly symbol?: string
+  /** Bos durumdaki baglantinin hedefi -- al-sat paneli. */
+  readonly tradePanelHref?: string
+  readonly loadMore?: LoadMore<TradeRow>
+  /**
+   * SAYFALAMA DURUMU DISARIDAN, VERILDIGINDE.
+   *
+   * `<TableTabs>` bunu verir cunku SEKME ETIKETI cizilen satir sayisini
+   * yazar: durum burada kalsaydi "Trades (25)" etiketi 50 satirin ustunde
+   * durabilirdi -- "Load more"i calistiran duzeltmenin KENDI ICINDE urettigi
+   * yanlis sayi. Verilmediginde bilesen kendi durumunu tutar, yani tek basina
+   * kullanimi (ve testleri) degismez.
+   */
+  readonly keyset?: KeysetRows<TradeRow>
+  /*
+   * MEKAN ICIN BIR PROP YOKTUR VE BU KASITLIDIR.
+   *
+   * Burada bir `graduatedSeq` prop'u vardi cunku `listTrades` `source`u
+   * SECMIYORDU. Artik seciyor, yani mekan satirin kendisinde (`venue.ts`).
+   * Prop'u silmek bir sadelestirme degil bir ARIZA SINIFI kapatmasidir: onu
+   * ileten iki hop vardi (sayfa -> `TableTabs` -> tablo) ve birini dusuren bir
+   * mutant butun havuz suite'inden SAG CIKMISTI, cunku her iddia tabloyu
+   * dogrudan ciziyordu. Satirla birlikte gezen bir alan bir cagri yerinde
+   * unutulamaz.
+   */
+  /** Yas hesabinin referans ani. Testler sabitler; uretimde `Date.now()`. */
+  readonly now?: number
+  readonly className?: string
+}
+
+/**
+ * YAS `components/ui/relativeAge`TEN GELIR, ve burada YENIDEN TANIMLANMAZ.
+ *
+ * Explore kartlari da ayni bicimi gosteriyor ve onlar SUNUCUDA cizilir; ortak
+ * modul bu yuzden var. Yeniden ihrac ediliyor cunku bu dosyanin testleri
+ * `relativeAge`i buradan aliyor ve fonksiyonun ADRESI degismedi.
+ */
+export { relativeAge }
+
+/**
+ * TOOLTIP ORAN DEGIL MUTLAK DEGER GOSTERIR.
+ *
+ * Olculdu (K2): 1,000000 USDC butceli bir `buyExactQuoteIn`'de toplam ucret
+ * butcenin %1,2345679'u -- %1,25'i DEGIL, cunku %1,25 CURVE tutarinin
+ * uzerindedir, butcenin degil. "Fee 1.25%" yazip yanina mutlak sayiyi koymak,
+ * aritmetigi kullaniciya tutarsiz gosterir. Bu yuzden burada hicbir yerde
+ * yuzde yok: uc mutlak tutar ve aralarindaki isaret.
+ *
+ * Yonler `<Money>`'nin kuralindan: alimda odenen her sey YUKARI (kullanici
+ * odeyecekten azini gormesin), satimda ele gecen tutar ASAGI (var olmayan
+ * parayi gostermesin) ve ucretler her zaman YUKARI (ucret bir maliyettir).
+ */
+export function feeSentence(row: TradeRow, venue: Venue = 'curve'): string {
+  const breakdown = feeBreakdown(row)
+  const delta = walletDeltaWei(row)
+  // "to the curve" / "from the curve" WAS WRITTEN ON EVERY ROW, and after
+  // graduation that names a contract the trade never touched: a pool trade's
+  // quote moves through `PoolManager` and its fee is taken by `ArcpadHook`.
+  // The noun comes from `venue.ts` so the two venues cannot drift apart.
+  const where = VENUE_NOUN[venue]
+  // Ucret kolonlari gelmediginde CUMLE DE KURULMAZ. Yarim bir dokum --
+  // "curve tutari X" deyip ucretleri atlamak -- kullanicinin odedigi tutari
+  // curve tutari sanmasina yol acar ve yanlis sayi eksik sayidan pahalidir.
+  if (breakdown === null || delta === null) {
+    return 'Fee breakdown is not available for this trade yet.'
+  }
+  const { curveWei, protocolWei, creatorWei } = breakdown
+  const total = formatUsdcAmount(delta, { rounding: row.isBuy ? 'up' : 'down' })
+  const curve = formatUsdcAmount(curveWei, { rounding: row.isBuy ? 'up' : 'down' })
+  const protocol = formatUsdcAmount(protocolWei, { rounding: 'up' })
+  const creator = formatUsdcAmount(creatorWei, { rounding: 'up' })
+
+  return row.isBuy
+    ? `Paid ${total} USDC: ${curve} to ${where}, plus ${protocol} protocol fee and ${creator} creator fee.`
+    : `Received ${total} USDC: ${curve} from ${where}, less ${protocol} protocol fee and ${creator} creator fee.`
+}
+
+/**
+ * `virtual_*` REZERVLER O SATIRIN KENDI ANLIK GORUNTUSUDUR.
+ *
+ * Token'in BUGUNKU rezervlerinden hesaplansaydi butun satirlar ayni fiyati
+ * gosterirdi ve kolon hicbir sey soylemezdi. Satirin kendi rezervleriyle
+ * hesaplandiginda kolon asagi dogru okundugunda fiyat yorungesini verir.
+ *
+ * Sifir token rezervi zincirde MUMKUN DEGIL (sanal rezerv hep pozitif), ama
+ * `priceWeiPerToken` orada `ZeroReserve` firlatir ve bir tablo satirinda
+ * firlayan bir istisna butun sayfayi goturur. Bozuk bir satir en fazla kendi
+ * hucresini kaybeder.
+ */
+export function rowPrice(row: TradeRow): string {
+  // Rezervler olmadan fiyat yok. "—" dogru cevap; `quoteAmountWei/token` ile
+  // uydurmak GERCEKLESEN fiyat degil, ortalama bir sey uretirdi.
+  if (row.virtualQuoteReservesWei === undefined || row.virtualTokenReservesTok === undefined) {
+    return '—'
+  }
+  try {
+    return formatPriceWeiPerToken(
+      priceWeiPerToken(row.virtualQuoteReservesWei, row.virtualTokenReservesTok),
+    )
+  } catch (error) {
+    if (error instanceof CurveMathError || error instanceof RangeError) return '—'
+    throw error
+  }
+}
+
+/**
+ * SON ISLEMLER.
+ *
+ * USDC KOLONU `walletDeltaWei`'DIR, `quoteAmountWei` DEGIL. `Trade` olayi uc
+ * alani ayri tasidigi icin iki farkli sayi hesaplanabilir; ekranda dogru olan,
+ * kullanicinin banka ekstresiyle uyusandir. Formul TEK yerde durur
+ * (`walletDelta.ts`) ve Task 12'nin onay ekrani ayni fonksiyonu cagirir.
+ *
+ * `isDev` `row.isDev`'DEN GELIR. Bu bilesen `feeCreator`'i PROP OLARAK BILE
+ * ALMAZ, ve bu bilerek: creator degistirilebilir (Faz 1d), dolayisiyla bugunun
+ * creator'iyla eski bir islemi karsilastirmak gecmisi yanlis boyar. Alani
+ * indexer noktasal olarak (`creator_at(token, seq)`) turetir; arayuzun elinde
+ * karsilastiracak bir sey OLMAMASI, o karsilastirmanin bir daha yazilamamasinin
+ * en ucuz garantisidir.
+ */
+export function TradesTable({
+  rows,
+  nextCursor,
+  symbol,
+  tradePanelHref = '#trade',
+  loadMore,
+  keyset: provided,
+  now,
+  className,
+}: TradesTableProps) {
+  // Kanca HER ZAMAN calisir (kosullu bir kanca yasak); disaridan bir durum
+  // geldiginde sonucu kullanilmaz. `loadMore` de o durumda gelmez, yani
+  // ictekinin getirecek bir sayfasi zaten yoktur.
+  const own = useKeysetRows(rows, nextCursor, loadMore)
+  const keyset = provided ?? own
+  const at = now ?? Date.now()
+
+  if (keyset.rows.length === 0) {
+    return (
+      <TableNotice
+        title="No trades yet. Be the first."
+        body="Nothing has traded on this curve. The first buy sets the opening print."
+        action={
+          <a
+            href={tradePanelHref}
+            className={buttonClassName({ variant: 'primary', size: 'sm', className: 'mt-1' })}
+          >
+            Buy this token
+          </a>
+        }
+      />
+    )
+  }
+
+  return (
+    <div className={cx('rounded-card border border-border bg-surface', className)}>
+      <table role="table" className={TABLE_CLASS}>
+        <caption className="sr-only">
+          Recent trades, newest first. Amounts are what left or entered the wallet, fees included.
+        </caption>
+        <thead role="rowgroup" className={THEAD_CLASS}>
+          <tr role="row" className="border-b border-border">
+            <HeadCell>Type</HeadCell>
+            <HeadCell numeric>{symbol ? `Amount (${symbol})` : 'Amount'}</HeadCell>
+            <HeadCell numeric>Price</HeadCell>
+            <HeadCell numeric>USDC</HeadCell>
+            <HeadCell>Trader</HeadCell>
+            <HeadCell numeric>Age</HeadCell>
+          </tr>
+        </thead>
+
+        <tbody role="rowgroup" className={TBODY_CLASS}>
+          {keyset.rows.map((row) => {
+            const venue = venueOf(row)
+            const sentence = feeSentence(row, venue)
+            return (
+              <tr role="row" key={row.eventSeq} className={BODY_ROW_CLASS}>
+                <Cell label="Type">
+                  {/*
+                    YON HEM OK HEM SOZCUK. Renk tek basina anlam tasimazsa
+                    kirmizi/yesil ayrimini goremeyen kullanici da satiri okur --
+                    ve bu urunde satirin yonu, satirin kendisidir. Ok
+                    `aria-hidden`: ekran okuyucu "ucgen yukari Buy" degil "Buy"
+                    duyar.
+                  */}
+                  <span
+                    className={cx('font-medium', row.isBuy ? 'text-positive' : 'text-negative')}
+                  >
+                    <span aria-hidden="true">{row.isBuy ? '▲' : '▼'}</span>{' '}
+                    {row.isBuy ? 'Buy' : 'Sell'}
+                  </span>
+                  {/*
+                    ROZET YALNIZCA HAVUZ SATIRINDA. Her satira "Curve" yazmak,
+                    tek mekani olan bir token'in listesine hicbir sey eklemeden
+                    bir kolon genisligi eklerdi -- ve bugun HER token tek
+                    mekanlidir. Rozet, ayrimin gercekten var oldugu listede
+                    belirir.
+                  */}
+                  {venue === 'pool' ? (
+                    <Pill tone="accent" className="ml-2">
+                      {VENUE_LABEL.pool}
+                    </Pill>
+                  ) : null}
+                </Cell>
+
+                <Cell label="Amount" numeric>
+                  {formatTokenAmount(row.tokenAmountTok)}
+                </Cell>
+
+                <Cell label="Price" numeric>
+                  {rowPrice(row)}
+                </Cell>
+
+                {/*
+                  `title` fareyle gelen icin, `VisuallyHidden` ekran okuyucu
+                  icin: ikisi de AYNI cumleyi tasir, yani dokum bir gorme
+                  bicimine bagli degil.
+                */}
+                <Cell label="USDC" numeric title={sentence}>
+                  {(() => {
+                    const delta = walletDeltaWei(row)
+                    // "—", `quoteAmountWei` DEGIL. Curve tutarini cuzdan tutari
+                    // diye etiketlemek brief'in yasakladigi hatadir.
+                    return delta === null ? (
+                      <span className="tabular-nums text-muted">—</span>
+                    ) : (
+                      <Money native={delta} rounding={row.isBuy ? 'up' : 'down'} />
+                    )
+                  })()}
+                  <VisuallyHidden>{` ${sentence}`}</VisuallyHidden>
+                </Cell>
+
+                <Cell label="Trader">
+                  <span className="inline-flex items-center gap-2">
+                    <Address value={row.trader} label="Trader" explorer />
+                    {row.isDev ? <Pill tone="accent">dev</Pill> : null}
+                  </span>
+                </Cell>
+
+                <Cell label="Age" numeric>
+                  {/*
+                    Sunucunun ve tarayicinin `now`'u birkac yuz ms ayrilir ve
+                    "59s" ile "1m" arasindaki sinir tam oraya dusebilir. Bu bir
+                    hidrasyon HATASI degil, zamana bagli bir degerin dogasi.
+                  */}
+                  <time dateTime={row.blockTime.toISOString()} suppressHydrationWarning>
+                    {relativeAge(row.blockTime, at)}
+                  </time>
+                </Cell>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+
+      <LoadMoreFooter state={keyset} label="Load more trades" />
+    </div>
+  )
+}

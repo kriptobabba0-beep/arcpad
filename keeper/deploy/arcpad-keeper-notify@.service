@@ -1,0 +1,82 @@
+; arcpad -- the thing that READS the alert log.
+;
+;   systemctl enable --now arcpad-keeper-notify@window.service
+;   systemctl enable --now arcpad-keeper-notify@graduate.service
+;
+; docs/runbooks/graduation-window.md section 7 states the two rules this unit
+; implements, and states the reason it must exist in the same breath:
+; **a heartbeat nobody counts is decoration.** On a VPS the keeper writes
+; PAGE / OK / HEARTBEAT lines to a file that, without this, no human and no
+; machine ever opens.
+;
+; ============ ONE INSTANCE PER COMPONENT, AND THAT IS NOT COSMETIC ============
+;
+; The watcher and the executor write SEPARATE files under SEPARATE component
+; names, because keeper/src/alert.ts split them precisely so one could not
+; pass a liveness gate on the other's behalf. Pointing a single dead-man's
+; switch at both would undo that at the transport layer: the executor's
+; heartbeats would check in while the watcher lay dead. So each instance
+; watches one file and checks in to ONE switch of its own.
+;
+; ============ AND IT IS NOT BOUND TO THE KEEPER ============
+;
+; No BindsTo=, no PartOf=. A forwarder that stopped when the keeper stopped
+; would go quiet at exactly the moment its silence is the signal. It must
+; outlive what it watches: keeper dead -> no new HEARTBEAT lines -> no
+; check-ins -> the switch pages. That chain is the entire design.
+;
+; Install:  /etc/systemd/system/arcpad-keeper-notify@.service
+
+[Unit]
+Description=arcpad keeper -- alert-log forwarder and dead-man check-in (%i)
+Documentation=file:///opt/arcpad/docs/runbooks/keeper-vps.md
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User=arcpad
+Group=arcpad
+WorkingDirectory=/opt/arcpad/keeper
+ExecStart=/usr/bin/env node --import tsx src/notify.ts
+
+; TODO(owner) 3, 4 and 5 live in these files: the page webhook URL, and a
+; dead-man's-switch check-in URL for EACH instance. The process refuses to start with only one of
+; them -- half of this control is worse than none, because it gets recorded as
+; built.
+EnvironmentFile=/etc/arcpad/notify-%i.env
+
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+
+MemoryAccounting=yes
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+; IT ONLY READS. No ReadWritePaths at all -- under ProtectSystem=strict this
+; process cannot write anywhere, which is the correct authority for something
+; whose entire job is to observe.
+
+[Install]
+WantedBy=multi-user.target

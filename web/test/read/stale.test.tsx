@@ -1,0 +1,227 @@
+import { render, screen } from '@testing-library/react'
+import { describe, expect, it } from 'vitest'
+import {
+  ARC_BLOCK_SECONDS,
+  describeBlockLag,
+  describeLag,
+  describeStaleness,
+  StaleNotice,
+} from '@/components/read/StaleNotice'
+import { stalenessOf } from '@/components/read/result'
+import type { IndexerStatus, ReadResult, StaleIndexer } from '@/components/read/types'
+import { BEHIND_INDEXER, LIVE_INDEXER, STALE_INDEXER } from '../fixtures/readModel'
+
+/**
+ * BU BILESENI HICBIR TEST CIZMIYORDU.
+ *
+ * `MAINNET-READINESS.md` §2.4 "hicbir sey kullaniciya indexer'in geride
+ * oldugunu soylemiyor" diyor; bu YANLIS -- `<StaleNotice>` iki sayfada da
+ * `0b4f9c2`'den beri cizili. Ama iddianin altindaki endise dogruydu ve kimse
+ * yazmamisti: bu dosya inene kadar `web/test` altinda `<StaleNotice>`'i import
+ * eden TEK BIR test yoktu. Yani kullanici ile "bayat fiyati canli sanmak"
+ * arasindaki tek sey, hic kosulmamis bir bileşendi.
+ *
+ * Cizilebilirligi tarayicida olculur (`e2e/db/explore-and-search.spec.ts`:
+ * `sync_state` gercekten geriye alinir). Burada olculen METINDIR -- ve metin
+ * onemli, cunku gorunen ama "0s ago" yazan bir uyari, olmayandan kotudur.
+ */
+describe('<StaleNotice>', () => {
+  it('neyin bayat oldugunu, ne kadar geride oldugunu ve NEYIN etkilenmedigini yazar', () => {
+    render(<StaleNotice indexer={STALE_INDEXER} what="Prices and volumes" />)
+    const notice = screen.getByTestId('stale-notice')
+    expect(notice).toHaveTextContent('Prices and volumes may be out of date')
+    // Kullanicinin imzaladigi sayinin bu olmadigini soyleyen cumle. Bu cumle
+    // olmadan uyari yalnizca korkutur; onunla birlikte ne yapilacagini soyler.
+    expect(notice).toHaveTextContent('Trading reads reserves straight from the chain')
+    // `role="status"`: DOM'a sonradan girse bile duyurulur.
+    expect(notice).toHaveAttribute('role', 'status')
+  })
+})
+
+/**
+ * B2-a'NIN EKRAN TARAFI.
+ *
+ * Canli kosuda olculen durum: indexer SANIYELER once yazdi ve YARIM MILYON
+ * blok geride. Eski sozlesme buna `stale: false` diyordu, yani bu uyari
+ * hicbir zaman cizilmedi. Simdi ciziliyor -- ve sayfada duran sayi, kimsenin
+ * gormedigi o sayidir.
+ */
+describe('<StaleNotice> -- canli ama geride', () => {
+  it('BLOK cinsinden gecikmeyi ve sure karsiligini yazar', () => {
+    render(<StaleNotice indexer={BEHIND_INDEXER} what="This page" />)
+    const notice = screen.getByTestId('stale-notice')
+    expect(notice).toHaveTextContent('This page may be out of date')
+    expect(notice).toHaveTextContent('510,000 blocks')
+    // 510.000 x 0,52 sn = 265.200 sn = 73,7 saat, ve 48 saat gun esigidir
+    // (`describeLag` ile ayni sinir) -> "3 days".
+    expect(notice).toHaveTextContent('~3 days')
+    // ...ve "yazma durdu" DEMEZ: indexer bir saniye once yazdi ve bu dogru.
+    expect(notice).not.toHaveTextContent('may have stopped')
+  })
+
+  it('sebep basina AYRI cumle -- besi de ayri ariza', () => {
+    expect(describeStaleness(STALE_INDEXER)).toContain('may have stopped')
+    expect(describeStaleness({ stale: true, why: 'never-ran', at: null })).toContain('never run')
+    expect(describeStaleness({ ...BEHIND_INDEXER, why: 'head-unknown' })).toContain(
+      'CANNOT be measured',
+    )
+  })
+
+  /**
+   * ============ C1: IKI OLGU, IKI CUMLE, HICBIRI DIGERINI YUTMAZ ==========
+   *
+   * Kompozisyon kosusunda 25 cizimin 25'i "may have stopped" dedi -- indexer
+   * canliyken -- ve `blocksBehind: 727334` ekrana hic gelmedi. Ustelik olu bir
+   * indexer'in cumlesi de birebir aynisiydi.
+   */
+  it('"yetisiyor" ile "durmus" AYNI cumle degildir, ve ucuncu bir durum ikisini birden soyler', () => {
+    const alive = describeStaleness(BEHIND_INDEXER)
+    const stopped = describeStaleness(STALE_INDEXER)
+    const both = describeStaleness({ ...BEHIND_INDEXER, why: 'stopped-and-behind' })
+
+    // (1) YASIYOR AMA GERIDE: "durmus" DEMEZ.
+    expect(alive).toContain('still catching up')
+    expect(alive).toContain('510,000 blocks')
+    expect(alive).not.toContain('may have stopped')
+
+    // (2) DURMUS: gecikmeyi YINE DE soyler -- eski hal onu dusuruyordu.
+    expect(stopped).toContain('may have stopped')
+    // GECIKMEYI YINE DE SOYLER -- ve "when it last looked" diye, cunku olu bir
+    // indexer'in gecikmesi bir OLCUM degil bir HATIRADIR (N1/N2).
+    expect(stopped).toContain('When it last looked')
+    expect(stopped).toContain('blocks')
+    expect(stopped).not.toContain('still catching up')
+
+    // (3) IKISI BIRDEN: iki olgu da cumlededir, ve cumle (1) ile (2)'nin
+    // hicbirine esit DEGILDIR.
+    expect(both).toContain('may have stopped')
+    expect(both).toContain('ALREADY 510,000 blocks')
+    expect(both).not.toBe(alive)
+    expect(both).not.toBe(stopped)
+  })
+})
+
+/**
+ * ============ N1: "BILMIYORUM" DIYEBILEN BIR CUMLE ============
+ *
+ * Bu durumun bir sure hicbir adi ve hicbir cumlesi yoktu: basa yetismis bir
+ * indexer merdivene girince sayfa TAZE dalini seciyor ve HICBIR sey
+ * cizmiyordu. Olculdu: 11 ardisik cizim, gercek gecikme 0 -> 120 blok.
+ */
+describe('<StaleNotice> -- canli ama zincire bakamiyor', () => {
+  const HEAD_STALE: StaleIndexer = {
+    stale: true,
+    why: 'head-stale',
+    at: {
+      lastBlock: 55_485_142n,
+      lastBlockHash: `0x${'ab'.repeat(32)}`,
+      updatedAt: new Date('2026-08-05T18:58:00.000Z'),
+      stalenessSeconds: 1,
+      head: {
+        measured: false,
+        why: 'observation-stale',
+        headBlock: 55_485_142n,
+        lastKnownBlocksBehind: 0n,
+        lastObservedSecondsAgo: 95,
+      },
+    },
+  }
+
+  it('OLCEMEDIGINI soyler, ve sifiri OLCUM gibi yazmaz', () => {
+    render(<StaleNotice indexer={HEAD_STALE} what="This page" />)
+    const notice = screen.getByTestId('stale-notice')
+    // (1) Uyari VAR. Eski hal hic cizmiyordu.
+    expect(notice).toHaveTextContent('This page may be out of date')
+    // (2) "Olcemiyorum" der -- "0 blok geride" DEMEZ.
+    expect(notice).toHaveTextContent('CANNOT be measured right now')
+    // (3) Surecin OLDUGUNU iddia etmez: canli, sadece bakamiyor.
+    expect(notice).not.toHaveTextContent('may have stopped')
+    // (4) Son bakisi ne zaman oldugu YAZILI -- operatorun sonraki sorusu bu.
+    expect(notice).toHaveTextContent('2m')
+  })
+
+  it('sifir gecikme, TAZE olculmusse bambaska bir cumledir', () => {
+    // Ayni sayi (0 blok), ama gozlem TAZE -> hicbir uyari cizilmez, cunku
+    // `stale: false` dalina duser. Farki uretin sey sayinin kendisi degil,
+    // sayinin YASIDIR.
+    expect(LIVE_INDEXER.stale).toBe(false)
+    expect(LIVE_INDEXER.at.head.blocksBehind).toBe(0n)
+  })
+})
+
+describe('describeBlockLag -- sinirlar', () => {
+  it('tekil blok, bilinmeyen blok, ve gruplu binlik', () => {
+    expect(describeBlockLag(null)).toBe('an unknown number of blocks')
+    // TEK blok, TEK saniye -- ve ikisi de TEKIL. 0,35'lik sabit bu satiri
+    // "~0 seconds"a yuvarlayarak cogul hatasini saklıyordu.
+    expect(describeBlockLag(1n)).toBe('1 block (~1 second)')
+    expect(describeBlockLag(767_504n)).toContain('767,504 blocks')
+    // 767.504 x 0,52 = 399.102 sn = 110,9 saat -> "5 days" (48 saat esigi asili).
+    expect(describeBlockLag(767_504n)).toContain('~5 days')
+  })
+
+  /*
+   * SABITIN YONU BIR TESTTIR, DEGERI DEGIL.
+   *
+   * `ARC_BLOCK_SECONDS` 0,35'ti ve zincir 0,52'de kosuyordu, yani site her
+   * bayatligi %47 EKSIK soyluyordu -- 7,4 gunluk gecikmeyi "~5 days" diye.
+   * Bir islem sitesinde yanlisin yonu onemlidir: yasi buyuk gostermek
+   * kullaniciyi temkinli yapar, kucuk gostermek ise bayat bir fiyata
+   * guvendirir.
+   *
+   * Bu yuzden test DEGERI degil YONU pinler: sabit, olculen en yavas
+   * pencereden (0,5192) kucuk olamaz. Zincir hizlanirsa bu test dusmez --
+   * dusmesi de gerekmez, cunku o yon guvenlidir.
+   */
+  it('sabit, OLCULEN blok suresinden kucuk olamaz -- yon guvenli tarafta kalir', () => {
+    const SLOWEST_MEASURED = 0.5192 // 2026-08-10, 100.000 bloklu pencere
+    expect(ARC_BLOCK_SECONDS).toBeGreaterThanOrEqual(SLOWEST_MEASURED)
+  })
+})
+
+describe('describeLag -- sinirlar', () => {
+  /**
+   * `null` "HIC KOSMADI"dir ve "0 saniye once" DEGILDIR.
+   *
+   * Sifira yuvarlamak, bos bir indexer'i mukemmel calisan bir indexer gibi
+   * gosterirdi -- yani uyarinin var olma sebebini tam tersine cevirirdi.
+   */
+  it('hic kosmamis indexer "never" der, "0s ago" demez', () => {
+    expect(describeLag(null)).toBe('never')
+    expect(describeLag(0)).toBe('0s ago')
+  })
+
+  it('90 saniyede dakikaya, 90 dakikada saate, 48 saatte gune gecer', () => {
+    expect(describeLag(89)).toBe('89s ago')
+    expect(describeLag(90)).toBe('2m ago')
+    expect(describeLag(89 * 60)).toBe('89m ago')
+    expect(describeLag(90 * 60)).toBe('2h ago')
+    expect(describeLag(47 * 3600)).toBe('47h ago')
+    expect(describeLag(48 * 3600)).toBe('2d ago')
+  })
+
+  /** Negatif bir gecikme -- saat kaymasi -- "-3s ago" yazmaz. */
+  it('negatif gecikme sifira kirpilir', () => {
+    expect(describeLag(-5)).toBe('0s ago')
+  })
+})
+
+describe('stalenessOf -- iki sayfanin da cagirdigi tek ifade', () => {
+  it('yalnizca BAYAT dalda durum doner', () => {
+    const fresh: ReadResult<number> = { ok: true, stale: false, data: 1, indexer: LIVE_INDEXER }
+    const stale: ReadResult<number> = {
+      ok: true,
+      stale: true,
+      staleData: 1,
+      indexer: STALE_INDEXER,
+    }
+    const missing: ReadResult<number> = { ok: false, reason: 'unavailable', indexer: null }
+
+    expect(stalenessOf(fresh)).toBeNull()
+    // DUSMUS bir okuma bayat DEGILDIR: ekranda zaten "veri yok" kutusu var ve
+    // ustune bir de "bayat" demek, iki farkli sorunu tek cumleye katlardi.
+    expect(stalenessOf(missing)).toBeNull()
+    const lagging: IndexerStatus | null = stalenessOf(stale)
+    expect(lagging).toBe(STALE_INDEXER)
+  })
+})

@@ -1,0 +1,282 @@
+[profile.default]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+script = "script"
+
+# Uniswap V4 bu üçlüyü zorunlu kılar. v4-core'un kendi foundry.toml'u da
+# tam olarak bunları kullanır; sapma "stack too deep" veya eksik TSTORE
+# opcode'u olarak geri döner.
+solc = "0.8.26"
+evm_version = "cancun"
+via_ir = true
+
+optimizer = true
+optimizer_runs = 800
+bytecode_hash = "none"
+
+# Bağımlılıkların kendi remappings.txt dosyalarını bağlamsal olarak okur.
+auto_detect_remappings = true
+
+# SALT OKUMA, YALNIZCA `out/`. Task 4'un ABI yuzey testi artifact'i
+# (`out/<C>.sol/<C>.json`) okur ve yuzeyi beklenen kumeyle IKI YONLU
+# karsilastirir.
+#
+# BU SATIR BUGUN GEREKLI DEGIL VE OYLE OLDUGU OLCULDU. forge 1.6.0-rc1,
+# `fs_permissions` HIC TANIMLI DEGILKEN artifact dizinine ORTUK bir okuma izni
+# verir: her iki giris de silindiginde Surface.t.sol 25/25 GECIYOR. Izin
+# sistemi o halde de calisiyor -- ayni kosuda `foundry.toml`, `src/FeeEscrow.sol`,
+# `remappings.txt` ve `test/` okumalari REDDEDILDI, `out/` altina yazma da
+# reddedildi.
+#
+# YINE DE DURUYOR, cunku ortuk izin KOSULLU: `fs_permissions` bir kez
+# tanimlandiginda ortuk izin ORTADAN KALKAR ve yalnizca listelenenler gecerli
+# olur. Olculdu -- liste `[{read, "./src"}]` yapildiginda `src/FeeEscrow.sol`
+# okunabilir hale geldi ama `out/` REDDEDILDI. Yani baska bir amacla eklenecek
+# ILK `fs_permissions` girisi (Faz 1d'nin deploy script'i en olasi aday) yuzey
+# testini sessizce kirardi. Bu satir tam olarak onu engeller ve hicbir sey
+# genisletmez: `access = "read"` ortuk iznin zaten verdigi seviyedir.
+#
+# FAZ 1D EKI. `./deploy` girisi deploy script'inin profil dosyasini okumasi
+# icindir. `./out` AYNEN KALIR ve kalmasi ZORUNLUDUR: yukaridaki olcum,
+# `fs_permissions` bir kez tanimlandiginda ortuk artifact izninin kalktigini
+# soyluyor. `./out`u default'tan dusurmek Surface.t.sol'u GURULTULU bicimde
+# kirar; ama YALNIZCA [profile.ci]'den dusurmek sadece CI'da kirar -- liste
+# MIRAS DEGIL, DEGISTIRME semantigiyle calisir. Iki liste de kendi kendine
+# yeterli tutulur ve test/script/Profiles.t.sol UCUNU birden olcer: `out/`
+# okunabilir, `deploy/` okunabilir, `src/` HALA REDDEDILIR. Ucuncusu, iznin
+# GENISLEMEDIGINI olcen tek iddiadir.
+#
+# FAZ 3 EKI. `./fixtures` girisi Task 4'un fixture ureticisi icindir ve
+# `read-write` OLMAK ZORUNDA (`vm.writeFile` + `vm.createDir`). `./out` ve
+# `./deploy` AYNEN KALIR: yukaridaki olcum, `fs_permissions` bir kez
+# tanimlandiginda ortuk artifact izninin kalktigini soyluyor, yani birini
+# dusurmek Surface.t.sol'u (27 iddia) ya da Profiles.t.sol'u kirar. Giris
+# ASAGIDAKI [profile.ci] listesine DE eklenir; profiller listeyi MIRAS ALMAZ,
+# DEGISTIRIR.
+#
+# FAZ 2 EKI -- `./out-frozen`, VE `read`TEN FAZLASI DEGIL. `DeployLib`in
+# broadcast oncesi kapisi (`assertMatchesFrozenBuild`) yayinlanacak
+# `LaunchFactory` creation code'unu DONDURULMUS derlemenin ciktisiyla
+# karsilastirir. `./out` YETMEZ ve yetmedigi OLCULDU: o dizini IKI derleme isi
+# yazar ve hangisinin kazandigi cagri sirasina baglidir; `out-frozen/`i
+# yalnizca `[profile.frozen]` yazabilir.
+#
+# GIRIS IKI LISTEYE DE EKLENDI. Profiller `fs_permissions`i MIRAS ALMAZ,
+# DEGISTIRIR -- yalnizca birine eklemek, obur profilde SESSIZ bir delik
+# birakirdi (CI `FOUNDRY_PROFILE=ci` ile kosar, yani delik tam da kapinin
+# onemli oldugu yerde acilirdi).
+#
+# GENISLEME OLCULDU: `test/script/Profiles.t.sol::test_theGrantDidNotWiden`
+# `src/`in HALA okunamadigini iddia eder ve bu giristen SONRA da yesildir --
+# yani izin `./out-frozen` kadar genisledi, bir adim fazla degil.
+fs_permissions = [
+  { access = "read", path = "./out" },
+  { access = "read", path = "./deploy" },
+  { access = "read-write", path = "./fixtures" },
+  { access = "read", path = "./out-frozen" },
+]
+
+[profile.default.fuzz]
+runs = 256
+
+[profile.default.invariant]
+runs = 256
+depth = 64
+fail_on_revert = false
+
+# CI profili: yerelden daha sert fuzz'lar. Foundry profilleri skaler build
+# anahtarini miras ALMAZ, bu yuzden hepsi burada tekrarlanir.
+[profile.ci]
+src = "src"
+out = "out"
+libs = ["lib"]
+test = "test"
+script = "script"
+
+solc = "0.8.26"
+evm_version = "cancun"
+via_ir = true
+
+optimizer = true
+optimizer_runs = 800
+bytecode_hash = "none"
+auto_detect_remappings = true
+
+# TEKRAR BILINCLIDIR VE GEREKCESI MIRAS DEGIL, DEGISTIRME (REPLACE)
+# SEMANTIGIDIR. Olculdu: `fs_permissions` [profile.default]'tan DIGER
+# PROFILLERCE MIRAS ALINIR (ci profilinde anahtar hic yokken default'un listesi
+# gecerliydi), ama bir profil kendi listesini tanimlarsa default'unkini
+# TAMAMEN degistirir (default `[out, src]`, ci `[out]` iken ci altinda `src`
+# reddedildi, ayni dosyayla default altinda okunabildi -- yani profil secimi de
+# boylece dogrulanmis oldu). Dolayisiyla ileride [profile.ci]'ye baska bir
+# amacla eklenecek tek bir giris, default'tan gelen `./out` iznini yalnizca CI'da
+# dusururdu. Her profilin listesi kendi kendine yeterli tutuluyor.
+#
+# FAZ 1D EKI. `./deploy` BURAYA DA yazilir; default'tan MIRAS ALINMAZ, cunku bu
+# profil kendi listesini tanimlar ve tanimlayan bir profil default'unkini
+# TAMAMEN degistirir. `./deploy`u yalnizca default'a eklemek, Profiles.t.sol'u
+# `FOUNDRY_PROFILE=ci` altinda kirardi -- P9 mutantinin olctugu tuzagin aynisi,
+# yonu ters cevrilmis hali.
+#
+# FAZ 3 EKI. `./fixtures` BURAYA DA yazilir, ayni MIRAS-DEGIL-DEGISTIRME
+# gerekcesiyle, ve bu YONDE de OLCULDU (2026-08-01): girisi YALNIZCA bu
+# listeden dusurup `FOUNDRY_PROFILE=ci forge test --match-contract FixtureGen`
+# kosuldugunda setUp
+#   `vm.createDir: the path fixtures is not allowed to be accessed for write
+#    operations`
+# ile duser (0 gecti / 1 dustu), AYNI ANDA default profil 8/8 GECER. Yani
+# default'un listesi ci'ye MIRAS KALMAZ. Kirilma GURULTULUDUR, sessiz degil --
+# CI `FOUNDRY_PROFILE: ci` ile kostugu icin drift kapisi yesil gorunmez, ama
+# kapinin kendisi de hic calismaz.
+fs_permissions = [
+  { access = "read", path = "./out" },
+  { access = "read", path = "./deploy" },
+  { access = "read-write", path = "./fixtures" },
+  { access = "read", path = "./out-frozen" },
+]
+
+[profile.ci.fuzz]
+runs = 5000
+
+[profile.ci.invariant]
+runs = 1000
+depth = 128
+fail_on_revert = false
+
+# Arc testnet (chainId 5042002). URL .env'den okunur, asla buraya yazilmaz.
+# Arc mainnet henuz mevcut degildir.
+[rpc_endpoints]
+arc_testnet = "${ARC_RPC_URL}"
+
+# UNISWAP V4-CORE KENDI OPTIMIZER AYARINI ZORUNLU KILAR VE BIZIMKI ONU
+# DERLEYEMEZ. Olculdu: `optimizer_runs = 800` ile `lib/v4-core/src/PoolManager.sol`
+# Yul'da "Variable memPtr_1 is 1 too deep in the stack" ile DUSER. v4-core'un
+# kendi `foundry.toml`u `optimizer_runs = 44444444` kullanir ve bu deger
+# tesadufi degil, o dosyayi derleyebilen degerdir.
+#
+# --------------------------------------------------------------------------
+# BU BLOGUN ONCEKI HALI DONDURULMUS BYTECODE'U KIRDI. OLCULDU, TAHMIN DEGIL.
+# --------------------------------------------------------------------------
+# `paths = "lib/v4-core/src/**"` yaziyordu ve bu satirin hemen ustundeki eski
+# yorum "`src/` 800'de KALIR" diyordu. YANLISTI. Olculen sonuc:
+#
+#   forge inspect src/BondingCurve.sol:BondingCurve bytecode | sha256sum
+#     bu kisitla      -> e73842c9b36b0b435ac5e899a1d9f40d7062b883197d4eecf115351c784596bb
+#     kisit olmadan   -> 8e2460fff48ee5b6c591d0c62041936a7c63099d2ae1d636fa3bd2b927b4982f  (DONDURULMUS)
+#
+#   artifact'lerin KENDI metadata'si (`metadata.settings.optimizer.runs`):
+#     BondingCurve 44444444 · LaunchFactory 44444444 · CurveMath 44444444
+#     LaunchToken  800      · FeeEscrow     800
+#
+# MEKANIZMA, VE TEK CUMLESI SUDUR: `lib/v4-core/src/**` GLOB'U
+# `lib/v4-core/src/libraries/FullMath.sol`I DE KAPSAR, VE `libraries/CurveMath.sol`
+# -- DONDURULMUS ALTI DOSYADAN BIRI -- ONU IMPORT EDER. Bir solc girdisinin
+# TEK bir optimizer ayari vardir, dolayisiyla `CurveMath` iceren HER derleme
+# birimi o kisiti saglamak ZORUNDADIR. Zincir bunun uzerine kurulur:
+#
+#     LaunchFactory -> BondingCurve -> CurveMath -> v4-core/libraries/FullMath  [KISITLI]
+#     LaunchFactory -> GraduationMath -> v4-core/{TickMath,PoolKey,IHooks,...}  [KISITLI]
+#
+# `LaunchToken` (yalnizca OZ ERC20) ve `FeeEscrow` (yalnizca `IFeeEscrow`)
+# v4-core'a HIC dokunmaz -- 800'de kalan tam olarak o ikisidir, ve olcum bunu
+# aynen gosterdi. Yani kisit "path'e gore" yazilmisti ama ETKISI IMPORT
+# KAPANISINA GOREYDI; ikisinin ayni sey oldugunu varsaymak hatanin kendisiydi.
+#
+# DUZELTME: kisit, 800'de GERCEKTEN DERLENEMEYEN dosyaya daraltildi. Gerekce
+# yukarida zaten yaziliydi ve tek bir dosyayi adlandiriyor: `PoolManager.sol`.
+# `FullMath.sol` kucuk, saf bir kutuphanedir ve 800'de sorunsuz derlenir --
+# dolayisiyla dondurulmus kapanisin icinde KISITLI hicbir dosya kalmaz.
+#
+# BU SATIRI GENISLETMEK ISTEYEN BIR SONRAKI KISI ICIN: glob'a
+# `lib/v4-core/src/**` yazmak DONDURULMUS HASH'I KIRAR ve testler YESIL kalir.
+# Kapiyi `make frozen-hash` calistirir ve `[profile.frozen]`e bakar (asagida);
+# once onu okuyun.
+[[profile.default.additional_compiler_profiles]]
+name = "v4core"
+optimizer = true
+optimizer_runs = 44444444
+via_ir = true
+evm_version = "cancun"
+bytecode_hash = "None"
+
+[[profile.default.compilation_restrictions]]
+paths = "lib/v4-core/src/PoolManager.sol"
+optimizer_runs = 44444444
+
+[[profile.ci.additional_compiler_profiles]]
+name = "v4core"
+optimizer = true
+optimizer_runs = 44444444
+via_ir = true
+evm_version = "cancun"
+bytecode_hash = "None"
+
+[[profile.ci.compilation_restrictions]]
+paths = "lib/v4-core/src/PoolManager.sol"
+optimizer_runs = 44444444
+
+# ---------------------------------------------------------------------------
+# DONDURULMUS BYTECODE KAPISININ KENDI PROFILI
+# ---------------------------------------------------------------------------
+# NICIN AYRI BIR PROFIL GEREKIYOR, VE NICIN YUKARIDAKI DARALTMA TEK BASINA
+# YETMEZ. Daraltma `src/`i kurtarir ama `test/`i kurtarmaz: `ArcpadLocker.t.sol`
+# hem `PoolManager`i (KISITLI) hem `BondingCurve`u import eder, yani o test'in
+# derleme birimi 44444444 olmak ZORUNDADIR ve `BondingCurve` o birimde de
+# derlenir. Ayni kontrat bir kosuda IKI KEZ derlenir ve IKI IS DE
+# `out/BondingCurve.sol/BondingCurve.json`A YAZAR.
+#
+# YARISIN GERCEK OLDUGU OLCULDU: agaci buldugum halde ILK `forge inspect`
+# `8e2460ff...` dondu, sonraki her cagri -- ARADA HICBIR KAYNAK DEGISIKLIGI
+# OLMADAN -- `e73842c9...` dondu. Yani kapi, korumak icin var oldugu degeri
+# RASTGELE dogru raporlayabiliyordu. Bayat bir artifact uzerinden gecen bir
+# dogrulama, hic olmamasindan KOTUDUR.
+#
+# BU PROFIL O YARISI YAPISAL OLARAK IMKANSIZ KILAR, "dikkatli olalim" diyerek
+# degil:
+#   (1) `out = "out-frozen"` -- KENDI ARTIFACT DIZINI. Default/ci profilinin
+#       hicbir isi buraya yazamaz, dolayisiyla okunan dosyayi yalnizca bu
+#       profil uretmis olabilir.
+#   (2) `skip` -- v4-core'a ULASAN HER KAYNAK kaynak kumesinden cikarilir
+#       (`ArcpadHook`, `ArcpadLocker`, `test/`, `script/`). Geriye kalan
+#       kapanista `PoolManager.sol` YOKTUR, dolayisiyla uygulanabilecek bir
+#       kisit da yoktur.
+#   (3) `additional_compiler_profiles = []` ve `compilation_restrictions = []`
+#       ACIKCA BOSALTILIR. BU SATIRLARI SILMEYIN: ilk yazimda yoklardi ve
+#       `FOUNDRY_PROFILE=frozen forge config` ikisinin de `[profile.default]`
+#       dan MIRAS ALINDIGINI gosterdi (44444444'lu profil ve `PoolManager`
+#       kisiti aynen goruldu). Bugun zararsizdir -- bu profilin kaynak
+#       kumesinde `PoolManager.sol`a ULASAN hicbir dosya yok, dolayisiyla
+#       kisit HICBIR dosyayla eslesmiyor -- ama "bugun eslesmiyor" bir kapinin
+#       dayanabilecegi bir sey degildir. Bosaltilmis halleriyle bu profilde
+#       800 disinda bir ayar URETILEMEZ, eslesme olsa bile.
+#
+# `GraduationMath` skip EDILMEZ ve edilmemelidir: `LaunchFactory` onu import
+# eder, yani fabrikanin gomdugu `BondingCurve`/`LaunchToken` initcode'unun
+# dogru cikmasi icin bu profilde derlenmesi ZORUNLUDUR. v4-core'un yalnizca
+# kucuk saf kutuphanelerine (TickMath, FullMath, tipler) dokunur ve 800'de
+# derlenir -- olculdu.
+[profile.frozen]
+src = "src"
+out = "out-frozen"
+libs = ["lib"]
+test = "test"
+script = "script"
+
+solc = "0.8.26"
+evm_version = "cancun"
+via_ir = true
+
+optimizer = true
+optimizer_runs = 800
+bytecode_hash = "none"
+auto_detect_remappings = true
+
+skip = ["src/ArcpadHook.sol", "src/ArcpadLocker.sol", "test/**", "script/**"]
+
+# MIRASI KESEN IKI SATIR. Gerekce yukarida (3); olcum
+# `FOUNDRY_PROFILE=frozen forge config` ile yapilir ve `optimizer_runs`in
+# YALNIZCA 800 gorunmesi beklenir.
+additional_compiler_profiles = []
+compilation_restrictions = []

@@ -1,0 +1,12 @@
+# Calisma agacinda her platformda LF kullanilir.
+#
+# Sebep: `forge fmt` LF yazar, Windows'ta git checkout CRLF'e cevirir ve
+# `forge fmt --check` dosyayi formatsiz sanar. Windows'ta calisan biri
+# duzeltemeyecegi bir hata alir -- `forge fmt` kosturmak islemez, cunku git
+# dosyayi tekrar CRLF'e cevirir. CI (Ubuntu) LF ile checkout ettigi icin
+# sorunu hic gormez, bu yuzden fark yalnizca yerelde ortaya cikar.
+* text=auto eol=lf
+
+# Ikili dosyalar dokunulmaz.
+*.png binary
+*.pdf binary

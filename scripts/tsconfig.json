@@ -1,0 +1,13 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+    // NO `rootDir`. `addressbook.ts` imports `../packages/shared/src/...` by
+    // RELATIVE path -- deliberately, because resolution happens from this
+    // file's directory rather than from the cwd the script is run in -- and any
+    // `rootDir` under the repo root turns that into TS6059. Omitting it lets
+    // tsc infer the root from the inputs, which is what we want: the program is
+    // "these scripts plus whatever they import".
+  },
+  "include": [".", "../packages/shared/src"]
+}

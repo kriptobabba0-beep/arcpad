@@ -1,0 +1,216 @@
+'use client'
+
+import { useState } from 'react'
+import { useConnect, useConnectors, useDisconnect } from 'wagmi'
+import { Address } from '@/components/ui/Address'
+import { Button } from '@/components/ui/Button'
+import { Dialog } from '@/components/ui/Dialog'
+import { Money } from '@/components/ui/Money'
+import { getWebConfig } from '@/lib/addresses'
+import { BRAND } from '@/lib/brand'
+import { useArcNetwork } from '@/hooks/useArcNetwork'
+import { useUsdcBalance } from '@/hooks/useUsdcBalance'
+
+/**
+ * K1'IN GORUNDUGU YER.
+ *
+ * Arc'ta native gaz varligi USDC'nin KENDISIDIR ve ayni fonun iki okumasi
+ * vardir: 18 ondalikli native ve 6 ondalikli ERC-20. Bu dugme BIR SATIR cizer
+ * ve o satir 6 ondalikli gorunumdur. Iki figur gostermek -- ya da daha kotusu
+ * ikisini toplamak -- 1e12'lik bir hatadir ve hicbir calisma zamani kontrolu
+ * onu goremez.
+ *
+ * Menudeki tek cumle bunu kullaniciya da soyler, cunku cuzdanin kendisi 18
+ * ondalikli gorunumu gosterecek ve iki ekranin ayni fon icin farkli sayilar
+ * yazmasi, aciklanmadigi surece, bir hata gibi okunur.
+ */
+const TWO_VIEWS_NOTE =
+  "USDC is Arc's gas asset. Your wallet may show 18 decimals; this is the same balance."
+
+export function WalletButton() {
+  // `wrongNetwork` / `switchToArc` are deliberately NOT read here any more --
+  // see the block above the chip. `NetworkBanner` owns the shell's switch
+  // control; the forms own the in-context one.
+  const { status, address } = useArcNetwork()
+  /*
+   * `native.wei` -- 18 ondalikli okuma. `<Money>` onu 6 ondalikli TEK figure
+   * cevirir. Hook'un `display` alani ayni dizeyi zaten uretiyor ama ekrana
+   * giden yol `<Money>`'dir, cunku `tabular-nums`'i tasiyan odur ve bu urunde
+   * her para hucresi ayni hizalamaya sahip olmak zorunda.
+   *
+   * `.native` ve `.erc20` AYRI NESNELER olarak geliyor ve bu kasitli:
+   * `view.native + view.erc20` derlenmez (TS2365). Duz bir `{ wei, units }`
+   * olsaydi toplanabilirdi ve 1e12'lik hata bir milyon USDC'nin altinda
+   * calisma zamaninda GORUNMEZ olurdu.
+   */
+  const { native, isPending: balancePending } = useUsdcBalance()
+  const connectors = useConnectors()
+  // wagmi 3.7.4: `connect`/`connectors` ve `disconnect` @deprecated takma
+  // adlar; sanctioned yol `mutate`. Ayni sinif S15'in `useAccount` bulgusuyla.
+  const { mutate: connect, isPending: isConnecting } = useConnect()
+  const { mutate: disconnect } = useDisconnect()
+  const { chain } = getWebConfig()
+
+  const [picking, setPicking] = useState(false)
+  const [account, setAccount] = useState(false)
+
+  if (status !== 'connected' || !address) {
+    return (
+      <>
+        {/*
+          `data-wallet-connect` IS LOAD-BEARING, not a test hook.
+          `TradePanel`'s connect button does
+          `document.querySelector('[data-wallet-connect]')?.click()` so that
+          there is ONE connector list in the product. Nothing carried the
+          attribute until the browser leg pressed that button and nothing
+          happened -- a defect no unit test could see, because the panel's own
+          test asserts the callback fires, not that the callback finds anything.
+        */}
+        <Button
+          variant="primary"
+          data-wallet-connect
+          onClick={() => setPicking(true)}
+          disabled={isConnecting}
+        >
+          {isConnecting ? 'Connecting…' : 'Connect wallet'}
+        </Button>
+        <Dialog
+          open={picking}
+          onClose={() => setPicking(false)}
+          title="Connect a wallet"
+          description={`${BRAND.name} never holds your keys. You sign every transaction in your own wallet on ${chain.name}.`}
+        >
+          {/*
+            Liste EIP-6963 ile KESFEDILIR (`useConnectors`), elle yazilmaz.
+            Sabit bir cuzdan listesi, kurulu olmayan cuzdanlari onerir ve
+            kurulu olan yenilerini gizler.
+          */}
+          {connectors.length === 0 ? (
+            <p className="text-sm text-muted">
+              No wallet found in this browser. Install a wallet extension, then reload this page.
+            </p>
+          ) : (
+            <ul className="flex flex-col gap-1.5">
+              {connectors.map((connector) => (
+                <li key={connector.uid}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      connect({ connector })
+                      setPicking(false)
+                    }}
+                    className="flex w-full items-center gap-3 rounded-input border border-border bg-surface-2 px-3 py-2.5 text-left text-sm transition-colors duration-150 hover:border-white/20"
+                  >
+                    {connector.icon ? (
+                      <img
+                        src={connector.icon}
+                        alt=""
+                        width={20}
+                        height={20}
+                        className="rounded-sm"
+                      />
+                    ) : (
+                      <span className="size-5 rounded-sm bg-white/10" aria-hidden="true" />
+                    )}
+                    {connector.name}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Dialog>
+      </>
+    )
+  }
+
+  /*
+   * ==========================================================================
+   *  THE HEADER NO LONGER CARRIES A "SWITCH TO ARC TESTNET" BUTTON, AND THIS
+   *  IS WHERE THE SECOND ONE USED TO BE.
+   * ==========================================================================
+   *
+   * It rendered `<Button onClick={switchToArc}>Switch to {chain.name}</Button>`
+   * INSTEAD of the chip below, and `NetworkBanner` renders the same control at
+   * the same time -- so a wrong-network wallet saw TWO buttons with the SAME
+   * accessible name on one screen. MEASURED in a real browser, not reasoned
+   * about: `e2e/arc`'s wrong-network test hit a Playwright strict-mode
+   * violation resolving `getByRole('button', { name: /Switch to Arc Testnet/ })`
+   * to both of them. That leg had never run before, which is why nothing said so.
+   *
+   * WHY THIS ONE AND NOT THE BANNER'S -- they are NOT redundant, they differ:
+   *
+   *   - the banner EXPLAINS ("Your wallet is on another network. You can read
+   *     everything here; signing needs Arc Testnet."). This one said nothing.
+   *   - `TradePanel` and `LaunchForm` turn their OWN submit button into the
+   *     switch, which is the strongest placement there is: it is the button the
+   *     user was already reaching for. Those stay.
+   *   - this one REPLACED the address chip, so a wrong-network visitor lost the
+   *     account dialog with it -- no address, no copy, no explorer link, and NO
+   *     DISCONNECT. The duplicate control also trapped the user.
+   *
+   * So the chip is drawn in every connected state now. The balance in it is
+   * read over OUR Arc transport rather than the wallet's (`lib/wagmi.ts`
+   * configures exactly one chain), which is the same reason the site stays
+   * readable on the wrong network at all.
+   *
+   * THE ASSERTION THAT WOULD HAVE CAUGHT IT lives in `test/ui/shell.test.tsx`,
+   * at the COMPOSED shell, and in the Arc leg against the live page. Each
+   * component was unit-tested alone and each was correct alone; nothing had
+   * ever rendered the two together.
+   */
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setAccount(true)}
+        // TEK SATIR. `whitespace-nowrap` bir susleme degil: adres ve bakiye
+        // sarildiginda iki satir olur ve iki satir "iki bakiye" gibi okunur.
+        className="inline-flex h-10 items-center gap-2.5 whitespace-nowrap rounded-input border border-border bg-surface px-3 text-sm transition-colors duration-150 hover:border-white/20"
+      >
+        <Address value={address} label="Your wallet" className="text-text" />
+        <span className="h-4 w-px bg-border" aria-hidden="true" />
+        {balancePending ? (
+          <span className="tabular-nums text-muted">—</span>
+        ) : (
+          <Money native={native.wei} rounding="down" unit className="text-muted" />
+        )}
+      </button>
+
+      <Dialog open={account} onClose={() => setAccount(false)} title="Wallet" size="md">
+        <dl className="flex flex-col gap-4">
+          <div className="flex flex-col gap-1">
+            <dt className="text-[13px] text-muted">Address</dt>
+            <dd className="text-sm">
+              <Address value={address} shorten={false} copy explorer label="Your wallet" />
+            </dd>
+          </div>
+
+          <div className="flex flex-col gap-1">
+            <dt className="text-[13px] text-muted">Balance</dt>
+            <dd className="text-2xl font-medium">
+              {balancePending ? (
+                <span className="tabular-nums text-muted">—</span>
+              ) : (
+                <Money native={native.wei} rounding="down" unit />
+              )}
+            </dd>
+            <dd className="text-[12px] leading-snug text-muted">{TWO_VIEWS_NOTE}</dd>
+          </div>
+        </dl>
+
+        <div className="mt-5 border-t border-border pt-4">
+          <Button
+            variant="danger"
+            className="w-full"
+            onClick={() => {
+              disconnect({})
+              setAccount(false)
+            }}
+          >
+            Disconnect
+          </Button>
+        </div>
+      </Dialog>
+    </>
+  )
+}

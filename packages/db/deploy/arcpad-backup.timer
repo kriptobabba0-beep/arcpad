@@ -1,0 +1,27 @@
+; Runs `arcpad-backup.service` nightly.
+;
+; `Persistent=true` IS THE WHOLE REASON THIS IS A TIMER AND NOT A CRON LINE.
+; A box that is off, rebooting, or being rebuilt at 03:17 misses a cron job
+; silently and forever. `Persistent=` makes systemd run the job on the next
+; boot instead, so a night of downtime costs a late backup rather than a
+; missing one -- which matters here because the retention policy in
+; `packages/db/src/backup.ts` keeps the NEWEST file however old it is, and a
+; missed run is exactly the case that turns into "the only copy is a month
+; old" without anything saying so.
+;
+; `RandomizedDelaySec=` because 03:17 on the hour is when every other box on
+; the host also wakes up, and a dump competing with a hundred neighbours for
+; the same disk is the one that hits `TimeoutStartSec`.
+
+[Unit]
+Description=arcpad nightly backup of chat_messages
+Documentation=file:///opt/arcpad/docs/runbooks/web-vps.md
+
+[Timer]
+OnCalendar=*-*-* 03:17:00
+Persistent=true
+RandomizedDelaySec=900
+Unit=arcpad-backup.service
+
+[Install]
+WantedBy=timers.target

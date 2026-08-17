@@ -1,0 +1,108 @@
+; arcpad -- the web app.
+;
+; IT LISTENS ON LOOPBACK ONLY, and that is not belt-and-braces on top of the
+; firewall. `next start` binds 0.0.0.0 by default, so a box whose firewall is
+; reloaded, misconfigured, or replaced by a cloud security group would publish
+; this port with no TLS in front of it. `-H 127.0.0.1` makes the reverse proxy
+; the ONLY way in, at the process rather than at the network.
+;
+; THE ADDRESSES ARE BAKED IN AT BUILD TIME, NOT READ AT START. Next inlines
+; every `NEXT_PUBLIC_*` into the client bundle during `next build`, so the
+; `EnvironmentFile` below does NOT configure them -- by the time this unit
+; runs they are already text inside the JavaScript. Changing an address means
+; REBUILDING, and `docs/runbooks/web-vps.md` §3 is the procedure. A restart
+; after editing the env file changes nothing on screen and looks like the
+; deploy silently failed.
+;
+; What the environment DOES carry at runtime is `DATABASE_URL`, because the
+; read layer opens its pool on the first query in the server process.
+;
+; THE DATABASE USER IS NOT THE MIGRATOR. `/etc/arcpad/web.env` points at
+; `arcpad_web`, which may SELECT anything and INSERT into exactly one table
+; (`chat_messages` -- the product's only write). Proven by probe on
+; 2026-08-10: UPDATE, DELETE, TRUNCATE, CREATE and DROP are all refused. The
+; unit does not read `/etc/arcpad/db.env`, and must not: that credential owns
+; the schema.
+;
+; Install:  /etc/systemd/system/arcpad-web.service
+
+[Unit]
+Description=arcpad web app (Next.js)
+Documentation=file:///opt/arcpad/docs/runbooks/web-vps.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+; ORDERED AFTER POSTGRES BUT NOT `Requires=` IT. The site is useful with the
+; database down -- the trade panel reads the chain directly, and `lib/db.ts`
+; is written to answer "the read layer cannot answer" rather than to crash.
+; `Requires=` would take the whole site down for an outage it is built to
+; survive.
+;
+; `StartLimitIntervalSec` LIVES HERE, IN `[Unit]`, AND NOWHERE ELSE. It reads
+; as a restart setting, so it wants to sit beside `Restart=` in `[Service]` --
+; where systemd parses it, warns `Unknown key name ... ignoring`, and starts
+; the unit anyway. The control is then absent while the file still claims it.
+; Observed on this unit on 2026-08-10, in the journal, at first start.
+; systemd's default limiter parks a unit in `failed` after five restarts and
+; stops trying; here that is merely wrong -- a crash loop should stay loud,
+; because the usual cause is a config the operator is actively fixing.
+StartLimitIntervalSec=0
+
+[Service]
+Type=exec
+User=arcpad
+Group=arcpad
+WorkingDirectory=/opt/arcpad/web
+ExecStart=/usr/bin/env node node_modules/next/dist/bin/next start -H 127.0.0.1 -p 3000
+EnvironmentFile=/etc/arcpad/web.env
+Environment=NODE_ENV=production
+Restart=always
+RestartSec=5
+; Long enough for in-flight requests to finish, short enough that a deploy is
+; not a coffee break.
+TimeoutStopSec=30
+MemoryAccounting=yes
+
+; WHERE TOKEN ARTWORK IS KEPT, and the only writable path this unit has.
+;
+; `ProtectSystem=strict` below makes the whole filesystem read-only, which is
+; correct and is also why this line is REQUIRED rather than a convenience:
+; without it `/api/ipfs/` cannot write, silently falls back to fetching from a
+; gateway every single time, and the site is back to the behaviour that was
+; measured failing -- half of six sequential requests returning 404 after up
+; to 24 seconds, and 48 requests per visitor on a cold explore page.
+;
+; systemd creates `/var/cache/arcpad` owned by `User=` and exports the path as
+; `$CACHE_DIRECTORY`, so the app finds it without a second copy of the path in
+; an env file. Content-addressed bytes never go stale, so nothing here needs
+; expiry -- and `systemctl clean --what=cache arcpad-web` empties it if it
+; ever needs emptying.
+CacheDirectory=arcpad
+CacheDirectoryMode=0750
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+; `next start` writes into `.next` at runtime (the fetch/image caches). Under
+; `ProtectSystem=strict` the whole filesystem is read-only, so this one path is
+; the app's only writable surface -- and the app owns nothing else on the box.
+ReadWritePaths=/opt/arcpad/web/.next
+
+[Install]
+WantedBy=multi-user.target

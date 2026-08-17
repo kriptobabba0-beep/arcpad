@@ -1,0 +1,172 @@
+name: contracts
+
+# ============================================================================
+#  POZITIF `paths:` FILTRESI -- VE BU BIR MALIYET DUZELTMESIDIR, USLUP DEGIL
+# ============================================================================
+#
+# OLCULDU (2026-08-17): hesabin 2.000 dakikalik aylik Actions kotasi TAMAMEN
+# tukendi ve butun isler runner alamaz hale geldi (`runner_name` bos, adim
+# sayisi 0, log'lar `BlobNotFound`). O gunun en uzun bes kosusu SIRASIYLA
+# 48,8 / 48,7 / 48,6 / 33 / 23 dakikaydi -- BESI DE bu is akisi.
+#
+# SEBEP: burada yalnizca `paths-ignore` vardi, yani "docs disinda HER SEY"
+# demekti. `web/` ya da `packages/db/` icinde tek satir degisince 48 dakikalik
+# Solidity test suiti bastan kosuyordu. O gun web ve db onlarca kez degisti.
+#
+# `forge` ve `fork` YALNIZCA Solidity'yi test eder; bir TypeScript degisikligi
+# onlarin sonucunu DEGISTIREMEZ. ABI ile TS baglayicilarinin uyumunu olcen sey
+# `abi-parity`dir ve o `node.yml`de durur -- yani bu filtre onu ETKILEMEZ.
+#
+# MARKDOWN `paths` ICINDE NEGATIF DESENLE ATILIR, `paths-ignore` ILE DEGIL:
+# GitHub ayni olay icin IKISINI BIRDEN kabul etmez, biri digerini dislar. Negatif
+# desen (`!`) `paths` icinde mesrudur ve SIRA baglayicidir -- sonraki desen
+# oncekini ezer, yani `!contracts/**/*.md` `contracts/**`ten SONRA gelmeli.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "contracts/**"
+      - "!contracts/**/*.md"
+      - ".gitmodules"
+      - ".github/workflows/contracts.yml"
+  pull_request:
+    # GitHub Actions YAML anchor/alias desteklemez; liste bilerek tekrarlanir.
+    paths:
+      - "contracts/**"
+      - "!contracts/**/*.md"
+      - ".gitmodules"
+      - ".github/workflows/contracts.yml"
+
+# Ayni dal icin yeni bir kosu basladiginda eskisini iptal et. Ard arda iki
+# push yapildiginda birincinin kosusu sonuna kadar calisip Actions dakikasi
+# yakiyordu.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  forge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.6.0-rc1
+
+      - name: Formatting
+        run: forge fmt --check --root contracts
+
+      - name: Build
+        run: forge build --root contracts --sizes
+
+      # DONDURULMUS BYTECODE. `Build`TAN SONRA KOSAR VE BU SIRA BILINCLIDIR:
+      # kapinin butun mesele ettigi sey, tam da default profil `out/`u yeni
+      # yazmisken bile dogru cevabi vermesidir. Kapi kendi profilini
+      # (`[profile.frozen]`, `out-frozen/`) kendisi derler ve yalnizca oradan
+      # okur; `out/`a kim ne yazarsa yazsin sonucu degismez.
+      #
+      # ELLE `forge inspect ... | sha256sum` KOSMAYIN. O komut Faz 2 boyunca
+      # SESSIZCE YANLIS CEVAP VERDI: `out/BondingCurve.sol/BondingCurve.json`i
+      # iki ayri derleme isi yaziyordu ve hangisinin kazandigi cagri sirasina
+      # bagliydi.
+      - name: Frozen bytecode gate
+        run: make frozen-hash
+
+      # BAGIMLILIK SABITLEME. `frozen-hash` bizim baytlarimizi, bu kapi
+      # BASKASININ kaynagini dondurur -- ve CI'da olmasi YEREL kosudan daha
+      # onemlidir: bir submodule kaymasi bir PR'da gelir, ve derleme onu
+      # sessizce KABUL EDER (yeni kodla derler, testler yesil kalir).
+      #
+      # `checkout` adiminin `submodules: recursive` ayari bu kapinin on
+      # kosuludur: kurulmamis bir submodule `-` oneki alir ve kapi onu da
+      # KIRMIZI sayar. Yani ikisi birlikte fail-closed'dir.
+      - name: Dependency pin gate
+        run: make deps-pin
+
+      - name: Test
+        run: forge test --root contracts --no-match-path 'test/fork/*' -vv
+        env:
+          FOUNDRY_PROFILE: ci
+
+      # FIXTURE'LAR KONTRATTAN SAPAMAZ -- ve bu, o iddianin tek
+      # CALISTIRILABILIR halidir. Faz 3'un indexer'i `contracts/fixtures/*.json`
+      # ile test edilir; elle yazilmis bir yuk kontrattan sapabilir ve saptigi
+      # gun testler yesil kalir. Burada fixture'lar gercek yurutmeden yeniden
+      # uretilir ve calisma agaci degismis olmamalidir.
+      #
+      # IKI ADIM, VE IKINCISI OLCULEREK ZORUNLU CIKTI: `git diff` IZLENMEYEN
+      # dosyalari GORMEZ. Fixture'lar henuz commit'lenmemisken, icerigi degisen
+      # 5 dosyaya ragmen `git diff --exit-code -- contracts/fixtures` 0 dondu
+      # (olculdu 2026-08-01). Yani tek basina `git diff`, fixture'lari SILEN ya
+      # da yeni bir senaryo EKLEYEN bir degisikligi de gecirirdi.
+      #
+      # `FOUNDRY_PROFILE: ci` BILINCLIDIR: `fs_permissions` profiller arasinda
+      # MIRAS ALINMAZ, DEGISTIRILIR; kapinin gercekten CI profilinde de yazma
+      # izni buldugunu ancak boyle olceriz.
+      - name: Fixtures are not stale
+        run: |
+          forge test --root contracts --match-contract FixtureGen
+          git diff --exit-code -- contracts/fixtures
+          if [ -n "$(git status --porcelain -- contracts/fixtures)" ]; then
+            echo "::error::contracts/fixtures changed after regeneration"
+            git status --porcelain -- contracts/fixtures
+            exit 1
+          fi
+        env:
+          FOUNDRY_PROFILE: ci
+
+  # `continue-on-error: true` KALDIRILDI. Bu is Arc'a dokunan TEK kontroldur ve o
+  # bayrakla birlikte gecse de gecmese de yesil gorunuyordu -- yani kapi olarak
+  # degeri sifirdi. Arc'in kendi dokumani anvil'in Arc'in precompile'larini,
+  # EIP-7708 Transfer olaylarini ve blocklist zorlamasini yeniden uretemedigini
+  # soyluyor, dolayisiyla canli RPC'ye karsi kosan bu is bizim tek gercek Arc
+  # dogrulamamizdir. Sessizce yesil gormek, sahip olmamak kadar kotudur.
+  fork:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.6.0-rc1
+
+      # Fork testleri harici bir RPC'ye baglidir, o yuzden gecici bir kesinti
+      # PR'lari bloklamasin diye BIR KEZ yeniden deniyoruz. Boylece gercek bir
+      # test basarisizligi CI'yi kirmizi yapar, aninda bir ag hatasi yapmaz.
+      # Ikisi de basarisiz olursa is GERCEKTEN basarisiz olur -- eskiden
+      # `continue-on-error` bunu da yutuyordu.
+      # ALT KATMAN B (`--no-match-contract 'LiveForkTest'`) BU ISTE KOSMAZ VE
+      # BU BIR DOGRULUK GEREGIDIR, MALIYET DEGIL. B tam graduation dongusunu
+      # yurutur: her kosuda GECICI bir factory + hook (yeniden madenlenir) +
+      # locker kurar ve canli `PoolManager`a karsi havuz acar. Bir kapinin
+      # sagladigi sey deterministik ve IDEMPOTENT olmalidir; dongu testi
+      # ikisini de saglamaz ve basarisizligini RPC gurultusunden ayirt
+      # edilemez kilar.
+      #
+      # AYRIM IKI EKSENLIDIR VE TEK EKSEN YETMEZ: dosya `test/fork/` altinda
+      # durdugu icin yukaridaki `Test` adimi (`--no-match-path 'test/fork/*'`)
+      # onu zaten dislar; bu satirdaki kontrat adi filtresi de FORK kapisinin
+      # onu cekmesini engeller. Iki filtre birbirinin tumleyeni oldugu icin
+      # yalnizca dizin degistirmek B'yi fork'suz pakete tasirdi.
+      #
+      # Ayni filtre Makefile'in `fork-test` hedefinde de vardir; ikisi
+      # ayrisirsa yerelde yesil gorunen bir ayrim CI'da delik olur.
+      - name: Arc fork test
+        run: |
+          set -o pipefail
+          run_fork() {
+            forge test --root contracts --match-path 'test/fork/*' \
+              --no-match-contract 'LiveForkTest' \
+              --fork-url https://rpc.testnet.arc.io -vv
+          }
+          run_fork || {
+            echo "::warning::first fork attempt failed; retrying once in case the RPC blipped"
+            sleep 20
+            run_fork
+          }

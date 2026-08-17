@@ -6,9 +6,19 @@ keystore/
 
 # Foundry
 contracts/out/
+# `[profile.frozen]`in KENDI artifact dizini. Ayri olmasi bir tercih degil,
+# dondurulmus bytecode kapisinin CALISMA KOSULU: default/ci profilinin
+# isleri `out/` icindeki ayni dosyaya yazabiliyor ve hangisinin kazandigi
+# cagri sirasina bagli. Bkz. contracts/foundry.toml, [profile.frozen].
+contracts/out-frozen/
 contracts/cache/
 contracts/broadcast/*/dry-run/
 contracts/.gas-snapshot
+# `make test` runs `forge test --root contracts` FROM THE REPO ROOT, and forge
+# persists failing invariant sequences to `<cwd>/cache/invariant/failures/...`
+# -- i.e. here, not under contracts/. Iki kez olustu. Bir sonraki basarisiz
+# invariant kosusu temiz bir agaci yine kirletirdi.
+cache/
 
 # Node
 node_modules/
@@ -19,6 +29,7 @@ node_modules/
 web/.next/
 web/out/
 web/.vercel/
+web/next-env.d.ts
 
 # Test / coverage
 coverage/
@@ -29,9 +40,46 @@ playwright-report/
 # Local data
 *.log
 postgres-data/
+# Keeper'in Launched tarama imleci ve alarm lavabosu. Ikisi de calisma zamani
+# durumudur: imlec makineye ozgu bir blok numarasi tasir, lavabo ise commit
+# edilmesi anlamsiz bir olay akisidir.
+keeper/.cursor
+# Graduation yurutucusunun calisma zamani durumu. IMLEC AYRI BIR DOSYADIR ve
+# olmasi zorunludur: izleyici ve yurutucu AYRI SUREÇLERDIR ve tek bir imlec
+# dosyasina iki yazici, birinin ilerlemesini digerinin geri almasi demektir.
+# `.graduate-state.json` karantina KARARLARINI tasir (zincir olgusu degil,
+# bu makinenin karari); `.graduate-locks/` iki yurutucunun ayni curve'e
+# birlikte gaz yakmasini engelleyen tavsiye kilitleridir.
+keeper/.cursor-graduate
+keeper/.graduate-state.json
+keeper/.graduate-locks/
 
 # OS / editor
 .DS_Store
 Thumbs.db
 .idea/
 .vscode/
+
+# SDD workspace (scratch)
+.superpowers/
+
+# Python bytecode from scripts/integration/ harnesses
+__pycache__/
+*.pyc
+
+# Browser artefacts from the playwright MCP server
+.playwright-mcp/
+
+# Calisma sirasinda alinan ekran goruntuleri ve ajan dizinleri.
+# Bunlar bir kez bakilip atilan seyler; depoya girerlerse klonu sisirir ve
+# hicbir incelemede okunmazlar.
+*.png
+semboller/
+.agents/
+.claude/
+skills-lock.json
+
+# Denetim kosumunun ciktisi. Bir KOSU kaydidir, bir kaynak degil: her kosuda
+# degisir ve git diffi gurultuyle doldurur. Kalici olmasi gereken bulgular
+# docs/plans/ altina YAZILIR.
+scripts/audit/report-*.json

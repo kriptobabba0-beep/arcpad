@@ -1,0 +1,28 @@
+{
+  "name": "@arcpad/keeper",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "graduate": "tsx src/graduate.ts",
+    "sweep": "tsx src/sweep.ts",
+    "notify": "tsx src/notify.ts",
+    "graduate:localchain-proof": "tsx test/localchain/graduationProof.ts",
+    "custody-proof": "tsx test/localchain/custodyProof.ts",
+    "scale-bench": "tsx test/localchain/scaleBench.ts",
+    "drill": "tsx src/drill.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@arcpad/shared": "workspace:*",
+    "dotenv": "17.4.2",
+    "viem": "2.55.8"
+  },
+  "devDependencies": {
+    "tsx": "4.23.1",
+    "typescript": "5.9.3",
+    "vitest": "4.1.10"
+  }
+}

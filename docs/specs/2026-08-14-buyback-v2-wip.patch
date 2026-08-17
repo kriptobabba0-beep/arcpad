@@ -1,0 +1,925 @@
+diff --git a/contracts/fixtures/buy_exact_quote_in.json b/contracts/fixtures/buy_exact_quote_in.json
+index 9c24cb6..e18d844 100644
+--- a/contracts/fixtures/buy_exact_quote_in.json
++++ b/contracts/fixtures/buy_exact_quote_in.json
+@@ -8,7 +8,7 @@
+   "logs": [
+     {
+       "logIndex": 0,
+-      "address": "0xeccfe597b3556b67300701dc78ff8d7efc526005",
++      "address": "0x1ab3b3d2e2d5a08c5fdd414af393e833c0d12164",
+       "topics": [
+         "0x733bb99acb17010119efa3b694a341a4be53fb2e7ea4800188314660780de278",
+         "0x0000000000000000000000000000000000000000000000000000000000000b0b"
+@@ -17,10 +17,10 @@
+     },
+     {
+       "logIndex": 1,
+-      "address": "0x7d2316b7560e1c4bfa3da52e1df189d9394445e0",
++      "address": "0xc12b42263994ca2acae7c508c32256aec651e295",
+       "topics": [
+         "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+-        "0x000000000000000000000000eccfe597b3556b67300701dc78ff8d7efc526005",
++        "0x0000000000000000000000001ab3b3d2e2d5a08c5fdd414af393e833c0d12164",
+         "0x0000000000000000000000000000000000000000000000000000000000000b0b"
+       ],
+       "data": "0x000000000000000000000000000000000000000000a608f34d5b0a6d6fab8989"
+@@ -31,7 +31,7 @@
+       "topics": [
+         "0x8752a472e571a816aea92eec8dae9baf628e840f4929fbcc2d155e6233ff68a7",
+         "0x0000000000000000000000000000000000000000000000000000000000007ea5",
+-        "0x000000000000000000000000eccfe597b3556b67300701dc78ff8d7efc526005"
++        "0x0000000000000000000000001ab3b3d2e2d5a08c5fdd414af393e833c0d12164"
+       ],
+       "data": "0x00000000000000000000000000000000000000000000000000215587d126dd3d"
+     },
+@@ -41,7 +41,7 @@
+       "topics": [
+         "0x8752a472e571a816aea92eec8dae9baf628e840f4929fbcc2d155e6233ff68a7",
+         "0x000000000000000000000000000000000000000000000000000000000000c7ea",
+-        "0x000000000000000000000000eccfe597b3556b67300701dc78ff8d7efc526005"
++        "0x0000000000000000000000001ab3b3d2e2d5a08c5fdd414af393e833c0d12164"
+       ],
+       "data": "0x000000000000000000000000000000000000000000000000000a86cc92e3da13"
+     }
+diff --git a/contracts/fixtures/buy_exact_quote_in_clamped.json b/contracts/fixtures/buy_exact_quote_in_clamped.json
+index 268fc3b..fcf01e8 100644
+--- a/contracts/fixtures/buy_exact_quote_in_clamped.json
++++ b/contracts/fixtures/buy_exact_quote_in_clamped.json
+@@ -8,7 +8,7 @@
+   "logs": [
+     {
+       "logIndex": 0,
+-      "address": "0xeccfe597b3556b67300701dc78ff8d7efc526005",
++      "address": "0x1ab3b3d2e2d5a08c5fdd414af393e833c0d12164",
+       "topics": [
+         "0x733bb99acb17010119efa3b694a341a4be53fb2e7ea4800188314660780de278",
+         "0x0000000000000000000000000000000000000000000000000000000000000b0b"
+@@ -17,19 +17,19 @@
+     },
+     {
+       "logIndex": 1,
+-      "address": "0xeccfe597b3556b67300701dc78ff8d7efc526005",
++      "address": "0x1ab3b3d2e2d5a08c5fdd414af393e833c0d12164",
+       "topics": [
+         "0x5f364ec8cbeb22a7121d682d8fbbf96032bfc28c76d26628d8562dfbb285b50a",
+-        "0x0000000000000000000000007d2316b7560e1c4bfa3da52e1df189d9394445e0"
++        "0x000000000000000000000000c12b42263994ca2acae7c508c32256aec651e295"
+       ],
+       "data": "0x000000000000000000000000000000000000000000000000a8c61737126d0853000000000000000000000000000000000000000000ab21d1239c709ad72081ca"
+     },
+     {
+       "logIndex": 2,
+-      "address": "0x7d2316b7560e1c4bfa3da52e1df189d9394445e0",
++      "address": "0xc12b42263994ca2acae7c508c32256aec651e295",
+       "topics": [
+         "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+-        "0x000000000000000000000000eccfe597b3556b67300701dc78ff8d7efc526005",
++        "0x0000000000000000000000001ab3b3d2e2d5a08c5fdd414af393e833c0d12164",
+         "0x0000000000000000000000000000000000000000000000000000000000000b0b"
+       ],
+       "data": "0x0000000000000000000000000000000000000000029009752660ad62af800000"
+@@ -40,7 +40,7 @@
+       "topics": [
+         "0x8752a472e571a816aea92eec8dae9baf628e840f4929fbcc2d155e6233ff68a7",
+         "0x0000000000000000000000000000000000000000000000000000000000007ea5",
+-        "0x000000000000000000000000eccfe597b3556b67300701dc78ff8d7efc526005"
++        "0x0000000000000000000000001ab3b3d2e2d5a08c5fdd414af393e833c0d12164"
+       ],
+       "data": "0x000000000000000000000000000000000000000000000000019a7536694356fe"
+     },
+@@ -50,7 +50,7 @@
+       "topics": [
+         "0x8752a472e571a816aea92eec8dae9baf628e840f4929fbcc2d155e6233ff68a7",
+         "0x000000000000000000000000000000000000000000000000000000000000c7ea",
+-        "0x000000000000000000000000eccfe597b3556b67300701dc78ff8d7efc526005"
++        "0x0000000000000000000000001ab3b3d2e2d5a08c5fdd414af393e833c0d12164"
+       ],
+       "data": "0x00000000000000000000000000000000000000000000000000819e4713c46c51"
+     }
+diff --git a/contracts/fixtures/buy_exact_tokens_out.json b/contracts/fixtures/buy_exact_tokens_out.json
+index 65bfbc7..0ca6435 100644
+--- a/contracts/fixtures/buy_exact_tokens_out.json
++++ b/contracts/fixtures/buy_exact_tokens_out.json
+@@ -8,7 +8,7 @@
+   "logs": [
+     {
+       "logIndex": 0,
+-      "address": "0xeccfe597b3556b67300701dc78ff8d7efc526005",
++      "address": "0x1ab3b3d2e2d5a08c5fdd414af393e833c0d12164",
+       "topics": [
+         "0x733bb99acb17010119efa3b694a341a4be53fb2e7ea4800188314660780de278",
+         "0x0000000000000000000000000000000000000000000000000000000000000b0b"
+@@ -17,10 +17,10 @@
+     },
+     {
+       "logIndex": 1,
+-      "address": "0x7d2316b7560e1c4bfa3da52e1df189d9394445e0",
++      "address": "0xc12b42263994ca2acae7c508c32256aec651e295",
+       "topics": [
+         "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+-        "0x000000000000000000000000eccfe597b3556b67300701dc78ff8d7efc526005",
++        "0x0000000000000000000000001ab3b3d2e2d5a08c5fdd414af393e833c0d12164",
+         "0x0000000000000000000000000000000000000000000000000000000000000b0b"
+       ],
+       "data": "0x00000000000000000000000000000000000000000052b7d2cee7561f3c9c0000"
+@@ -31,7 +31,7 @@
+       "topics": [
+         "0x8752a472e571a816aea92eec8dae9baf628e840f4929fbcc2d155e6233ff68a7",
+         "0x0000000000000000000000000000000000000000000000000000000000007ea5",
+-        "0x000000000000000000000000eccfe597b3556b67300701dc78ff8d7efc526005"
++        "0x0000000000000000000000001ab3b3d2e2d5a08c5fdd414af393e833c0d12164"
+       ],
+       "data": "0x000000000000000000000000000000000000000000000000000ee34735ed575a"
+     },
+@@ -41,7 +41,7 @@
+       "topics": [
+         "0x8752a472e571a816aea92eec8dae9baf628e840f4929fbcc2d155e6233ff68a7",
+         "0x000000000000000000000000000000000000000000000000000000000000c7ea",
+-        "0x000000000000000000000000eccfe597b3556b67300701dc78ff8d7efc526005"
++        "0x0000000000000000000000001ab3b3d2e2d5a08c5fdd414af393e833c0d12164"
+       ],
+       "data": "0x0000000000000000000000000000000000000000000000000004b38fc03000a4"
+     }
+diff --git a/contracts/fixtures/forged.json b/contracts/fixtures/forged.json
+index 0403761..1b03d06 100644
+--- a/contracts/fixtures/forged.json
++++ b/contracts/fixtures/forged.json
+@@ -8,11 +8,11 @@
+   "logs": [
+     {
+       "logIndex": 0,
+-      "address": "0xf6f1c0ddf9fd7d8d649136fdef58cc4bb5ce834c",
++      "address": "0x842f94211fddde358784ff8bd7138c58cf5d1598",
+       "topics": [
+         "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+         "0x0000000000000000000000000000000000000000000000000000000000000000",
+-        "0x00000000000000000000000075e817fef8cef59bf21d36413c10b88461320982"
++        "0x0000000000000000000000009eb4a5d5dcc77f7dd17dd2db1f33e703fa1fa177"
+       ],
+       "data": "0x0000000000000000000000000000000000000000033b2e3c9fd0803ce8000000"
+     },
+@@ -21,8 +21,8 @@
+       "address": "0x5991a2df15a8f6a256d3ec51e99254cd3fb576a9",
+       "topics": [
+         "0x18335d7ceae0e8415362afcfc11b534b5bfbf6b27c59420bf3d8e783b39de1c7",
+-        "0x000000000000000000000000f6f1c0ddf9fd7d8d649136fdef58cc4bb5ce834c",
+-        "0x00000000000000000000000075e817fef8cef59bf21d36413c10b88461320982",
++        "0x000000000000000000000000842f94211fddde358784ff8bd7138c58cf5d1598",
++        "0x0000000000000000000000009eb4a5d5dcc77f7dd17dd2db1f33e703fa1fa177",
+         "0x000000000000000000000000000000000000000000000000000000000000c7ea"
+       ],
+       "data": "0x000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000001000ecdc5a5a42e9bd315804a0767e4f053a27ff438ff7e07b6e82944aaaf6b44de000000000000000000000000000000000000000000000000000000000000000841726320436f696e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000341524300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000013697066733a2f2f6172637061642f736d6f6b6500000000000000000000000000"
+diff --git a/contracts/fixtures/launch.json b/contracts/fixtures/launch.json
+index 2e86d55..311b6e9 100644
+--- a/contracts/fixtures/launch.json
++++ b/contracts/fixtures/launch.json
+@@ -8,11 +8,11 @@
+   "logs": [
+     {
+       "logIndex": 0,
+-      "address": "0x7d2316b7560e1c4bfa3da52e1df189d9394445e0",
++      "address": "0xc12b42263994ca2acae7c508c32256aec651e295",
+       "topics": [
+         "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+         "0x0000000000000000000000000000000000000000000000000000000000000000",
+-        "0x000000000000000000000000eccfe597b3556b67300701dc78ff8d7efc526005"
++        "0x0000000000000000000000001ab3b3d2e2d5a08c5fdd414af393e833c0d12164"
+       ],
+       "data": "0x0000000000000000000000000000000000000000033b2e3c9fd0803ce8000000"
+     },
+@@ -21,7 +21,7 @@
+       "address": "0xf62849f9a0b5bf2913b396098f7c7019b51a820a",
+       "topics": [
+         "0xe027304f2e5e4d74279f1d1b4ac8f3d1916482aa45475d7dd67699ee58d8d479",
+-        "0x0000000000000000000000007d2316b7560e1c4bfa3da52e1df189d9394445e0",
++        "0x000000000000000000000000c12b42263994ca2acae7c508c32256aec651e295",
+         "0x0000000000000000000000005615deb798bb3e4dfa0139dfa1b3d433cc23b72f"
+       ],
+       "data": "0x"
+@@ -31,8 +31,8 @@
+       "address": "0xf62849f9a0b5bf2913b396098f7c7019b51a820a",
+       "topics": [
+         "0x18335d7ceae0e8415362afcfc11b534b5bfbf6b27c59420bf3d8e783b39de1c7",
+-        "0x0000000000000000000000007d2316b7560e1c4bfa3da52e1df189d9394445e0",
+-        "0x000000000000000000000000eccfe597b3556b67300701dc78ff8d7efc526005",
++        "0x000000000000000000000000c12b42263994ca2acae7c508c32256aec651e295",
++        "0x0000000000000000000000001ab3b3d2e2d5a08c5fdd414af393e833c0d12164",
+         "0x000000000000000000000000000000000000000000000000000000000000c7ea"
+       ],
+       "data": "0x000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000000c000000000000000000000000000000000000000000000000000000000000001000ecdc5a5a42e9bd315804a0767e4f053a27ff438ff7e07b6e82944aaaf6b44de000000000000000000000000000000000000000000000000000000000000000841726320436f696e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000341524300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000013697066733a2f2f6172637061642f736d6f6b6500000000000000000000000000"
+diff --git a/contracts/fixtures/sell.json b/contracts/fixtures/sell.json
+index 1456372..ac5dcb0 100644
+--- a/contracts/fixtures/sell.json
++++ b/contracts/fixtures/sell.json
+@@ -8,7 +8,7 @@
+   "logs": [
+     {
+       "logIndex": 0,
+-      "address": "0xeccfe597b3556b67300701dc78ff8d7efc526005",
++      "address": "0x1ab3b3d2e2d5a08c5fdd414af393e833c0d12164",
+       "topics": [
+         "0x733bb99acb17010119efa3b694a341a4be53fb2e7ea4800188314660780de278",
+         "0x0000000000000000000000000000000000000000000000000000000000000b0b"
+@@ -17,11 +17,11 @@
+     },
+     {
+       "logIndex": 1,
+-      "address": "0x7d2316b7560e1c4bfa3da52e1df189d9394445e0",
++      "address": "0xc12b42263994ca2acae7c508c32256aec651e295",
+       "topics": [
+         "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+         "0x0000000000000000000000000000000000000000000000000000000000000b0b",
+-        "0x000000000000000000000000eccfe597b3556b67300701dc78ff8d7efc526005"
++        "0x0000000000000000000000001ab3b3d2e2d5a08c5fdd414af393e833c0d12164"
+       ],
+       "data": "0x000000000000000000000000000000000000000000295be96e64066972000000"
+     },
+@@ -31,7 +31,7 @@
+       "topics": [
+         "0x8752a472e571a816aea92eec8dae9baf628e840f4929fbcc2d155e6233ff68a7",
+         "0x0000000000000000000000000000000000000000000000000000000000007ea5",
+-        "0x000000000000000000000000eccfe597b3556b67300701dc78ff8d7efc526005"
++        "0x0000000000000000000000001ab3b3d2e2d5a08c5fdd414af393e833c0d12164"
+       ],
+       "data": "0x0000000000000000000000000000000000000000000000000007cec7626b0581"
+     },
+@@ -41,7 +41,7 @@
+       "topics": [
+         "0x8752a472e571a816aea92eec8dae9baf628e840f4929fbcc2d155e6233ff68a7",
+         "0x000000000000000000000000000000000000000000000000000000000000c7ea",
+-        "0x000000000000000000000000eccfe597b3556b67300701dc78ff8d7efc526005"
++        "0x0000000000000000000000001ab3b3d2e2d5a08c5fdd414af393e833c0d12164"
+       ],
+       "data": "0x000000000000000000000000000000000000000000000000000277317d652a29"
+     }
+diff --git a/contracts/src/BondingCurve.sol b/contracts/src/BondingCurve.sol
+index 40b88e2..1f1c1f3 100644
+--- a/contracts/src/BondingCurve.sol
++++ b/contracts/src/BondingCurve.sol
+@@ -64,6 +64,18 @@ interface ICurveBoundToken {
+ interface ILaunchFactory {
+     function graduationTarget() external view returns (address);
+     function protocolTreasury() external view returns (address);
++    /// @notice Bu launch'in buyback politikasi. `treasury == 0` -> KAPALI.
++    /// @dev TEK cagri: "acik mi" ile "yuzde kac" ayri okunsaydi ikisi bir
++    ///      islem icinde ayrisabilirdi. Ayrica `view` TASIYICIDIR -- solc
++    ///      `view`den STATICCALL uretir, yani kotu niyetli bir factory ucret
++    ///      dagitiminin ORTASINDA curve'e geri giremez. Ayni uyari
++    ///      `protocolTreasury` icin de gecerlidir ve oradan kopyalanmistir.
++    function buybackPolicy(address token) external view returns (address treasury, uint256 lockBps);
++}
++
++/// @dev Buyback payinin yatirildigi yer. `accrue` token basina defter tutar.
++interface IBuybackTreasury {
++    function accrue(address token) external payable;
+ }
+ 
+ /// @title BondingCurve
+@@ -703,12 +715,54 @@ contract BondingCurve {
+         // defterin tamami ondan once yazilmistir, yani CEI'nin LAFZI da
+         // korunur -- `bind`'inki gibi bir sapma yok.
+         IFeeEscrow(escrow).deposit{value: protocolFee}(protocolTreasury());
+-        if (creatorFee != 0) IFeeEscrow(escrow).deposit{value: creatorFee}(creator);
++        _settleCreatorFee(token_, creatorFee);
+ 
+         (bool ok,) = msg.sender.call{value: netOut}("");
+         if (!ok) revert PayoutFailed();
+     }
+ 
++    /**
++     * @notice Creator ucretini oder; buyback aciksa bir kismini AYIRIR.
++     *
++     * @dev ============ PROTOKOL PAYINA HIC DOKUNULMAZ ============
++     *
++     *      Bu fonksiyon yalnizca `creatorFee` gorur. `protocolFee` kendi
++     *      bps'inden hesaplanir ve buraya HIC GIRMEZ, dolayisiyla "buyback
++     *      protokol gelirini azaltir" hatasi bir DIKKAT meselesi degil, bir
++     *      IMKANSIZLIKTIR. Referans uygulamada ayni ozellik bir SIRALAMA
++     *      disiplinidir (once protokol payini ayir, sonra kalani bol) cunku
++     *      orada tek bir taban ucret vardir; bizde iki bagimsiz bps oldugu icin
++     *      ayrim tipin kendisinde durur.
++     *
++     * @dev ============ ISARETLEME BURADA, SUPURMEDE DEGIL ============
++     *
++     *      Pay, ucretin KAZANILDIGI islemde ayrilir. Bir launch buyback'i
++     *      sonradan kapatirsa ONCEDEN ayrilmis para hazinede kalir ve buyback
++     *      olarak harcanir; kapaliyken biriken ucret de sonradan acilmakla
++     *      buyback'e donusemez, cunku hic yatirilmamistir. Spec'in istedigi
++     *      "eski ucretler eski politikayi izler" ozelligi bu satirdan gelir --
++     *      ayri bir `pending` alanina gerek yoktur.
++     *
++     * @dev Hazineye yapilan cagri `payable`dir ve BIR DIS CAGRIDIR; defterin
++     *      tamami bundan once yazilmistir (cagiran `_settleBuy`/satis yolunun
++     *      dis cagri bolumu). Hazine yalnizca kendi depolamasina yazar ve
++     *      curve'e geri girmez.
++     */
++    function _settleCreatorFee(address token_, uint256 creatorFee) private {
++        if (creatorFee == 0) return;
++
++        (address treasury, uint256 lockBps) = ILaunchFactory(factory).buybackPolicy(token_);
++        // `treasury == 0` KAPALI demektir; carpim hic yapilmaz.
++        uint256 buybackQuote = treasury == address(0) ? 0 : (creatorFee * lockBps) / 10_000;
++
++        if (buybackQuote != 0) IBuybackTreasury(treasury).accrue{value: buybackQuote}(token_);
++
++        uint256 creatorCash = creatorFee - buybackQuote;
++        // Kosul KALMALIDIR: `FeeEscrow.deposit` sifir tutarda revert eder ve
++        // `lockBps == 10_000` durumunda nakit pay TAM SIFIR olur.
++        if (creatorCash != 0) IFeeEscrow(escrow).deposit{value: creatorCash}(creator);
++    }
++
+     // ---------------------------------------------------------------
+     // Graduation -- curve'un TEK cikis yolu
+     // ---------------------------------------------------------------
+@@ -955,7 +1009,7 @@ contract BondingCurve {
+         // ALICI YATIRIM ANINDA COZULUR; satis yolundaki ayni satirin notu
+         // gecerlidir.
+         IFeeEscrow(escrow).deposit{value: protocolFee}(protocolTreasury());
+-        if (creatorFee != 0) IFeeEscrow(escrow).deposit{value: creatorFee}(creator);
++        _settleCreatorFee(token_, creatorFee);
+ 
+         // Iade duz `call` ile yapilir ve BASARISIZLIGINDA REVERT EDER. Arc'ta
+         // sozlesmelere native gonderimin basarili olacagi garanti degildir ve
+diff --git a/contracts/src/LaunchFactory.sol b/contracts/src/LaunchFactory.sol
+index 9f61f4d..f629c2a 100644
+--- a/contracts/src/LaunchFactory.sol
++++ b/contracts/src/LaunchFactory.sol
+@@ -289,6 +289,33 @@ contract LaunchFactory {
+     ///      factory kosar.
+     mapping(address token => address) public feeScheduleOf;
+ 
++    // ==================================================================
++    //  CREATOR-FUNDED BUYBACK & LOCK
++    // ==================================================================
++
++    /// @notice Creator ucretinin buyback'e ayrilan payi: %50.
++    /// @dev SABIT, ayarlanabilir DEGIL -- ve bu, spec'in "launch aninda
++    ///      snapshot'la" istegini bu mimaride TAM olarak karsilar. Bu deponun
++    ///      surumleme birimi FABRIKADIR: `LaunchFactory`nin initcode'u bir
++    ///      adres belirleyicisidir, yani bu sabiti degistirmek zaten YENI BIR
++    ///      FABRIKA NESLI demektir. Eski launch'lar eski fabrikada, eski
++    ///      politikayla kalir; gecmise donuk bir degisiklik YAPILAMAZ.
++    uint256 public constant BUYBACK_LOCK_BPS = 5_000;
++
++    /// @notice Ayrilan payin yatirildigi hazine. Sifir ise ozellik KAPALIDIR.
++    address public immutable buybackTreasury;
++
++    /// @notice Launch basina buyback tercihi.
++    mapping(address token => bool) public buybackEnabledOf;
++
++    /// @notice Mezuniyet sonrasi ucret kesen hook; hazine tahakkuk yetkisini
++    ///         buradan dogrular. Governor BIR KEZ yazar.
++    address public graduationHook;
++
++    /// @notice Supurmeyi tetikleyen operator. Governor doner.
++    address public buybackKeeper;
++
++
+     // ---------------------------------------------------------------
+     // Olaylar ve hatalar
+     // ---------------------------------------------------------------
+@@ -427,6 +454,16 @@ contract LaunchFactory {
+ 
+     /// @dev Yalnizca `governor`.
+     error NotGovernor();
++    /// @dev Buyback'i ACMAYA yalnizca creator yetkilidir.
++    error NotLaunchCreator();
++    /// @dev Governor buyback'i ACAMAZ; yalnizca kapatabilir.
++    error GovernorCannotEnableBuyback();
++    /// @dev Bu fabrikadan cikmamis bir token.
++    error UnknownLaunch();
++    /// @dev `graduationHook` yalnizca BIR KEZ yazilir.
++    error HookAlreadySet();
++    /// @dev Hazine yokken buyback acilamaz.
++    error BuybackUnavailable();
+ 
+     /// @dev Sifir hedef ONERILEMEZ. Bir "hedefi geri al" yolu bilerek yoktur:
+     ///      graduation'i durdurmak bir pause'dur ve bu sistemde pause yoktur.
+@@ -646,7 +683,21 @@ contract LaunchFactory {
+         uint256 virtualTokenReserves_,
+         uint256 virtualQuoteReserves_,
+         uint256 saleSupply_,
+-        address feeSchedule_
++        address feeSchedule_,
++        /**
++         * @dev BUYBACK HAZINESI, VE SIFIR OLMASI MESRUDUR.
++         *
++         *      `address(0)` gecirmek ozelligi KAPALI bir fabrika uretir:
++         *      `buybackPolicy` her zaman sifir doner, `launchWithBuyback`
++         *      ve `setBuybackEnabled(true)` `BuybackUnavailable` ile reddedilir.
++         *      Yani ayni kaynak hem buyback'li hem buyback'siz bir nesil
++         *      uretebilir ve ozelligi acmak bir DEPLOY karari olur.
++         *
++         *      Kod kontrolu YOKTUR ve olmamalidir: hazine bu fabrikanin
++         *      adresini constructor'inda okur, yani ondan SONRA deploy edilir.
++         *      Bir CREATE2 on-tahmini gecirmek mesru ve beklenen kullanimdir.
++         */
++        address buybackTreasury_
+     ) {
+         if (escrow_ == address(0)) revert ZeroEscrowAddress();
+         if (escrow_.code.length == 0) revert EscrowHasNoCode();
+@@ -709,6 +760,7 @@ contract LaunchFactory {
+             )) revert ProfileNotSeedable();
+ 
+         feeSchedule = feeSchedule_;
++        buybackTreasury = buybackTreasury_;
+         escrow = escrow_;
+         protocolTreasury = protocolTreasury_;
+         governor = governor_;
+@@ -734,10 +786,129 @@ contract LaunchFactory {
+     ///      en sonda. Uretilen iki kontratin constructor'i da hicbir dis cagri
+     ///      yapmaz (OZ ERC20'nin `_mint`'i dahil), yani bu dizide yeniden
+     ///      girilebilecek bir pencere yoktur.
++    // ==================================================================
++    //  BUYBACK: IZINLER VE POLITIKA
++    // ==================================================================
++
++    event BuybackEnabledUpdated(address indexed token, address indexed by, bool enabled);
++    event GraduationHookSet(address indexed hook);
++    event BuybackKeeperSet(address indexed keeper);
++
++    /**
++     * @notice Bir launch'in buyback tercihini degistirir.
++     *
++     * @dev ============ PROTOKOL, CREATOR'I BUYBACK'E ZORLAYAMAZ ============
++     *
++     *      Bu, ozelligin en onemli guvenlik ozelligidir ve asimetri
++     *      BILINCLIDIR:
++     *
++     *          creator : kapali -> acik   VE   acik -> kapali
++     *          governor:                       acik -> kapali  YALNIZCA
++     *
++     *      Gerekce ekonomiktir. Buyback'in parasi CREATOR'IN ucret gelirinden
++     *      cikar, ama satin alinan tokenlarin %30'u vesting sonunda PROTOKOLE
++     *      gider. Governor "acik" diyebilseydi, protokol bir creator'in kendi
++     *      gelirini, ciktisindan kendisinin pay aldigi bir kasaya ZORLA
++     *      yonlendirebilirdi. Bu kabul edilemez bir guven varsayimidir.
++     *
++     *      Ters yon serbesttir ve zararsizdir: kapatmak, gelecekteki gelirin
++     *      TAMAMINI creator'a birakir -- yani governor'in yapabilecegi tek sey
++     *      creator'in lehinedir. Referans uygulama da ayni asimetriyi tasir.
++     *
++     * @dev ZATEN AYNI DEGERE AYARLAMAK SESSIZCE GECER, revert etmez: bir
++     *      operator betigi idempotent olabilmelidir.
++     */
++    function setBuybackEnabled(address token, bool enabled) external {
++        if (feeScheduleOf[token] == address(0)) revert UnknownLaunch();
++
++        address creator = LaunchToken(token).creator();
++        if (msg.sender == creator) {
++            if (enabled && buybackTreasury == address(0)) revert BuybackUnavailable();
++        } else if (msg.sender == governor) {
++            // ASIMETRI BURADA. Bir satir, ve ozelligin guven modelinin tamami.
++            if (enabled) revert GovernorCannotEnableBuyback();
++        } else {
++            revert NotLaunchCreator();
++        }
++
++        if (buybackEnabledOf[token] == enabled) return;
++        buybackEnabledOf[token] = enabled;
++        emit BuybackEnabledUpdated(token, msg.sender, enabled);
++    }
++
++    /**
++     * @notice Curve ve hook'un okudugu tek karar noktasi.
++     * @return treasury Sifir ise buyback KAPALI.
++     * @return lockBps  Creator ucretinin ayrilan payi.
++     *
++     * @dev TEK CAGRI, IKI DEGER: "acik mi" ile "yuzde kac" ayri okunsaydi
++     *      ikisi bir islem icinde ayrisabilirdi.
++     */
++    function buybackPolicy(address token) external view returns (address treasury, uint256 lockBps) {
++        if (!buybackEnabledOf[token]) return (address(0), 0);
++        return (buybackTreasury, BUYBACK_LOCK_BPS);
++    }
++
++    /**
++     * @notice Mezuniyet hook'unu BIR KEZ kaydeder.
++     * @dev Hook, fabrika adresine madenlenmis bir tuzla deploy edildigi icin
++     *      fabrikadan SONRA var olur; constructor argumani OLAMAZ. Bir kez
++     *      yazilir cunku degistirilebilir olsaydi governor, hazineye tahakkuk
++     *      yetkisi olan sahte bir adres kaydedebilirdi.
++     */
++    function setGraduationHook(address hook) external {
++        if (msg.sender != governor) revert NotGovernor();
++        if (hook == address(0)) revert ZeroGraduationTarget();
++        if (graduationHook != address(0)) revert HookAlreadySet();
++        graduationHook = hook;
++        emit GraduationHookSet(hook);
++    }
++
++    /**
++     * @notice Supurme operatorunu doner.
++     * @dev Anahtarci DEGISTIRILEBILIR olmalidir (anahtar rotasyonu bir
++     *      operasyon gerekliligidir) ve olmasi GUVENLIDIR: anahtarcinin tek
++     *      yetkisi supurmeyi TETIKLEMEKTIR. Nereye harcanacagi, ne kadarinin
++     *      guvenli oldugu ve parcanin kime gidecegi hazinede sabittir; kotu
++     *      niyetli bir anahtarci yalnizca supurmeyi GECIKTIREBILIR, ve o
++     *      gecikme `SWEEP_GRACE` sonrasi izinsiz supurmeyle asilir.
++     */
++    function setBuybackKeeper(address keeper) external {
++        if (msg.sender != governor) revert NotGovernor();
++        buybackKeeper = keeper;
++        emit BuybackKeeperSet(keeper);
++    }
++
+     function launch(string calldata name_, string calldata symbol_, string calldata uri_)
+         external
+         returns (address token, address curve)
+     {
++        return _launch(name_, symbol_, uri_, false);
++    }
++
++    /**
++     * @notice Buyback tercihiyle birlikte launch.
++     *
++     * @dev AYRI BIR GIRIS, DEGISTIRILMIS BIR IMZA DEGIL. `launch`in uc
++     *      argumanli hali ARAYUZDE KALIR: arayuz, betikler ve indexer'in ABI
++     *      beklentisi kirilmaz ve buyback istemeyen bir creator icin hicbir
++     *      sey degismez. Spec'in geriye donuk uyumluluk maddesinin bu
++     *      mimarideki karsiligi budur.
++     */
++    function launchWithBuyback(
++        string calldata name_,
++        string calldata symbol_,
++        string calldata uri_,
++        bool buybackEnabled
++    ) external returns (address token, address curve) {
++        return _launch(name_, symbol_, uri_, buybackEnabled);
++    }
++
++    function _launch(string calldata name_, string calldata symbol_, string calldata uri_, bool buybackEnabled)
++        private
++        returns (address token, address curve)
++    {
++        if (buybackEnabled && buybackTreasury == address(0)) revert BuybackUnavailable();
+         if (bytes(name_).length == 0) revert EmptyName();
+         if (bytes(symbol_).length == 0) revert EmptySymbol();
+ 
+@@ -791,6 +962,11 @@ contract LaunchFactory {
+         // olayindan ONCE ve `bind`den ONCE, yani mevcut CEI disiplinine uyar --
+         // her defter yazimi her dis cagridan once biter.
+         feeScheduleOf[token] = feeSchedule;
++        // Tercih ANINDA yazilir: curve ilk isleminde `buybackPolicy`yi okur.
++        if (buybackEnabled) {
++            buybackEnabledOf[token] = true;
++            emit BuybackEnabledUpdated(token, msg.sender, true);
++        }
+         emit FeeScheduleAssigned(token, feeSchedule);
+ 
+         emit Launched(token, curve, msg.sender, name_, symbol_, uri_, salt);
+diff --git a/contracts/test/ArcpadHook.t.sol b/contracts/test/ArcpadHook.t.sol
+index 84a1c71..1f53c3b 100644
+--- a/contracts/test/ArcpadHook.t.sol
++++ b/contracts/test/ArcpadHook.t.sol
+@@ -235,7 +235,7 @@ contract ArcpadHookTest is Test {
+ 
+         escrow = new FeeEscrow();
+         schedule = new FeeSchedule();
+-        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule));
++        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule), address(0));
+ 
+         locker = new LockerStub(pm, usdc);
+         harness = new SwapHarness(pm);
+diff --git a/contracts/test/ArcpadLocker.t.sol b/contracts/test/ArcpadLocker.t.sol
+index edb4067..ea43a5e 100644
+--- a/contracts/test/ArcpadLocker.t.sol
++++ b/contracts/test/ArcpadLocker.t.sol
+@@ -284,7 +284,7 @@ contract ArcpadLockerTest is Test {
+ 
+         escrow = new FeeEscrow();
+         schedule = new FeeSchedule();
+-        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule));
++        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule), address(0));
+ 
+         bytes memory args = abi.encode(IPoolManager(address(pm)), address(factory), address(escrow));
+         (address hookAddr, bytes32 salt) =
+@@ -695,7 +695,7 @@ contract ArcpadLockerTest is Test {
+     /// KENDI defteridir, dolayisiyla ikinci factory'nin token'i bu locker'in
+     /// factory'sinde SIFIR schedule tasir.
+     function test_graduateOnACurveFromAnotherFactoryReverts() public {
+-        LaunchFactory other = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule));
++        LaunchFactory other = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule), address(0));
+         vm.prank(GOVERNOR);
+         other.proposeGraduationTarget(address(locker));
+         vm.warp(block.timestamp + 3 days);
+diff --git a/contracts/test/ArcpadRouter.t.sol b/contracts/test/ArcpadRouter.t.sol
+index 7dd5607..36ce9cd 100644
+--- a/contracts/test/ArcpadRouter.t.sol
++++ b/contracts/test/ArcpadRouter.t.sol
+@@ -126,7 +126,7 @@ contract ArcpadRouterTest is Test {
+ 
+         escrow = new FeeEscrow();
+         schedule = new FeeSchedule();
+-        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule));
++        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule), address(0));
+ 
+         bytes memory args = abi.encode(IPoolManager(address(pm)), address(factory), address(escrow));
+         (address hookAddr, bytes32 salt) =
+diff --git a/contracts/test/BondingCurve.t.sol b/contracts/test/BondingCurve.t.sol
+index a589857..861561f 100644
+--- a/contracts/test/BondingCurve.t.sol
++++ b/contracts/test/BondingCurve.t.sol
+@@ -296,6 +296,13 @@ contract MeasuringFactory {
+         return treasury;
+     }
+ 
++    /// @dev Buyback KAPALI: sifir hazine, sifir pay. Bu taslaklarin isi
++    ///      egriyi calistirmaktir; buyback'in kendi testleri ayri dosyada.
++    function buybackPolicy(address) external pure returns (address, uint256) {
++        return (address(0), 0);
++    }
++
++
+     function pull() external returns (uint256, uint256) {
+         return curve.graduate();
+     }
+diff --git a/contracts/test/FixtureGen.t.sol b/contracts/test/FixtureGen.t.sol
+index 39c15bf..144013b 100644
+--- a/contracts/test/FixtureGen.t.sol
++++ b/contracts/test/FixtureGen.t.sol
+@@ -223,7 +223,7 @@ contract FixtureGenTest is Test {
+         vm.createDir("./fixtures", true);
+ 
+         escrow = new FeeEscrow();
+-        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+ 
+         vm.deal(CREATOR, 1_000e18);
+         vm.deal(TRADER, 1_000e18);
+diff --git a/contracts/test/LaunchFactory.t.sol b/contracts/test/LaunchFactory.t.sol
+index 7248f57..051145f 100644
+--- a/contracts/test/LaunchFactory.t.sol
++++ b/contracts/test/LaunchFactory.t.sol
+@@ -50,6 +50,13 @@ contract Forger {
+         return target.protocolTreasury();
+     }
+ 
++    /// @dev Buyback KAPALI: sifir hazine, sifir pay. Bu taslaklarin isi
++    ///      egriyi calistirmaktir; buyback'in kendi testleri ayri dosyada.
++    function buybackPolicy(address) external pure returns (address, uint256) {
++        return (address(0), 0);
++    }
++
++
+     function graduationTarget() external view returns (address) {
+         return target.graduationTarget();
+     }
+@@ -156,14 +163,14 @@ contract LaunchFactoryTest is Test {
+     function setUp() public {
+         FEE_SCHEDULE = new FeeSchedule();
+         escrow = new FeeEscrow();
+-        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+         vm.deal(ALICE, 100e18);
+         vm.deal(BOB, 100e18);
+         vm.deal(BUYER, 1_000_000e18);
+     }
+ 
+     function _newFactory(uint256 t_, uint256 v_, uint256 s_) internal returns (LaunchFactory) {
+-        return new LaunchFactory(address(escrow), TREASURY, GOVERNOR, t_, v_, s_, address(FEE_SCHEDULE));
++        return new LaunchFactory(address(escrow), TREASURY, GOVERNOR, t_, v_, s_, address(FEE_SCHEDULE), address(0));
+     }
+ 
+     /// Fuzz edilen bir dizeyi token sinirlarina sigdirir; bos ise yedegi verir.
+@@ -916,13 +923,13 @@ contract LaunchFactoryTest is Test {
+     /// yapisaldir: schedule bir odeme ALICISI degil, CAGRILAN bir kontrattir.
+     function test_theFeeScheduleMustBeNonZeroAndHaveCode() public {
+         vm.expectRevert(LaunchFactory.ZeroFeeSchedule.selector);
+-        new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(0));
++        new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(0), address(0));
+ 
+         vm.expectRevert(LaunchFactory.FeeScheduleHasNoCode.selector);
+-        new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(0xDEAD));
++        new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(0xDEAD), address(0));
+ 
+         // KONTROL: kodu olan bir adresle GECER.
+-        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+         assertEq(ok.feeSchedule(), address(FEE_SCHEDULE));
+     }
+ 
+@@ -1357,13 +1364,13 @@ contract LaunchFactoryTest is Test {
+     /// iki iddia bunu ayrica sabitler.
+     function test_constructorRejectsAZeroEscrowOrTreasury() public {
+         vm.expectRevert(LaunchFactory.ZeroEscrowAddress.selector);
+-        new LaunchFactory(address(0), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        new LaunchFactory(address(0), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+ 
+         vm.expectRevert(LaunchFactory.ZeroTreasuryAddress.selector);
+-        new LaunchFactory(address(escrow), address(0), GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        new LaunchFactory(address(escrow), address(0), GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+ 
+         vm.expectRevert(LaunchFactory.ZeroGovernorAddress.selector);
+-        new LaunchFactory(address(escrow), TREASURY, address(0), T, V, S, address(FEE_SCHEDULE));
++        new LaunchFactory(address(escrow), TREASURY, address(0), T, V, S, address(FEE_SCHEDULE), address(0));
+ 
+         assertTrue(
+             LaunchFactory.ZeroEscrowAddress.selector != BondingCurve.ZeroEscrow.selector,
+@@ -1384,11 +1391,11 @@ contract LaunchFactoryTest is Test {
+     /// launch'inda, ancak BIR ALICININ isleminde goruluyor.
+     function test_constructorRejectsACodelessEscrow() public {
+         vm.expectRevert(LaunchFactory.EscrowHasNoCode.selector);
+-        new LaunchFactory(address(0xE0A), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        new LaunchFactory(address(0xE0A), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+ 
+         // KABUL EDILEN TARAF: kodu olan bir escrow gecer ve gercekten ticaret
+         // yapar -- kontrolun fazla siki olmadigini gosterir.
+-        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+         vm.prank(ALICE);
+         (address token, address curve) = ok.launch("Arc Coin", "ARC", "ipfs://cid");
+         vm.prank(BUYER);
+@@ -1418,20 +1425,20 @@ contract LaunchFactoryTest is Test {
+ 
+         // (a) uye YOK (ve fallback de yok)
+         vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
+-        new LaunchFactory(noMember, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        new LaunchFactory(noMember, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+ 
+         // (b) uye REVERT ediyor
+         vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
+-        new LaunchFactory(reverting, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        new LaunchFactory(reverting, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+ 
+         // (c) YAPISAL OLARAK IMKANSIZ cevap
+         vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
+-        new LaunchFactory(lying, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        new LaunchFactory(lying, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+ 
+         // ...ve gercekci operator hatasinin kendisi: baska bir arcpad
+         // kontratini yapistirmak.
+         vm.expectRevert(LaunchFactory.EscrowIsNotAFeeEscrow.selector);
+-        new LaunchFactory(someToken, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        new LaunchFactory(someToken, TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+     }
+ 
+     /// YOKLAMA FAZLA KISITLAMIYOR -- iki kabul tanigi.
+@@ -1450,12 +1457,12 @@ contract LaunchFactoryTest is Test {
+         assertGt(escrow.owed(ALICE), 0);
+         assertEq(escrow.owed(address(0)), 0, "sifir alici anahtari yazilamaz");
+ 
+-        LaunchFactory used = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        LaunchFactory used = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+         assertEq(used.escrow(), address(escrow));
+ 
+         // (2) vekil.
+         EscrowProxy proxy = new EscrowProxy(address(new FeeEscrow()));
+-        LaunchFactory proxied = new LaunchFactory(address(proxy), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        LaunchFactory proxied = new LaunchFactory(address(proxy), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+         assertEq(proxied.escrow(), address(proxy));
+ 
+         // ...ve vekilli factory gercekten ticaret yapar: yoklama kozmetik
+@@ -1498,7 +1505,7 @@ contract LaunchFactoryTest is Test {
+             assertGt(escrow.owed(keys[i]), 0, "on kosul: her anahtara alacak yazilmali");
+         }
+ 
+-        LaunchFactory f = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        LaunchFactory f = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+         assertEq(f.escrow(), address(escrow), "escrow makul bir anahtarda alacagi oldugu icin reddedildi");
+ 
+         // ...ve YAZILAMAYAN tek anahtar hala sifir. Yoklamanin dayandigi sey
+@@ -1518,7 +1525,7 @@ contract LaunchFactoryTest is Test {
+         escrow.deposit{value: amount}(recipient);
+         assertGt(escrow.owed(recipient), 0, "on kosul: alacak yazilmali");
+ 
+-        LaunchFactory f = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        LaunchFactory f = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+         assertEq(f.escrow(), address(escrow), "escrow bir aliciya alacak yazdigi icin reddedildi");
+ 
+         // VE SEBEBIN KENDISI: sifir alici anahtari YAZILAMAZ, dolayisiyla
+@@ -1536,7 +1543,7 @@ contract LaunchFactoryTest is Test {
+     /// gostermemek icin buradadir.
+     function test_theLedgerProbeDoesNotSeeAPermissiveFallback() public {
+         PermissiveFallback wrong = new PermissiveFallback();
+-        LaunchFactory accepted = new LaunchFactory(address(wrong), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        LaunchFactory accepted = new LaunchFactory(address(wrong), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+         assertEq(accepted.escrow(), address(wrong), "acik hucre kapandiysa bu testi guncelle");
+ 
+         // VE KACIRILANIN SONUCU OLCULUYOR. Bu sekil FAIL-CLOSED DEGILDIR:
+@@ -1557,7 +1564,7 @@ contract LaunchFactoryTest is Test {
+     /// gelir ve bu sabittir.
+     function test_aZeroEscrowIsReportedAsZeroNotAsCodeless() public {
+         vm.expectRevert(LaunchFactory.ZeroEscrowAddress.selector);
+-        new LaunchFactory(address(0), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        new LaunchFactory(address(0), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+         assertEq(address(0).code.length, 0, "address(0) violates BOTH escrow guards");
+     }
+ 
+@@ -1607,7 +1614,7 @@ contract LaunchFactoryTest is Test {
+         // "escrow OLMAYAN, sifir OLMAYAN her adres"tir.
+         Seeder safeLike = new Seeder();
+         LaunchFactory f2 =
+-            new LaunchFactory(address(escrow), address(safeLike), GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++            new LaunchFactory(address(escrow), address(safeLike), GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+         vm.prank(ALICE);
+         (, address curve2) = f2.launch("Arc Coin", "ARC", "ipfs://cid");
+         vm.prank(BUYER);
+@@ -1635,13 +1642,13 @@ contract LaunchFactoryTest is Test {
+     /// dolayisiyla sifir kontrolu ONCE gelir ve bu sabittir.
+     function test_constructorRejectsTheEscrowAsTheTreasury() public {
+         vm.expectRevert(LaunchFactory.TreasuryIsTheEscrow.selector);
+-        new LaunchFactory(address(escrow), address(escrow), GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        new LaunchFactory(address(escrow), address(escrow), GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+ 
+         vm.expectRevert(LaunchFactory.ZeroTreasuryAddress.selector);
+-        new LaunchFactory(address(escrow), address(0), GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        new LaunchFactory(address(escrow), address(0), GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+ 
+         // Ve escrow'un KENDISI disinda her sey gecer -- koruma dardir.
+-        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE));
++        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(FEE_SCHEDULE), address(0));
+         assertEq(ok.protocolTreasury(), TREASURY);
+     }
+ 
+@@ -1654,12 +1661,12 @@ contract LaunchFactoryTest is Test {
+     /// birden olabilir.
+     function test_constructorRejectsTheEscrowAsGovernorButAcceptsTheTreasuryAsGovernor() public {
+         vm.expectRevert(LaunchFactory.GovernorIsTheEscrow.selector);
+-        new LaunchFactory(address(escrow), TREASURY, address(escrow), T, V, S, address(FEE_SCHEDULE));
++        new LaunchFactory(address(escrow), TREASURY, address(escrow), T, V, S, address(FEE_SCHEDULE), address(0));
+ 
+         vm.expectRevert(LaunchFactory.ZeroGovernorAddress.selector);
+-        new LaunchFactory(address(escrow), TREASURY, address(0), T, V, S, address(FEE_SCHEDULE));
++        new LaunchFactory(address(escrow), TREASURY, address(0), T, V, S, address(FEE_SCHEDULE), address(0));
+ 
+-        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, TREASURY, T, V, S, address(FEE_SCHEDULE));
++        LaunchFactory ok = new LaunchFactory(address(escrow), TREASURY, TREASURY, T, V, S, address(FEE_SCHEDULE), address(0));
+         assertEq(ok.governor(), TREASURY);
+         assertEq(ok.protocolTreasury(), TREASURY);
+     }
+diff --git a/contracts/test/fork/GraduationCycle.live.fork.t.sol b/contracts/test/fork/GraduationCycle.live.fork.t.sol
+index d3f1aeb..28898ee 100644
+--- a/contracts/test/fork/GraduationCycle.live.fork.t.sol
++++ b/contracts/test/fork/GraduationCycle.live.fork.t.sol
+@@ -330,7 +330,7 @@ contract GraduationCycleLiveForkTest is Test {
+     ///      ama CANLI `PoolManager`, CANLI `FeeEscrow` ve CANLI `FeeSchedule`
+     ///      ile.
+     function _deployDisposableStack() internal {
+-        factory = new LaunchFactory(liveEscrow, DISPOSABLE_TREASURY, DISPOSABLE_GOVERNOR, T, V, S, liveFeeSchedule);
++        factory = new LaunchFactory(liveEscrow, DISPOSABLE_TREASURY, DISPOSABLE_GOVERNOR, T, V, S, liveFeeSchedule, address(0));
+ 
+         bytes memory args = abi.encode(pm, address(factory), liveEscrow);
+         (address hookAddr, bytes32 salt) =
+@@ -678,7 +678,7 @@ contract GraduationCycleLiveForkTest is Test {
+ 
+         // --- YARI 2: CURVE'UN ELE ALISI, FORK'TA ---
+         LaunchFactory blocked =
+-            new LaunchFactory(liveEscrow, DISPOSABLE_TREASURY, DISPOSABLE_GOVERNOR, T, V, S, liveFeeSchedule);
++            new LaunchFactory(liveEscrow, DISPOSABLE_TREASURY, DISPOSABLE_GOVERNOR, T, V, S, liveFeeSchedule, address(0));
+         PayoutRejectingTarget target = new PayoutRejectingTarget();
+ 
+         vm.prank(DISPOSABLE_GOVERNOR);
+diff --git a/contracts/test/invariant/BondingCurveInvariants.t.sol b/contracts/test/invariant/BondingCurveInvariants.t.sol
+index dc136ca..1992da2 100644
+--- a/contracts/test/invariant/BondingCurveInvariants.t.sol
++++ b/contracts/test/invariant/BondingCurveInvariants.t.sol
+@@ -695,7 +695,7 @@ abstract contract BondingCurveInvariantsBase is Test {
+     ///      test kontratidir, boylece D3'un iki fazli setter'i kampanyanin
+     ///      kurulumunda GERCEKTEN yurunur.
+     function _launchViaFactory(uint256 v) internal {
+-        factory = new LaunchFactory(address(escrow), TREASURY, address(this), T, v, S, address(FEE_SCHEDULE));
++        factory = new LaunchFactory(address(escrow), TREASURY, address(this), T, v, S, address(FEE_SCHEDULE), address(0));
+         vm.prank(LAUNCHER);
+         (, address curveAddr) = factory.launch("arcpad", "ARC", "ipfs://arcpad");
+         curve = BondingCurve(curveAddr);
+diff --git a/contracts/test/invariant/PoolSeedInvariants.t.sol b/contracts/test/invariant/PoolSeedInvariants.t.sol
+index deba728..be752d3 100644
+--- a/contracts/test/invariant/PoolSeedInvariants.t.sol
++++ b/contracts/test/invariant/PoolSeedInvariants.t.sol
+@@ -88,7 +88,7 @@ contract PoolSeedInvariantsTest is Test {
+ 
+         escrow = new FeeEscrow();
+         schedule = new FeeSchedule();
+-        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule));
++        factory = new LaunchFactory(address(escrow), TREASURY, GOVERNOR, T, V, S, address(schedule), address(0));
+ 
+         bytes memory args = abi.encode(IPoolManager(address(pm)), address(factory), address(escrow));
+         (address hookAddr, bytes32 salt) =
+diff --git a/contracts/test/invariant/ReentrancyInvariants.t.sol b/contracts/test/invariant/ReentrancyInvariants.t.sol
+index c02f1c2..98bb8a3 100644
+--- a/contracts/test/invariant/ReentrancyInvariants.t.sol
++++ b/contracts/test/invariant/ReentrancyInvariants.t.sol
+@@ -106,7 +106,7 @@ abstract contract ReentrancyInvariantsBase is Test {
+         // olculmus kor noktasinin aynisi.
+         factory = new LaunchFactory(
+             address(escrow), address(actor1), address(this), T, virtualQuote, S, address(FEE_SCHEDULE)
+-        );
++        , address(0));
+ 
+         // Uc curve URUN YOLUYLA: creator'lari aktorlerdir, dolayisiyla
+         // creator ucreti de silahli bir alicida birikir.
+diff --git a/contracts/test/script/Deploy.t.sol b/contracts/test/script/Deploy.t.sol
+index d00256c..1cd437f 100644
+--- a/contracts/test/script/Deploy.t.sol
++++ b/contracts/test/script/Deploy.t.sol
+@@ -1204,7 +1204,7 @@ contract DeployTest is Test {
+                 p.virtualQuoteReserves,
+                 p.saleSupply,
+                 address(new FeeSchedule())
+-            )
++            , address(0))
+         );
+     }
+ 

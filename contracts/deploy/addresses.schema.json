@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arcpad.local/schemas/addresses.json",
+  "title": "arcpad address book",
+  "description": "DOKUMANTASYONDUR, CALISMA ZAMANI BAGIMLILIGI DEGILDIR. Dogrulamayi yapan sey packages/shared/src/addresses.ts icindeki parseAddressBook'tur ve o, her basarisizligi ALAN ADIYLA birlikte firlatir. Bu dosya seklin okunabilir kaydidir; bir JSON Schema dogrulayicisi eklemek ayni kurallarin ikinci bir kopyasini yaratirdi ve ikisi ayrisabilirdi.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "chainId",
+    "chainKey",
+    "profile",
+    "virtualTokenReserves",
+    "virtualQuoteReserves",
+    "saleSupply",
+    "totalSupply",
+    "launchFactory",
+    "feeEscrow",
+    "governor",
+    "protocolTreasury",
+    "graduationTarget",
+    "feeSchedule",
+    "poolManager",
+    "arcpadHook",
+    "arcpadLocker",
+    "arcpadRouter",
+    "feeEscrowBlock",
+    "launchFactoryBlock",
+    "startBlock",
+    "deployTx",
+    "escrowInitcodeHash",
+    "factoryInitcodeHash",
+    "routerInitcodeHash",
+    "commit",
+    "smokeToken",
+    "smokeCurve"
+  ],
+  "$defs": {
+    "address": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{40}$",
+      "description": "EIP-55 checksum'lu olmalidir. Buyuk-kucuk harf dogrulamasini JSON Schema ifade edemez; parseAddressBook eder."
+    },
+    "bytes32": {
+      "type": "string",
+      "pattern": "^0x[0-9a-fA-F]{64}$"
+    },
+    "uint": {
+      "type": "string",
+      "pattern": "^[0-9]+$",
+      "description": "ONDALIK DIZE, ASLA JSON sayisi. totalSupply = 1e27 bir IEEE-754 double'a sigmaz ve sayi olarak yazilsaydi sessizce yuvarlanirdi."
+    }
+  },
+  "properties": {
+    "chainId": {
+      "type": "integer",
+      "description": "Dosya adiyla AYNI olmalidir: addresses.<chainId>.json."
+    },
+    "chainKey": {
+      "type": "string",
+      "description": "expected-governance.json icindeki governance kaydinin anahtari. Profil adiyla AYNI SEY DEGILDIR: iki zincir de \"testnet\" profilini kullanir ama AYRI governance adresleri tasir."
+    },
+    "profile": {
+      "enum": [
+        "testnet",
+        "production"
+      ]
+    },
+    "virtualTokenReserves": {
+      "$ref": "#/$defs/uint"
+    },
+    "virtualQuoteReserves": {
+      "$ref": "#/$defs/uint"
+    },
+    "saleSupply": {
+      "$ref": "#/$defs/uint"
+    },
+    "totalSupply": {
+      "$ref": "#/$defs/uint",
+      "description": "LAUNCH_TOKEN_TOTAL_SUPPLY = 1e27. Task 6'da deployment'in GERCEKTEN mint ettigi bir token'in TOTAL_SUPPLY()'i okunarak dogrulanir, bir sabitten kopyalanmaz."
+    },
+    "launchFactory": {
+      "$ref": "#/$defs/address"
+    },
+    "feeEscrow": {
+      "$ref": "#/$defs/address"
+    },
+    "governor": {
+      "$ref": "#/$defs/address"
+    },
+    "protocolTreasury": {
+      "$ref": "#/$defs/address"
+    },
+    "graduationTarget": {
+      "$ref": "#/$defs/address",
+      "description": "Bu fazda sifir. Faz 2'nin degisikligi INCELENEN bir dosyada diff olsun diye simdiden burada."
+    },
+    "feeSchedule": {
+      "$ref": "#/$defs/address"
+    },
+    "poolManager": {
+      "$ref": "#/$defs/address"
+    },
+    "arcpadHook": {
+      "$ref": "#/$defs/address"
+    },
+    "arcpadLocker": {
+      "$ref": "#/$defs/address"
+    },
+    "arcpadRouter": {
+      "$ref": "#/$defs/address",
+      "description": "Mezun olmus bir havuzda islem yapmanin TEK yolu. ZORUNLUDUR, nullable DEGIL: V4 bir EOA'ya swap girisi vermez ve Arc'ta Universal Router yoktur, dolayisiyla router'i olmayan bir dagitim mezuniyet sonrasi ticareti OLMAYAN bir dagitimdir. `routerInitcodeHash` ile birlikte CREATE2(0x4e59b448..., keccak(\"arcpad.ArcpadRouter.v1\"), hash) olarak yeniden turetilir."
+    },
+    "feeEscrowBlock": {
+      "$ref": "#/$defs/uint"
+    },
+    "launchFactoryBlock": {
+      "$ref": "#/$defs/uint"
+    },
+    "startBlock": {
+      "$ref": "#/$defs/uint",
+      "description": "min(feeEscrowBlock, launchFactoryBlock). Indexer'in fromBlock'u. Iki bilesen AYRI tutulur: escrow once deploy edilir, ve bugun factory blogundan baslamak hicbir sey kacirmaz -- ileride escrow-onceli bir olay eklenirse kacirirdi."
+    },
+    "deployTx": {
+      "$ref": "#/$defs/bytes32",
+      "description": "LaunchFactory'yi yaratan islem. Adres defterinin zincir ustundeki demirlemesi."
+    },
+    "escrowInitcodeHash": {
+      "$ref": "#/$defs/bytes32",
+      "description": "Bu ikisi sayesinde her iki adres YALNIZCA defterden yeniden turetilebilir: CREATE2(0x4e59b448..., salt, hash). Onlarsiz defter bir IDDIA; onlarla bir ISPAT TASLAGI."
+    },
+    "factoryInitcodeHash": {
+      "$ref": "#/$defs/bytes32"
+    },
+    "routerInitcodeHash": {
+      "$ref": "#/$defs/bytes32",
+      "description": "UCUNCU turetme. Router'in initcode'u constructor argumanlarini (PoolManager, hook) da icerir, yani bu hash BYTECODE ya da BAGLANTI degistiginde kayar -- ikisi de router'in kimligidir. Havuz uclusunun boyle bir hash'i yoktur ve o adresler bu yuzden yalnizca KOPYALANIR."
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$",
+      "description": "Jeneratorun KOSTUGU agac (git rev-parse HEAD). BYTECODE'UN URETILDIGI AGAC DEGILDIR ve oyle okunmamalidir: bu defter UC AYRI agactan kontrat kaydediyor (factory 8dec4e92, router fe11fff), yani tek bir alan o soruyu en fazla bir kontrat icin cevaplayabilir, ve ciplak bir yeniden uretim canli HEAD'i damgalar -- ki o hicbiri icin dogrudur. \"Deploy edilen bytecode derlenenle ayni\" cumlesinin mercii BURASI DEGIL: kontrat basina initcodeHash alanlari (escrow/factory/router) ve `make frozen-hash-chain`tir. Havuz uclusunun initcode hash'i YOKTUR, dolayisiyla onlar icin merci yalnizca frozen-hash-chain'dir."
+    },
+    "smokeToken": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/address"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Task 7 doldurana kadar null. CI fork kapisinin okudugu kalici tamamlanmis-curve fixture'i. TIPTE BASTAN VAR: Task 7 bir DEGER degisikligi olsun, SEMA degisikligi olmasin diye."
+    },
+    "smokeCurve": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/address"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}

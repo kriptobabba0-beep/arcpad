@@ -1,0 +1,134 @@
+name: graduation-drill
+
+# HAFTALIK TATBIKAT. "Angaryaya hic ateslenmemis bir monitor, bozuk oldugunu
+# kimsenin bilmedigi bir monitordur." Ayrintilar ve manuel kosum:
+# docs/runbooks/graduation-window.md, bolum 8.
+#
+# IKI AYRI ZAMANLAMA, cunku iki faz arasinda UC GUN vardir:
+#   observe -- Pazartesi 09:15 UTC, Safe oneriyi yaptiktan hemen sonra
+#   expiry  -- Persembe 09:15 UTC, ayni onerinin suresi dolduktan sonra
+#
+# ONERI ADIMI (adim 1) BURADA DEGILDIR ve olmamalidir: governor bir Safe'tir ve
+# bir CI isine governor yetkisi vermek, tatbikatin tespit etmek icin var oldugu
+# seyi yaratirdi. Safe islemini rota'daki imzaci gonderir; CI yalnizca GOZLER.
+
+on:
+  schedule:
+    # Pazartesi 09:15 UTC -- rota devrinden 15 dakika sonra, boylece duseni
+    # o hafta nobette olan gorur.
+    - cron: "15 9 * * 1"
+    # Persembe 09:15 UTC -- Pazartesi'nin onerisi eta + 3 gun'u gecmis olur.
+    - cron: "15 9 * * 4"
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: "observe | expiry"
+        required: true
+        default: observe
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  drill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # DEPLOY EDILMEMIS BIR ZINCIRDE TATBIKAT ANLAMSIZDIR ve sessizce gecmek
+      # YASAKTIR: `exit 1` ile duser. Yesil gorunen ama hicbir sey dogrulamayan
+      # bir is, bu depoda zaten bir kez `continue-on-error` olarak yasandi ve
+      # kaldirildi (bkz. contracts.yml'deki fork isi).
+      - name: Require a deployed factory
+        env:
+          ARC_FACTORY_ADDRESS: ${{ vars.ARC_FACTORY_ADDRESS }}
+        run: |
+          if [ -z "$ARC_FACTORY_ADDRESS" ]; then
+            echo "::error::ARC_FACTORY_ADDRESS is unset. The drill cannot run before the deploy;"
+            echo "::error::set the repository variable when Task 6 lands. Failing rather than passing vacuously."
+            exit 1
+          fi
+
+      - name: Resolve phase
+        id: phase
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ inputs.phase }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event.schedule }}" = "15 9 * * 1" ]; then
+            echo "value=observe" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=expiry" >> "$GITHUB_OUTPUT"
+          fi
+
+      # LAVABOYU GERCEKTEN TASIYAN ADIM.
+      #
+      # Onceki hal bu adimin VAR OLDUGUNU yorumda soyluyor ama yazmiyordu:
+      # `observe` fazi `KEEPER_ALERT_LOG`u okuyordu, hicbir sey onu bu runner'a
+      # getirmiyordu, ve `fileAlertSink` okunamayan dosyaya `[]` dondugu icin is
+      # KAPALI DUSUYOR ama ASLA GECEMIYORDU. Kalici kirmizi bir haftalik is, bosu
+      # bosuna yesil olan kadar guvenilir sekilde susturulur -- ayni vakumlu-kapi
+      # arizasinin diger yonu.
+      #
+      # Keeper artik lavabosunu KENDI yazar (`KEEPER_ALERT_LOG`, bkz.
+      # keeper/src/alert.ts `fileSink`). Geriye tek bir yapilandirma kaliyor:
+      # o dosyanin nereden okunacagi. Eksikse is ADIYLA duser.
+      - name: Fetch the keeper's alert sink
+        if: steps.phase.outputs.value == 'observe'
+        env:
+          SINK_URL: ${{ vars.KEEPER_ALERT_LOG_URL }}
+        run: |
+          if [ -z "$SINK_URL" ]; then
+            echo "::error::KEEPER_ALERT_LOG_URL is unset. The keeper writes its sink to"
+            echo "::error::\$KEEPER_ALERT_LOG (see docs/runbooks/graduation-window.md section 7);"
+            echo "::error::publish that file and set the repository variable to its URL."
+            echo "::error::Failing rather than reading an empty file and calling it a pass."
+            exit 1
+          fi
+          curl --fail --silent --show-error --max-time 30 "$SINK_URL" -o "$RUNNER_TEMP/alerts.log"
+          echo "KEEPER_ALERT_LOG=$RUNNER_TEMP/alerts.log" >> "$GITHUB_ENV"
+          echo "pulled $(wc -l < "$RUNNER_TEMP/alerts.log") sink lines"
+
+      # `observe` alarm lavabosunu OKUR, SIMULE ETMEZ.
+      - name: Drill
+        env:
+          ARC_RPC_URL: ${{ secrets.ARC_RPC_URL }}
+          ARC_FACTORY_ADDRESS: ${{ vars.ARC_FACTORY_ADDRESS }}
+          ARC_START_BLOCK: ${{ vars.ARC_START_BLOCK }}
+          KEEPER_CHAIN_KEY: ${{ vars.KEEPER_CHAIN_KEY }}
+          KEEPER_DRILL_TARGET: "0x000000000000000000000000000000000000dEaD"
+          KEEPER_DRILL_CALLER: ${{ vars.KEEPER_DRILL_CALLER }}
+          # TATBIKATIN BEKLEME SURESI, KEEPER'IN POLL ARALIGINDAN TURER
+          # (`drillObserve` `waitMs`), ve ikisi AYRISIRSA is yanlis cevap verir:
+          # keeper 30 saniyede bir poll ederken tatbikat 3 x 5 sn bekleyip
+          # "NO HEARTBEAT ... there was no watcher" derdi -- yani CALISAN bir
+          # izleyiciyi olu ilan eder. Bu ayrisma varsayimsal degil: canli Arc
+          # public RPC'sine karsi 5 saniyelik varsayilan aralik OLCULEREK
+          # calismaz (bkz. runbook bolum 6, "Arc's public RPC"), dolayisiyla
+          # keeper 30 saniyede kosar. Deger buraya ACIKCA yazilir ki iki taraf
+          # ayni sayiyi soylesin.
+          KEEPER_POLL_INTERVAL_MS: ${{ vars.KEEPER_POLL_INTERVAL_MS || '30000' }}
+          # PENCERE. `vars.KEEPER_DRILL_SINCE` rota'nin Safe islemini
+          # gondermeden hemen once yazdigi ISO damgasidir. Ayarli degilse
+          # is BUGUNUN baslangicini kullanir -- yani kanit BU KOSUYA ait
+          # olmak zorundadir ve gecen haftanin sayfasi gecemez.
+          KEEPER_DRILL_SINCE: ${{ vars.KEEPER_DRILL_SINCE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEEPER_DRILL_SINCE:-}" ]; then
+            KEEPER_DRILL_SINCE="$(date -u +%Y-%m-%dT00:00:00Z)"
+            echo "KEEPER_DRILL_SINCE unset; defaulting to the start of today ($KEEPER_DRILL_SINCE)"
+          fi
+          export KEEPER_DRILL_SINCE
+          pnpm --filter @arcpad/keeper drill ${{ steps.phase.outputs.value }}

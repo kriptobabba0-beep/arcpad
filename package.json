@@ -1,0 +1,25 @@
+{
+  "name": "arcpad",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "build": "pnpm -r --if-present build",
+    "fmt": "prettier --write \"**/*.{ts,tsx}\"",
+    "fmt:check": "prettier --check \"**/*.{ts,tsx}\"",
+    "lint": "eslint .",
+    "addressbook": "tsx scripts/addressbook.ts"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3",
+    "@types/node": "26.1.1",
+    "@eslint/js": "9.39.5",
+    "eslint": "9.39.5",
+    "prettier": "3.9.6",
+    "typescript-eslint": "8.65.0",
+    "tsx": "4.23.1",
+    "viem": "2.55.8"
+  },
+  "packageManager": "pnpm@11.17.0"
+}

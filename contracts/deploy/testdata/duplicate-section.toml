@@ -1,0 +1,18 @@
+# NOT A DEPLOYABLE PROFILE. Fixture for the M-4 test: two [profiles.testnet]
+# tables. Real TOML rejects a duplicate table; the earlier reader silently kept
+# the LAST one, which was the single malformation it accepted while being
+# documented as "throws on every line it does not recognise".
+[profiles.testnet]
+virtualTokenReserves = "1073000000000000000000000000"
+virtualQuoteReserves = "4292000000000000000"
+saleSupply = "793100000000000000000000000"
+
+[profiles.testnet]
+virtualTokenReserves = "1073000000000000000000000000"
+virtualQuoteReserves = "4292000000000000000000"
+saleSupply = "793100000000000000000000000"
+
+[profiles.production]
+virtualTokenReserves = "1073000000000000000000000000"
+virtualQuoteReserves = "4292000000000000000000"
+saleSupply = "793100000000000000000000000"

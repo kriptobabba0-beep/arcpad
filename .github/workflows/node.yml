@@ -1,0 +1,382 @@
+name: node
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".gitignore"
+  pull_request:
+    # GitHub Actions YAML anchor/alias desteklemez; liste bilerek tekrarlanir.
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".gitignore"
+
+# Ayni dal icin yeni bir kosu basladiginda eskisini iptal et. Ard arda iki
+# push yapildiginda birincinin kosusu sonuna kadar calisip Actions dakikasi
+# yakiyordu.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    # `@arcpad/db` testleri GERCEK bir Postgres ister ve veritabani yoksa
+    # ATLAMAZ, COKER (packages/db/test/setup.ts). Bu servis olmadan `pnpm -r
+    # test` adimi kirmizi olur -- bilerek: Faz 0'in devir listesi (satir 41-42)
+    # "hicbir CI is akisi henuz calismadi, kapilarin degeri sifir" diye
+    # kaydetti; atlayan bir veritabani testi ayni siniftir.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: arcpad
+          POSTGRES_PASSWORD: arcpad
+          POSTGRES_DB: arcpad
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # SUBMODULE'LAR ZORUNLU, VE BU BIR NODE ISI OLDUGU HALDE.
+          #
+          # `web/test/errors/reconcile.test.ts` hata imzalarini GERCEK
+          # kaynaktan uzlastirir ve o kaynagin bir parcasi OpenZeppelin'dir
+          # (`contracts/lib/openzeppelin-contracts/.../ERC20.sol`). Submodule
+          # olmadan bes vaka `ENOENT` ile duser -- ve ariza YALNIZCA CI'da
+          # gorunur, cunku her gelistirici checkout'unda o dizin zaten vardir.
+          #
+          # Testi "dosya yoksa atla" yapmak YANLIS cozumdur: atlayan bir
+          # uzlastirma testi yesil gorunur ve hicbir sey uzlastirmaz.
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Format check
+        run: pnpm run fmt:check
+
+      - name: Lint
+        run: pnpm run lint
+
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      # ====================================================================
+      #  `--workspace-concurrency=1` ZORUNLU: UC SUIT AYNI VERITABANINI PAYLASIR
+      # ====================================================================
+      #
+      # OLCULDU (2026-08-17, bu kapi): `indexer` bir test dustu ve sebep bir urun
+      # kusuru DEGILDI --
+      #
+      #   error: deadlock detected
+      #     ❯ resetSchema test/db.ts:35   DROP SCHEMA IF EXISTS public CASCADE
+      #
+      # `pnpm -r` paketleri PARALEL kosar. `@arcpad/db` ve `indexer` kurulumlarinda
+      # AYNI veritabaninda `DROP SCHEMA public CASCADE` yapar, `web` de ayni
+      # baglantiyi okur. Ikisi ayni anda semayi dusurunce Postgres deadlock verir.
+      #
+      # BU KAPI BUGUNE KADAR SANSLA GECTI. `fileParallelism: false` bir paketin
+      # ICINDEKI dosyalari korur; paketler ARASINDA hicbir sey korumaz. Ayni sinif
+      # daha once de olculmustu: iki tam kosu ust uste binince `migrate.test.ts`te
+      # 32 HAYALET ariza uretmisti.
+      #
+      # Neden ayri veritabani degil: paket basina farkli bir `DATABASE_URL` vermek
+      # pnpm'de temiz degil, ve bir dosya daha (DB olusturma adimi) eklerdi.
+      # Serilestirmenin bedeli olculdu ve KUCUK: DB'ye bagli uc suit zaten
+      # birbiriyle cekisiyordu (db ~90s, indexer ~68s, web ~60s), yani paralellik
+      # gorunurde kalandan azini kazandiriyordu.
+      - name: Test
+        run: pnpm -r --workspace-concurrency=1 test
+        env:
+          DATABASE_URL: postgres://arcpad:arcpad@localhost:5432/arcpad
+
+      # THE STEP WITHOUT WHICH THIS JOB HAS NEVER BEEN GREEN.
+      #
+      # `next build` prerenders `/_not-found`, which reaches `getWebConfig()`,
+      # which throws `WebConfigError: NEXT_PUBLIC_ARC_CHAIN_ID: is not set`.
+      # Measured on this tree: the build fails with exit status 1 without these
+      # values and succeeds with them. Neither this job nor `release-gate` set
+      # any of them, so the gate was decorative -- and a gate that has never
+      # passed teaches people to ignore it, which this repository has already
+      # paid for twice (a permanently-red weekly drill; a 90-error lint run).
+      #
+      # THE VALUES ARE READ, NOT PASTED. `--env-only` loads
+      # `contracts/deploy/addresses.<chainId>.json` through the SAME loader that
+      # re-derives every address from its initcode hash via CREATE2, rejects
+      # aliases, checks the profile digest and cross-checks
+      # `expected-governance.json`. A hand-written value in this file would be a
+      # third copy that outlives the book -- exactly the defect sitting in
+      # `indexer-live.yml` today. It finds the chain id itself, so not even that
+      # is written here.
+      - name: Web env, from the address book
+        run: pnpm addressbook --env-only >> "$GITHUB_ENV"
+
+      - name: Build web
+        run: pnpm --filter @arcpad/web build
+
+  # THE ABI PARITY GATE, IN ITS OWN JOB.
+  #
+  # `packages/shared/src/abi/*` is the one copy of the ABI the frontend ships,
+  # and it is committed rather than generated at build time so that `web` builds
+  # without a Solidity toolchain. The price of committing it is drift, and this
+  # job is what makes drift impossible to merge: it builds the contracts and
+  # compares BOTH DIRECTIONS -- a removed entry and an ADDED entry are both
+  # failures.
+  #
+  # Separate from `check` because `check` must keep running on a runner with no
+  # Foundry; `test:abi` is deliberately NOT part of `pnpm -r test` for the same
+  # reason. The risk that buys is a test that never runs anywhere, and
+  # `abi-parity.test.ts` closes it by asserting this job exists.
+  abi-parity:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.6.0-rc1
+
+      - name: Build contracts
+        run: forge build --root contracts
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: ABI parity
+        run: pnpm --filter @arcpad/shared test:abi
+
+  # THE QUOTE ENGINE, RUN AGAINST REAL BYTECODE.
+  #
+  # `packages/shared/test/chain/**` starts `anvil`, deploys the compiled
+  # FeeEscrow/LaunchFactory/LaunchToken/BondingCurve, and executes several
+  # hundred planned trades against them, comparing every fee, every reserve and
+  # every refund. Task 4 proves the arithmetic; this proves the AGREEMENT.
+  #
+  # `anvil` ships with foundry, so there is no extra install step. Separate from
+  # `check` for the same reason as `abi-parity`: `check` must keep running on a
+  # runner with no Solidity toolchain, and `test:chain` is deliberately NOT part
+  # of `pnpm -r test`. The risk that buys -- a suite that runs nowhere -- is
+  # closed by a gate inside the suite that asserts this job exists.
+  chain-differential:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.6.0-rc1
+
+      - name: Build contracts
+        run: forge build --root contracts
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Curve differential
+        run: pnpm --filter @arcpad/shared test:chain
+
+  # THE BROWSER LEG. A REAL CHAIN, A REAL BUILD, A REAL BROWSER.
+  #
+  # Two specs run without a database and one with, and the split is a claim
+  # rather than a convenience:
+  #
+  #   e2e:local  `DATABASE_URL` is STRIPPED by the harness, so the token page
+  #              can only take the `readTokenOverview -> unavailable ->
+  #              verifyCanonical -> draw from the chain` branch. Task 7's
+  #              degrade-without-breaking property and Task 12's
+  #              database-independence property are therefore measured by the
+  #              SAME run.
+  #   e2e:db     the same build against Postgres: Explore's sorts and filters,
+  #              the keyset pager, ⌘K's pasted-address path and the token
+  #              page's tables.
+  #   e2e:audit  axe, keyboard-only, the byte budgets, CLS/LCP and the
+  #              third-party request count.
+  #
+  # Foundry is here for `anvil` only -- `forge build` produces the artefacts the
+  # harness DEPLOYS, so it must run first or the deploy has nothing to deploy.
+  #
+  # NO `continue-on-error`, anywhere. Phase 0 recorded a job-level
+  # `continue-on-error` that showed a failing job as green; a gate that cannot
+  # turn the run red is not a gate.
+  e2e-local:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: arcpad
+          POSTGRES_PASSWORD: arcpad
+          POSTGRES_DB: arcpad
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.6.0-rc1
+
+      - name: Build contracts
+        run: forge build --root contracts
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm --filter @arcpad/web exec playwright install --with-deps chromium
+
+      # The chain scenario. The harness strips `DATABASE_URL` itself, so this
+      # step deliberately does NOT set it -- and would still take the
+      # chain-only branch if it did.
+      - name: End-to-end, local chain
+        run: pnpm --filter @arcpad/web e2e:local
+
+      - name: End-to-end, audits
+        run: pnpm --filter @arcpad/web e2e:audit
+
+      # A skipped database spec reads exactly like a passing one, so the suite
+      # FAILS without `DATABASE_URL` rather than skipping. A Postgres service
+      # is one block of YAML; a gate that quietly does not run is nothing.
+      - name: End-to-end, with Postgres
+        run: pnpm --filter @arcpad/web e2e:db
+        env:
+          DATABASE_URL: postgres://arcpad:arcpad@localhost:5432/arcpad
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: web/test-results
+          retention-days: 7
+
+  # THE ARC TESTNET LEG. Only on `main`, and only when the secret exists.
+  #
+  # It measures the ONE thing anvil cannot: that the 6-decimal ERC-20 view at
+  # 0x3600…0000 and the 18-decimal native view are two readings of ONE balance.
+  # There is no contract at that address on a devchain, so an interface that
+  # SUMMED the two views would stay green on the local leg forever.
+  #
+  # The `if` gates the JOB, not a step, and there is no `continue-on-error`:
+  # when the secret is present this job can turn the run red. When it is
+  # absent the job does not run at all -- which is visible in the checks list,
+  # unlike a step that skipped.
+  e2e-arc:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium
+        run: pnpm --filter @arcpad/web exec playwright install --with-deps chromium
+
+      - name: End-to-end, Arc testnet
+        run: pnpm --filter @arcpad/web e2e:arc
+        env:
+          E2E_ARC: ${{ secrets.E2E_ARC }}
+          E2E_ARC_RPC_URL: ${{ secrets.E2E_ARC_RPC_URL }}
+          E2E_ARC_BASE_URL: ${{ secrets.E2E_ARC_BASE_URL }}
+          E2E_ARC_PRIVATE_KEY: ${{ secrets.E2E_ARC_PRIVATE_KEY }}
+          E2E_ARC_FACTORY: ${{ secrets.E2E_ARC_FACTORY }}
+          E2E_ARC_TOKEN: ${{ secrets.E2E_ARC_TOKEN }}
+          E2E_ARC_CURVE: ${{ secrets.E2E_ARC_CURVE }}
+
+  # THE RELEASE GATE.
+  #
+  # Format, lint, repository-wide typecheck, the web suite and a real build --
+  # with the end-to-end escape hatch REFUSED rather than honoured. It also rules
+  # on the declared open cells, so an allowance that outlived its reason turns
+  # the run red instead of quietly persisting.
+  #
+  # Separate from `check` because its verdict is a different question: `check`
+  # asks "is this branch healthy", this asks "may this be released".
+  release-gate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `git show HEAD:<path>` decides whether an open cell has expired, so
+          # the gate needs a real commit, not a synthetic merge with no history.
+          fetch-depth: 2
+          # Bu kapi `check`in kostugu web suitini de kosar; ayni submodule
+          # bagimliligi (bkz. `check`in checkout'undaki gerekce).
+          submodules: recursive
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm
+        run: corepack enable pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Same reason as the `check` job's copy: `release-gate` ends in a real
+      # `next build`, and it had no environment either. Repeated rather than
+      # factored because GitHub Actions has no YAML anchors and a composite
+      # action for one `run:` line would hide the one thing worth reading.
+      - name: Web env, from the address book
+        run: pnpm addressbook --env-only >> "$GITHUB_ENV"
+
+      - name: Release gate
+        run: pnpm --filter @arcpad/web release-gate
