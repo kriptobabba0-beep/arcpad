@@ -226,12 +226,26 @@ aramasi -- iki eleman buluyordu. `> summary` (cocuk birlesticisi) kullanildi;
 `.first()` de calisirdi ama DOM sirasina guvenmek, ic ice iki acilirdan
 hangisinin once geldigini gorunmez bir varsayim yapardi.
 
-### CI'in kapi kapi durumu (3. kosu, 6fcae8e)
+### CI'in kapi kapi durumu
 
-`forge` **843/843** (41 suite, 37 dk), `fork`, `slither`, `check`
+`forge` **843/843** (41 suite, 37 dk), `fork` **29/29**, `slither`, `check`
 (db **406**, indexer **333**, shared 308, keeper 371, scripts 19, web 1311),
 `release-gate`, `abi-parity`, `chain-differential` — **yedisi de yesil**.
 Kalan tek kapi `e2e-local`.
+
+### E2E'YI CI'A SORMAYI BIRAK — YERELDE KOSUYOR
+
+Uc CI turu e2e uzerinde harcandiktan sonra olculdu: **Chromium ve `anvil` bu
+makinede ZATEN kurulu**, yani `pnpm --filter @arcpad/web e2e:local` burada
+kosuyor (~2,5 dk). Her tur icin CI'i beklemek gereksizdi.
+
+Yerel kosu sirayla iki ariza daha cikardi ve **ikisi de ayni sinif**: bu suite
+hic kosmadigi icin arayuzden SESSIZCE kopmus.
+
+| Belirti | Gercek sebep |
+|---|---|
+| `locator('summary')` iki eleman buldu | `QuoteBreakdown` DA bir `<details>`tir ve `trade-details`in icinde durur; torun aramasi ikisini birden bulur. `> summary` (cocuk birlesticisi). `.first()` de calisirdi ve DOM sirasina gorunmez bir varsayim yuklerdi |
+| `getByRole('tab', {name: 'Receive tokens'})` 90 sn bekleyip dustu | Panel UC durumlu kaldi ama arayuz onlari uc sekme olarak GOSTERMIYOR: sekmeler artik **Buy / Sell**, alim tarafinda birim `flip-unit` dugmesiyle ceviriliyor |
 
 ---
 

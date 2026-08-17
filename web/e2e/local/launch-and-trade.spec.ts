@@ -384,7 +384,21 @@ test.describe('the eight-step chain scenario', () => {
 
     await withWallet(page)
     await page.goto(`/token/${token}`)
-    await page.getByRole('tab', { name: 'Receive tokens' }).click()
+    /*
+     * ============ "RECEIVE TOKENS" ARTIK BIR SEKME DEGIL ============
+     *
+     * Panel UC DURUMLU kaldi (`spend` / `receive` / `sell`) ama arayuz onlari
+     * uc sekme olarak GOSTERMIYOR: sekmeler artik yalnizca **Buy / Sell**, ve
+     * alim tarafinda BIRIM `flip-unit` dugmesiyle degistiriliyor (USDC yaz <->
+     * token yaz). Yani `getByRole('tab', { name: 'Receive tokens' })` hicbir
+     * seye denk gelmiyordu ve test 90 saniye bekleyip dusuyordu.
+     *
+     * Kullanicinin yaptigi hareket AYNEN yurutuluyor: sayfa `spend`te acilir,
+     * birim cevrilir, sonra token cinsinden yazilir. `flip-unit` alan BOSKEN
+     * de cizilir (bkz. `converseText`in kendi gerekcesi), dolayisiyla once bir
+     * sey yazmak gerekmez.
+     */
+    await page.getByTestId('flip-unit').click()
     await page.getByLabel('Tokens to buy').fill(String(askTok / 10n ** 18n))
 
     await expect(page.getByTestId('clamp-notice')).toBeVisible()
