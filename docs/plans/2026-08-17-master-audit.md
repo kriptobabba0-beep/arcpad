@@ -278,6 +278,40 @@ uzunluklar AYNIDIR. O iddia CALISAN bir suzgecte duserdi. Kirpmanin
 saklayamadigi sey HANGI satirlarin geldigidir, bu yuzden iddia uzunluk degil
 **uyelik**: ayni siralama, ayni ilk sayfa, eski satirlar pencereli olanda YOK.
 
+### H-7. `volume` INDEKSI HAKSIZ YERE GERI ALINMISTI
+
+H-6'nin dolaysiz sonucu. `017_sort_keys.sql` bir kez gonderilmis, sonra
+**geri alinmisti** — sebep, `e2e/db/explore-and-search.spec.ts`in "`oldest`
+yaratilis sirasina gore ARTMALI" diyerek dusmesiydi. H-6 o testin Explore'un
+**okumadigi** bir `?sort=` parametresini surdugunu gosterdi: hata degisiklikten
+**degil**, silinmis bir URL sozlesmesinden geliyordu. Ve bu, geri almadan sonra
+ayni mesajla tekrar dusmesinden zaten belliydi.
+
+**DERS: geri almadan once arizanin degisiklikten geldigini DOGRULA.** En ucuz
+testi, geri almanin ardindan hayatta kalip kalmadigidir.
+
+Dayandigi esitlik artik bir **kapi**: `packages/db/test/sort-keys.test.ts`
+(6 test). Ve esitlik yapisaldir — `applyLaunch` iki sutunu **tek ifadede ayni
+CTE'den** yazar, hicbir `UPDATE` `created_seq`e dokunmaz, view'in
+`JOIN token_stats`i INNER'dir, ve `applyLaunch` tek yazma yoludur (indexer de
+onu cagirir). Kapi bunu metin taramasiyla degil, **olaylari oynatarak** olcer:
+launch + transfer + iki alim + `Completed`.
+
+Sunucuda olculdu (`/root/arcpad-buyback`, 3.000 token, **421/421**, 91 s):
+
+```
+recentBuys       Sort=0        marketCap        Sort=2   <- D-14, urun karari
+newest           Sort=0        volume           Sort=0   <- GERI GETIRILDI
+oldest           Sort=0        nearGraduation   Sort=2   <- cozulebilir
+```
+
+`volume` Explore'un **varsayilan** sekmesidir (`trending`), yani en cok okunan
+siralama. Alti siralamanin **dordu** artik indeksten geliyor.
+
+Ve bu tur bir **is akisi kazanci** da getirdi: db suitini sunucuda kosturmak
+(415 -> 421 test, **92 saniye**) bir CI turunun yerini aliyor. Bu degisiklik
+gonderilmeden once orada dogrulandi.
+
 ### CI'in kapi kapi durumu
 
 `forge` **843/843** (41 suite, 37 dk), `fork` **29/29**, `slither`, `check`
@@ -407,6 +441,45 @@ ediyordu. Paylasilan bir `renderChart` yardimcisi eklendi (30/30 yesil) —
 testler artik gercekligi yansitiyor.
 
 ### J-1. Diger
+
+### D-14 (`marketCap` siralamasi) — BIR URUN KARARI BEKLIYOR, PERFORMANS ISI DEGIL
+
+Explore'un uc para siralamasindan `volume` artik indeksten geliyor
+(`017_sort_keys.sql`, olculdu `Sort=2 -> 0`). `marketCap` gelmiyor, ve sebebi
+bakim eksigi DEGIL.
+
+`writeMarketCap` **uc** yerden cagrilir: `admit.ts` (acilis), `apply/trade.ts`
+(egri islemleri) ve **`apply/pool.ts` — mezuniyetten SONRA, havuz fiyatindan**.
+`token_overview` ise `market_cap_wei`i `curve_state`ten hesaplar, ve egri
+mezuniyette **DONAR**. Yani mezun bir token icin:
+
+| | Deger |
+|---|---|
+| `token_stats.market_cap_wei` | havuzun **canli** fiyati |
+| view'in `market_cap_wei`'i | egrinin **donmus** son fiyati |
+
+Ikisi bayatliktan degil **tasarimdan** ayrisir. View'i `ts`e baglamak bu yuzden
+bir indeks degisikligi degil: mezun tokenlerin **gosterilen** market cap'ini ve
+`marketCap` siralamasinin **anlamini** degistirir. (Denendi; dokuz test dustu ve
+o testler bugunku anlami kodluyordu, yani hakliydilar.)
+
+**KARAR SAHIBININ:**
+
+* **A)** View egri turevli kalir. Indeks, egri ifadesini aynen yansitan — ve
+  mezuniyette donan — **ayri** bir sakli sutun ister.
+* **B)** View `ts.market_cap_wei`e gecer. Mezunlar **canli havuz** market cap'i
+  gosterir; bu muhtemelen kullanici icin daha dogrudur ama gorunen degerleri ve
+  siralamayi degistirir, ve dokuz testin beklentisi guncellenir.
+
+Karar verilene kadar `scale.test.ts` bunu **olculmus borc** olarak kirmizi
+tutar.
+
+`nearGraduation` ise **cozulebilir ve karar gerektirmez**: `progress_ppm` bir
+egri kavramidir, mezuniyette %100'de donar, `_ppm` zaten bildirilmis bir sonek.
+Tek yapisal kisit: bakim `applyTrade`'in **mevcut** `st` CTE'sine katilmali —
+Postgres tek ifadede ayni satiri iki kez guncellemeyi desteklemez ve ayri bir
+`mc AS (UPDATE token_stats ...)` ya hacim sayaclarini ya da yeni sutunu
+**sessizce** dusururdu.
 
 ### C-2 (HSTS) — HEMEN ACILABILIR, KADEMELI
 

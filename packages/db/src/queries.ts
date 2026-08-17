@@ -407,35 +407,44 @@ export const SORTS = {
    * basina 10 saniyede bir odenir.
    *
    * SEBEP IFADE DEGIL, SUTUNUN KAYNAGI: `market_cap_wei` view'de
-   * `curve_state`ten yeniden hesaplanir, `created_seq` ise `launches`tan gelir
-   * -- TABLOLAR ARASI bir ifadeye hicbir indeks hizmet edemez. (`token_stats`
+   * `curve_state`ten yeniden hesaplanir -- TABLOLAR ARASI (`curve_state` x
+   * `deployment`) bir ifadeye hicbir indeks hizmet edemez. (`token_stats`
    * uzerindeki `token_stats_mcap_idx` bu yuzden bugune kadar hic KULLANILMADI.)
    *
-   * DUZELTMESI BIR PERFORMANS ISI DEGIL, BIR DOGRULUK ISI -- ve iki kez
-   * denendi, ikisi de testlerle yanlislandi:
+   * VE DUZELTMESI BIR PERFORMANS ISI DEGIL, BIR URUN KARARI. Iki deger
+   * BAYATLIKTAN degil TASARIMDAN ayrisir: `writeMarketCap` UC yerden cagrilir
+   * ve ucuncusu `indexer/src/apply/pool.ts`tir -- yani MEZUNIYETTEN SONRA,
+   * HAVUZ fiyatindan. View ise egriden hesaplar ve egri mezuniyette DONAR:
    *
-   *   1. View `ts.market_cap_wei`e cevrildi: `Sort` 2 -> 0, yani kazanc GERCEK.
-   *      Ama `packages/db`'nin `applyLaunch`i o sutunu yalnizca INSERT eder;
-   *      guncelleyen indexer'in `writeMarketCap`idir. Yani db katmaninda deger
-   *      BAYATLAR -- 9 test hakli olarak dustu.
-   *   2. Yalnizca `ts.created_seq`e cevrildi: `volume` icin `Sort` 0 oldu, ama
-   *      `e2e/db/explore-and-search.spec.ts` "`oldest` yaratilis sirasina gore
-   *      ARTMALI" diyerek dustu -- e2e fixture'i `ts.created_seq` ile
-   *      `l.created_seq`i AYNI yazmiyor.
+   *   ts.market_cap_wei   -> mezun tokende havuzun CANLI fiyati
+   *   view'inki           -> egrinin DONMUS son fiyati
    *
-   * Iki denemede de ayni varsayim vardi: "`token_stats`in bir sutunu
-   * `launches`taki karsiliginin sadik bir aynasidir". DEGIL, ve bunu zorlayan
-   * hicbir sey yok. Acmanin sarti ikisinden biri: `market_cap_wei` bakimini
-   * `packages/db`'ye (`applyTrade`in CTE'sine, ayni islem, ayni muhafiz)
-   * tasimak, YA DA `ts.created_seq = l.created_seq` esitligini bir CHECK ile
-   * zorlamak ve fixture'i ona uydurmak.
+   * View'i `ts`e baglamak bu yuzden mezun tokenlerin GOSTERILEN market cap'ini
+   * ve bu siralamanin ANLAMINI degistirir. Denendi ve dokuz test dustu; o
+   * testler bugunku anlami kodluyor, yani hakliydilar. Secim sahibinin:
+   * (A) view egri turevli kalir ve indeks, egri ifadesini aynen yansitan --
+   * mezuniyette donan -- ayri bir sakli sutun ister; (B) view `ts`e gecer,
+   * mezunlar canli havuz market cap'i gosterir (muhtemelen kullanici icin daha
+   * dogru) ama gorunen degerler degisir.
    *
    * PAKETLEME BURADA GORUNUR KALIR ve bu `ordering.test.ts`in sart kostugu
    * sey: bag-bozma anahtarini sorguyu okuyan gormeli. Onceden paketlenmis bir
    * view sutunu (`sort_mcap_key`) denendi ve kapi -- hakli olarak -- reddetti.
    */
   marketCap: { key: 'search_key(market_cap_wei, created_seq)', desc: true },
-  /* Ayni gerekce, ayni olculmus borc. */
+  /*
+   * BU SIRALAMA INDEKSTEN GELIR (`017_sort_keys.sql`, olculdu: `Sort=2` -> 0).
+   *
+   * `volume_24h_wei` ZATEN `token_stats`ten geliyordu; eksik olan tek sey
+   * ikinci argumanin ayni tabloda olmasiydi, ve view'in `created_seq`i
+   * `ts`ten almasi onu TEK TABLOYA cozdu. `created_seq`in `market_cap_wei`ten
+   * ayrildigi yer de burasi: `applyLaunch` ikisini TEK ifadede ayni CTE'den
+   * yazar ve hicbir `UPDATE` ona dokunmaz, yani ayrisamaz. `test/sort-keys.
+   * test.ts` o esitligi bir KAPI haline getirir.
+   *
+   * Explore'un VARSAYILAN sekmesi budur (`explore/params.ts`, `trending`), yani
+   * en cok okunan siralama.
+   */
   volume: { key: 'search_key(volume_24h_wei, created_seq)', desc: true },
   /**
    * GRADUATION'A EN YAKIN ONCE.

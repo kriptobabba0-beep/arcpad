@@ -216,29 +216,32 @@ describe(`token_overview, ${TOKENS} token`, () => {
   /**
    * ============ HANGI SIRALAMALARIN INDEKSTEN GELMESI BEKLENIR ============
    *
-   * UC PARA SIRALAMASI BU LISTEDE YOK, ve bu bir gevsetme degil IKI KEZ
-   * OLCULMUS bir kayittir. Ikisinde de ayni hatayi yaptim: `token_stats`in bir
-   * sutununun `launches`taki karsiligini SADIK BIR AYNA sandim. DEGIL --
-   * farkli yazarlari ve farkli fixture'lari var.
+   * `marketCap` ve `nearGraduation` BU LISTEDE YOK, ve bu bir gevsetme degil
+   * OLCULMUS bir kayittir (`017_sort_keys.sql` §ACIK BIRAKILANLAR):
    *
-   *   1. View'in `market_cap_wei`ini sakli `ts.market_cap_wei`e cevirdim ->
-   *      DOKUZ test dustu. `packages/db`nin `applyLaunch`i o sutunu yalnizca
-   *      INSERT eder; islemlerde guncelleyen INDEXER'in `writeMarketCap`idir,
-   *      yani bu katmanda islemlerden sonra BAYATLAR.
-   *   2. View'in `created_seq`ini `ts.created_seq`e cevirdim (bu sutun
-   *      DEGISMEZ diye guvenli sandim) -> `e2e/db/explore-and-search.spec.ts`
-   *      dustu: "`oldest` must ascend by creation order". Yani e2e fixture'i
-   *      ikisini AYNI yazmiyor.
+   *   * `marketCap` -- BIR URUN KARARI bekliyor, bakim isi degil. `ts.market_
+   *     cap_wei` mezuniyetten SONRA havuz fiyatini izler (`apply/pool.ts`),
+   *     view ise egriden hesaplar ve egri mezuniyette DONAR -- yani ikisi
+   *     bayatliktan degil TASARIMDAN ayrisir. View'i `ts`e baglamak mezun
+   *     tokenlerin GOSTERILEN market cap'ini degistirirdi; denendi, dokuz test
+   *     dustu ve o testler bugunku anlami kodluyordu.
+   *   * `nearGraduation` -- COZULEBILIR: `progress_ppm` `curve_state` x
+   *     `deployment`ten hesaplanir ve `token_stats`te bir evi yok, ama `_ppm`
+   *     zaten bildirilmis bir sonek ve bakim noktasi `applyTrade`in MEVCUT
+   *     `st` CTE'sidir. AYRI bir CTE olmaz: Postgres tek ifadede ayni satiri
+   *     iki kez guncellemeyi desteklemez, ikinci etki sessizce kaybolur.
    *
-   * Ders tek: bu semada `token_stats` TURETILMIS bir tablodur ve sutunlarinin
-   * `launches`i yansittigi HICBIR YERDE zorlanmiyor. Indeksin onu kosulu bir
-   * performans isi degil, bir DOGRULUK isi: ya bakim `packages/db`ye tasinacak
-   * ya da esitlik bir CHECK/kapi ile zorlanacak.
+   * IKISI DE `it.each`TEN CIKARILMADI, `EXPECTED_INDEXED`E EKLENMEDI: plan
+   * sekilleri yukarida HER KOSUDA basilir, yani ikisinin `Sort=2` oldugu
+   * gorunur kalir. Kirmizi bir kapi degil, GORUNUR bir borc.
    *
-   * UCU DE plan sekli olarak HER KOSUDA basilir, yani `Sort` sayilari gorunur
-   * kalir. Kirmizi bir kapi degil, GORUNUR bir borc.
+   * `volume` BU LISTEDE, VE BIR KEZ HAKSIZ YERE CIKARILMISTI: geri alinma
+   * sebebi bir e2e testinin dusmesiydi, ama o test Explore'un OKUMADIGI bir
+   * `?sort=` parametresini suruyordu -- hata bu degisiklikten degil, silinmis
+   * bir URL sozlesmesinden geliyordu. `test/sort-keys.test.ts` artik dayandigi
+   * esitligi burada, arayuzden bagimsiz olarak zorluyor.
    */
-  const EXPECTED_INDEXED: readonly SortKey[] = ['recentBuys', 'newest', 'oldest']
+  const EXPECTED_INDEXED: readonly SortKey[] = ['recentBuys', 'newest', 'oldest', 'volume']
 
   it.each(EXPECTED_INDEXED)(
     '%s: hicbir `Sort` dugumu bir SAYFADAN fazlasini islemez',
@@ -280,7 +283,7 @@ describe(`token_overview, ${TOKENS} token`, () => {
    * tasinmasi gerektigini SOYLER. Aksi halde bir duzeltme sessizce olculmemis
    * kalirdi -- ve bu depo tam olarak o sinifi tekrar tekrar odedi.
    */
-  it.each(['marketCap', 'volume', 'nearGraduation'] as SortKey[])(
+  it.each(['marketCap', 'nearGraduation'] as SortKey[])(
     '%s HALA tabloyu siraliyor -- acik borc, ve olculuyor',
     async (sort) => {
       const widest = widestSortInput(await analyze(pageSql(sort)))
