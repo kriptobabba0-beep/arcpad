@@ -111,7 +111,7 @@ ACAMAZ, `buybackTreasury`yi ikinci kez yazamaz.
 | **C-7** | Orta | `make slither` kirmizi. | ✅ **Cikis kodu 0** (C-10'un sonucu + iki yonerge yerlestirmesi) |
 | **C-3** | Bilgi | `X-Powered-By: Next.js` sizintisi (canli olcum). | ✅ `poweredByHeader: false` |
 | **C-1** | Dusuk | `/api/metadata` kimlik istemez: herkes pinning kotamiza 5 MiB gorsel yazabilir. nginx `limit_req` (burst 5) tek fren. | ⚠️ KABUL — kota tukenirse rota 502 doner ve form URI yoluna duser. Kimlik eklemek cuzdan imzasi ister; launch AKISINDAN ONCE imza istemek donusumu kirar. |
-| **C-2** | Dusuk | Canli sitede **HSTS yok**. `http://` → `https://` 301 var (olculdu), ama ilk ciplak istek strip edilebilir. | ✅ **KARARA BAGLANDI, TARIHLI** — sertifika 1 GUNLUK, hic otomatik yenilenmemis. HSTS **2026-10-14'ten sonra** acilir. Bkz. J-1. |
+| **C-2** | Dusuk | Canli sitede **HSTS yok**. `http://` → `https://` 301 var (olculdu), ama ilk ciplak istek strip edilebilir. | ✅ **KARARA BAGLANDI** — `--dry-run` zaten gecmis; HSTS **kademeli** (`max-age=300` → 1 gun → 2 yil) HEMEN acilabilir. Kalan tek sey sunucu erisimi. Bkz. J-1. |
 | **C-5** | Bilgi | Addressbook'ta `buybackTreasury`/`buybackVault` yok. | ✅ **TASARIM GEREGI** — `setBuybackTreasury` BIR KEZ yazilir, yani fabrikanin `buybackTreasury()` gorunumu degistirilemez kaynaktir. Supurucu onu oradan okur; defterde ikinci bir kopya, zincirden sapabilecek bir kopya olurdu. |
 | **C-4** | Bilgi | `ArcpadLocker`ta toz: 6.23e18 token + 3.69e11 wei, supurme yolu yok. | ✅ KASITLI — bir `sweep` fonksiyonu "yakilmis pozisyon" garantisini delerdi. |
 | **C-11** | **YUKSEK (surec)** | **CI bu kodun HICBIRINI gormemisti.** Son is akisi kosusu **2026-07-30**, Faz 0 PR'inda. O gunden beri **349 commit** birikti ve `contracts.yml`/`node.yml`/`slither.yml` yalnizca `push: [main]` ve `pull_request` ile tetikleniyor; `buyback-v2` icin acik bir PR yoktu. | ✅ **PR #2 ACILDI** — dort kapi ilk kez bu kod uzerinde kostu ve **bes ariza buldu**; hepsi duzeltildi. Bkz. §H. |
@@ -353,38 +353,46 @@ testler artik gercekligi yansitiyor.
 
 ### J-1. Diger
 
-### C-2 (HSTS) — OLCULDU VE TARIHE BAGLANDI
+### C-2 (HSTS) — HEMEN ACILABILIR, KADEMELI
 
-Ilk denemede sertifika bu makineden okunamadi ve sebep bir **olcum tuzagiydi**:
+Sertifika gercek haliyle okundu. Ilk deneme bir **olcum tuzagina** dustu:
 .NET'in `HttpWebRequest`i `CN=Kaspersky Anti-Virus Personal Root Certificate`
-donduruyordu, yani yerel antivirus TLS'i araya giriyor. **Python'un `ssl`
-modulu araya girmiyor** ve gercek sertifikayi verdi:
+donduruyordu (yerel antivirus TLS'i araya giriyor). **Python'un `ssl` modulu
+araya girmiyor**:
 
 | Alan | Deger |
 |---|---|
 | Ihracci | **Let's Encrypt (YE1)** |
 | `notBefore` | **2026-08-15 22:33:04 UTC** |
 | `notAfter` | 2026-11-13 22:33:03 UTC |
-| Yas | **1 gun** |
 
-**Karar: HSTS KAPALI KALIR, ve acilacagi tarih 2026-10-14'ten SONRADIR.**
+**ILK DEGERLENDIRME YANLISTI VE DUZELTILDI.** Bu belge once "ilk OTOMATIK
+yenileme (~14 Ekim) beklenmeli" diyordu. Iki hata vardi:
 
-Gerekce `nginx-arcpad.conf`un kendi kuralidir ("en az bir OTOMATIK yenileme
-gerceklesene kadar acma") ve sayilar artik onu somutlastiriyor: sertifika bir
-gunluk, yani HIC yenilenmedi. Certbot suresinin bitmesine ~30 gun kala yeniler
-(`notAfter` 13 Kasim), yani ilk otomatik yenileme **~14 Ekim 2026**.
+1. **Yenilemenin calistigi ZATEN kanitli.** `certbot renew --dry-run` tam bu
+   is icin vardir -- yenileme akisini bastan sona kosturur, yalnizca
+   sertifikayi degistirmez. 2026-08-16'da GECTI ve `certbot.timer` acik
+   (bkz. `server-and-domain` notu). `nginx-arcpad.conf`taki kuralin GEREKCESI
+   "yenileme calisiyor mu" sorusudur; o soru cevaplanmis. Takvimi beklemek
+   yeni bir bilgi URETMEZ.
+2. **Geri alinamazlik HSTS'ten degil `max-age`den gelir.** Dogrudan
+   `max-age=63072000` varsayildi; standart yol KADEMELI acmaktir.
 
-Neden bu kadar dikkat: `max-age=63072000` her ziyaretciye iki yil boyunca
-"bu alan adina ASLA duz HTTP ile baglanma" der ve **basligi kaldirmakla geri
-alinamaz** -- yalnizca yeterince uzun sure `max-age=0` sunarak. Sertifika
-yenilenmesi bir kez sessizce basarisiz olursa ve HSTS aciksa site
-ulasilamaz hale gelir ve ziyaretci onu atlayamaz. Erken acmak riskli, gec
-acmak degil.
+**Dogru plan -- kademeli, ve her adim geri alinabilir:**
 
-Yapilacak (operator, ~14 Ekim'den sonra): sunucuda `certbot certificates`
-ciktisinin yeni bir `notBefore` gosterdigini dogrula, sonra
-`nginx-arcpad.conf`taki `Strict-Transport-Security` satirini
-`max-age=63072000; includeSubDomains` ile ac.
+| Adim | `max-age` | Bozulursa kendini toparlama |
+|---|---|---|
+| 1 | `300` (5 dk) | **5 dakika** |
+| 2 | `86400` (1 gun) | 1 gun |
+| 3 | `63072000` (2 yil) + `includeSubDomains` | — |
+
+`max-age=300` ile risk fiilen sifirdir: bir sey ters giderse bes dakikada
+kendiliginden duzelir. Her adimda dogrulama: `nginx -t`, sonra
+`curl -sI https://outofmind.fun | grep -i strict-transport`.
+
+**Engel teknik degil erisim:** degisiklik sunucudaki nginx dosyasindadir ve
+SSH anahtari (`~/.ssh/arcpad_keeper_ed25519`) PAROLA KORUMALIDIR; parola bu
+oturumda yok. Karar verilmis ve adimlar yazili; kalan tek sey erisim.
 
 ### C-1 (`/api/metadata`) — KABUL, VE NEDEN
 

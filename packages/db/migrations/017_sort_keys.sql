@@ -42,18 +42,43 @@
 -- `launches`tan (`l.created_seq`) gelir -- iki tablo, sifir indeks.
 --
 -- ==================================================================
---  COZUM: EKLEMELI. GOSTERILEN DEGER DEGISMEZ.
+--  COZUM: IKI SUTUNUN KAYNAGI DEGISIR. YENI SUTUN YOK.
 -- ==================================================================
 --
--- View'in `market_cap_wei`i OLDUGU GIBI KALIR (hesaplanan ifade, her zaman
--- taze). Yanina YALNIZCA SIRALAMA ICIN iki sutun eklenir ve ikisi de TAMAMEN
--- `token_stats`ten turer, yani ifade indeksleri onlara hizmet edebilir.
+-- ILK DENEME REDDEDILDI, VE KAPILAR HAKLIYDI. View'in SONUNA `sort_mcap_key`
+-- diye onceden paketlenmis sutunlar eklemeyi denedim; uc kapi birden kirdi:
 --
--- NICIN GOSTERILEN DEGERI DEGISTIRMIYORUM: `writeMarketCap` bir sira muhafizi
--- tasir (`COALESCE(last_trade_seq, 0) <= guardSeq`), yani gec gelen bir olay
--- yazimi ATLAYABILIR. Ayrisma pratikte olmaz -- ama olsaydi, view'in
--- gosterdigi sayiyi bayatlatmak siralamayi bayatlatmaktan COK daha kotu bir
--- ariza olurdu. Bu yuzden risk yalnizca SIRAYA verilir, SAYIYA verilmez.
+--   * `naming.test.ts`: her `numeric` TAM OLARAK `numeric(78,0)` olmali ve
+--     `_wei`/`_tok` ile bitmeli. `sort_mcap_key numeric` ikisini de ihlal eder.
+--   * `ordering.test.ts`: `SORTS`taki her ifade GORUNUR sekilde
+--     `search_key(...)` olmali. Paketlemeyi view'in icine saklamak, sorguyu
+--     okuyanin bag-bozma anahtarini GOREMEMESI demek.
+--   * sema parmak izi: yeni sutunlar envanteri kaydirir.
+--
+-- Uc kural da dogru kurallar. Dolayisiyla dogru cozum EKLEMEK degil, mevcut
+-- iki sutunun KAYNAGINI degistirmek:
+--
+--   market_cap_wei : div(cs...)  ->  ts.market_cap_wei
+--   created_seq    : l.created_seq -> ts.created_seq
+--
+-- Boylece `search_key(market_cap_wei, created_seq)` TEK BIR TABLONUN iki
+-- sutununa cozulur ve ifade indeksi ona hizmet eder. `SORTS` DEGISMEZ --
+-- paketleme sorguda gorunur kalir.
+--
+-- ============ SAKLI DEGERE GUVENMEK NEDEN SAGLAM ============
+--
+-- `curve_state`in sanal rezervlerini yazan TEK yol var (`applyTrade`,
+-- `packages/db/src/apply.ts`) ve muhafizi `event_seq > c.last_seq`.
+-- `writeMarketCap` ayni degeri AYNI ifadeyle (`div(Vq * N, Vt)`) ve esdeger
+-- bir muhafizla (`COALESCE(last_trade_seq, 0) <= guardSeq`) yazar; gec gelen
+-- eski bir olay IKISINDE DE atlanir. Yani iki deger ayrisamaz -- o
+-- fonksiyonun kendi yorumunun soyledigi sey.
+--
+-- `ts.created_seq` ile `l.created_seq` de ayni launch'in ayni numarasidir;
+-- `applyLaunch` ikisini birlikte yazar.
+--
+-- Sonuc olarak bu migration bir kopyayi KALDIRIR: market cap artik TEK bir
+-- yerden okunur.
 
 -- ------------------------------------------------------------------
 -- 1. IFADE INDEKSLERI
@@ -68,13 +93,12 @@ CREATE INDEX token_stats_sort_volume_idx
   ON token_stats (search_key(volume_24h_wei, created_seq) DESC);
 
 -- ------------------------------------------------------------------
--- 2. VIEW: IKI SIRALAMA SUTUNU EKLENIR
+-- 2. VIEW: IKI SUTUNUN KAYNAGI DEGISIR
 -- ------------------------------------------------------------------
--- `CREATE OR REPLACE VIEW` yalnizca SONA sutun eklemeye izin verir; mevcut
--- sutunlarin adi, tipi ve SIRASI birebir korunmak zorunda. Bu yuzden govde
--- `016_buyback.sql`den OLDUGU GIBI kopyalanir ve iki satir SONA eklenir.
--- Kopya istenmez ama alternatifi view'i DROP etmektir ve bu depoda bir view'i
--- dusurmek ona bagli her seyi de dusurur.
+-- `CREATE OR REPLACE VIEW` sutun adlarini, TIPLERINI ve SIRASINI birebir
+-- korumami sart kosar -- ve bu degisiklik tam olarak oyle: ne sutun eklenir ne
+-- cikarilir, yalnizca IKISININ KAYNAGI degisir. `ts.market_cap_wei` da
+-- `numeric(78,0)`, `ts.created_seq` da `bigint`, yani tipler AYNI.
 CREATE OR REPLACE VIEW token_overview AS
 SELECT
   l.token,
@@ -102,9 +126,8 @@ SELECT
   COALESCE(bb.enabled, false) AS buyback_enabled,
   COALESCE(bb.locked_total_tok, 0)::numeric(78, 0) AS buyback_locked_tok,
 
-  div(cs.virtual_quote_reserves_wei * d.total_supply_tok, cs.virtual_token_reserves_tok)::numeric(
-    78, 0
-  ) AS market_cap_wei,
+  -- SAKLI DEGER, YENIDEN HESAPLANAN DEGIL. Bkz. yukaridaki gerekce.
+  ts.market_cap_wei,
 
   div(cs.virtual_quote_reserves_wei * 1000000000000000000::numeric, cs.virtual_token_reserves_tok)::numeric(
     78, 0
@@ -127,17 +150,10 @@ SELECT
   ts.last_buy_seq,
   ts.last_trade_at,
   ts.last_buy_at,
-  l.created_seq,
-  l.created_at,
-
-  -- ---- SONA EKLENEN IKI SUTUN: YALNIZCA SIRALAMA ICIN ----
-  --
-  -- Ikisi de TAMAMEN `ts`den turer. Bu, tek onemli ozellik: `l.created_seq`
-  -- kullanilsaydi ifade yine TABLOLAR ARASI olur ve indeks yine ise yaramazdi.
-  -- `ts.created_seq` ile `l.created_seq` ayni launch'in ayni numarasidir
-  -- (`applyLaunch` ikisini birlikte yazar), yani sira ayni.
-  search_key(ts.market_cap_wei, ts.created_seq) AS sort_mcap_key,
-  search_key(ts.volume_24h_wei, ts.created_seq) AS sort_volume_key
+  -- `ts`den, `l`den DEGIL: `search_key(volume_24h_wei, created_seq)` ve
+  -- `search_key(market_cap_wei, created_seq)` boylece TEK TABLOYA coozulur.
+  ts.created_seq,
+  l.created_at
 FROM launches l
 JOIN curve_state cs ON cs.token = l.token
 JOIN token_stats ts ON ts.token = l.token

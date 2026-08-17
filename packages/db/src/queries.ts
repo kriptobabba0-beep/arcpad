@@ -398,23 +398,27 @@ export const SORTS = {
   newest: { key: 'created_seq', desc: true },
   oldest: { key: 'created_seq', desc: false },
   /*
-   * SAKLI SIRALAMA ANAHTARI, HESAPLANAN IFADE DEGIL -- VE BU OLCUMLE GELDI.
+   * IFADE DEGISMEDI, VIEW'IN SUTUN KAYNAGI DEGISTI (`017_sort_keys.sql`).
    *
-   * Eski hal `search_key(market_cap_wei, created_seq)` idi ve `market_cap_wei`
-   * view'de HESAPLANAN bir ifadedir (`curve_state` x `deployment`), `created_seq`
-   * ise `launches`tan gelir. Tablolar arasi bir ifadeye hicbir indeks hizmet
-   * etmez: 3.000 tokende plan uc `Seq Scan` + 3.000 satirlik bir `Sort`
-   * gosterdi ve `LIMIT 24` bunu KURTARMADI (`Sort` once butun satirlari uretir).
-   * Bedel `LiveRefresh` yuzunden gorunur kullanici basina 10 saniyede bir
-   * odeniyordu. Olcum: `packages/db/test/scale.test.ts`.
+   * OLCULDU (CI, 3.000 token): bu siralama uc `Seq Scan` + 3.000 satirlik bir
+   * `Sort` uretiyordu ve `LIMIT 24` onu KURTARMIYORDU -- `Sort` once butun
+   * satirlari uretmek zorunda. Bedel `LiveRefresh` yuzunden gorunur kullanici
+   * basina 10 saniyede bir odeniyordu.
    *
-   * `sort_mcap_key` TAMAMEN `token_stats`ten turer (`017_sort_keys.sql`) ve
-   * ifade indeksi ona hizmet eder. GOSTERILEN `market_cap_wei` DEGISMEDI.
+   * Sebep ifade DEGILDI: `market_cap_wei` view'de `curve_state`ten yeniden
+   * hesaplaniyordu, `created_seq` ise `launches`tan geliyordu -- TABLOLAR ARASI
+   * bir ifadeye hicbir indeks hizmet edemez. Migration ikisini de
+   * `token_stats`e cevirdi (market cap ZATEN orada saklaniyor ve ayni ifadeyle
+   * yaziliyordu), boylece `token_stats (search_key(market_cap_wei,
+   * created_seq) DESC)` ifade indeksi bu ifadeye TAM eslesir.
+   *
+   * PAKETLEME BURADA GORUNUR KALIR ve bu `ordering.test.ts`in sart kostugu
+   * sey: bag-bozma anahtarini sorguyu okuyan gormeli. Onceden paketlenmis bir
+   * view sutunu (`sort_mcap_key`) denendi ve kapi -- hakli olarak -- reddetti.
    */
-  marketCap: { key: 'sort_mcap_key', desc: true },
-  /* Ayni gerekce: `volume_24h_wei` `token_stats`ten ama `created_seq` view'de
-     `launches`tan geliyordu -- iki tablo, sifir indeks. Bkz. `sort_mcap_key`. */
-  volume: { key: 'sort_volume_key', desc: true },
+  marketCap: { key: 'search_key(market_cap_wei, created_seq)', desc: true },
+  /* Ayni gerekce, ayni migration. */
+  volume: { key: 'search_key(volume_24h_wei, created_seq)', desc: true },
   /**
    * GRADUATION'A EN YAKIN ONCE.
    *
@@ -462,8 +466,8 @@ const SEARCH_SORTS = {
     key: 'search_key(search_rank(o.name, o.symbol, $1)::numeric, o.created_seq)',
     desc: true,
   },
-  marketCap: { key: 'o.sort_mcap_key', desc: true },
-  volume: { key: 'o.sort_volume_key', desc: true },
+  marketCap: { key: 'search_key(o.market_cap_wei, o.created_seq)', desc: true },
+  volume: { key: 'search_key(o.volume_24h_wei, o.created_seq)', desc: true },
   recentBuys: { key: 'o.last_buy_seq', desc: true },
   newest: { key: 'o.created_seq', desc: true },
   oldest: { key: 'o.created_seq', desc: false },
