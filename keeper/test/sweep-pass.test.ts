@@ -39,6 +39,7 @@ type Calls = {
   minSweepWei: number
   isDesignatedKeeper: number
   readToken: Address[]
+  budgets: number[]
   quote: Address[]
   simulate: { token: Address; minTokensOut: bigint; deadline: bigint }[]
   send: { token: Address; minTokensOut: bigint }[]
@@ -51,6 +52,7 @@ function emptyCalls(): Calls {
     minSweepWei: 0,
     isDesignatedKeeper: 0,
     readToken: [],
+    budgets: [],
     quote: [],
     simulate: [],
     send: [],
@@ -94,6 +96,22 @@ function fakeChain(
     isDesignatedKeeper() {
       calls.isDesignatedKeeper++
       return Promise.resolve(overrides.designated ?? true)
+    },
+    budgets(tokens) {
+      calls.budgets.push(tokens.length)
+      return Promise.resolve(
+        tokens.map((token) => ({
+          token,
+          spendableWei: ONE_USDC,
+          permissionless: false,
+          ...(overrides.state?.spendableWei === undefined
+            ? {}
+            : { spendableWei: overrides.state.spendableWei }),
+          ...(overrides.state?.permissionless === undefined
+            ? {}
+            : { permissionless: overrides.state.permissionless }),
+        })),
+      )
     },
     readToken(token) {
       calls.readToken.push(token)
@@ -178,6 +196,89 @@ describe('runSweepPass', () => {
     // gereksizce yerdi.
     expect(calls.minSweepWei).toBe(1)
     expect(calls.isDesignatedKeeper).toBe(1)
+  })
+
+  /**
+   * ============ OLCEK: PAHALI OKUMA TOKEN SAYISIYLA BUYUMEZ ============
+   *
+   * BU TESTIN VAR OLMA SEBEBI BIR REGRESYON. Ilk hal her token icin
+   * `readToken` cagiriyordu (`curve()` + uc `eth_call` = token basina DORT
+   * okuma) ve ancak ONDAN SONRA ucuz kapilar isliyordu. Bin tokenli bir
+   * platformda bu, altmis saniyede bir dort bin cagri demektir -- ve Arc'in
+   * hiz siniri bu depoda ard arda DOKUZ `eth_getLogs`i bile reddetti.
+   *
+   * Iddia: bin token, HICBIRI esigi gecmiyor -> `readToken` SIFIR kez
+   * cagrilir, ve butce okumasi TOPLU yapilir.
+   */
+  it('BIN TOKEN, hicbiri esikte: `readToken` HIC cagrilmaz, butce TOPLU okunur', async () => {
+    const many = Array.from(
+      { length: 1_000 },
+      (_, i) => `0x${(i + 1).toString(16).padStart(40, '0')}` as Address,
+    )
+    const { chain, calls } = fakeChain({ state: { spendableWei: 0n } })
+    const result = await run(chain, many)
+
+    expect(calls.readToken, 'esigi gecmeyen bir token icin pahali okuma YAPILMAZ').toEqual([])
+    expect(calls.quote).toEqual([])
+    expect(calls.simulate).toEqual([])
+    // Butce TEK cagrida (taklit parcalamaz; gercek uygulama 250'lik parcalara
+    // boler, ama iddia "gecis toplu SORAR"dir).
+    expect(calls.budgets).toEqual([1_000])
+    expect(result.summary.considered).toBe(1_000)
+    expect(result.summary.skipped['nothing-pending']).toBe(1_000)
+  })
+
+  it('BIN TOKEN, biri esikte: yalnizca O tokenin pahali yolu kosar', async () => {
+    const many = Array.from(
+      { length: 1_000 },
+      (_, i) => `0x${(i + 1).toString(16).padStart(40, '0')}` as Address,
+    )
+    const winner = many[500] as Address
+    const calls = emptyCalls()
+    const chain: SweepChain = {
+      ...fakeChain().chain,
+      budgets(tokens) {
+        calls.budgets.push(tokens.length)
+        return Promise.resolve(
+          tokens.map((token) => ({
+            token,
+            // Yalnizca bir token esigin USTUNDE.
+            spendableWei: token === winner ? ONE_USDC : 0n,
+            permissionless: false,
+          })),
+        )
+      },
+      readToken(token) {
+        calls.readToken.push(token)
+        return Promise.resolve({
+          token,
+          curve: CURVE,
+          spendableWei: ONE_USDC,
+          permissionless: false,
+          graduated: false,
+        })
+      },
+      quote(state) {
+        calls.quote.push(state.token)
+        return Promise.resolve(1_000n)
+      },
+      simulate(token, minTokensOut, deadline) {
+        calls.simulate.push({ token, minTokensOut, deadline })
+        return Promise.resolve({ ok: true })
+      },
+      send(token, minTokensOut) {
+        calls.send.push({ token, minTokensOut })
+        return Promise.resolve('0xfeed' as Hex)
+      },
+    }
+
+    const result = await run(chain, many)
+
+    expect(calls.readToken, 'pahali yol YALNIZCA hayatta kalan icin').toEqual([winner])
+    expect(calls.quote).toEqual([winner])
+    expect(calls.send.map((s) => s.token)).toEqual([winner])
+    expect(result.summary.swept).toBe(1)
+    expect(result.summary.skipped['nothing-pending']).toBe(999)
   })
 
   it('ESIK ALTINDA TEKLIF ICIN TEK BIR RPC HARCAMAZ', async () => {

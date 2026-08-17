@@ -19,9 +19,19 @@ import {
 import { withRateLimitRetry } from '../chainReader'
 import { extractRevertData } from '../graduate/chain'
 import { CURVE_ABI, FACTORY_ABI, TOKEN_ABI, TREASURY_ABI } from './abi'
-import type { SendOutcome, SimulateOutcome, SweepChain, TokenSweepState } from './pass'
+import type { SendOutcome, SimulateOutcome, SweepChain, TokenBudget, TokenSweepState } from './pass'
 
 type ArcClient = ReturnType<typeof createArcClient>
+
+/**
+ * BIR `aggregate3` PARCASINDA KAC TOKEN.
+ *
+ * `keeper/src/watch/graduationWindow.ts` alt cagri genisligini 500 olarak
+ * OLCTU (`DEFAULT_CURVE_BATCH_SUBCALLS`, gerekcesi orada). Butce okumasi token
+ * basina IKI alt cagri harcar, dolayisiyla ayni sinir 250 tokene karsilik
+ * gelir. Sayi buradan turetilir, ikinci bir olcum olarak yazilmaz.
+ */
+const SWEEP_BATCH_TOKENS = 250
 
 /**
  * ============ `SweepChain`IN TEK GERCEK UYGULAMASI ============
@@ -107,6 +117,54 @@ export function viemSweepChain(opts: {
         blockNumber,
       })
       return getAddress(designated) === getAddress(opts.caller)
+    },
+
+    /**
+     * ============ UCUZ KAPI, `aggregate3` ILE ============
+     *
+     * Iki gorunum de HAZINEDE ve tek argumanli, yani token basina IKI alt
+     * cagri. Parca genisligi `SWEEP_BATCH_SUBCALLS` (500), dolayisiyla bir
+     * `eth_call` **250 tokeni** okur. Bin token -> dort cagri.
+     *
+     * `multicall`in `allowFailure: false`u KASITLIDIR. Bir alt cagri revert
+     * ederse bu fonksiyon FIRLAR; sessizce sifir dondurmek "butcesi yok" ile
+     * "okuyamadim"i ayni sey yapardi ve ikincisi bir tokeni SESSIZCE
+     * supurulmeden birakirdi -- `chainReader.readContractBatch`in yazili
+     * gerekcesiyle ayni.
+     */
+    async budgets(
+      tokens: readonly Address[],
+      blockNumber: bigint,
+    ): Promise<readonly TokenBudget[]> {
+      const out: TokenBudget[] = []
+      for (let i = 0; i < tokens.length; i += SWEEP_BATCH_TOKENS) {
+        const chunk = tokens.slice(i, i + SWEEP_BATCH_TOKENS)
+        const calls = chunk.flatMap((token) => [
+          {
+            address: opts.treasury,
+            abi: TREASURY_ABI,
+            functionName: 'spendable' as const,
+            args: [token] as const,
+          },
+          {
+            address: opts.treasury,
+            abi: TREASURY_ABI,
+            functionName: 'sweepIsPermissionless' as const,
+            args: [token] as const,
+          },
+        ])
+        const results = (await withRateLimitRetry(() =>
+          opts.client.multicall({ contracts: calls as never, allowFailure: false, blockNumber }),
+        )) as unknown[]
+        for (const [j, token] of chunk.entries()) {
+          out.push({
+            token,
+            spendableWei: results[j * 2] as bigint,
+            permissionless: results[j * 2 + 1] as boolean,
+          })
+        }
+      }
+      return out
     },
 
     async readToken(token: Address, blockNumber: bigint): Promise<TokenSweepState> {

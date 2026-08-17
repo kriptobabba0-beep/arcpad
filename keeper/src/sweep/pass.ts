@@ -42,6 +42,38 @@ import {
  * dusururdu).
  */
 
+/**
+ * ============ UCUZ KAPININ TOPLU GIRDISI -- VE NICIN ZORUNLU ============
+ *
+ * ILK HAL O(N) RPC HARCIYORDU VE OLCEKTE COKERDI. Her token icin
+ * `readToken` cagriliyordu (`curve()` + uc `eth_call` = **token basina dort
+ * okuma**), ve ancak ONDAN SONRA ucuz kapilar isliyordu. Bin tokenli bir
+ * platformda bu, altmis saniyede bir **dort bin cagri** demektir -- ve Arc'in
+ * hiz siniri bu depoda ARD ARDA DOKUZ `eth_getLogs`i bile reddetti
+ * (`Request exceeds defined limit`, olculdu).
+ *
+ * Kararin kendisi ise neredeyse her zaman TEK bir sayiyla veriliyor:
+ * `spendable < MIN_SWEEP_WEI`. Yani pahali okumalar, elenmesi bir tek sayiyla
+ * mumkun olan tokenlar icin harcaniyordu.
+ *
+ * Bu tip o eleme icin. Iki alan da HAZINEDE ve tek argumanlidir, yani
+ * `aggregate3` ile TEK cagrida yuzlercesi okunur (`readContractBatch`,
+ * olculmus parca genisligi 500 alt cagri -> **250 token/cagri**). Bin token
+ * icin dort cagri, dort bin degil.
+ *
+ * `permissionless` de burada, ve bu bir ayrinti degil: `planSweep` YETKIYI
+ * esikten ONCE sorar. Yalnizca `spendable` toplanip yetki sonraya
+ * birakilsaydi, yetkisiz bir anahtarcinin ozeti `not-authorised` yerine
+ * `below-threshold` derdi -- yani alarm katmani yanlis sebebi gorurdu.
+ */
+export type TokenBudget = {
+  readonly token: Address
+  /** `BuybackTreasury.spendable(token)`. */
+  readonly spendableWei: bigint
+  /** `BuybackTreasury.sweepIsPermissionless(token)`. */
+  readonly permissionless: boolean
+}
+
 /** Bir tokenin, karar icin gereken zincir durumu -- TEK BLOKTAN okunmus. */
 export type TokenSweepState = {
   readonly token: Address
@@ -77,6 +109,14 @@ export interface SweepChain {
   minSweepWei(blockNumber: bigint): Promise<bigint>
   /** Bu anahtarci fabrikanin kayitli anahtarcisi mi. */
   isDesignatedKeeper(blockNumber: bigint): Promise<boolean>
+  /**
+   * UCUZ KAPININ GIRDISI, TOPLU. Bkz. `TokenBudget`.
+   *
+   * Cagrilan taraf parcalamayi KENDI yapar (`aggregate3` alt cagri sinirini
+   * yalnizca o bilir). Donen dizi GIRDIYLE AYNI SIRADA ve AYNI UZUNLUKTA
+   * olmak zorundadir; eksik bir eleman sessizce bir tokeni atlamak olurdu.
+   */
+  budgets(tokens: readonly Address[], blockNumber: bigint): Promise<readonly TokenBudget[]>
   readToken(token: Address, blockNumber: bigint): Promise<TokenSweepState>
   /**
    * Supurmenin GERCEKTEN uretecegi token miktari. `null` = bilinemedi.
@@ -203,12 +243,56 @@ export async function runSweepPass(deps: SweepPassDeps): Promise<SweepPassResult
   let unreadable = 0
   let published = 0
 
-  for (const token of deps.tokens) {
+  /*
+   * ============ ONCE TOPLU ELEME, SONRA PAHALI OKUMA ============
+   *
+   * Tek bir cagri kumesiyle her tokenin `spendable` ve `sweepIsPermissionless`
+   * degeri gelir; `planSweep` SAF oldugu icin karar RPC HARCAMADAN verilir. Bin
+   * tokenin dokuz yuz doksan dokuzu burada elenir ve hicbiri icin `curve()`
+   * okunmaz. Bkz. `TokenBudget`.
+   */
+  const budgets = await deps.chain.budgets(deps.tokens, head)
+  if (budgets.length !== deps.tokens.length) {
+    throw new Error(
+      `budgets() ${deps.tokens.length} token icin ${budgets.length} sonuc dondurdu. ` +
+        'Eksik bir eleman, sessizce atlanan bir token demektir.',
+    )
+  }
+
+  for (const [index, entry] of budgets.entries()) {
+    const token = entry.token
     if (published >= budget) {
-      emit({ kind: 'budget-exhausted', remaining: deps.tokens.length - deps.tokens.indexOf(token) })
+      emit({ kind: 'budget-exhausted', remaining: budgets.length - index })
       break
     }
 
+    const base = {
+      token,
+      spendableWei: entry.spendableWei,
+      minSweepWei,
+      permissionless: entry.permissionless,
+      isDesignatedKeeper,
+    }
+
+    // ILK GECIS: TEKLIFSIZ VE OKUMASIZ. Ucuz kapilarin hepsi burada calisir.
+    const provisional = planSweep(
+      { ...base, quotedTokensOut: null },
+      deps.nowSeconds,
+      deps.jitterSeed(),
+      policy,
+    )
+    if (provisional.action === 'skip' && provisional.reason !== 'no-quote') {
+      summary = foldDecision(summary, provisional)
+      emit({ kind: 'skip', token, reason: provisional.reason })
+      continue
+    }
+
+    /*
+     * BURADAN SONRASI YALNIZCA HAYATTA KALANLAR ICIN. Merci secimi (`curve()`,
+     * `graduated()`) ve teklif ancak esigi ve yetkiyi gecen bir token icin
+     * okunur -- yani pahali yol, token SAYISIYLA degil GERCEKTEN supurulecek
+     * olanlarin sayisiyla buyur.
+     */
     let state: TokenSweepState
     try {
       state = await deps.chain.readToken(token, head)
@@ -222,29 +306,7 @@ export async function runSweepPass(deps: SweepPassDeps): Promise<SweepPassResult
       continue
     }
 
-    const base = {
-      token,
-      spendableWei: state.spendableWei,
-      minSweepWei,
-      permissionless: state.permissionless,
-      isDesignatedKeeper,
-    }
-
-    // ILK GECIS: TEKLIFSIZ. Ucuz kapilarin hepsi burada calisir.
-    const provisional = planSweep(
-      { ...base, quotedTokensOut: null },
-      deps.nowSeconds,
-      deps.jitterSeed(),
-      policy,
-    )
-    if (provisional.action === 'skip' && provisional.reason !== 'no-quote') {
-      summary = foldDecision(summary, provisional)
-      emit({ kind: 'skip', token, reason: provisional.reason })
-      continue
-    }
-
-    // Buraya gelindiyse teklif DISINDA her sey gecti; simdi teklif icin
-    // odemeye deger.
+    // Teklif icin odemeye deger.
     const quoted = await deps.chain.quote(state, head)
     const decision: SweepDecision = planSweep(
       { ...base, quotedTokensOut: quoted },

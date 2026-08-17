@@ -87,7 +87,7 @@ ACAMAZ, `buybackTreasury`yi ikinci kez yazamaz.
 | # | Yuzey | Risk sinifi | Kanit | Durum |
 |---|---|---|---|---|
 | C1 | `POST /api/chat` | Tek kullanici-yazilabilir DB yolu | `web/test/chat/route.test.ts` | ✅ imza→I/O sirasi olculuyor |
-| C2 | `POST /api/metadata` | Kimliksiz pinning kotasi | baytdan tur karari + nginx `limit_req` | ⚠️ C-1 |
+| C2 | `POST /api/metadata` | Kimliksiz pinning kotasi | baytdan tur karari + nginx `limit_req` | ⚠️ C-1 (kabul) |
 | C3 | `GET /api/ipfs/*` | SSRF + depolanmis XSS | CID deseni, sabit host, baytdan tur, akista tavan | ✅ |
 | C4 | `GET /api/search` | SQL enjeksiyonu, DoS | parametre baglama, `q`≤128, imlec deseni, `limit` sabit | ✅ |
 | C5 | Server component okuma yolu | Veri sizintisi | `web/lib/read.ts` — yalnizca `token_overview` gorunumleri | ✅ |
@@ -96,7 +96,7 @@ ACAMAZ, `buybackTreasury`yi ikinci kez yazamaz.
 | C8 | Keeper buyback supurmesi | Anahtar, MEV | `sweep/decide.ts` + `minTokensOut` | ✅ |
 | C9 | Keeper alarm/tatbikat | Sessiz ariza | `alert.ts`, `drill.ts` | ✅ |
 | C10 | DB gocleri / yedek | Sema kaymasi | `migrate.ts` ozet defteri, `backup.ts` | ✅ |
-| C11 | HTTP basliklari / TLS | MITM, XSS | `next.config.ts` + canli olcum | ⚠️ C-2, C-3 |
+| C11 | HTTP basliklari / TLS | MITM, XSS | `next.config.ts` + canli olcum | ✅ C-3 kapatildi; C-2 tarihe baglandi |
 
 ---
 
@@ -104,14 +104,14 @@ ACAMAZ, `buybackTreasury`yi ikinci kez yazamaz.
 
 | Kod | Siddet | Bulgu | Durum |
 |---|---|---|---|
-| **C-8** | **YUKSEK** | **Buyback supurme anahtarcisinin SURECI YOKTU.** `src/sweep/decide.ts` karari 19 testle veriyordu ve `planSweep`in tek referansi kendi test dosyasiydi — hicbir sey onu cagirmiyordu. Para hazinede birikir, `SWEEP_GRACE` (7 gun) dolunca supurme izinsiz hale gelir ve cagiran `minTokensOut`u SECER (sifir gecebilir) → slipaj korumasi kapanir, supurme sandviclenebilir. Hicbir test kirmizi degildi. | ✅ **YAZILDI** — `src/sweep.ts` + `sweep/{pass,chain,config,store,abi}.ts`, 16 yeni test, canli Arc'ta dogrulandi (bkz. §F) |
+| **C-8** | **YUKSEK** | **Buyback supurme anahtarcisinin SURECI YOKTU.** `src/sweep/decide.ts` karari 19 testle veriyordu ve `planSweep`in tek referansi kendi test dosyasiydi — hicbir sey onu cagirmiyordu. Para hazinede birikir, `SWEEP_GRACE` (7 gun) dolunca supurme izinsiz hale gelir ve cagiran `minTokensOut`u SECER (sifir gecebilir) → slipaj korumasi kapanir, supurme sandviclenebilir. Hicbir test kirmizi degildi. | ✅ **YAZILDI** — `src/sweep.ts` + `sweep/{pass,chain,config,store,abi}.ts`, 16 yeni test, canli Arc'ta dogrulandi (bkz. §I) |
 | **C-10** | Orta | **CRLF slither'in kaynak eslemesini kaydiriyordu.** Bes kontrat dosyasi bir betikle CRLF'e cevrilmisti; crytic-compile satirlari diskten normalize okur, solc ise bayt ofseti verir → 3 satirlik kayma → HER `slither-disable-next-line` yonergesi ISKALIYORDU. Triyaj "calismiyor" gorunuyordu; sebep triyaj degildi. | ✅ LF'e cevrildi; 1 High + 13 Medium → **0 / 0** |
 | **C-9** | Orta | **Migration ozeti satir sonuna duyarliydi.** `sha256Hex(readFile(...))` ham baytlardan hesaplaniyordu; `.gitattributes` `eol=lf` dese de bir editor/betik Windows'ta CRLF birakir (olculdu: `011_`, `013_` icin `i/lf w/crlf`). Sunucuda uygulanmis bir migration, Windows checkout'undan kosuldugunda "uygulandiktan SONRA degismis" ile dagitimi durdururdu. | ✅ `\r\n → \n` normalize; iki dosya LF'e cevrildi; 2 yeni test |
 | **C-6** | Orta | `BuybackVestingVault` icin **fuzz/invariant yoktu**; yalnizca birim testi. Agirlikli ortalamanin `vestingEnd`i her kilitte yeniden kaydirmasi, tam olarak senaryo testinin goremedigi yer. | ✅ `BuybackVaultInvariants.t.sol` — 9 invariant × 16.384 cagri + 1 deterministik no-op kapisi |
 | **C-7** | Orta | `make slither` kirmizi. | ✅ **Cikis kodu 0** (C-10'un sonucu + iki yonerge yerlestirmesi) |
 | **C-3** | Bilgi | `X-Powered-By: Next.js` sizintisi (canli olcum). | ✅ `poweredByHeader: false` |
 | **C-1** | Dusuk | `/api/metadata` kimlik istemez: herkes pinning kotamiza 5 MiB gorsel yazabilir. nginx `limit_req` (burst 5) tek fren. | ⚠️ KABUL — kota tukenirse rota 502 doner ve form URI yoluna duser. Kimlik eklemek cuzdan imzasi ister; launch AKISINDAN ONCE imza istemek donusumu kirar. |
-| **C-2** | Dusuk | Canli sitede **HSTS yok**. `http://` → `https://` 301 var (olculdu), ama ilk ciplak istek strip edilebilir. | ⚠️ ACIK — sertifika en az bir kez otomatik yenilendikten sonra ac; `nginx-arcpad.conf`taki gerekce gecerli. |
+| **C-2** | Dusuk | Canli sitede **HSTS yok**. `http://` → `https://` 301 var (olculdu), ama ilk ciplak istek strip edilebilir. | ✅ **KARARA BAGLANDI, TARIHLI** — sertifika 1 GUNLUK, hic otomatik yenilenmemis. HSTS **2026-10-14'ten sonra** acilir. Bkz. J-1. |
 | **C-5** | Bilgi | Addressbook'ta `buybackTreasury`/`buybackVault` yok. | ✅ **TASARIM GEREGI** — `setBuybackTreasury` BIR KEZ yazilir, yani fabrikanin `buybackTreasury()` gorunumu degistirilemez kaynaktir. Supurucu onu oradan okur; defterde ikinci bir kopya, zincirden sapabilecek bir kopya olurdu. |
 | **C-4** | Bilgi | `ArcpadLocker`ta toz: 6.23e18 token + 3.69e11 wei, supurme yolu yok. | ✅ KASITLI — bir `sweep` fonksiyonu "yakilmis pozisyon" garantisini delerdi. |
 | **C-11** | **YUKSEK (surec)** | **CI bu kodun HICBIRINI gormemisti.** Son is akisi kosusu **2026-07-30**, Faz 0 PR'inda. O gunden beri **349 commit** birikti ve `contracts.yml`/`node.yml`/`slither.yml` yalnizca `push: [main]` ve `pull_request` ile tetikleniyor; `buyback-v2` icin acik bir PR yoktu. | ✅ **PR #2 ACILDI** — dort kapi ilk kez bu kod uzerinde kostu ve **bes ariza buldu**; hepsi duzeltildi. Bkz. §H. |
@@ -249,9 +249,9 @@ hic kosmadigi icin arayuzden SESSIZCE kopmus.
 
 ---
 
-## F. KALAN IS
+## J. KALAN IS
 
-### F-0. E2E AUDIT BACAGININ ACIGA CIKARDIGI DORT URUN BULGUSU
+### J-0. E2E AUDIT BACAGININ ACIGA CIKARDIGI DORT URUN BULGUSU
 
 `pnpm --filter @arcpad/web e2e:audit` ILK KEZ kosuldu (2026-08-17, yerel):
 **35 gecti, 6 dustu**. Dusenler seciciyle ilgili DEGIL — dordu de gercek urun
@@ -351,20 +351,59 @@ Bedeli: grafik artik asenkron kuruluyor, yani 10 birim testi senkron iddia
 ediyordu. Paylasilan bir `renderChart` yardimcisi eklendi (30/30 yesil) —
 testler artik gercekligi yansitiyor.
 
-### F-1. Diger
+### J-1. Diger
 
-1. **C-2 (HSTS)** — operator karari. Sertifika yasi bu makineden OLCULEMEDI:
-   yerel Kaspersky TLS'i araya giriyor (okunan sertifika
-   `CN=Kaspersky Anti-Virus Personal Root Certificate`) ve `openssl` kurulu
-   degil. Somut oneri: sunucuda `certbot certificates` ciktisindaki
-   `Expiry Date` en az bir kez OTOMATIK yenilenmisse (yani ilk duzenlemeden
-   >60 gun gecmisse), `nginx-arcpad.conf`taki `Strict-Transport-Security`
-   satirini `max-age=63072000; includeSubDomains` ile ac. Geri alinamaz bir
-   karardir; erken acmak riskli, gec acmak degil.
+### C-2 (HSTS) — OLCULDU VE TARIHE BAGLANDI
+
+Ilk denemede sertifika bu makineden okunamadi ve sebep bir **olcum tuzagiydi**:
+.NET'in `HttpWebRequest`i `CN=Kaspersky Anti-Virus Personal Root Certificate`
+donduruyordu, yani yerel antivirus TLS'i araya giriyor. **Python'un `ssl`
+modulu araya girmiyor** ve gercek sertifikayi verdi:
+
+| Alan | Deger |
+|---|---|
+| Ihracci | **Let's Encrypt (YE1)** |
+| `notBefore` | **2026-08-15 22:33:04 UTC** |
+| `notAfter` | 2026-11-13 22:33:03 UTC |
+| Yas | **1 gun** |
+
+**Karar: HSTS KAPALI KALIR, ve acilacagi tarih 2026-10-14'ten SONRADIR.**
+
+Gerekce `nginx-arcpad.conf`un kendi kuralidir ("en az bir OTOMATIK yenileme
+gerceklesene kadar acma") ve sayilar artik onu somutlastiriyor: sertifika bir
+gunluk, yani HIC yenilenmedi. Certbot suresinin bitmesine ~30 gun kala yeniler
+(`notAfter` 13 Kasim), yani ilk otomatik yenileme **~14 Ekim 2026**.
+
+Neden bu kadar dikkat: `max-age=63072000` her ziyaretciye iki yil boyunca
+"bu alan adina ASLA duz HTTP ile baglanma" der ve **basligi kaldirmakla geri
+alinamaz** -- yalnizca yeterince uzun sure `max-age=0` sunarak. Sertifika
+yenilenmesi bir kez sessizce basarisiz olursa ve HSTS aciksa site
+ulasilamaz hale gelir ve ziyaretci onu atlayamaz. Erken acmak riskli, gec
+acmak degil.
+
+Yapilacak (operator, ~14 Ekim'den sonra): sunucuda `certbot certificates`
+ciktisinin yeni bir `notBefore` gosterdigini dogrula, sonra
+`nginx-arcpad.conf`taki `Strict-Transport-Security` satirini
+`max-age=63072000; includeSubDomains` ile ac.
+
+### C-1 (`/api/metadata`) — KABUL, VE NEDEN
+
+Rota kimlik istemez, yani internetteki herkes bizim pinning kotamiza 5 MiB'a
+kadar GORSEL yazabilir. Uc sey bunu bir acik degil bir maliyet yapiyor:
+
+* Tur **baytlardan** karara baglanir (`imageTypeOf`), yani keyfi icerik
+  pinlenemez -- yalnizca gercek gorseller.
+* nginx `limit_req zone=arcpad_write burst=5` ve `client_max_body_size 6m`.
+* Kota tukendiginde rota 502 doner ve form URI yoluna duser; **launch akisi
+  durmaz**.
+
+Kimlik eklemenin bedeli daha yuksek: cuzdan imzasi istemek, launch formunu
+DOLDURMADAN once imza istemek demektir ve donusumu kirar. Kayit altina alindi;
+kota izlenmesi operasyonel bir istir, kod kusuru degil.
 
 ---
 
-## F. CANLI KANIT — SUPURUCU (2026-08-17, Arc testnet)
+## I. CANLI KANIT — SUPURUCU (2026-08-17, Arc testnet)
 
 `pnpm --filter @arcpad/keeper sweep -- --once`, uretim fabrikasina karsi,
 kuru kosuda, iki kimlikle:
