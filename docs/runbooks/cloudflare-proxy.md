@@ -1,8 +1,8 @@
 # Cloudflare proxy'sini acmak — sirali, her adimi geri alinabilir
 
-> Durum: **PLANLANDI, UYGULANMADI.** Bugun A kaydi `DNS only` (turuncu bulut
-> kapali). Bu belge nicin oyle oldugunu, acmanin ne kazandirdigini, ve HANGI
-> SIRAYLA acilmasi gerektigini yazar.
+> Durum: **FAZ 0 UYGULANDI VE DOGRULANDI (2026-08-17).** A kaydi hala
+> `DNS only`; sirada FAZ 1-2 var ve ikisi de Cloudflare panelinde, yani
+> depo sahibinin elinde.
 >
 > Olcumler 2026-08-17'de yapildi. "Sunucuda dogrula" diye isaretli satirlar bu
 > makineden okunamadi (SSH bu oturumda kapali) ve uygulamadan ONCE
@@ -62,7 +62,10 @@ free/pro planinda origin'in yanit vermesi icin ~100 saniye vardir; 40 < 100.
 **Mail etkilenmez.** Ekran goruntusundeki `MX` ve `TXT` kayitlari `DNS only`
 KALIR — mail proxy'lenmez. Yalnizca `A` kaydi proxy'lenir.
 
-## 3. FAZ 0 — sunucu hazirligi (proxy KAPALIYKEN, gorunur etkisi SIFIR)
+## 3. FAZ 0 — sunucu hazirligi ✅ **UYGULANDI 2026-08-17**
+
+> **Sonuc:** `nginx -t` gecti, reload edildi, site DEGISMEDI (HTTP 200, CSP ve
+> diger basliklar aynen). Uc olcum asagida.
 
 Bu fazin tamami proxy kapaliyken **etkisizdir**: Cloudflare aralıklarindan
 trafik gelmedigi icin `set_real_ip_from` hicbir istegi etkilemez. Bu yuzden
@@ -120,9 +123,41 @@ uydurdugu `CF-Connecting-IP` YOK SAYILIR. Bu yuzden 0b, guvenlik duvarindan
 proxy_read_timeout 90s;
 ```
 
-**0d. Dogrula:** `nginx -t && systemctl reload nginx`, sonra site ELDEN
-gecirilir. Proxy hala kapali oldugu icin hicbir sey degismis olmamali —
-degistiyse 0b/0c yanlistir ve buradan geri donmek bedelsizdir.
+**0d. Dogrula.** Uc sey olculdu:
+
+**(i) `nginx -t` GERCEK bir hata yakaladi, ve reload'dan ONCE.** Ilk cekim
+betigi iki listeyi dogrudan birlestirdi; v4'un son satirinda newline olmadigi
+icin v6'nin ilki ona yapisti:
+
+```
+[emerg] host not found in set_real_ip_from "131.0.72.0/222400:cb00::/32"
+```
+
+Site el DEGMEDI (reload kosmadi). Betik `tr -s '[:space:]' '
+'` ile normalize
+edildi ve **her satirin CIDR oldugu dogrulanir** -- bicimi kontrol edilmeyen
+bir liste, `nginx -t`i her gun dusuren bir timer demekti. Simdi 22 aralik,
+iki dosya birebir tutuyor.
+
+**(ii) Site degismedi.** Reload sonrasi yerelde `200 200 200`, disaridan
+`HTTP 200`, `ssl_verify_result 0`, ve CSP / `X-Frame-Options` / `Cache-Control`
+aynen. Proxy kapali oldugu icin yeni satirlar beklendigi gibi ETKISIZ.
+
+**(iii) SAHTECILIK KAPALI -- ve bu iddia OLCULDU, akil yurutulmedi.**
+Disaridan uydurma basliklarla iki istek atildi:
+
+```
+curl -H 'CF-Connecting-IP: 203.0.113.99' https://outofmind.fun/?spooftest=1
+curl -H 'X-Forwarded-For: 198.51.100.7'  https://outofmind.fun/?xfftest=1
+```
+
+Erisim logu ikisinde de **gercek istemci IP'sini** yazdi (`95.7.225.216`),
+uydurulani DEGIL. nginx `CF-Connecting-IP`'yi ancak istek
+`set_real_ip_from` listesindeki bir adresten geldiginde dikkate alir; benim
+makinem o listede olmadigi icin baslik yok sayildi.
+
+Bu, FAZ 0'in guvenlik duvarindan (FAZ 3) ONCE durmasinin neden guvenli
+oldugunun kanitidir.
 
 ## 4. FAZ 1 — Cloudflare panel ayarlari (proxy'i ACMADAN once)
 
