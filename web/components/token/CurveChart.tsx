@@ -158,6 +158,30 @@ export function CurveChart({
   progressPercent: string
 }) {
   const curve = referenceCurve(profile)
+  /*
+   * ============================================================================
+   *  BUGUN HICBIR URETIM SAYFASI `trades` GECMIYOR -- YANI BU KATMAN CIZILMIYOR
+   * ============================================================================
+   *
+   * Bu bir kusur DEGIL ama yanlis guven vermemesi icin YAZILI olmasi gerekiyor,
+   * cunku `curve-realised` yolunun bir e2e iddiasi ve bilesen testleri VAR --
+   * ve o testler `trades`i KENDILERI verdigi icin yesil kaliyorlar.
+   *
+   * Zincir: `CurveChart`in tek cagirani `<TokenPriceChart>`, onun da tek
+   * cagirani `app/token/[address]/page.tsx`in **ZINCIR-ONLY** dalidir (veritabani
+   * yokken cizilen dal). O dalda islem gecmisi YOKTUR ve olamaz -- gecmis
+   * indexer'dadir; sayfanin kendi yorumu da bunu soyluyor. `trades` varsayilani
+   * `[]`, dolayisiyla `realised.length > 1` hicbir zaman dogru olmaz.
+   *
+   * INDEXLI dal bu grafigi HIC cizmez: orada `<PriceChart>` (lightweight-charts
+   * mumlari) var. Yani "gerceklesen fiyat egrinin uzerinde durur" ozelligi
+   * bugun bir KULLANICIYA gorunmuyor.
+   *
+   * Bilesen SILINMEDI: calisiyor, testli, ve bir gun zincir-only dala gecmis
+   * eklenirse ya da mum grafiginin yanina referans egrisi konursa yeniden
+   * kullanilabilir. Silmek bir urun karari olurdu; yanlis guveni kapatmak ise
+   * bir belgeleme isi -- ve o burada yapiliyor.
+   */
   const realised = realisedSeries(trades)
 
   const maxPrice = curve[curve.length - 1]?.priceWei ?? 1n

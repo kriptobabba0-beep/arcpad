@@ -349,29 +349,38 @@ anlamina da gelebilir.
 
 ### CI'in kapi kapi durumu
 
-`forge` **843/843** (41 suite, 37 dk), `fork` **29/29**, `slither`, `check`
-(db **406**, indexer **333**, shared 308, keeper 371, scripts 19, web 1311),
-`release-gate`, `abi-parity`, `chain-differential` — **yedisi de yesil**.
-Kalan tek kapi `e2e-local`.
+`forge` **843/843** (41 suite, 37 dk), `fork` **29/29**, `slither`, `check`,
+`release-gate`, `abi-parity`, `chain-differential` — hepsi PR #2'de yesil
+gecti.
 
-`e2e-local`'in ic durumu: `e2e:local` **7/7**, `e2e:audit` **41/41**,
-`e2e:db` H-6'dan sonra ilk kez 3. testin OTESINE geciyor.
+### H-10. CI COKTU, VE KAPILAR YINE KOSTURULDU (BASKA YERDE)
 
-### E2E'YI CI'A SORMAYI BIRAK — YERELDE KOSUYOR
+2026-08-17 aksami GitHub Actions bu depo icin **saatlerce coktu**: her is 2-4
+saniyede, **adim kaydi olmadan**, log'lari `BlobNotFound` donerek oldu (oncesinde
+API'de 503, `codeload`da 429, ve bir submodule cekiminde 500). Kodla ilgisi yok
+ve yeniden tetikleme duzeltmedi.
 
-Uc CI turu e2e uzerinde harcandiktan sonra olculdu: **Chromium ve `anvil` bu
-makinede ZATEN kurulu**, yani `pnpm --filter @arcpad/web e2e:local` burada
-kosuyor (~2,5 dk). Her tur icin CI'i beklemek gereksizdi.
+**Bu, kapilari kosturmamak icin bir gerekce degil.** Her paket baska bir yerde
+kosturuldu ve sonuclar burada:
 
-Yerel kosu sirayla iki ariza daha cikardi ve **ikisi de ayni sinif**: bu suite
-hic kosmadigi icin arayuzden SESSIZCE kopmus.
+| Kapi | Sonuc | Nerede |
+|---|---|---|
+| `@arcpad/db` | **423/423** | sunucu (92 s) |
+| `@arcpad/indexer` | **333/333** | sunucu |
+| `@arcpad/keeper` | **373/373** | yerel |
+| `@arcpad/shared` | **308/308** | yerel |
+| `@arcpad/scripts` | **19/19** | yerel |
+| `web` birim | **1319/1319** | yerel |
+| `web` `e2e:db` | **14/14** | yerel, **SSH tuneliyle** |
+| `web` `e2e:local` / `e2e:audit` | 7/7 · 41/41 | CI (colmeden once) |
+| `fmt:check` · `typecheck` | temiz | yerel |
+| `forge` · `fork` | 843/843 · 29/29 | **contracts/ bu seansta HIC degismedi** (`git diff 783eeaf..HEAD -- contracts/` bos), yani sonuclar gecerli |
 
-| Belirti | Gercek sebep |
-|---|---|
-| `locator('summary')` iki eleman buldu | `QuoteBreakdown` DA bir `<details>`tir ve `trade-details`in icinde durur; torun aramasi ikisini birden bulur. `> summary` (cocuk birlesticisi). `.first()` de calisirdi ve DOM sirasina gorunmez bir varsayim yuklerdi |
-| `getByRole('tab', {name: 'Receive tokens'})` 90 sn bekleyip dustu | Panel UC durumlu kaldi ama arayuz onlari uc sekme olarak GOSTERMIYOR: sekmeler artik **Buy / Sell**, alim tarafinda birim `flip-unit` dugmesiyle ceviriliyor |
-
----
+**VE BU, BIR BOSLUK ORTAYA CIKARDI.** `web` altinda iki dosya degistirilmisti
+(`ActivityTabs.tsx` caption'lari, `page.tsx`'in `page` parametresi) ve web'in
+**1319 birim testi hic kosturulmamisti** — CI cokuk oldugu icin o suit bu
+degisiklikleri hic gormedi. Yerelde kosturuldu: **1319/1319**. Kapi cokunce
+"kapatilan is" degil, "olculmeyen is" birikir; fark tam olarak budur.
 
 ## J. KALAN IS
 
@@ -652,8 +661,8 @@ Tam kanit: **`docs/runbooks/cloudflare-proxy.md` §10**. Ozet:
 | 1 — panel ayarlari | ✅ sahibi yapti (Full strict, TLS 1.2, Rocket Loader KAPALI) |
 | 2 — `A` kaydi `Proxied` | ✅ bes kontrol gecti |
 | 3 — origin'i CF aralıklarina kapat | ✅ zamanlanmis geri alma ile uygulandi |
-| 4 — HSTS kademeli | ⬜ sirada |
-| 5 — Origin CA | ⬜ istege bagli |
+| 4 — HSTS kademeli | ✅ **1. kademe canli** (`max-age=300`, HTML + statik); 2-3. kademe zaman gerektirir |
+| 5 — Origin CA | ⬜ istege bagli, **sahibinin panelinde** sertifika uretmesini ister |
 
 **En onemli iki olcum.** Gercek IP: proxy'den gecen bir istegin log'a dustugu IP,
 istemcinin gercek IPv6'sinin **birebir aynisi** — yani hız limitleri kullanici
