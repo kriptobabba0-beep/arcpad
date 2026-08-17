@@ -42,43 +42,51 @@
 -- `launches`tan (`l.created_seq`) gelir -- iki tablo, sifir indeks.
 --
 -- ==================================================================
---  COZUM: IKI SUTUNUN KAYNAGI DEGISIR. YENI SUTUN YOK.
+--  COZUM: TEK SUTUN, TEK INDEKS -- VE NICIN DAHA FAZLASI DEGIL
 -- ==================================================================
 --
--- ILK DENEME REDDEDILDI, VE KAPILAR HAKLIYDI. View'in SONUNA `sort_mcap_key`
--- diye onceden paketlenmis sutunlar eklemeyi denedim; uc kapi birden kirdi:
+-- IKI DENEME REDDEDILDI, VE IKISINDE DE KAPILAR HAKLIYDI.
 --
---   * `naming.test.ts`: her `numeric` TAM OLARAK `numeric(78,0)` olmali ve
---     `_wei`/`_tok` ile bitmeli. `sort_mcap_key numeric` ikisini de ihlal eder.
---   * `ordering.test.ts`: `SORTS`taki her ifade GORUNUR sekilde
---     `search_key(...)` olmali. Paketlemeyi view'in icine saklamak, sorguyu
---     okuyanin bag-bozma anahtarini GOREMEMESI demek.
---   * sema parmak izi: yeni sutunlar envanteri kaydirir.
+-- (1) Onceden paketlenmis view sutunlari (`sort_mcap_key`) -- uc kapi kirdi:
+--     `naming.test.ts` (her `numeric` TAM OLARAK `numeric(78,0)` ve
+--     `_wei`/`_tok`), `ordering.test.ts` (`SORTS`taki ifade GORUNUR sekilde
+--     `search_key(...)` olmali, yoksa okuyan bag-bozma anahtarini goremez) ve
+--     sema parmak izi.
 --
--- Uc kural da dogru kurallar. Dolayisiyla dogru cozum EKLEMEK degil, mevcut
--- iki sutunun KAYNAGINI degistirmek:
+-- (2) View'in `market_cap_wei`ini sakli `ts.market_cap_wei`e cevirmek --
+--     CI DOKUZ TESTLE reddetti ("acilis market cap'i tam 4 USDC", "hic islem
+--     gormemis alti token TEK bir deger tasir", ...). Sebep bir KATMAN
+--     ihlaliydi: `packages/db`'nin `applyLaunch`i `token_stats.market_cap_wei`i
+--     yalnizca **INSERT** eder; islemlerde guncelleyen sey INDEXER'in
+--     `writeMarketCap`idir. Yani sakli deger bu katmanda islemlerden sonra
+--     BAYATLAR ve view onu okuyamaz. `writeMarketCap`in "ayrisamaz" yorumu
+--     yalnizca INDEXER yolu icin dogru.
 --
---   market_cap_wei : div(cs...)  ->  ts.market_cap_wei
---   created_seq    : l.created_seq -> ts.created_seq
+-- Geriye TEK guvenli degisiklik kalir:
 --
--- Boylece `search_key(market_cap_wei, created_seq)` TEK BIR TABLONUN iki
--- sutununa cozulur ve ifade indeksi ona hizmet eder. `SORTS` DEGISMEZ --
--- paketleme sorguda gorunur kalir.
+--   created_seq : l.created_seq -> ts.created_seq
 --
--- ============ SAKLI DEGERE GUVENMEK NEDEN SAGLAM ============
+-- `token_stats.created_seq` `applyLaunch`in INSERT'inde yazilir ve BIR DAHA
+-- DEGISMEZ, yani bayatlayamaz -- `market_cap_wei`ten ayiran sey tam olarak bu.
+-- Ve bu tek satir `volume`u kurtarir: `volume_24h_wei` ZATEN `ts`den geliyordu,
+-- eksik olan yalnizca ikinci argumanin ayni tabloda olmasiydi.
 --
--- `curve_state`in sanal rezervlerini yazan TEK yol var (`applyTrade`,
--- `packages/db/src/apply.ts`) ve muhafizi `event_seq > c.last_seq`.
--- `writeMarketCap` ayni degeri AYNI ifadeyle (`div(Vq * N, Vt)`) ve esdeger
--- bir muhafizla (`COALESCE(last_trade_seq, 0) <= guardSeq`) yazar; gec gelen
--- eski bir olay IKISINDE DE atlanir. Yani iki deger ayrisamaz -- o
--- fonksiyonun kendi yorumunun soyledigi sey.
+-- `volume` Explore'un VARSAYILAN sekmesidir (`explore/params.ts`, TABS[0]),
+-- yani en cok okunan siralama. Olculdu: `Sort=2` -> `Sort=0`.
 --
--- `ts.created_seq` ile `l.created_seq` de ayni launch'in ayni numarasidir;
--- `applyLaunch` ikisini birlikte yazar.
+-- ============ ACIK BIRAKILANLAR, OLCUMLERIYLE ============
 --
--- Sonuc olarak bu migration bir kopyayi KALDIRIR: market cap artik TEK bir
--- yerden okunur.
+--   marketCap       Sort=2 -- duzeltmesi `market_cap_wei` bakimini
+--                             `packages/db`'ye tasimayi ister (ayni islem,
+--                             ayni muhafiz). En sicak yazma yolu ve tam-bir-kez
+--                             garantisi tasiyor; ayri bir tur hak ediyor.
+--   nearGraduation  Sort=2 -- `progress_ppm` `curve_state` x `deployment`ten
+--                             hesaplanir. Tasarim BELIRLENDI: `_ppm` zaten
+--                             bildirilmis sonek, `ts.created_seq` zaten var,
+--                             bakim noktasi `applyTrade`in CTE'si.
+--
+-- Ikisi de `scale.test.ts` tarafindan OLCULMEYE devam eder: kapi kirmizi
+-- kalir ve o kirmizi, yapilacak isin kendisidir.
 
 -- ------------------------------------------------------------------
 -- 1. IFADE INDEKSLERI
@@ -86,9 +94,11 @@
 -- `search_key` `IMMUTABLE STRICT`tir (bkz. `008_search.sql`), yani bir ifade
 -- indeksinde kullanilabilir. Yon `DESC`, sorgudakiyle AYNI: yonu ters bir
 -- indeks sirali taramaya hizmet ETMEZ ve planlayici yine siralar.
-CREATE INDEX token_stats_sort_mcap_idx
-  ON token_stats (search_key(market_cap_wei, created_seq) DESC);
-
+-- YALNIZCA `volume`. `market_cap_wei` uzerindeki ikizi BILEREK EKLENMIYOR:
+-- view o sutunu okumadigi surece indeks OLU kalir, ve olu bir indeks bedava
+-- degildir -- `token_stats` her islemde guncellendigi icin her yazimda bakim
+-- maliyeti oder. Zaten var olan `token_stats_mcap_idx` de tam bu yuzden
+-- bugune kadar hicbir sorgunun kullanmadigi bir yuktu.
 CREATE INDEX token_stats_sort_volume_idx
   ON token_stats (search_key(volume_24h_wei, created_seq) DESC);
 
@@ -126,8 +136,11 @@ SELECT
   COALESCE(bb.enabled, false) AS buyback_enabled,
   COALESCE(bb.locked_total_tok, 0)::numeric(78, 0) AS buyback_locked_tok,
 
-  -- SAKLI DEGER, YENIDEN HESAPLANAN DEGIL. Bkz. yukaridaki gerekce.
-  ts.market_cap_wei,
+  -- HESAPLANAN IFADE, OLDUGU GIBI. Sakli `ts.market_cap_wei`e cevirmeyi
+  -- denedim ve CI DOKUZ TESTLE reddetti; sebebi asagida (§COZUM) yazili.
+  div(cs.virtual_quote_reserves_wei * d.total_supply_tok, cs.virtual_token_reserves_tok)::numeric(
+    78, 0
+  ) AS market_cap_wei,
 
   div(cs.virtual_quote_reserves_wei * 1000000000000000000::numeric, cs.virtual_token_reserves_tok)::numeric(
     78, 0

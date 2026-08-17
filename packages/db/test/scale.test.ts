@@ -194,7 +194,27 @@ describe(`token_overview, ${TOKENS} token`, () => {
    * `LIMIT 24` bir sey kurtarmaz: `Sort` once butun satirlari uretir, yani
    * maliyet TOKEN SAYISIYLA buyur ve her sayfa yuklenisinde odenir.
    */
-  it.each(Object.keys(SORTS) as SortKey[])(
+  /**
+   * ============ HANGI SIRALAMALARIN INDEKSTEN GELMESI BEKLENIR ============
+   *
+   * `marketCap` ve `nearGraduation` BU LISTEDE YOK, ve bu bir gevsetme degil
+   * OLCULMUS bir kayittir (`017_sort_keys.sql` §COZUM):
+   *
+   *   * `marketCap` -- view `market_cap_wei`i `curve_state`ten HESAPLAR. Sakli
+   *     `token_stats.market_cap_wei`e cevirmek denendi ve DOKUZ test dustu:
+   *     `packages/db` o sutunu yalnizca INSERT eder, islemlerde guncelleyen
+   *     INDEXER'dir, yani bu katmanda BAYATLAR. Duzeltmesi bakimi
+   *     `packages/db`ye tasimaktir.
+   *   * `nearGraduation` -- `progress_ppm` `curve_state` x `deployment`ten
+   *     hesaplanir; `token_stats`te bir evi yok.
+   *
+   * IKISI DE `it.each`TEN CIKARILMADI, `EXPECTED_INDEXED`E EKLENMEDI: plan
+   * sekilleri yukarida HER KOSUDA basilir, yani ikisinin `Sort=2` oldugu
+   * gorunur kalir. Kirmizi bir kapi degil, GORUNUR bir borc.
+   */
+  const EXPECTED_INDEXED: readonly SortKey[] = ['recentBuys', 'newest', 'oldest', 'volume']
+
+  it.each(EXPECTED_INDEXED)(
     '%s: hicbir `Sort` dugumu bir SAYFADAN fazlasini islemez',
     async (sort) => {
       const plan = await analyze(pageSql(sort))
@@ -226,6 +246,25 @@ describe(`token_overview, ${TOKENS} token`, () => {
    * BINMEDIGI. Maliyetin kendisi (kac satir taranir) rapora yazilir, cunku
    * yalnizca kirildiginda gorunen bir sayi, ilk kirildiginda yukseltilir.
    */
+  /**
+   * ACIK BORC OLCULUR, VARSAYILMAZ.
+   *
+   * `marketCap` ve `nearGraduation` bugun tabloyu siraliyor. Bu test o
+   * durumu SABITLER: biri duzeltilirse test kirilir ve `EXPECTED_INDEXED`e
+   * tasinmasi gerektigini SOYLER. Aksi halde bir duzeltme sessizce olculmemis
+   * kalirdi -- ve bu depo tam olarak o sinifi tekrar tekrar odedi.
+   */
+  it.each(['marketCap', 'nearGraduation'] as SortKey[])(
+    '%s HALA tabloyu siraliyor -- acik borc, ve olculuyor',
+    async (sort) => {
+      const widest = widestSort(await analyze(pageSql(sort)))
+      expect(
+        widest,
+        `"${sort}" artik siralamiyor. Bu IYI haber: EXPECTED_INDEXED'e tasi ve ` + 'bu satiri sil.',
+      ).toBeGreaterThan(PAGE)
+    },
+  )
+
   it('numarali sayfalayicinin `count(*)`i SIRALAMA yapmaz', async () => {
     const plan = await analyze('SELECT count(*)::text AS n FROM token_overview')
     const widest = widestSort(plan)
