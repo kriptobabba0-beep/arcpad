@@ -839,3 +839,72 @@ beklenen deger geri okunur. Ikisi de duserse betik DURUR.
 **BEKLEYEN:** tarama zincir basina yetisene kadar site bos gorunur. Bu ariza
 degil. Sunucu ayrica bir `System restart required` bildiriyor -- tarama bittikten
 sonra yapilmali, once yapmak taramayi gereksizce geciktirir.
+
+---
+
+## L. BOS BIR CEVAP BIR CEVAPTIR -- VE 36 OLAY BOYLE KAYBOLDU
+
+Taramanin **sirasinda** bulundu, taramayi dogrulamak icin degil, ilerlemesini
+olcmek icin bakarken. En pahali sinif bu: kimse aramadigi icin degil, arayan
+kimsenin **kirmizi gormedigi** icin gizli kalan ariza.
+
+### L-1. ARIZA
+
+Bir RPC ucu `eth_getLogs` icin **hata vermeden bos dizi** donuyor. viem'in
+`fallback` tasiyicisi yedege yalnizca birincil uc **REDDEDERSE** gecer -- bos bir
+dizi red degildir, **cevaptir**. Indexer "bu aralikta olay yok" kabul etti ve
+**imleci ilerletti**. Geri donus yok: imlec ilerledi, aralik bir daha okunmadi.
+
+> **Bir yedek, yalnizca birincil ucun HATA VERDIGINI varsayar. Yalan soyleyen bir
+> uc hata vermez.**
+
+### L-2. NASIL KANITLANDI -- TOPLAMLA DEGIL, KONTROL NOKTASIYLA
+
+Zincirdeki `owed(recipient)` degeri, bizim o bloga kadarki kumulatif toplamimizla
+**ikili arama** ile karsilastirildi:
+
+| Blok | Zincir | Bizim defter |
+|---|---|---|
+| 56.900.000 | esit | esit |
+| 57.179.323 | esit | esit |
+| **57.185.000** | **ayristi** | — |
+
+Ayrilan pencerede zincirde **36 escrow logu** var (57.180.976–57.181.241);
+defterimizde **0**. Toplamlari karsilastirmak bunu gosteremezdi: toplam, kaybin
+**nerede** oldugunu soylemez, ve kayip yeterince kucukse yuvarlamaya benzer.
+
+### L-3. MUHAFIZ: TANIGA SORULUR, YALANCIYA DEGIL
+
+`indexer/src/empty-range-guard.ts`: bos cevaplar **orneklemeyle** (varsayilan
+her 25'te bir) **ikinci** bir uca sorulur. Tanik `client` OLAMAZ -- yalan
+soyleyen uca kendi yalanini sormak dogrulama degil **tekrardir**.
+
+Uc sessiz-ariza korumasi bilerek yazildi: muhafiz **kapaliysa** soyler; **kosamiyorsa**
+kostugunu iddia etmez; tanik bosu **onaylarsa** bu bir teyittir, sayilir.
+
+### L-4. VE MUHAFIZIN KENDISI KUSURLUYDU -- UC KEZ DURDURDU DIYE DEGIL, DOKUZ KEZ
+
+Dagitimdan sonra servis **dokuz kez** yeniden basladi, her seferinde
+`WitnessUnavailable`. Belirleyici ayrinti loglarin icindeydi:
+`Details: pruned history unavailable`.
+
+Tanik uc **budanmis** bir dugum: eski bloklarin loglarini tutmuyor, yani o
+araliklar hakkinda **tanikligi yok**. Varsayimim yanlisti -- "ikinci bir uc ayni
+tarihsel sorguyu cevaplayabilir".
+
+Bunu ariza saymak **iki kez** yanlisti:
+
+* **Olcu olarak:** tanigin susmasi, birincil ucun yalan soyledigi anlamina gelmez.
+* **Sonuc olarak:** durmak **koruma eklemez** -- o aralikta zaten dogrulama
+  yapilamiyordu -- yalnizca isi keser.
+
+> **Muhafiz, korudugu isi imkansiz kiliyordu.**
+
+Artik ucuncu bir sonuc var: *"tanik bu aralik hakkinda konusamaz."* Sayaci
+artirmaz, ama **sessiz de gecilmez**: `silencedByHorizon` ana donguden raporlanir.
+Sayilmayan **ve** soylenmeyen bir bosluk, bu muhafizin bulmak icin var oldugu
+seyin ta kendisi olurdu.
+
+Testlerden biri **ayirt edici**: kalip tasimayan bir hata (`connection reset`)
+hala sayilir ve esikte durdurur. O kontrol olmadan kalibi genis tutup her seyi
+yutmak testi **gecerdi** -- ve muhafiz sessizce no-op olurdu.
