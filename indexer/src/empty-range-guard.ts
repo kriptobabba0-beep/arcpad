@@ -74,6 +74,39 @@ export class EmptyRangeDisputed extends Error {
   }
 }
 
+/**
+ * ============ TANIGIN BIR UFKU VAR, VE ALTINDA SUSAR ============
+ *
+ * OLCULDU (uretim, 2026-08-18): tanik uc `pruned history unavailable` donduruyor.
+ * Budanmis bir dugum eski bloklarin loglarini TUTMAZ -- yani o aralik hakkinda
+ * tanikligi YOKTUR. Bu bir ariza DEGIL, yapisal bir sinir.
+ *
+ * Ilk surum bunu "cevap veremedi" sayiyordu ve ard arda bes kez gorunce
+ * `WitnessUnavailable` atip indexer'i durduruyordu -- geriye donuk tarama
+ * boyunca her ~10 dakikada bir. Yanlisti: tanigin susmasi, birincil ucun
+ * yalan soyledigi anlamina gelmez, ve durmak KORUMA EKLEMEZ (o aralikta zaten
+ * dogrulama yapilamiyor) -- yalnizca isi keser.
+ *
+ * Dogru model: "tanik bu aralik hakkinda konusamaz" ayri bir sonuctur. Atlanir,
+ * hata sayilmaz, ama SESSIZ de gecilmez: cagiran, tarihsel araligin
+ * DOGRULANMADIGINI bilmelidir.
+ */
+const CANNOT_TESTIFY = /pruned|history unavailable|state unavailable|missing trie node/i
+
+function cannotTestify(error: unknown): boolean {
+  // Hem viem'in `details` alanini hem duz mesaji tarar: sarmalayici degisebilir,
+  // sunucunun cumlesi degismez.
+  const parts: string[] = []
+  if (error instanceof Error) parts.push(error.message)
+  const details = (error as { details?: unknown } | null)?.details
+  if (typeof details === 'string') parts.push(details)
+  const cause = (error as { cause?: unknown } | null)?.cause
+  if (cause instanceof Error) parts.push(cause.message)
+  const causeDetails = (cause as { details?: unknown } | null)?.details
+  if (typeof causeDetails === 'string') parts.push(causeDetails)
+  return CANNOT_TESTIFY.test(parts.join(' | '))
+}
+
 /** Tanik ardisik olarak cevap veremedi: muhafiz KOSAMIYOR, yani gecerli degil. */
 export class WitnessUnavailable extends Error {
   constructor(
@@ -100,6 +133,11 @@ export interface EmptyRangeGuard {
   readonly emptyRangesSeen: () => number
   /** Test ve teshis icin: kac dogrulama yapildi. */
   readonly verifications: () => number
+  /**
+   * Tanigin UFKUNUN ALTINDA kaldigi icin dogrulanamayan aralik sayisi. Sifirdan
+   * buyukse o araliklar DOGRULANMAMISTIR -- cagiran bunu gorunur kilmalidir.
+   */
+  readonly silencedByHorizon: () => number
 }
 
 export interface EmptyRangeGuardOptions {
@@ -131,11 +169,13 @@ export function createEmptyRangeGuard(options: EmptyRangeGuardOptions): EmptyRan
   let seen = 0
   let verified = 0
   let failures = 0
+  let silenced = 0
 
   return {
     enabled: witness !== null,
     emptyRangesSeen: () => seen,
     verifications: () => verified,
+    silencedByHorizon: () => silenced,
     onEmptyRange: async (from: bigint, to: bigint): Promise<void> => {
       seen += 1
       if (witness === null) return
@@ -145,6 +185,13 @@ export function createEmptyRangeGuard(options: EmptyRangeGuardOptions): EmptyRan
       try {
         count = await witness(from, to)
       } catch (error) {
+        if (cannotTestify(error)) {
+          // TANIGIN UFKUNUN ALTINDA. Ariza degil, sinir: sayaci ARTIRMAZ.
+          // Sayilsaydi geriye donuk her tarama `WitnessUnavailable` ile durur ve
+          // muhafiz, korudugu isi imkansiz kilardi.
+          silenced += 1
+          return
+        }
         failures += 1
         // TAVANA KADAR YUTULUR: tek bir tanik hatasi ingest'i durdurmamali,
         // cunku tanik tanim geregi IKINCIL bir uctur ve onun gecici arizasi

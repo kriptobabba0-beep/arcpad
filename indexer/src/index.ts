@@ -154,7 +154,34 @@ async function main(): Promise<void> {
     )
   }
 
+  /*
+   * ============ SUSTURULAN DOGRULAMA, SESSIZ KALMAZ ============
+   *
+   * Tanik budanmis bir dugumse eski bloklar icin `pruned history unavailable`
+   * doner: o aralik hakkinda tanikligi YOKTUR (`empty-range-guard.ts`). Muhafiz
+   * bunu haklı olarak ariza saymaz -- ama SAYMAMAK ile SOYLEMEMEK ayni sey
+   * degil. Sayilmayan ve soylenmeyen bir bosluk, tam olarak bu muhafizin
+   * bulmak icin yazildigi seydir: guven veren ama olcmeyen bir mekanizma.
+   *
+   * Ilk susturmada HEMEN basilir -- geriye donuk tarama saatler surer ve
+   * operatorun bunu sonunda degil basinda bilmesi gerekir. Sonrasinda yalnizca
+   * SAYI DEGISTIYSE basilir, yoksa dongu gunlugu doldurur ve okunmaz olur.
+   */
+  let reportedSilenced = 0
+  const reportHorizon = () => {
+    const silenced = emptyRangeGuard.silencedByHorizon()
+    if (silenced === reportedSilenced) return
+    reportedSilenced = silenced
+    console.warn(
+      `[indexer] BOS ARALIK DOGRULANAMADI (${silenced} aralik): tanik uc bu bloklarin ` +
+        'gecmisini BUDAMIS, yani onlar hakkinda taniklik edemiyor. Bu araliklarda bos ' +
+        'cevaplar DOGRULANMAMISTIR. Tanik arsiv ucu ise sorun yok; degilse guncel ' +
+        'bloklara yetisildiginde dogrulama yeniden devreye girer.',
+    )
+  }
+
   for (;;) {
+    reportHorizon()
     const result = await runWithRetry(pool, rpc, deployment, config, {
       pacer,
       widthMemo,
