@@ -30,12 +30,6 @@ on:
       - ".gitmodules"
       - ".github/workflows/contracts.yml"
   pull_request:
-    # GitHub Actions YAML anchor/alias desteklemez; liste bilerek tekrarlanir.
-    paths:
-      - "contracts/**"
-      - "!contracts/**/*.md"
-      - ".gitmodules"
-      - ".github/workflows/contracts.yml"
 
 # Ayni dal icin yeni bir kosu basladiginda eskisini iptal et. Ard arda iki
 # push yapildiginda birincinin kosusu sonuna kadar calisip Actions dakikasi
@@ -45,7 +39,62 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ==========================================================================
+  #  FILTRE ARTIK IS AKISINDA DEGIL, ISTE -- CUNKU KOSMAYAN BIR KAPI SUSAR
+  # ==========================================================================
+  #
+  # `on.pull_request.paths` bir kapiyi tamamen susturur: is akisi HIC baslamaz
+  # ve GitHub o commit icin HICBIR check RAPOR ETMEZ. Dal korumasi acisindan bu
+  # "gecti" degil, SONSUZA KADAR BEKLIYOR demektir -- yani bu kapilari zorunlu
+  # yapmak, ilgisiz bir PR'i kalici olarak kilitlerdi.
+  #
+  # ATLANAN BIR IS ISE BIR SONUCTUR. Filtre `if:` ile ise tasinince is akisi her
+  # PR'da kosar, `gate` her zaman bir cevap uretir, ve zorunlu check guvenle
+  # secilebilir. Maliyet gerekcesi de artik yok: depo PUBLIC, yani Actions
+  # dakikalari ucretsiz (2026-08-17'de kotasi tukenen hesap OZELDI).
+  #
+  # FILTRE FAIL-CLOSED'DIR: base sha yoksa, `git diff` patlarsa ya da liste bos
+  # gelirse sonuc `true`dur, yani KOSAR. Ters tasarim -- supheliyken atla -- tam
+  # olarak bu deponun bulmak icin ugrastigi sinifi uretirdi: sessizce atlanan ve
+  # yesil gorunen bir kapi.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.diff.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Base commit'e `git diff` yapabilmek icin tam gecmis gerekir; sig bir
+          # klon base sha'yi bulamaz ve filtre fail-closed'a duserdi.
+          fetch-depth: 0
+
+      - id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -u
+          decide() {
+            echo "relevant=$1" >> "$GITHUB_OUTPUT"
+            echo "::notice::contracts: relevant=$1 ($2)"
+            exit 0
+          }
+          # PR disinda (push: main) filtre YOKTUR: orada kilitlenecek bir PR yok
+          # ve is akisinin kendi `paths`i zaten oraya bakar.
+          [ "$EVENT" = "pull_request" ] || decide true "PR degil"
+          [ -n "$BASE" ] || decide true "base sha yok -- fail-closed"
+          files="$(git diff --name-only "$BASE"...HEAD)" || decide true "git diff patladi -- fail-closed"
+          [ -n "$files" ] || decide true "degisiklik listesi bos -- fail-closed"
+          # Markdown hicbir kapinin sonucunu degistiremez.
+          candidates="$(echo "$files" | grep -v '[.]md$' || true)"
+          if echo "$candidates" | grep -qE '^(contracts/|[.]gitmodules$|[.]github/workflows/contracts[.]yml$)'; then
+            decide true "ilgili dosya degisti"
+          fi
+          decide false "ilgili dosya yok"
+
   forge:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -125,6 +174,8 @@ jobs:
   # soyluyor, dolayisiyla canli RPC'ye karsi kosan bu is bizim tek gercek Arc
   # dogrulamamizdir. Sessizce yesil gormek, sahip olmamak kadar kotudur.
   fork:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -170,3 +221,36 @@ jobs:
             sleep 20
             run_fork
           }
+
+  # ==========================================================================
+  #  ZORUNLU CHECK BUDUR -- VE ATLAMAYI RAPOR VERMEMEKTEN AYIRIR
+  # ==========================================================================
+  #
+  # `if: always()` olmasa bu is de atlanir ve zorunlu check yine rapor vermezdi;
+  # yani kapinin butun anlami o tek satirda duruyor.
+  #
+  # GitHub'in "atlanan is basarili sayilir" davranisina GUVENILMEZ: o davranis
+  # gecmiste degisti, ve sessizce degisirse kapi sessizce acilirdi. Karar burada
+  # ACIKCA verilir -- `failure` ve `cancelled` kirmizidir, `skipped` yesildir
+  # cunku is akisi KOSMUS ve isin gereksiz olduguna kendisi karar vermistir. Hic
+  # rapor vermemekle ayni sey degildir.
+  gate:
+    needs: [changes, forge, fork]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every gate settled
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          set -eu
+          echo "$RESULTS"
+          # Tam esitlik, `contains` degil: "failure" alt dizgesi baska bir alanda
+          # gecerse yanlis kirmizi verirdi, ve bir kapinin yanlis kirmizisi
+          # guveni tam da kirmizinin ise yaramasi gereken yerde asindirir.
+          bad="$(echo "$RESULTS" | python3 -c 'import json,sys; print(" ".join(k for k,v in json.load(sys.stdin).items() if v["result"] not in ("success","skipped")))')"
+          if [ -n "$bad" ]; then
+            echo "::error::contracts kapilari kirmizi: $bad"
+            exit 1
+          fi
+          echo "contracts: butun kapilar yesil ya da gerekmedi"
