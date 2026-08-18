@@ -7,7 +7,7 @@
       "0xf5447724A9BEa99635c0456049169eaCa84EE65B",
       "0x0D646a725DAdc8ADcF209ac999B219EF2a69ad21"
     ],
-    "allowedGraduationTargets": []
+    "allowedGraduationTargets": ["0xBBE8EB43380d3572cF0F97BE5A9d6755Dd3c79Aa"]
   },
   "local-rehearsal": {
     "governor": "0x0000000000000000000000000000000000000601",

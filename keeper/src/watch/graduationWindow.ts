@@ -889,8 +889,23 @@ const RANGE_ERROR_CODES = new Set([-32602, -32012, -32614])
 // yani genel bir "exceeds limit" kaligi, GECICI bir hatayi KALICI sanip
 // araligi bosuna kucultur ve gercek teshisi bulandirirdi. Yalnizca aralik/boyut
 // icin AYIRT EDICI olan kaliplar.
+// URETIMDEKI IKI UCUN GERCEK METINLERI, CANLI OLCULDU (2026-08-18):
+//
+//   drpc      "ranges over 10000 blocks are not supported on this endpoint"
+//   quicknode "eth_getLogs is limited to a 10,000 range"
+//
+// Ikisi de yukaridaki kaliplarin HICBIRINE uymuyordu, yani `isRangeTooLarge`
+// false donuyor, aralik KUCULMUYOR ve tarama ayni parcada kalici olarak
+// dusuyordu: `alerts.log`da 245 kez `log-scan-failed`, hepsi "not converging".
+// Kalip o sirada yalnizca blockdaemon'in "head otesi" mesajini yakaliyordu --
+// ki o bir BOYUT hatasi bile degil ve kuculmekle cozulmez.
+//
+// Yeni iki desen DAR: sayi ile birlikte "blocks" ya da "range" gecmesini
+// arar, yani ustteki yorumun korudugu ayrim -- hiz sinirini aralik sanmamak --
+// bozulmaz. `Request exceeds defined limit` hala EŞLEŞMEZ ve testte oyle
+// yazilidir.
 const RANGE_ERROR_TEXT =
-  /requested range too large|range is too large|more than \d+ results|too many (logs|results|blocks)|block range/i
+  /requested range too large|range is too large|more than \d+ results|too many (logs|results|blocks)|block range|ranges? over [\d,]+ blocks?|limited to an? [\d,]+ range/i
 
 export function isRangeTooLarge(error: unknown): boolean {
   for (let node = error, depth = 0; node !== null && node !== undefined && depth < 12; depth += 1) {
