@@ -207,12 +207,29 @@ export function createEmptyRangeGuard(options: EmptyRangeGuardOptions): EmptyRan
 }
 
 /**
- * Tanik istemcinin adresi. `arcRpcUrls` birincil + yedekleri DEDUPLIKE eder,
- * yani ikinci eleman gercekten BASKA bir uctur. Yedek yoksa `null` -- ve
- * cagiran bunu `enabled: false` olarak gorur.
+ * Tanik istemcinin adresi: listenin SON ucu.
+ *
+ * ============ NEDEN SONUNCU, VE NEDEN `urls[1]` DEGIL ============
+ *
+ * OLCULDU (uretim, 2026-08-18): ayni 36 escrow logu IKINCI kez kayboldu.
+ * Zincir soyle: birincil uc `rate limit exceeded` verdi, viem ILK YEDEGE
+ * dustu, ve o uc 36 log iceren aralik icin HATASIZ BOS DIZI dondu -- yani
+ * viem'in failover'i tam da yalanin gerektigi yerde tetiklenmedi.
+ *
+ * Ve muhafiz o yalani ONAYLADI, cunku tanik da ayni `urls[1]`di. Yalan
+ * soyleyen uca kendi yalanini sormak dogrulama degil TEKRARDIR -- bu dosya
+ * bunu bastan beri yaziyordu, ama `witnessUrlFrom` tam olarak onu yapiyordu.
+ * Sonuc sessiz kayiptan kotuydu: sessiz kayip arti SAHTE GUVEN.
+ *
+ * viem yedeklere SIRAYLA duser, dolayisiyla sonuncusu birincil arizada en az
+ * ugranan uctur ve `urls[1]` ile cakismayan tek secimdir.
+ *
+ * IKI UC VARSA tanik zorunlu olarak ilk yedektir -- baska secenek yoktur ve bu
+ * durum testte ACIKCA yazilidir, ki koruma zayifladiginda gorunur olsun.
+ * `arcRpcUrls` listeyi DEDUPLIKE eder, yani sonuncu gercekten baska bir uctur.
  */
 export function witnessUrlFrom(urls: readonly string[]): string | null {
-  return urls.length >= 2 ? (urls[1] as string) : null
+  return urls.length >= 2 ? (urls[urls.length - 1] as string) : null
 }
 
 /** Yalnizca tip icin: tanigin sordugu izleme kumesi cagiranin kumesiyle AYNI olmali. */

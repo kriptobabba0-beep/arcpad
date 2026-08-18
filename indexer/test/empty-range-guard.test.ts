@@ -174,10 +174,43 @@ describe('bos aralik muhafizi', () => {
     expect(guard.silencedByHorizon()).toBe(5)
   })
 
-  it('tanik adresi: yedek yoksa null, varsa IKINCI uc', () => {
+  /**
+   * ============ TANIK, VIEM'IN ILK DUSTUGU UC OLAMAZ ============
+   *
+   * OLCULDU (uretim, 2026-08-18): 36 escrow logu IKINCI kez kayboldu, ayni
+   * araliktan. Zincir soyle: birincil uc `rate limit exceeded` verdi, viem
+   * ILK YEDEGE dustu (`urls[1]` = blockdaemon), ve o uc 36 log iceren aralik
+   * icin HATASIZ BOS DIZI dondu. viem bunu gecerli bir cevap saydi.
+   *
+   * Ve muhafiz bu yalani ONAYLADI: tanik da `urls[1]`di. Yani yalan soyleyen
+   * uca kendi yalanini sorduk -- bu dosyanin ustunde "asla yapilmamali" diye
+   * yazan seyin ta kendisi. Sonuc sessiz kayiptan KOTUYDU: sessiz kayip arti
+   * SAHTE GUVEN.
+   *
+   * Tanik bu yuzden SON uctur: viem sirayla duser, yani sonuncusu birincil
+   * arizada en az ugranan ve `urls[1]` ile CAKISMAYAN tek secimdir.
+   */
+  it('tanik SON uctur -- viem`in ilk dustugu uc ASLA secilmez', () => {
+    // Ayirt edici kontrol: eski surum `urls[1]` dondururdu ve bu satirda olurdu.
+    expect(witnessUrlFrom(['https://primary', 'https://first-fallback', 'https://last'])).toBe(
+      'https://last',
+    )
+    expect(
+      witnessUrlFrom(['https://p', 'https://blockdaemon', 'https://drpc', 'https://quicknode']),
+      'uretimdeki dort uc: tanik quicknode olmali, blockdaemon DEGIL',
+    ).toBe('https://quicknode')
+  })
+
+  it('tanik adresi: yedek yoksa null', () => {
     expect(witnessUrlFrom(['https://a'])).toBeNull()
-    expect(witnessUrlFrom(['https://a', 'https://b'])).toBe('https://b')
     expect(witnessUrlFrom([])).toBeNull()
+  })
+
+  it('TEK yedek varsa tanik odur -- ve bu durum RISKLIDIR', () => {
+    // Iki uc varken tanik ile viem'in ilk yedegi ZORUNLU olarak ayni olur;
+    // baska secim yok. Test bunu bir iddia olarak yazar ki, birileri uctan
+    // birini silmeye kalktiginda korumanin zayifladigi GORUNUR olsun.
+    expect(witnessUrlFrom(['https://a', 'https://b'])).toBe('https://b')
   })
 })
 
