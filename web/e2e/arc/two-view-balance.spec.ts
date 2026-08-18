@@ -110,6 +110,21 @@ function arcClient() {
 }
 
 /**
+ * `<details>` KAPALIYSA ACAR. Panelin bakiye satiri, MAX dugmesi ve gaz notu
+ * bu bolumun icinde durur ve bolum `open` TASIMADAN baslar -- yani ucune de
+ * ulasmanin tek yolu once burayi acmaktir, kullanici icin de test icin de.
+ *
+ * `> summary`: `QuoteBreakdown` da bir `<details>`tir ve bunun ICINDE durur,
+ * yani torun aramasi IKI ozet bulur ve strict mode ile duser.
+ */
+async function openTradeDetails(page: import('@playwright/test').Page): Promise<void> {
+  const details = page.getByTestId('trade-details')
+  if (!(await details.evaluate((el) => (el as HTMLDetailsElement).open))) {
+    await details.locator('> summary').click()
+  }
+}
+
+/**
  * THE SKIP IS AN ANNOUNCEMENT, AND IT IS A TEST RATHER THAN A HOOK.
  *
  * MEASURED, AND THE FIRST VERSION WAS WRONG IN EXACTLY THE WAY THIS FILE IS
@@ -462,6 +477,20 @@ test.describe('Arc testnet', () => {
      * yani secici hicbir zaman denenmemisti. `SpendableMaxButton` zaten
      * `data-testid="max-button"` tasiyor ve o ad SLIPAJ metniyle cakismaz.
      */
+    /*
+     * ONCE ACILIR -- CUNKU MAX DA O KAPALI BOLUMUN ICINDE.
+     *
+     * OLCULDU (ilk canli kosu, 2026-08-18): `element is not visible`, 120 s
+     * boyunca. `SpendableMaxButton` bakiye satiriyla birlikte
+     * `DetailsSection`in icinde durur ve o `<details>` `open` TASIMAZ. Test
+     * bolumu ZATEN aciyordu, ama MAX'a tikladiktan SONRA -- yani gizli bir
+     * dugmeye tiklamaya calisip zaman asimina dusuyordu.
+     *
+     * Bolumun kapali baslamasi bilincli bir urun karari (bkz. `TradeCard.tsx`:
+     * "hepsi ayni anda gorunurse panel bir duvar olur"), dolayisiyla duzeltme
+     * TESTTE: kullanici da MAX'a ulasmak icin ayni tiklamayi yapar.
+     */
+    await openTradeDetails(page)
     await page.getByTestId('max-button').click()
     const typed = await page.getByLabel('Amount to spend').inputValue()
     const asWei = BigInt(Math.round(Number(typed) * 1e6)) * 1_000_000_000_000n
@@ -481,12 +510,7 @@ test.describe('Arc testnet', () => {
      * yesildi ve "kullanici sebebi goruyor" degil "sebep DOM'da var" diyordu.
      * Iddianin konusu ekranda duran seydir.
      */
-    const details = page.getByTestId('trade-details')
-    if (!(await details.evaluate((el) => (el as HTMLDetailsElement).open))) {
-      // `> summary`: `QuoteBreakdown` da bir `<details>`tir ve bunun ICINDE
-      // durur, yani torun aramasi IKI ozet bulur ve strict mode ile duser.
-      await details.locator('> summary').click()
-    }
+    await openTradeDetails(page)
     await expect(page.getByTestId('gas-reserve-note')).toBeVisible()
     await expect(page.getByTestId('gas-reserve-note')).toContainText(/leaves .* for gas/i)
     expect(wallet.sent().length, 'MAX must not send anything on its own').toBe(0)
@@ -604,9 +628,31 @@ test.describe('Arc testnet', () => {
    * refusing on behalf of. Without (b) this would only prove the screen and the
    * screen's own beliefs agree.
    */
+  /*
+   * ============ CANLI BIR KEEPER VARKEN BU DURUM VAR OLAMAZ ============
+   *
+   * OLCULDU (uretim, 2026-08-18): `arcpad-keeper-graduate` `KEEPER_DRY_RUN=false`
+   * ile kosuyor, yani tamamlanan bir curve'u SANIYELER ICINDE graduate eder.
+   * Bu testin olctugu durum -- `complete=true` VE `graduated=false` -- bu yuzden
+   * uretimde KALICI OLARAK VAR OLAMAZ; zincirde bugun oyle bir curve yok ve
+   * bir tanesini tamamlamak da ise yaramaz, cunku keeper onu hemen kapatir.
+   *
+   * Test bu yuzden varsayilan kosuda HER ZAMAN duserdi -- ve her zaman kirmizi
+   * olan bir test bir kapi degil, GURULTUDUR: bir sure sonra "zaten hep kirmizi"
+   * diye okunur ve gercek bir ariza da orada kaybolur.
+   *
+   * Ayni dosyadaki pahali senaryo (`E2E_ARC_COMPLETE=1`) ile ayni kapinin
+   * arkasina alindi. O bayrakla kosarken keeper'i durdurmak gerekir; iddia
+   * DEGISMEDI, yalnizca ne zaman olculebilecegi durustce yazildi.
+   */
   test('a completed curve names WHY it cannot graduate, and offers no action that can only revert', async ({
     page,
   }) => {
+    test.skip(
+      process.env.E2E_ARC_COMPLETE !== '1',
+      'E2E_ARC_COMPLETE is not set — a complete-but-ungraduated curve cannot exist while the ' +
+        'graduate keeper runs with KEEPER_DRY_RUN=false (measured 2026-08-18)',
+    )
     const token = process.env.E2E_ARC_SMOKE_TOKEN ?? ''
     const curve = process.env.E2E_ARC_SMOKE_CURVE ?? ''
     const locker = process.env.E2E_ARC_LOCKER ?? ''
