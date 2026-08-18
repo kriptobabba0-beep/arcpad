@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { formatUsdcCompact } from '@arcpad/shared/browser'
 import type { IChartApi, ISeriesApi, Time, UTCTimestamp } from 'lightweight-charts'
 import type { CandleRow } from '@/lib/read'
+import { PRICE_SCALE_MARGINS, VOLUME_SCALE_MARGINS } from './chartBands'
 
 /**
  * ============ KUTUPHANE TEMBEL YUKLENIR, TIPLER STATIK KALIR ============
@@ -210,7 +211,11 @@ export function PriceChart({
           vertLines: { color: 'rgba(255,255,255,0.04)' },
           horzLines: { color: 'rgba(255,255,255,0.04)' },
         },
-        rightPriceScale: { borderColor: 'rgba(255,255,255,0.08)' },
+        rightPriceScale: {
+          borderColor: 'rgba(255,255,255,0.08)',
+          // Mumlarin inebilecegi ALT SINIR -- bkz. `PRICE_SCALE_MARGINS`.
+          scaleMargins: PRICE_SCALE_MARGINS,
+        },
         timeScale: {
           borderColor: 'rgba(255,255,255,0.08)',
           timeVisible: true,
@@ -237,15 +242,16 @@ export function PriceChart({
       /*
        * HACIM KENDI OLCEGINDE, ALTTA.
        *
-       * `priceScaleId: ''` ayri bir olcek demek; `scaleMargins` onu alt %20'ye
-       * sikistirir. Ayni olcegi paylassalardi hacim cubuklari fiyat eksenini
+       * `priceScaleId: ''` ayri bir olcek demek; `scaleMargins` onu en alttaki
+       * serite sikistirir. ALT SINIR TEK BASINA YETMEZ: fiyat olcegi de bir alt
+       * sinir tasimali, yoksa mumlar bu seridin icine iner. Ayni olcegi paylassalardi hacim cubuklari fiyat eksenini
        * ezer ve mumlar ekranin ustunde bir seride sikisirdi.
        */
       const volume = chart.addSeries(mod.HistogramSeries, {
         priceFormat: { type: 'volume' },
         priceScaleId: '',
       })
-      volume.priceScale().applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
+      volume.priceScale().applyOptions({ scaleMargins: VOLUME_SCALE_MARGINS })
       volumeRef.current = volume
 
       /*
