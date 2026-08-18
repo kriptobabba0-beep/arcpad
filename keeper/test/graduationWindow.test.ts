@@ -741,6 +741,27 @@ describe('knownCurves', () => {
     }
     expect(isRangeTooLarge(new Error('requested range too large'))).toBe(true)
     expect(isRangeTooLarge(new Error('query returned more than 10000 results'))).toBe(true)
+
+    /*
+     * ============ URETIMDEKI IKI UCUN GERCEK METINLERI ============
+     *
+     * OLCULDU (canli, 2026-08-18): iki DURUST uc araligi soyle reddediyor. Bu
+     * satirlar yokken kalip onlari TANIMIYORDU, yani `isRangeTooLarge` false
+     * donuyor, aralik KUCULMUYOR ve tarama ayni parcada kalici olarak
+     * dusuyordu -- `alerts.log`da **245 kez** `log-scan-failed`, hepsi "not
+     * converging".
+     *
+     * Ironi olculdu: kalip o sirada YALNIZCA blockdaemon'in "head otesi"
+     * mesajini yakaliyordu, ki o bir BOYUT hatasi bile degil.
+     */
+    expect(
+      isRangeTooLarge(new Error('ranges over 10000 blocks are not supported on this endpoint')),
+      'drpc: canli olculen aralik reddi',
+    ).toBe(true)
+    expect(
+      isRangeTooLarge(new Error('eth_getLogs is limited to a 10,000 range')),
+      'quicknode: canli olculen aralik reddi',
+    ).toBe(true)
     // Arc'in CANLI olculen hiz siniri mesaji. Aralik sanilirsa, GECICI bir
     // hata yuzunden aralik bosuna kuculur ve teshis bulanir.
     expect(isRangeTooLarge(new Error('Request exceeds defined limit: rate limit exceeded'))).toBe(
