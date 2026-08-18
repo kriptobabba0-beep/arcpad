@@ -7,7 +7,6 @@ import type { HexAddress } from '@/components/read/types'
 import { Button } from '@/components/ui/Button'
 import { Card } from '@/components/ui/Card'
 import { Money } from '@/components/ui/Money'
-import { Tabs } from '@/components/ui/Tabs'
 import { useArcNetwork } from '@/hooks/useArcNetwork'
 import { useChainNow } from '@/hooks/useChainNow'
 import { useUsdcBalance } from '@/hooks/useUsdcBalance'
@@ -16,6 +15,8 @@ import { decodePoolSwapError, type PoolFailure } from '@/lib/poolOutcome'
 import { quoteWeiFromUnits } from '@/lib/quoteUnits'
 import { ARCPAD_ROUTER_ABI } from '@/lib/routerAbi'
 import { AmountInput } from './AmountInput'
+import { AmountCard, AssetRow, DetailsSection } from './TradeCard'
+import { TradeSideTabs } from './TradeTabs'
 import { ApproveStep } from './ApproveStep'
 import { spendableFrom } from './gas'
 import { SpendableMaxButton } from './SpendableMaxButton'
@@ -28,8 +29,6 @@ import {
   POOL_BOUND_LABEL,
   POOL_DEADLINE_TTL_SECONDS,
   POOL_DEFAULT_TAB,
-  POOL_TAB_LABEL,
-  POOL_TABS,
   poolButtonFor,
   poolDeadline,
   poolQuoteRequest,
@@ -138,6 +137,8 @@ export const POOL_GAS_NEEDS_APPROVAL =
 
 export type PoolTradeFormProps = {
   readonly symbol: string
+  /** Token gorseli; `AmountCard`taki hapta cizilir. `null` = harf rozeti. */
+  readonly imageUrl?: string | null
   readonly connection: 'disconnected' | 'wrongNetwork' | 'connected'
   readonly chainName: string
   readonly token: HexAddress
@@ -190,6 +191,7 @@ export type PoolFormRequest = {
 
 export function PoolTradeForm({
   symbol,
+  imageUrl,
   connection,
   chainName,
   token,
@@ -310,17 +312,29 @@ export function PoolTradeForm({
 
   return (
     <Card className="flex flex-col gap-3 px-4 py-4" data-testid="pool-panel">
-      <Tabs
-        items={POOL_TABS.map((id) => ({ id, label: POOL_TAB_LABEL[id] }))}
-        value={tab}
+      {/*
+        ============ EGRI PANELIYLE AYNI SERIT, AYNI SEBEPLE ============
+
+        Uc sekme ("Buy · Spend USDC" / "Buy · Receive tokens" / "Sell")
+        kullaniciya once bir MEKANIK sorusu soruyordu: hangi giris noktasi?
+        Oysa ilk soru niyettir -- aliyor musun, satiyor musun. Birim sorusu
+        ancak alimin ICINDE anlamlidir ve orada, tutarin yaninda durur.
+
+        MODEL DEGISMEDI: `PoolTab` hala uc degerli ve ucu de zincirde ayri
+        giris noktalari. Degisen tek sey, ayni sayfadaki iki panelin artik
+        AYNI dili konusmasi -- bir token mezun oldugunda islem yuzeyi
+        tanidik kalmali, cunku degisen sey mekan, kullanicinin niyeti degil.
+      */}
+      <TradeSideTabs
+        idBase="pool-trade"
+        tab={tab}
         onChange={(next) => {
-          setTab(next as PoolTab)
+          setTab(next)
           // The unit changes with the tab; leaving the old TEXT turns "1.5"
           // USDC into 1.5 TOKENS without the user noticing.
           setText('')
         }}
-        label="Pool trade action"
-        idBase="pool-trade"
+        label="Pool trade side"
       />
 
       <p className="text-[12px] leading-snug text-muted" data-testid="pool-venue-note">
@@ -332,61 +346,110 @@ export function PoolTradeForm({
       <div
         role="tabpanel"
         id={`pool-trade-panel-${tab}`}
-        aria-labelledby={`pool-trade-tab-${tab}`}
+        aria-labelledby={`pool-trade-tab-${isPoolBuyTab(tab) ? 'buy' : 'sell'}`}
         className="flex flex-col gap-3"
       >
-        <AmountInput
-          label={label}
-          unit={unit}
-          value={text}
-          onChange={setText}
-          {...(parsed.ok || parsed.reason === null ? {} : { error: parsed.reason })}
-        />
-
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-[12px] text-muted">
-            Balance <Money native={usdcBalance} rounding="down" unit />
-            {tokenBalance !== null && tab !== 'spend' ? (
-              <span className="ml-2 tabular-nums">
-                · {formatTokenAmount(tokenBalance)} {symbol}
-              </span>
-            ) : null}
-          </p>
-          <SpendableMaxButton
-            spendable={tab === 'sell' ? tokenBalance : spendable}
-            reason={gasReason}
-            onPick={(picked) =>
-              setText(
-                /*
-                 * `rounding: 'down'` IS THE QUANTISATION, and a second one was
-                 * measured to be dead. This line called `quantiseToInput(picked)`
-                 * first; `formatUsdcAmount(_, { rounding: 'down' })` already
-                 * truncates to six decimals, so a mutant deleting the extra call
-                 * changed nothing and SURVIVED -- a step that reads as a
-                 * safeguard while doing nothing is worse than its absence,
-                 * because the next reader trusts it. The direction is the
-                 * load-bearing part: rounding UP would overshoot `spendable` by
-                 * a micro-USDC and eat exactly the gas reserve.
-                 */
-                tab === 'spend'
-                  ? formatUsdcAmount(picked, { rounding: 'down' }).replace(/,/g, '')
-                  : formatTokenAmount(picked).replace(/,/g, ''),
-              )
-            }
+        <AmountCard
+          title={tab === 'sell' ? `Sell ${symbol}` : `Buy ${symbol}`}
+          token={token}
+          symbol={symbol}
+          imageUrl={imageUrl ?? null}
+          converse={
+            /*
+              BIRIM DEGISTIRME, ALIMIN ICINDE. Uc sekmeli seritte bu bir sekmeydi;
+              artik tutarin yanindaki bir dugme -- egri panelinde oldugu gibi.
+              Satista yoktur: satis her zaman token cinsindendir.
+            */
+            isPoolBuyTab(tab) ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setTab(tab === 'spend' ? 'receive' : 'spend')
+                  setText('')
+                }}
+                className="inline-flex items-center gap-1.5 transition-colors hover:text-text"
+                data-testid="pool-flip-unit"
+                aria-label={
+                  tab === 'spend'
+                    ? `Enter an amount of ${symbol} instead`
+                    : 'Enter an amount of USDC instead'
+                }
+              >
+                <span aria-hidden="true">⇅</span>
+                {tab === 'spend' ? symbol : 'USDC'}
+              </button>
+            ) : undefined
+          }
+        >
+          <AmountInput
+            large
+            hideLabel
+            label={label}
+            unit={unit}
+            {...(tab === 'spend' ? { prefix: '$' } : {})}
+            value={text}
+            onChange={setText}
+            {...(parsed.ok || parsed.reason === null ? {} : { error: parsed.reason })}
           />
-        </div>
+        </AmountCard>
+
+        <AssetRow label={tab === 'sell' ? 'Receive' : 'Pay with'} />
 
         {/*
-          THE GAS RESERVE IS NOT SILENT. On Arc gas is paid in the very asset
-          being spent, so MAX must be smaller than the balance -- and a MAX that
-          is smaller than the balance without saying why reads as a bug.
+          ============ KATLANIR "DETAILS" -- EGRI PANELIYLE AYNI ============
+
+          Bakiye, MAX ve gaz payi notu burada durur. Hepsi ayni anda gorunurse
+          panel bir duvar olur ve kullanici hicbirini okumaz; `<details>` KAPALI
+          baslar ve acan biri hepsini gorur. `TradeCard.tsx`teki gerekcenin
+          aynisi -- ve iki panelin ayni yerde ayni seyi saklamasi, mezuniyetin
+          arayuzu taninmaz hale getirmemesi demek.
         */}
-        {isPoolBuyTab(tab) && spendable !== null && spendable < usdcBalance ? (
-          <p className="text-[12px] text-muted" data-testid="pool-gas-reserve-note">
-            MAX leaves <Money native={usdcBalance - spendable} rounding="up" unit /> for gas. On Arc
-            the gas asset is USDC too.
-          </p>
-        ) : null}
+        <DetailsSection>
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[12px] text-muted">
+              Balance <Money native={usdcBalance} rounding="down" unit />
+              {tokenBalance !== null && tab !== 'spend' ? (
+                <span className="ml-2 tabular-nums">
+                  · {formatTokenAmount(tokenBalance)} {symbol}
+                </span>
+              ) : null}
+            </p>
+            <SpendableMaxButton
+              spendable={tab === 'sell' ? tokenBalance : spendable}
+              reason={gasReason}
+              onPick={(picked) =>
+                setText(
+                  /*
+                   * `rounding: 'down'` IS THE QUANTISATION, and a second one was
+                   * measured to be dead. This line called `quantiseToInput(picked)`
+                   * first; `formatUsdcAmount(_, { rounding: 'down' })` already
+                   * truncates to six decimals, so a mutant deleting the extra call
+                   * changed nothing and SURVIVED -- a step that reads as a
+                   * safeguard while doing nothing is worse than its absence,
+                   * because the next reader trusts it. The direction is the
+                   * load-bearing part: rounding UP would overshoot `spendable` by
+                   * a micro-USDC and eat exactly the gas reserve.
+                   */
+                  tab === 'spend'
+                    ? formatUsdcAmount(picked, { rounding: 'down' }).replace(/,/g, '')
+                    : formatTokenAmount(picked).replace(/,/g, ''),
+                )
+              }
+            />
+          </div>
+
+          {/*
+            THE GAS RESERVE IS NOT SILENT. On Arc gas is paid in the very asset
+            being spent, so MAX must be smaller than the balance -- and a MAX that
+            is smaller than the balance without saying why reads as a bug.
+          */}
+          {isPoolBuyTab(tab) && spendable !== null && spendable < usdcBalance ? (
+            <p className="text-[12px] text-muted" data-testid="pool-gas-reserve-note">
+              MAX leaves <Money native={usdcBalance - spendable} rounding="up" unit /> for gas. On
+              Arc the gas asset is USDC too.
+            </p>
+          ) : null}
+        </DetailsSection>
 
         <SlippageRow
           value={slipBps}
@@ -605,9 +668,17 @@ function useRequestReport(
 export type PoolTradePanelProps = {
   readonly token: HexAddress
   readonly symbol: string
+  /**
+   * Token gorseli -- `AmountCard`taki hapta cizilir.
+   *
+   * `null` ile `undefined` AYNI SEY DEGIL: `TokenArtwork` `null`i "gorsel yok,
+   * harf rozetini ciz" diye okur. Egri paneli bunu bastan beri aliyordu;
+   * mezun olmus token ayni sayfada gorselsiz kaliyordu.
+   */
+  readonly imageUrl?: string | null
 }
 
-export function PoolTradePanel({ token, symbol }: PoolTradePanelProps) {
+export function PoolTradePanel({ token, symbol, imageUrl }: PoolTradePanelProps) {
   const network = useArcNetwork()
   const balance = useUsdcBalance()
   const account = network.address as HexAddress | undefined
@@ -716,6 +787,7 @@ export function PoolTradePanel({ token, symbol }: PoolTradePanelProps) {
   return (
     <PoolTradeForm
       symbol={symbol}
+      imageUrl={imageUrl ?? null}
       connection={connection}
       chainName={config.chain.name}
       token={token}

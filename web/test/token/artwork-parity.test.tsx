@@ -73,6 +73,46 @@ describe('gorsel her iki yuzeye de ulasir', () => {
     expect(seen[0]?.['imageUrl']).toBe(IMAGE)
   })
 
+  /*
+   * VE MEZUN OLMUS TOKENDE DE.
+   *
+   * Bu bosluk 2026-08-19'a kadar GORUNMEZDI: eski havuz paneli token hapini
+   * hic cizmiyordu, dolayisiyla gecmeyen bir `imageUrl`in sonucu da yoktu.
+   * Panel egri paneliyle ayni dile gecince hap geldi -- ve o an prop'un
+   * gecmedigi ortaya cikti. Ayni tokenin mezuniyetten sonra harf rozetine
+   * dusmesi, kusurun ilk halinin ("ayni token, iki farkli sembol") tam olarak
+   * tekrari olurdu.
+   */
+  it('TradeSurface `imageUrl`i HAVUZ paneline de GECIRIR', () => {
+    seen.length = 0
+    render(
+      <TradeSurface
+        token={TOKEN}
+        curve={CURVE}
+        lifecycle={{ kind: 'graduated', poolNote: 'Trading has moved to the pool.' }}
+        profile={PROFILE}
+        symbol="LOCKED"
+        imageUrl={IMAGE}
+      />,
+    )
+    expect(seen).toHaveLength(1)
+    expect(seen[0]?.['imageUrl'], 'mezun panelde gorsel yutuldu').toBe(IMAGE)
+  })
+
+  it('havuz panelinde de gorsel YOKKEN `null` gecer', () => {
+    seen.length = 0
+    render(
+      <TradeSurface
+        token={TOKEN}
+        curve={CURVE}
+        lifecycle={{ kind: 'graduated', poolNote: 'Trading has moved to the pool.' }}
+        profile={PROFILE}
+        symbol="LOCKED"
+      />,
+    )
+    expect(seen[0]?.['imageUrl']).toBeNull()
+  })
+
   it('gorsel YOKKEN `null` gecer -- `undefined` degil', () => {
     seen.length = 0
     render(
