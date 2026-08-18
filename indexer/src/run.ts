@@ -749,6 +749,18 @@ export interface RunOnceOptions {
    */
   resolveHook?: HookResolver
   /**
+   * BOS BIR ARALIGI BAGIMSIZ BIR UCTA DOGRULAR (`empty-range-guard.ts`).
+   *
+   * VERILMEZSE dogrulama yapilmaz ve bos cevap sorgusuz kabul edilir -- yani
+   * bugune kadarki davranis. Uretimde bu, 36 escrow olayinin sessizce
+   * kaybolmasi ve ardindan `fee_balances`in patlamasiyla sonuclandi.
+   *
+   * `resolveHook` ile ayni gerekceyle ISTEGE BAGLI: bir testin dogrulama
+   * gormesi, o testin bir TANIK verdigini gostermeli -- tesadufi bir
+   * varsayilani degil.
+   */
+  onEmptyRange?: (from: bigint, to: bigint) => Promise<void>
+  /**
    * VERILMEZSE BUYBACK KATMANI TAMAMEN KAPALIDIR: hazine adresi sorulmaz, bes
    * olay CEKILMEZ. `resolveHook`un aynisi -- ve ayni sebeple ayri tutuluyor:
    * bir testin buyback loglarini gormesi, o testin bir hazine adresi
@@ -805,6 +817,14 @@ export async function runOnce(
     pacer,
     ...(options.widthMemo !== undefined ? { widthMemo: options.widthMemo } : {}),
     ...(options.resolveHook !== undefined ? { resolveHook: options.resolveHook } : {}),
+    /*
+     * BOS ARALIK MUHAFIZI. Verilmezse davranis ESKISI GIBIDIR -- yani bos bir
+     * cevap sorgusuz kabul edilir, ki uretimde 36 olayin kaybolma yolu buydu
+     * (`empty-range-guard.ts`). Uretim yolu onu `index.ts`te kurar; testlerin
+     * cogu vermez ve VERMEMELI: tanigi olmayan bir dagitim gecerli bir
+     * dagitimdir, yalnizca bu ikinci goze sahip degildir.
+     */
+    ...(options.onEmptyRange !== undefined ? { onEmptyRange: options.onEmptyRange } : {}),
   })
 
   // ZINCIR BAGI: isledigimiz araligin ILK blogunun `parentHash`'i, kayitli
@@ -908,6 +928,19 @@ const PERMANENT = new Set([
   // (arsiv state'i olmayan RPC). Tekrar denemek ayni cevabi verir.
   'StartBlockAfterEscrow',
   'HistoricalStateUnavailable',
+  // ============ BOS ARALIK MUHAFIZININ IKI SINIFI, IKISI DE KALICI ============
+  //
+  // `EmptyRangeDisputed`: birincil uc bos dedi, BAGIMSIZ tanik olay buldu.
+  // Yeniden denemek AYNI yalanci uca sormaktir -- ve daha kotusu, o aralik
+  // gercekten bosalmis gibi bir cevap donerse KAYBI MASKELER. Devam etmek ise
+  // imleci ilerletir, yani kaybi KALICI yapar. Uretimde bu tam olarak oldu:
+  // 36 escrow olayi dustu ve ariza ancak `fee_balances` patlayinca gorundu.
+  //
+  // `WitnessUnavailable`: muhafiz KOSAMIYOR. Yutup devam etmek, muhafizi
+  // sessiz bir no-op'a cevirirdi -- yani duzeltmek icin yazildigi sinifin ta
+  // kendisi. Ikisi de operatorun mudahalesini ister.
+  'EmptyRangeDisputed',
+  'WitnessUnavailable',
   // ============ HAVUZ KATMANININ ALTI SINIFI, HEPSI KALICI ============
   //
   // Ortak sekil: hepsi bir VARSAYIMIN yanlis oldugunu soyler, bir gecici

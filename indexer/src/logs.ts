@@ -1516,6 +1516,15 @@ export interface FetchOptions {
    */
   onTimestampFallback?: (blocks: readonly bigint[]) => void
   /**
+   * Bir aralik HIC olay dondurmediginde cagrilir. Amaci bir olcumu dogrulamak:
+   * bos cevap veren bir uc, hata vermeyen bir veri kaybidir. Uygulamasi
+   * `createEmptyRangeGuard`; itiraz ederse ATAR ve imlec ILERLEMEZ.
+   *
+   * SESSIZ DUSMEK YASAK, `onTimestampFallback` ile ayni gerekce: verilmezse
+   * dogrulama yapilmaz ve bunu cagiran ACIKCA bilmelidir (`guard.enabled`).
+   */
+  onEmptyRange?: (from: bigint, to: bigint) => Promise<void>
+  /**
    * Bir graduation hedefinin havuz kablolamasini cozer. VERILMEZSE bu aralikta
    * mezun olan token'lar icin havuz izlenmez -- yalnizca `watch.pools`
    * kullanilir. Testlerin cogu bunu vermez ve VERMEMELI: havuzu olmayan bir
@@ -1766,7 +1775,24 @@ export async function fetchRange(
     options,
   )
 
-  return attachPoolContext(decoded, pools, bornHere)
+  const events = attachPoolContext(decoded, pools, bornHere)
+
+  /*
+   * ============ BOS BIR ARALIK, "OLAY YOK"UN KANITI DEGILDIR ============
+   *
+   * Bir uc `eth_getLogs`e bos dizi donebilir ve bu bir HATA olarak gelmez --
+   * viem yedek uca gecmez, biz de imleci ilerletiriz. Uretimde tam olarak bu
+   * oldu ve 36 escrow olayi SESSIZCE kayboldu (`empty-range-guard.ts` basligi
+   * olcumu tasiyor). Kanca burada, cunku guvenilen iddia tek tek sorgular degil
+   * "bu ARALIKTA hic olay yok"tur -- imleci ilerleten de odur.
+   *
+   * VERILMEZSE DAVRANIS DEGISMEZ. Kanca istege baglidir ve testlerin cogu onu
+   * vermez; muhafizin kendi testleri `empty-range-guard.test.ts`te durur.
+   */
+  if (events.length === 0 && options.onEmptyRange !== undefined) {
+    await options.onEmptyRange(from, to)
+  }
+  return events
 }
 
 /**
