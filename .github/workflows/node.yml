@@ -448,6 +448,7 @@ jobs:
   # cunku is akisi KOSMUS ve isin gereksiz olduguna kendisi karar vermistir. Hic
   # rapor vermemekle ayni sey degildir.
   gate:
+    name: node-gate
     needs: [changes, check, abi-parity, chain-differential, e2e-local, e2e-arc, release-gate]
     if: always()
     runs-on: ubuntu-latest

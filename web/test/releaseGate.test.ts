@@ -168,6 +168,53 @@ describe('the gate contains every required step', () => {
   })
 })
 
+/**
+ * ============================================================================
+ *  UC KAPI, UC AYRI AD -- YOKSA DAL KORUMASI SAHTE OLUR
+ * ============================================================================
+ *
+ * OLCULDU (2026-08-18): uc is akisinin toplayici isi de `gate` adiniyordu, ve
+ * GitHub check adini o addan turetir. Ayni commit uzerinde `gate` adli IKI
+ * check goruldu. Zorunlu check olarak `gate` secilseydi, hangi is akisinin
+ * kapisinin beklendigi belirsiz kalirdi -- ve "bir tanesi gecti" yeterli
+ * sayilabilirdi. Kapi gibi gorunen ama kapi olmayan bir sey.
+ *
+ * Adlar bu yuzden benzersiz. Test onlari SABIT tutar: biri geri degistirilirse
+ * koruma sessizce zayiflardi, ve sessizce zayiflayan bir koruma bu deponun
+ * tekrar tekrar odedigi seydir.
+ */
+describe('her is akisinin kapisi BENZERSIZ bir ad tasir', () => {
+  const GATES: readonly (readonly [string, string])[] = [
+    ['node.yml', 'node-gate'],
+    ['contracts.yml', 'contracts-gate'],
+    ['slither.yml', 'static-analysis-gate'],
+  ]
+
+  it('uc kapi da beklenen adi tasir', () => {
+    for (const [file, name] of GATES) {
+      const text = readFileSync(join(REPO_ROOT, '.github/workflows', file), 'utf8')
+      expect(text, `${file} bir \`gate\` isi tasimali`).toMatch(/^ {2}gate:$/m)
+      expect(text, `${file} kapisinin adi "${name}" olmali`).toContain(`name: ${name}`)
+    }
+  })
+
+  it('adlar birbirinden FARKLI -- ayirt edici kontrol', () => {
+    // Uc dosya da ayni adi tasisaydi ustteki test yine gecerdi; ayirt eden sey
+    // budur.
+    const names = GATES.map(([, name]) => name)
+    expect(new Set(names).size, 'iki kapi ayni adi tasiyor').toBe(names.length)
+  })
+
+  it('kapi `if: always()` olmadan bir kapi DEGILDIR', () => {
+    // Bu satir olmasa is akisi atlandiginda kapi da atlanir ve zorunlu check
+    // hic rapor vermezdi -- yani PR sonsuza kadar beklerdi.
+    for (const [file] of GATES) {
+      const text = readFileSync(join(REPO_ROOT, '.github/workflows', file), 'utf8')
+      expect(text, `${file} kapisi kosulsuz kosmali`).toContain('if: always()')
+    }
+  })
+})
+
 describe('the workflow really runs what these tests assert', () => {
   it('the extractor finds real steps and NOT the prose around them', () => {
     const commands = runCommands(workflow())

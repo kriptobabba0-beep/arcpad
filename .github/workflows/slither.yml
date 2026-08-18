@@ -117,6 +117,7 @@ jobs:
   # cunku is akisi KOSMUS ve isin gereksiz olduguna kendisi karar vermistir. Hic
   # rapor vermemekle ayni sey degildir.
   gate:
+    name: static-analysis-gate
     needs: [changes, slither]
     if: always()
     runs-on: ubuntu-latest
