@@ -1001,3 +1001,85 @@ basligi (`  b:`) da iki bosluktan fazla girintilidir. Govde sonraki ise
 **tasiyordu**. Sinir artik `run:`in kendi girintisi. Kusur **iki kopyadaydi** ve
 ikisi birden kirildi; ikisi de duzeltildi ve artik birbirine capraz referans
 veriyor.
+
+---
+
+## N. DERIN DENETIM (18 Agustos) -- ALARM KAPALIYDI, DORT ARIZA SESSIZCE BIRIKTI
+
+Kullanicinin "eksik/denetlenmemis/amatorce kalan ne var" sorusu uzerine yapildi.
+Butun bulgularin ortak koku ayni cikti: **alarm sistemi kapaliydi**, dolayisiyla
+uretim sessizce bozuluyordu.
+
+### N-1. ALARM ILETICI HIC CALISMIYORDU
+
+`arcpad-keeper-notify@.service` kurulu ama `disabled`, yapilandirmasi HIC yok.
+`/var/lib/arcpad/alerts.log`: 21.654 satir, **671 PAGE**. Dosyanin kendi yorumu
+bunu yaziyordu: *"Bir VPS'te o dosyayi KIMSE OKUMAZ."*
+
+Gece boyunca 538 cokme oldu; hicbiri haber vermedi.
+
+> **Tamamlanmis, testli, kurulu ve KAPALI bir alarm sistemi, olmayan bir alarm
+> sisteminden kotudur: varligi guven verir.**
+
+Kullanici bilincli olarak "simdilik kurma" dedi. Kabul edilmis risk olarak
+buraya yazilir; iki URL (sayfa + olu-adam) verildigi an devreye alinabilir.
+
+### N-2. ARALIK KALIBI TERS CALISIYORDU -- 245 SAYFA
+
+`isRangeTooLarge`, canli olculen mesajlara karsi kosturuldu:
+
+| uc | mesaj | taniniyor mu |
+|---|---|---|
+| drpc | `ranges over 10000 blocks are not supported` | **HAYIR** |
+| quicknode | `eth_getLogs is limited to a 10,000 range` | **HAYIR** |
+| blockdaemon | `block range extends beyond current head` | evet (!) |
+
+Yani kucultmekle **cozulen** iki reddi kaciriyor, kucultmekle **cozulmeyen**
+birini yakaliyordu. Kucultme hic tetiklenmedi, tarama ayni parcada kalici olarak
+dustu, imlec onune gecemedi ve izleyici kalp atisi yayamadi -- 252
+`watcher-heartbeat-missed` sayfasi da buradan. **245 -> 0.**
+
+### N-3. IZIN LISTESI BOSTU -- 18 SAYFA
+
+`allowedGraduationTargets: []`, oysa zincirde bir hedef coktan atanmisti: bizim
+`arcpadLocker`imiz, governance ile. `graduationTarget()` zincirden okunarak
+dogrulandi.
+
+Bos liste Faz 1d'de DOGRUYDU. Yanlis olan, faz degisince guncellenmemesiydi --
+ve `config.ts`in kendi yorumu bunu ongormustu: *"bir gun icinde rota o sayfayi
+susturmayi ogrenir ve kontrol -- HALA calisiyor gorunurken -- sifira duser."*
+
+Liste artik **adres defterine bagli**: bir test, defterdeki `graduationTarget`in
+izin listesinde olmasini zorunlu kilar. Mutasyonla dogrulandi. **18 -> 0.**
+
+### N-4. KEEPER YALANCI UCU HALA KULLANIYORDU
+
+Bolum M'de blockdaemon indexer'dan cikarilmisti; keeper'in iki env dosyasinda
+DURUYORDU. Sonucu olculdu: keeper 26 curve goruyordu, indexer ve zincir **27**.
+Uc cikarildi, imlec sifirlandi, yeniden tarandi: **26 -> 27**, sifir sayfa.
+
+### N-5. ARC E2E BACAGI "GECIYORDU" AMA HICBIR SEY OLCMUYORDU
+
+`e2e-arc` isi 39 saniyede `success` donuyordu; loglar butun `E2E_ARC_*`
+degiskenlerinin **bos** oldugunu gosterdi. Yani `node-gate` uzerinden dal
+korumasina da "gecti" diye yansiyordu.
+
+Elle kosturuldu (canli zincir + canli site): **6 gecti, 2 dustu**. Gecenler
+arasinda suitin var olma sebebi vardi: `units === floor(wei / 1e12)` -- anvil'de
+OLCULEMEYEN iliski. Gercek bir alim da yapildi ve muhasebesi tuttu.
+
+Bulunan kusur: `getByRole('button', { name: 'MAX' })` ad eslesmesini ALT DIZGE
+yapar ve ayni paneldeki iki slipaj dugmesini yakaliyordu. Test hic kosmadigi
+icin secici hic denenmemisti.
+
+**ACIK:** MAX dugmesi bulunuyor, `disabled` degil, ama tiklanamiyor (120 s
+timeout, "olay alabilir" kontrolu gecmiyor). Arastirilmali.
+
+### N-6. DOGRULANAN VE KAPANMIS OLANLAR
+
+* `Graduated` fetch/decode ediliyor -- "mainnet engelleyici" listesinde acikti.
+* `ArcpadHook` `protocolTreasury`'yi **asla** onbelleklemiyor.
+* Yedekleme kapsami DOGRU (tek kullanici verisi `chat_messages`; gerisi zincirden
+  yeniden uretilebilir -- bolum M bunu fiilen kanitladi) ve **geri yuklenebilir
+  oldugu test edildi**: gecici bir veritabanina restore edilip silindi.
+* **ACIK:** yedekler yalnizca sunucunun kendisinde; off-site kopya yok.
