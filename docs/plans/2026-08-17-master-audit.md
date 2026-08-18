@@ -908,3 +908,96 @@ seyin ta kendisi olurdu.
 Testlerden biri **ayirt edici**: kalip tasimayan bir hata (`connection reset`)
 hala sayilir ve esikte durdurur. O kontrol olmadan kalibi genis tutup her seyi
 yutmak testi **gecerdi** -- ve muhafiz sessizce no-op olurdu.
+
+---
+
+## M. AYNI 36 LOG IKINCI KEZ KAYBOLDU -- VE MUHAFIZ YALANI ONAYLADI
+
+Gece boyunca servis **538 kez** yeniden basladi. Ariza kodu `23514`:
+
+```
+new row for relation "fee_balances" violates check constraint
+  "fee_balances_claimable_wei_check"
+Failing row contains (0xe92c64..., -59347050754458163, ...)
+```
+
+Yani bir `claim`, defterdeki bakiyeyi **negatife** dusuruyordu -- karsilik gelen
+`deposit` defterde YOKTU. Kontrat sifir bakiyede `NothingToClaim` ile revert
+eder, dolayisiyla bu yalnizca bizim defterimizin eksik olmasiyla aciklanabilir.
+`claimable_wei >= 0` kisiti veri kaybini **yakalayan** sey oldu.
+
+### M-1. KAYIP, KONTROL NOKTASIYLA YERELLESTIRILDI
+
+`verify-ledger.sh` bes noktada **esit**, yalnizca head'de ayrisik dedi. Daraltma:
+
+| pencere | yon | tutar |
+|---|---|---|
+| 57.125.497 – 57.200.000 | defter EKSIK | `59.347.050.754.458.163` |
+| 57.360.000 – 57.440.000 | defter FAZLA | bir `claim` kacmis |
+
+Ustteki sayi cokme satirindaki `-59347050754458163` ile **birebir ayni**.
+Zincirde o pencerede **36 escrow logu** var (`57.175.497–57.185.496`),
+defterimizde **0** -- yani DUNKU 36 log, ayni aralik, ikinci kez.
+
+### M-2. KOK NEDEN: IKI UC, IKI FARKLI DURUMDA YALAN SOYLUYOR
+
+Her uce ayni sorgu soruldu:
+
+| uc | 10.000 ustu aralik | head otesi aralik | 36 logluk aralik |
+|---|---|---|---|
+| birincil | rate limit | rate limit | rate limit |
+| **blockdaemon** | **"0 log"** | hata | **"0 log"** |
+| **drpc** | hata | **"0 log"** | hata |
+| quicknode | hata | hata | hata |
+
+Zincir soyle tamamlandi:
+
+1. birincil uc `rate limit exceeded` verdi
+2. viem **ILK YEDEGE** dustu -- blockdaemon
+3. blockdaemon 36 log iceren aralik icin **hatasiz bos dizi** dondu
+4. viem bunu gecerli bir cevap saydi, imlec ilerledi
+5. **ve muhafiz onayladi**, cunku `witnessUrlFrom` de `urls[1]`i seciyordu
+
+> **Bes numara en kotusu: yalan soyleyen uca kendi yalanini sorduk.**
+> `empty-range-guard.ts` bastan beri "bu yapilmamali" diye yaziyordu, ve tam
+> olarak onu yapiyordu. Sonuc sessiz kayiptan kotu: sessiz kayip arti **sahte
+> guven**.
+
+### M-3. UC KATMANDA DUZELTILDI
+
+* **Tanik artik SON uc.** viem yedeklere sirayla duser; sonuncusu `urls[1]` ile
+  cakismayan tek secimdir.
+* **Yalanci uc yedek zincirinden CIKARILDI.** Hata veren bir uctan kotudur:
+  hata failover tetikler, yalan tetiklemez.
+* **`rpc-honesty.ts`**: yalani artik bir kapi olcuyor. Uc sonuc -- DURUST,
+  TANIKLIK YOK (hata), YALANCI (hatasiz yanlis sayi). Canli pozitif kontrol:
+  blockdaemon listeye geri konunca kapi onu **yakaladi** ve 1 dondu.
+
+### M-4. VE KISMI YENIDEN TARAMA GUVENLI CIKTI -- OLCULDU
+
+Sekiz `apply*` fonksiyonunun **hepsi** idempotent: `ON CONFLICT (event_seq)
+DO NOTHING`, `event_seq > coalesce(...)` seq-muhafizi, ya da
+`WHERE ... AND NOT complete`. Yani imleci geri almak yeterli; 8 saatlik tam
+reindex gerekmedi.
+
+Ilk denemede imlec **degismedi**: `last_block_hash` NOT NULL ve `UPDATE`
+patladi -- geri okuma bunu gosterdi. Ikinci denemede yazilan hash de yanlisti,
+cunku hex **elle** yazilmisti (`0x3661000` = 57.020.416, 57.000.000 degil), ve
+`ReorgDetected` onu yakaladi. Ucuncu deneme hash'i `printf` ile hesaplayip
+**bir sonraki blogun `parentHash`i ile dogruladi**.
+
+> **Elle yazilmis bir hex, sessizce baska bir blogu isaret eder.**
+
+### M-5. VE CI KAPISININ KENDI ARACI OLU KODDU
+
+`releaseGate` ve `abi-parity` kirmizilari **ayni** kusurdandi: is akisi
+cikaricisinin cok satirli `run: |` dali. `node.yml`de bugune kadar hic `run: |`
+YOKTU -- sayisi sifirdi -- yani o dal hic calismamisti. FAZ K'de eklenen ilk iki
+blok onu ilk kez kosturdu: cikarici **31 komut yerine 402** topladi, **158'i
+yorum**.
+
+Sinir "en az iki bosluk girintili" diye yazilmisti, oysa YAML'de sonraki isin
+basligi (`  b:`) da iki bosluktan fazla girintilidir. Govde sonraki ise
+**tasiyordu**. Sinir artik `run:`in kendi girintisi. Kusur **iki kopyadaydi** ve
+ikisi birden kirildi; ikisi de duzeltildi ve artik birbirine capraz referans
+veriyor.
