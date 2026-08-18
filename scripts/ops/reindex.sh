@@ -66,6 +66,22 @@ systemctl stop arcpad-indexer.service arcpad-keeper-graduate.service arcpad-keep
 systemctl is-active arcpad-indexer.service >/dev/null 2>&1 && { echo "indexer DURMADI"; exit 1; }
 echo "durdu"
 
+say "3a. CHAT'I DISARI AL -- `CASCADE` LISTEDEN CIKARMAYI TANIMAZ"
+# OLCULDU (ilk kosu, 2026-08-18): `chat_messages` bosaltma listesinden ACIKCA
+# cikarilmisti ama log "truncate cascades to table chat_messages" dedi --
+# `launches`a bagli yabanci anahtar uzerinden CASCADE ona da ulasti. O gun
+# tablo bostu ve kayip olmadi; ama bir dahaki kosuda kullanicilarin yazdigi
+# tek geri getirilemez veri SESSIZCE silinirdi.
+#
+# Bir tabloyu listeden cikarmak, onu korumaz. Korumanin tek yolu DISARI ALIP
+# GERI KOYMAKTIR.
+CHAT_DUMP="/root/chat-before-reindex-$(date +%s).sql"
+pg_dump "$DATABASE_URL" --data-only --table=chat_messages --file="$CHAT_DUMP" || {
+  echo "chat dokumu ALINAMADI -- bosaltma YAPILMIYOR"; exit 1
+}
+CHAT_ROWS=$(psql "$DATABASE_URL" -tAc 'SELECT count(*) FROM chat_messages')
+echo "chat satiri: $CHAT_ROWS -> $CHAT_DUMP"
+
 say "3. TURETILMIS VERIYI BOSALT"
 # Tablo listesi KATALOGDAN uretilir. `deployment` KORUNUR -- silinirse
 # `ensureDeployment` yeni bir kimlik yazar ve `admit.ts` mevcut kimligi
@@ -85,6 +101,18 @@ END $$;
 SQL
 psql "$DATABASE_URL" -tAc \
   "SELECT 'launches='||(SELECT count(*) FROM launches)||' fee_events='||(SELECT count(*) FROM fee_events)||' imlec='||coalesce((SELECT last_block::text FROM sync_state WHERE id=1),'YOK')"
+
+say "3b. CHAT'I GERI KOY"
+# Dokum `--data-only`: sema zaten yerinde, yalnizca satirlar geri gelir.
+if [ "${CHAT_ROWS:-0}" -gt 0 ]; then
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$CHAT_DUMP" >/dev/null || {
+    echo "chat GERI YUKLENEMEDI. Dokum duruyor: $CHAT_DUMP"; exit 1
+  }
+fi
+# SAYIYLA DOGRULA, "geri yukledim" ile degil.
+BACK=$(psql "$DATABASE_URL" -tAc 'SELECT count(*) FROM chat_messages')
+echo "chat geri: $BACK (once $CHAT_ROWS)"
+[ "$BACK" = "${CHAT_ROWS:-0}" ] || { echo "CHAT SAYISI UYUSMUYOR -- duruyorum"; exit 1; }
 
 say "4. BASLAT"
 systemctl start arcpad-indexer.service arcpad-keeper-graduate.service arcpad-keeper-window.service
