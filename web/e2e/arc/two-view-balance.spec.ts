@@ -450,7 +450,19 @@ test.describe('Arc testnet', () => {
     // the test would fail for the wrong reason and read as a product defect.
     expect(balance, 'MAX reserves a fraction of a balance; there must be one').toBeGreaterThan(0n)
 
-    await page.getByRole('button', { name: 'MAX' }).click()
+    /*
+     * `data-testid`, ROL+AD DEGIL -- VE BU AYRIM OLCULDU.
+     *
+     * `getByRole('button', { name: 'MAX' })` ad eslesmesini ALT DIZGE olarak
+     * yapar, yani ayni panelde duran "What is max slippage?" ve "Edit max
+     * slippage" dugmelerini de yakalar: strict mode ihlali, ve gercek dugme
+     * hic secilmez. Ilk canli kosuda (2026-08-18) tam olarak boyle dustu.
+     *
+     * Bu test bugune kadar HIC KOSMAMISTI (`E2E_ARC` hicbir zaman ayarlanmadi),
+     * yani secici hicbir zaman denenmemisti. `SpendableMaxButton` zaten
+     * `data-testid="max-button"` tasiyor ve o ad SLIPAJ metniyle cakismaz.
+     */
+    await page.getByTestId('max-button').click()
     const typed = await page.getByLabel('Amount to spend').inputValue()
     const asWei = BigInt(Math.round(Number(typed) * 1e6)) * 1_000_000_000_000n
     expect(asWei, 'MAX must reserve something for gas').toBeLessThan(balance)
