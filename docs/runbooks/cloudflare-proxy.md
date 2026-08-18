@@ -407,3 +407,38 @@ pratikte **geri alinamaz**: preload listesinden cikma talebi aylar surer ve eski
 tarayicilarda hic silinmez.
 
 Aslin yedegi: `/root/arcpad.nginx.bak.<ts>`. `nginx -t` reload'dan ONCE gecti.
+
+---
+
+## 11. RPC DURUSTLUK KAPISI (gunluk timer)
+
+**Neden var.** 2026-08-18: `rpc.blockdaemon.testnet.arc.network` 36 log iceren
+bir aralik icin **hatasiz bos dizi** donduruyordu. viem'in `fallback`i yedege
+yalnizca birincil uc REDDEDERSE gecer -- bos bir dizi red degil, cevaptir. Ayni
+36 log iki kez kayboldu ve yalanci uc **elle** bulundu.
+
+**Ne olcer.** Defterdeki en yeni ucret olayinin blogunu her uca sorar:
+
+| sonuc | anlami | kapi |
+|---|---|---|
+| `DURUST` | dogru sayiyi dondurdu | yesil |
+| `TANIKLIK YOK` | hata dondurdu (budanmis, aralik/oran siniri) | yesil -- "bilmiyorum" mesrudur |
+| `YALANCI` | hatasiz YANLIS sayi (ozellikle sifir) | **KIRMIZI** |
+
+Hicbir uc cevap veremezse de kirmizi: olculmemis bir durustlugu yesil saymak
+"kosmayan bir kapi rapor vermez" arizasinin ta kendisidir.
+
+**Nerede.** `arcpad-rpc-honesty.timer` (gunluk, `RandomizedDelaySec=1800`).
+Elle: `bash scripts/ops/rpc-honesty.sh`.
+
+**Kirmizi gorulurse.** O ucu `ARC_RPC_FALLBACK_URLS`ten CIKAR ve indexer'i
+yeniden baslat. Yalanci bir uc, hata veren bir uctan **kotudur**: hata failover
+tetikler, yalan tetiklemez ve veri sessizce kaybolur. Cikardiktan sonra
+`scripts/ops/verify-ledger.sh --self-test` ile defteri kontrol noktalariyla
+dogrula; kayip varsa imleci geri al (sekiz `apply*` fonksiyonu da idempotenttir,
+yani kismi yeniden tarama guvenlidir -- tam reindex GEREKMEZ).
+
+> Imleci geri alirken blok hex'ini **elle yazma**: `printf "0x%x"` ile hesapla ve
+> yazdigin hash'i bir sonraki blogun `parentHash`i ile dogrula. Elle yazilmis
+> bir hex sessizce baska bir blogu isaret eder (olculdu: `0x3661000` =
+> 57.020.416, 57.000.000 degil).

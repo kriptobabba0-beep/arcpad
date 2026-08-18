@@ -2,7 +2,8 @@ import 'dotenv/config'
 import { ARC_TESTNET_CHAIN_ID, arcRpcUrls, assertArcChain, createArcClient } from '@arcpad/shared'
 import { createPool } from '@arcpad/db'
 import { loadConfig } from './config'
-import { createAddressWidthMemo, createPacer, type RpcClient } from './logs'
+import { createAddressWidthMemo, createPacer, getLogs, type RpcClient } from './logs'
+import { createEmptyRangeGuard, witnessUrlFrom } from './empty-range-guard'
 import {
   assertStartBlockCoversEscrow,
   createBuybackResolver,
@@ -98,12 +99,95 @@ async function main(): Promise<void> {
   // gerekce `createBuybackResolver`da), kurulduktan sonra hic yapilmaz.
   const resolveBuyback = createBuybackResolver(rpc, pacer)
 
+  /*
+   * ============ BOS ARALIK MUHAFIZI: BAGIMSIZ BIR IKINCI GOZ ============
+   *
+   * `client` bir YEDEKLI tasiyicidir ve yedege yalnizca birincil uc REDDEDERSE
+   * gecer. Uretimde olculen ariza tam da bu bosluktaydi: birincil uc reddetmedi,
+   * BOS DIZI dondu; viem bir hata gormedi, indexer "olay yok" kabul etti ve
+   * imleci ilerletti. 36 escrow olayi kayboldu (`empty-range-guard.ts`).
+   *
+   * Tanik bu yuzden `client` OLAMAZ -- yalan soyleyen uca kendi yalanini sormak
+   * dogrulama degil tekrardir. `witnessUrlFrom` deduplike edilmis listenin
+   * IKINCI ucunu alir ve ona TEK BASINA bagli bir istemci kurar.
+   *
+   * YEDEK YAPILANDIRILMAMISSA MUHAFIZ KAPALIDIR VE BUNU SOYLER. Sessizce
+   * hicbir sey yapan bir muhafiz, olmayan bir muhafizdan kotudur: varligi guven
+   * verir. Uyari bir kez, baslangicta basilir.
+   */
+  const witnessUrl = witnessUrlFrom(arcRpcUrls(config.rpcUrl, config.rpcFallbackUrls))
+  const witnessRpc =
+    witnessUrl === null
+      ? null
+      : (createArcClient([witnessUrl], { retryCount: 0 }) as unknown as RpcClient)
+  const witnessPacer = createPacer({ minIntervalMs: config.minRequestIntervalMs })
+  /*
+   * TANIK IZLEME KUMESI ISTEMEZ, VE BU BILINCLI BIR SADELESTIRME.
+   *
+   * Muhafizin yakaladigi sey tek bir kayip log DEGIL, ucun BOZUK DURUMUDUR --
+   * olculen ariza da bir durumdu (aynı dakikada 0/10'a karsi 10/10), secmeli
+   * bir kayip degil. Boyle bir uc araligin TAMAMINA bos der; dolayisiyla
+   * statik iki adres (factory + escrow) uzerinde sonda atmak yeter ve
+   * veritabanina, izleme kumesine, havuz cozucusune HIC dokunmaz.
+   *
+   * Daha genis bir sonda (curve/token adresleri) daha fazla log gorurdu ama
+   * tespiti guclendirmezdi: yalan araliga aittir, adrese degil.
+   */
+  const emptyRangeGuard = createEmptyRangeGuard({
+    witness:
+      witnessRpc === null
+        ? null
+        : async (from, to) =>
+            (
+              await getLogs(
+                witnessRpc,
+                { from, to, address: [deployment.factory, deployment.escrow] },
+                witnessPacer,
+              )
+            ).length,
+  })
+  if (!emptyRangeGuard.enabled) {
+    console.warn(
+      '[indexer] BOS ARALIK DOGRULAMASI KAPALI: `ARC_RPC_FALLBACK_URLS` bos, yani bagimsiz ' +
+        'bir tanik yok. Bos bir `eth_getLogs` cevabi SORGUSUZ kabul edilir -- uretimde bu, ' +
+        '36 olayin sessizce kaybolmasi demekti.',
+    )
+  }
+
+  /*
+   * ============ SUSTURULAN DOGRULAMA, SESSIZ KALMAZ ============
+   *
+   * Tanik budanmis bir dugumse eski bloklar icin `pruned history unavailable`
+   * doner: o aralik hakkinda tanikligi YOKTUR (`empty-range-guard.ts`). Muhafiz
+   * bunu haklı olarak ariza saymaz -- ama SAYMAMAK ile SOYLEMEMEK ayni sey
+   * degil. Sayilmayan ve soylenmeyen bir bosluk, tam olarak bu muhafizin
+   * bulmak icin yazildigi seydir: guven veren ama olcmeyen bir mekanizma.
+   *
+   * Ilk susturmada HEMEN basilir -- geriye donuk tarama saatler surer ve
+   * operatorun bunu sonunda degil basinda bilmesi gerekir. Sonrasinda yalnizca
+   * SAYI DEGISTIYSE basilir, yoksa dongu gunlugu doldurur ve okunmaz olur.
+   */
+  let reportedSilenced = 0
+  const reportHorizon = () => {
+    const silenced = emptyRangeGuard.silencedByHorizon()
+    if (silenced === reportedSilenced) return
+    reportedSilenced = silenced
+    console.warn(
+      `[indexer] BOS ARALIK DOGRULANAMADI (${silenced} aralik): tanik uc bu bloklarin ` +
+        'gecmisini BUDAMIS, yani onlar hakkinda taniklik edemiyor. Bu araliklarda bos ' +
+        'cevaplar DOGRULANMAMISTIR. Tanik arsiv ucu ise sorun yok; degilse guncel ' +
+        'bloklara yetisildiginde dogrulama yeniden devreye girer.',
+    )
+  }
+
   for (;;) {
+    reportHorizon()
     const result = await runWithRetry(pool, rpc, deployment, config, {
       pacer,
       widthMemo,
       resolveHook,
       resolveBuyback,
+      onEmptyRange: emptyRangeGuard.onEmptyRange,
     })
     if (result === null) {
       // Head'e yetistik. `nextRange` `null` dondugunde HICBIR SEY yapilmaz --

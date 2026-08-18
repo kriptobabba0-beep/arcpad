@@ -49,10 +49,30 @@ function runCommands(workflow: string): string[] {
     const single = /^\s*(?:-\s+)?run:\s*(\S.*?)\s*$/.exec(line)
     if (single?.[1] === undefined) continue
     if (single[1] === '|' || single[1] === '>-' || single[1] === '|-') {
+      /*
+       * SINIR GIRINTIDIR, "en az iki bosluk" DEGIL.
+       *
+       * OLCULDU (2026-08-18): bu dal bugune kadar HIC KOSMAMISTI -- node.yml'de
+       * `run: |` sayisi sifirdi, yani burasi olu koddu. Ilk blok eklendigi anda
+       * cikarici 31 komut yerine 402 topladi, 158'i yorum: eski kural sonraki
+       * ISIN BASLIGINDA durmuyordu, cunku `  b:` de "en az iki bosluk"
+       * girintilidir. Govde, `run:`in KENDI girintisinden fazla girintili
+       * satirlardir -- YAML bunu boyle tanimlar.
+       *
+       * IKINCI KOPYA: ayni cikarici `packages/shared/test/abi-parity.test.ts`
+       * icinde de durur ve ayni gun ayni kusurla kirildi. Birini degistiren
+       * otekini de degistirmeli.
+       */
+      const runIndent = (/^(\s*)/.exec(line)?.[1] ?? '').length
       for (let j = i + 1; j < lines.length; j += 1) {
         const body = lines[j] ?? ''
         if (body.trim() === '') continue
-        if (!/^\s{2,}\S/.test(body)) break
+        const indent = (/^(\s*)/.exec(body)?.[1] ?? '').length
+        if (indent <= runIndent) break
+        // Bir yorum komut DEGILDIR. Govdedeki `#` satirlarini komut saymak,
+        // "bu adim gercekten X kosuyor mu" sorusunu bir metin aramasina
+        // indirger -- ve asagidaki mutant kontrolu tam da onu reddediyor.
+        if (body.trim().startsWith('#')) continue
         commands.push(body.trim())
       }
       continue
@@ -148,12 +168,118 @@ describe('the gate contains every required step', () => {
   })
 })
 
+/**
+ * ============================================================================
+ *  UC KAPI, UC AYRI AD -- YOKSA DAL KORUMASI SAHTE OLUR
+ * ============================================================================
+ *
+ * OLCULDU (2026-08-18): uc is akisinin toplayici isi de `gate` adiniyordu, ve
+ * GitHub check adini o addan turetir. Ayni commit uzerinde `gate` adli IKI
+ * check goruldu. Zorunlu check olarak `gate` secilseydi, hangi is akisinin
+ * kapisinin beklendigi belirsiz kalirdi -- ve "bir tanesi gecti" yeterli
+ * sayilabilirdi. Kapi gibi gorunen ama kapi olmayan bir sey.
+ *
+ * Adlar bu yuzden benzersiz. Test onlari SABIT tutar: biri geri degistirilirse
+ * koruma sessizce zayiflardi, ve sessizce zayiflayan bir koruma bu deponun
+ * tekrar tekrar odedigi seydir.
+ */
+describe('her is akisinin kapisi BENZERSIZ bir ad tasir', () => {
+  const GATES: readonly (readonly [string, string])[] = [
+    ['node.yml', 'node-gate'],
+    ['contracts.yml', 'contracts-gate'],
+    ['slither.yml', 'static-analysis-gate'],
+  ]
+
+  it('uc kapi da beklenen adi tasir', () => {
+    for (const [file, name] of GATES) {
+      const text = readFileSync(join(REPO_ROOT, '.github/workflows', file), 'utf8')
+      expect(text, `${file} bir \`gate\` isi tasimali`).toMatch(/^ {2}gate:$/m)
+      expect(text, `${file} kapisinin adi "${name}" olmali`).toContain(`name: ${name}`)
+    }
+  })
+
+  it('adlar birbirinden FARKLI -- ayirt edici kontrol', () => {
+    // Uc dosya da ayni adi tasisaydi ustteki test yine gecerdi; ayirt eden sey
+    // budur.
+    const names = GATES.map(([, name]) => name)
+    expect(new Set(names).size, 'iki kapi ayni adi tasiyor').toBe(names.length)
+  })
+
+  it('kapi `if: always()` olmadan bir kapi DEGILDIR', () => {
+    // Bu satir olmasa is akisi atlandiginda kapi da atlanir ve zorunlu check
+    // hic rapor vermezdi -- yani PR sonsuza kadar beklerdi.
+    for (const [file] of GATES) {
+      const text = readFileSync(join(REPO_ROOT, '.github/workflows', file), 'utf8')
+      expect(text, `${file} kapisi kosulsuz kosmali`).toContain('if: always()')
+    }
+  })
+})
+
 describe('the workflow really runs what these tests assert', () => {
   it('the extractor finds real steps and NOT the prose around them', () => {
     const commands = runCommands(workflow())
     expect(commands.length).toBeGreaterThan(5)
     expect(commands).toContain('pnpm install --frozen-lockfile')
     for (const command of commands) expect(command.startsWith('#')).toBe(false)
+  })
+
+  /*
+   * ==========================================================================
+   *  BLOK `run:` DALI, ILK KEZ GERCEKTEN KOSUYOR
+   * ==========================================================================
+   *
+   * OLCULDU (2026-08-18): bu is akisinda `run: |` HIC YOKTU -- sayisi sifirdi.
+   * Yani `runCommands`in cok satirli dali OLU KODDU ve kusuru gorunmuyordu:
+   * govdenin nerede bittigini GIRINTIYLE degil, "en az iki bosluk" kuralyla
+   * ariyordu, ve YAML'de sonraki isin basligi da en az iki bosluk girintilidir.
+   * Ilk blok eklendigi anda cikarici 31 komut yerine 402 topladi, 158'i yorum.
+   *
+   * Bu, bu deponun tekrar tekrar odedigi sinifin ta kendisi: tamamlanmis,
+   * kapili ve HIC CAGRILMAYAN bir katman. Asagidaki uc test o dali uretim
+   * verisiyle surer, ki bir daha sessizce cürümesin.
+   */
+  it('BLOK dali gercekten kosar ve govdeden komut cikarir', () => {
+    const commands = runCommands(workflow())
+    // `gate` isinin govdesinden gelen gercek bir komut. Blok dali hic
+    // calismasaydi bu satir listede OLMAZDI.
+    expect(commands, 'blok `run:` govdesi hic okunmamis').toContain('set -eu')
+  })
+
+  it('govde SONRAKI ISE TASMAZ -- sinir girintidir, "iki bosluk" degil', () => {
+    const yaml = [
+      'jobs:',
+      '  a:',
+      '    steps:',
+      '      - run: |',
+      '          echo icerde',
+      '  b:',
+      '    steps:',
+      '      - run: echo disarda',
+    ].join('\n')
+    const commands = runCommands(yaml)
+    expect(commands).toContain('echo icerde')
+    // AYIRT EDICI: eski surum burada `b:` ve `steps:` satirlarini da komut
+    // sanardi, cunku ikisi de iki bosluktan fazla girintili.
+    expect(commands, 'govde sonraki ise tasti').not.toContain('b:')
+    expect(commands).not.toContain('steps:')
+    expect(commands).toContain('echo disarda')
+  })
+
+  it('govdedeki shell yorumu KOMUT DEGILDIR', () => {
+    const yaml = [
+      'jobs:',
+      '  a:',
+      '    steps:',
+      '      - run: |',
+      '          # bir yorum',
+      '          echo ger',
+    ].join('\n')
+    const commands = runCommands(yaml)
+    expect(commands).toContain('echo ger')
+    expect(
+      commands.some((c) => c.startsWith('#')),
+      'yorum komut sayildi',
+    ).toBe(false)
   })
 
   it('the extractor is NOT satisfied by a comment — measured, not assumed', () => {
