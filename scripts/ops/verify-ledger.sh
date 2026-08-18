@@ -8,6 +8,12 @@
 # Betigin kendisi bunu bilmek zorunda kalsaydi, dagitim duzeni degistiginde
 # sessizce yanlis veritabanina baglanabilirdi.
 #
+# VE BETIK `indexer/scripts/` ICINDE DURUR, `scripts/ops/` icinde DEGIL. pnpm
+# katidir ve Node modul aramasini DOSYANIN konumundan yapar, cwd'den degil --
+# `scripts/` bir workspace paketi olmadigi icin oradan `pg` cozumlenemiyordu
+# (sunucuda olculdu). Betigi bagimliliklarinin yasadigi pakete koymak, `cd`
+# ile duzeltilemeyecek bir seyi yapisal olarak dogru kilar.
+#
 # KULLANIM
 #   scripts/ops/verify-ledger.sh                 # varsayilan kontrol noktalari
 #   scripts/ops/verify-ledger.sh --self-test     # once araci sina, sonra dogrula
@@ -21,4 +27,4 @@ for f in /etc/arcpad/indexer.env /etc/arcpad/db.env; do
 done
 
 cd "$(dirname "$0")/../../indexer"
-exec node --import tsx ../scripts/ops/verify-ledger.ts "$@"
+exec node --import tsx scripts/verify-ledger.ts "$@"
