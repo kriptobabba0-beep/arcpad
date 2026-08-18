@@ -133,7 +133,9 @@ async function main(): Promise<number> {
         // SORULAMAYAN BIR NOKTA YESIL DEGILDIR. Uc cevap vermediyse o kontrol
         // noktasi DOGRULANMAMISTIR, ve dogrulanmamis bir noktayi gecmis saymak
         // tam olarak bu betigin bulmak icin yazildigi sinif olurdu.
-        console.log(`SORULAMADI ${recipient} @ ${block} -- ${(error as Error).message.split('\n')[0]}`)
+        console.log(
+          `SORULAMADI ${recipient} @ ${block} -- ${(error as Error).message.split('\n')[0]}`,
+        )
         failed = true
         continue
       }
