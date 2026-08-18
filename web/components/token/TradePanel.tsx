@@ -40,11 +40,12 @@ import {
   type AmountChip,
   amountChipsFor,
   type ApprovalState,
+  parseAmount,
   buttonFor,
   clampToReserve,
   type ConnectionState,
   DEFAULT_TAB,
-  parseAmount,
+  isBuyTab,
   type Quote,
   quoteFor,
   shortcutBaseFor,
@@ -337,6 +338,7 @@ export function TradeForm({
         gelmez.
       */}
       <TradeSideTabs
+        idBase="trade"
         tab={tab}
         onChange={(next) => {
           setTab(next)
@@ -349,7 +351,7 @@ export function TradeForm({
       <div
         role="tabpanel"
         id={`trade-panel-${tab}`}
-        aria-labelledby={`trade-tab-${tab}`}
+        aria-labelledby={`trade-tab-${isBuyTab(tab) ? 'buy' : 'sell'}`}
         className="flex flex-col gap-3"
       >
         {/*

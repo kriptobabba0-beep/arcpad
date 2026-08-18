@@ -59,12 +59,6 @@ export const POOL_TAB_QUOTE: Readonly<Record<PoolTab, RouterQuoteFn>> = {
   sell: 'quoteSellExactIn',
 }
 
-export const POOL_TAB_LABEL: Readonly<Record<PoolTab, string>> = {
-  spend: 'Buy · Spend USDC',
-  receive: 'Buy · Receive tokens',
-  sell: 'Sell',
-}
-
 export const POOL_DEFAULT_TAB: PoolTab = 'spend'
 
 export const isPoolBuyTab = (tab: PoolTab): boolean => tab !== 'sell'

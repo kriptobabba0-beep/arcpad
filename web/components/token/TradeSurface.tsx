@@ -114,7 +114,16 @@ export function TradeSurface({
    * checking `complete` keeps one rule in one place.
    */
   if (lifecycle.kind === 'graduated') {
-    return <PoolTradePanel token={token} symbol={symbol} />
+    /*
+      GORSEL MEZUN OLMUS TOKENE DE GECER.
+      
+      Bu satir `imageUrl`i gecirmiyordu ve fark edilmiyordu, cunku eski havuz
+      paneli token hapini HIC cizmiyordu. Panel egri paneliyle ayni dile
+      gecince hap geldi -- ve gorseli gecirmemek, ayni tokenin mezuniyetten
+      sonra harf rozetine dusmesi demek olurdu. `null` bilincli: `TokenArtwork`
+      onu "gorsel yok, rozeti ciz" diye okur, `undefined` ise "belirtilmedi".
+    */
+    return <PoolTradePanel token={token} symbol={symbol} imageUrl={imageUrl ?? null} />
   }
   if (profile === null) return null
   return (

@@ -23,10 +23,25 @@ export function TradeSideTabs({
   tab,
   onChange,
   label = 'Trade side',
+  idBase,
 }: {
   tab: TradeTab
   onChange: (next: TradeTab) => void
   label?: string
+  /**
+   * `id` uretiminin koku: sekmeler `${idBase}-tab-buy` / `${idBase}-tab-sell`
+   * olur.
+   *
+   * OLCULDU (2026-08-19): bu prop YOKKEN sekmeler hic `id` tasimiyordu, ama
+   * `TradePanel` panelini `aria-labelledby={`trade-tab-${tab}`}` ile
+   * etiketliyordu -- yani BOSA isaret eden bir baglanti. Ekran okuyucu icin
+   * panelin adi yoktu, ve `aria-labelledby` sessizce yok sayilir.
+   *
+   * Ustelik `tab` UC degerlidir (`spend`/`receive`/`sell`) ama sekme IKIDIR,
+   * dolayisiyla dogru hedef `buy`/`sell`tir; uctan ikiye indirgemeyi bu
+   * bilesen yapar, cagiran degil.
+   */
+  idBase: string
 }) {
   const buying = isBuyTab(tab)
   return (
@@ -37,6 +52,7 @@ export function TradeSideTabs({
       data-testid="trade-side-tabs"
     >
       <SideButton
+        id={`${idBase}-tab-buy`}
         active={buying}
         onClick={() => {
           // ALIMA DONERKEN `spend`. Varsayilan bu, cunku rezervin tepesinde
@@ -47,6 +63,7 @@ export function TradeSideTabs({
         Buy
       </SideButton>
       <SideButton
+        id={`${idBase}-tab-sell`}
         active={!buying}
         onClick={() => {
           if (buying) onChange('sell')
@@ -59,10 +76,12 @@ export function TradeSideTabs({
 }
 
 function SideButton({
+  id,
   active,
   onClick,
   children,
 }: {
+  id: string
   active: boolean
   onClick: () => void
   children: React.ReactNode
@@ -70,6 +89,7 @@ function SideButton({
   return (
     <button
       type="button"
+      id={id}
       role="tab"
       aria-selected={active}
       onClick={onClick}

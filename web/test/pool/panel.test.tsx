@@ -85,6 +85,16 @@ function setup(overrides: Partial<PoolTradeFormProps> = {}) {
     button: () => q.getByTestId('pool-submit'),
     field: () => q.getByRole('textbox', { name: /amount|tokens/i }),
     tab: (name: RegExp) => q.getByRole('tab', { name }),
+    /*
+     * `receive` ARTIK BIR SEKME DEGIL, BIR BIRIM SECIMI.
+     *
+     * Panel uc sekmeli seritten ("Buy · Spend USDC" / "Buy · Receive tokens" /
+     * "Sell") egri panelinin dilini konusan iki sekmeye gecti; alimin icindeki
+     * birim secimi tutarin yanindaki ⇅ dugmesi oldu. MODEL DEGISMEDI -- ayni
+     * `PoolTab`, ayni uc giris noktasi -- yalnizca ona ulasma yolu degisti,
+     * ve bu testler tam olarak o yolu surer.
+     */
+    flipUnit: () => q.getByTestId('pool-flip-unit'),
   }
 }
 
@@ -110,7 +120,7 @@ describe('each tab reaches its own router entrypoint', () => {
 
   it('Receive tokens sends buyExactOut with a USDC cap', async () => {
     const t = setup({ quote: { kind: 'ok', amountIn: 1_000_000n, amountOut: 17n } })
-    await t.user.click(t.tab(/Receive tokens/))
+    await t.user.click(t.flipUnit())
     await t.user.type(t.field(), '17')
     await t.user.click(t.button())
 
@@ -146,7 +156,7 @@ describe('each tab reaches its own router entrypoint', () => {
 
   it('the RECEIVE quote line reads the INPUT leg, in USDC', async () => {
     const t = setup({ quote: { kind: 'ok', amountIn: 1_000_000n, amountOut: 17n } })
-    await t.user.click(t.tab(/Receive tokens/))
+    await t.user.click(t.flipUnit())
     await t.user.type(t.field(), '17')
     expect(t.q.getByTestId('pool-quote-amount').textContent).toBe('1.000000 USDC')
     expect(t.q.getByTestId('pool-quote-bound').textContent).toBe('1.025000 USDC')
@@ -235,7 +245,7 @@ describe('approvals are new to this product, and the panel says so up front', ()
       approval: 'required',
       quote: { kind: 'ok', amountIn: 1_000_000n, amountOut: 17n },
     })
-    await t.user.click(t.tab(/Receive tokens/))
+    await t.user.click(t.flipUnit())
     await t.user.type(t.field(), '17')
     expect(t.q.getByTestId('approve-step-1').textContent).toContain('1.025000 USDC')
     const residual = t.q.getByTestId('approve-residual')
