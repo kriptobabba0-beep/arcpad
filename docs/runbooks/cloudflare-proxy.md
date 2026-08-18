@@ -442,3 +442,5 @@ yani kismi yeniden tarama guvenlidir -- tam reindex GEREKMEZ).
 > yazdigin hash'i bir sonraki blogun `parentHash`i ile dogrula. Elle yazilmis
 > bir hex sessizce baska bir blogu isaret eder (olculdu: `0x3661000` =
 > 57.020.416, 57.000.000 degil).
+
+<!-- Dal korumasinin KILITLENMEDIGINI kanitlamak icin acilan gecici PR. -->
