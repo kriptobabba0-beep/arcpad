@@ -8,6 +8,12 @@ import {
   SlippageRow,
   VERY_HIGH_SLIP_BPS,
 } from '@/components/token/SlippageRow'
+import {
+  PRICE_PANE_INDEX,
+  PRICE_PANE_STRETCH,
+  VOLUME_PANE_INDEX,
+  VOLUME_PANE_STRETCH,
+} from '@/components/token/chartBands'
 import type { CandleRow } from '@/lib/read'
 
 /**
@@ -35,10 +41,20 @@ import type { CandleRow } from '@/lib/read'
  * sabitler.
  */
 const setData = vi.fn<(data: readonly Record<string, number>[]) => void>()
-const addSeries = vi.fn<(kind: string, options?: Record<string, unknown>) => unknown>(() => ({
+const addSeries = vi.fn<
+  (kind: string, options?: Record<string, unknown>, paneIndex?: number) => unknown
+>(() => ({
   setData,
   priceScale: () => ({ applyOptions: vi.fn() }),
 }))
+/*
+ * `panes()` MOCK'TA OLMAK ZORUNDA, ve yoklugu sessiz degildi: hacim kendi
+ * pane'ine tasininca `chart.panes()` `undefined` dondu, efekt orada patladi ve
+ * SONRAKI seriler hic eklenmedi -- on test birden dustu. Mock'un eksigi, kodun
+ * kusuru gibi okunur.
+ */
+const setStretchFactor = vi.fn()
+const panes = vi.fn(() => [{ setStretchFactor }, { setStretchFactor }])
 const removeSeries = vi.fn()
 const subscribeCrosshairMove = vi.fn()
 const fitContent = vi.fn()
@@ -53,6 +69,7 @@ const applyOptions = vi.fn<(options: Record<string, unknown>) => void>()
 vi.mock('lightweight-charts', () => ({
   createChart: vi.fn(() => ({
     addSeries,
+    panes,
     removeSeries,
     subscribeCrosshairMove,
     applyOptions,
@@ -166,10 +183,28 @@ describe('<PriceChart>', () => {
     expect(points).toHaveLength(2)
   })
 
-  it('HACIM KENDI OLCEGINDE -- fiyat olcegini paylassaydi mumlari ezerdi', async () => {
+  /*
+   * HACIM KENDI PANE'INDE -- ve bu, "kendi olceginde"den DAHA GUCLU bir iddia.
+   *
+   * Onceki hal `priceScaleId: ''` ile ayni pane'in alt seridine sikistiriyordu.
+   * Cakismayi engelleyen sey iki marj sayisinin BIRBIRIYLE UYUMLU kalmasiydi ve
+   * kalmadi: fiyat olcegine hic alt marj verilmemisti, mumlar hacmin ustune
+   * indi (bildirildi 2026-08-19). Ayri pane'de cakisma bir hesaba degil YAPIYA
+   * baglidir.
+   */
+  it('HACIM KENDI PANE`INDE -- ayni pane`de marjlar birbirinden kayabilirdi', async () => {
     await renderChart(<PriceChart candles={[candle(0, USDC, USDC)]} metric="fdv" shape="candles" />)
     const histogram = addSeries.mock.calls.find((c) => c[0] === 'histogram-series')
-    expect(histogram?.[1]).toMatchObject({ priceScaleId: '' })
+    const price = addSeries.mock.calls.find((c) => c[0] === 'candles-series')
+    expect(histogram?.[2], 'hacme pane index`i verilmemis').toBe(VOLUME_PANE_INDEX)
+    // Fiyat ilk pane'de: kutuphane `undefined`i 0 sayar, ikisi de kabul.
+    expect(histogram?.[2]).not.toBe(price?.[2] ?? PRICE_PANE_INDEX)
+  })
+
+  it('PANE YUKSEKLIKLERI oran olarak verilir -- sabit piksel kucuk ekranda ezerdi', async () => {
+    await renderChart(<PriceChart candles={[candle(0, USDC, USDC)]} metric="fdv" shape="candles" />)
+    expect(setStretchFactor).toHaveBeenCalledWith(PRICE_PANE_STRETCH)
+    expect(setStretchFactor).toHaveBeenCalledWith(VOLUME_PANE_STRETCH)
   })
 
   it('BOS VERI grafigi kurmaz, bir metin yazar', async () => {

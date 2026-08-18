@@ -1,59 +1,82 @@
 import { describe, expect, it } from 'vitest'
-import { bandGap, PRICE_SCALE_MARGINS, VOLUME_SCALE_MARGINS } from '@/components/token/chartBands'
+import {
+  PRICE_PANE_INDEX,
+  PRICE_PANE_STRETCH,
+  PRICE_SCALE_MARGINS,
+  VOLUME_PANE_INDEX,
+  VOLUME_PANE_STRETCH,
+  VOLUME_SCALE_MARGINS,
+  volumeShare,
+} from '@/components/token/chartBands'
 
 /**
  * ============================================================================
- *  MUMLAR HACMIN ICINE GIREMEZ -- VE BU BIR SAYIDIR, BIR IZLENIM DEGIL
+ *  MUMLAR HACMIN ICINE GIREMEZ -- VE BU YAPISAL, GORSEL DEGIL
  * ============================================================================
  *
  * Bildirilen kusur (2026-08-19): fiyat mumlari hacim cubuklariyla ic ice
  * giriyordu.
  *
- * SEBEP: hacim `{ top: 0.8 }` ile alt seride yerlestirilmisti, ama fiyat
- * olceginin `scaleMargins`i hic ayarlanmamisti -- kutuphanenin varsayilani
- * `{ top: 0.2, bottom: 0.1 }`, yani mumlarin alt siniri 0.90'di. 0.80-0.90
- * arasi iki serinin ustuste bindigi seritti.
+ * ILK SEBEP: hacim AYNI pane'in alt seridine `{ top: 0.8 }` ile
+ * sikistirilmisti, ama fiyat olceginin `scaleMargins`i hic ayarlanmamisti --
+ * varsayilan `bottom: 0.1`, yani mumlarin alt siniri 0.90'di ve 0.80-0.90
+ * arasi ustuste biniyordu.
  *
- * Bu dosya iki seridin ARALIKLARINI karsilastirir. Bir gorsel regresyonu
- * ekran goruntusuyle kovalamak yerine, cakismanin TANIMINI olcer: fiyat
- * seridinin alt siniri, hacim seridinin ust sinirindan KUCUK olmali.
+ * ILK DUZELTME YETMEDI, ve bu dosyanin var olma sebebi o: fiyat olcegine alt
+ * marj vermek cakismayi bitirdi ama bos marj da olcekte yer kapladigi icin
+ * fiyat ekseni NEGATIFE indi (canli grafikte `-10.00` okundu). Bir fiyat
+ * ekseninin negatif degeri, cozdugu seyden daha kotu bir yanlistir.
+ *
+ * DOGRU AYRIM PANE'DIR: iki seri iki ayri pane'de, iki ayri eksende. Cakisma
+ * artik bir marj hesabina degil YAPIYA bagli -- ve asagidaki iddialar tam
+ * olarak o yapiyi olcer.
  */
-describe('grafik seritleri: fiyat ile hacim ayri durur', () => {
-  /** Fiyat seridinin alt siniri (0 = tepe, 1 = dip). */
-  const priceBottom = 1 - PRICE_SCALE_MARGINS.bottom
-  const volumeTop = VOLUME_SCALE_MARGINS.top
-
-  it('fiyat seridi hacim seridine GIRMEZ', () => {
-    expect(
-      priceBottom,
-      `mumlarin alt siniri ${priceBottom}, hacmin ust siniri ${volumeTop} -- ustuste biniyorlar`,
-    ).toBeLessThan(volumeTop)
+describe('grafik: hacim KENDI pane`inde durur', () => {
+  it('iki seri AYRI pane`lerdedir', () => {
+    expect(VOLUME_PANE_INDEX, 'hacim fiyatla ayni pane`de -- cakisma yeniden mumkun').not.toBe(
+      PRICE_PANE_INDEX,
+    )
   })
 
-  it('aralarinda GORULEBILIR bir bosluk vardir', () => {
-    // Sifir bir bosluk teknik olarak "cakismiyor"dur ama iki serit bitisik
-    // cizilir ve kullanicinin sikayeti tam olarak buydu. Alt sinir olculu:
-    // yuksekligin %5'i, 300px'lik bir grafikte ~15px.
-    expect(bandGap(), 'iki serit bitisik').toBeGreaterThanOrEqual(0.05)
+  it('fiyat ILK pane`dedir', () => {
+    // Kutuphane ilk pane'i ana pane sayar; hacmi oraya koymak zaman eksenini
+    // hacme baglardi.
+    expect(PRICE_PANE_INDEX).toBe(0)
   })
 
-  it('AYIRT EDICI: eski degerler bu kontrolu GECEMEZ', () => {
-    // Anti-vakumluk. Kusurun kendisi -- varsayilan `bottom: 0.1` ile
-    // `top: 0.8` -- burada ACIKCA reddedilir, yoksa ustteki iddialarin
-    // gercekten bir sey yakalayip yakalamadigi bilinmezdi.
-    const eskiPriceBottom = 1 - 0.1
+  it('hacim serit gibi ince, ama GORULEBILIR', () => {
+    // Cok buyukse fiyat mumlari ezilir; cok kucukse cubuklar okunmaz.
+    expect(volumeShare()).toBeGreaterThanOrEqual(0.12)
+    expect(volumeShare()).toBeLessThanOrEqual(0.3)
+  })
+
+  it('fiyat pane`i hacimden BUYUKTUR', () => {
+    expect(PRICE_PANE_STRETCH).toBeGreaterThan(VOLUME_PANE_STRETCH)
+  })
+
+  /*
+   * AYIRT EDICI KONTROL.
+   *
+   * Ustteki iddialar, iki sayinin ayni pane icinde marjla ayrildigi ESKI
+   * tasarimda da gecerdi -- cunku o tasarimda pane kavrami yoktu. Bu yuzden
+   * kusurun kendisi burada ACIKCA yeniden kurulur ve reddedilir: ayni pane'de,
+   * eski marjlarla, mumlarin alt siniri hacmin ust sinirini ASIYORDU.
+   */
+  it('AYIRT EDICI: eski tek-pane duzeni cakisiyordu', () => {
+    const eskiPriceBottom = 1 - 0.1 // kutuphane varsayilani
     const eskiVolumeTop = 0.8
     expect(eskiPriceBottom).toBeGreaterThan(eskiVolumeTop)
   })
 
-  it('hacim seridi grafigin DIBINE oturur', () => {
-    // `bottom: 0` olmazsa hacim havada asili kalir ve altinda anlamsiz bir
-    // bosluk olusur -- serit bir taban degil, ikinci bir yuzer kutu olurdu.
-    expect(VOLUME_SCALE_MARGINS.bottom).toBe(0)
+  it('fiyat marjlari artik YALNIZCA nefes payi -- ikisi de esit ve kucuk', () => {
+    // Hacim baska pane'de oldugu icin alt marjin ona yer acmak gibi bir isi
+    // kalmadi. Asimetrik birakmak, kalkmis bir gerekcenin izini surdururdu.
+    expect(PRICE_SCALE_MARGINS.bottom).toBe(PRICE_SCALE_MARGINS.top)
+    expect(PRICE_SCALE_MARGINS.bottom).toBeLessThan(0.2)
   })
 
-  it('fiyat seridi tepede de nefes payi birakir', () => {
-    // Ust marj sifir olsaydi en yuksek mum eksen etiketine yapisirdi.
-    expect(PRICE_SCALE_MARGINS.top).toBeGreaterThan(0)
+  it('hacim kendi pane`inin DIBINE oturur', () => {
+    // `bottom: 0` olmazsa cubuklar havada asili kalir.
+    expect(VOLUME_SCALE_MARGINS.bottom).toBe(0)
   })
 })

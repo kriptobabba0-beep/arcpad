@@ -4,7 +4,13 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { formatUsdcCompact } from '@arcpad/shared/browser'
 import type { IChartApi, ISeriesApi, Time, UTCTimestamp } from 'lightweight-charts'
 import type { CandleRow } from '@/lib/read'
-import { PRICE_SCALE_MARGINS, VOLUME_SCALE_MARGINS } from './chartBands'
+import {
+  PRICE_PANE_STRETCH,
+  PRICE_SCALE_MARGINS,
+  VOLUME_PANE_INDEX,
+  VOLUME_PANE_STRETCH,
+  VOLUME_SCALE_MARGINS,
+} from './chartBands'
 
 /**
  * ============ KUTUPHANE TEMBEL YUKLENIR, TIPLER STATIK KALIR ============
@@ -242,16 +248,24 @@ export function PriceChart({
       /*
        * HACIM KENDI OLCEGINDE, ALTTA.
        *
-       * `priceScaleId: ''` ayri bir olcek demek; `scaleMargins` onu en alttaki
-       * serite sikistirir. ALT SINIR TEK BASINA YETMEZ: fiyat olcegi de bir alt
-       * sinir tasimali, yoksa mumlar bu seridin icine iner. Ayni olcegi paylassalardi hacim cubuklari fiyat eksenini
+       * AYRI BIR PANE, ayni pane'in alt seridi DEGIL. Marjla ayirmak cakismayi
+       * bitiriyordu ama fiyat eksenini NEGATIFE indiriyordu (bos marj da olcekte
+       * yer kaplar; canli grafikte `-10.00` okundu). Kendi pane'inde hacmin
+       * kendi ekseni olur ve fiyat ekseni yalnizca fiyati olcer. Ayni olcegi paylassalardi hacim cubuklari fiyat eksenini
        * ezer ve mumlar ekranin ustunde bir seride sikisirdi.
        */
-      const volume = chart.addSeries(mod.HistogramSeries, {
-        priceFormat: { type: 'volume' },
-        priceScaleId: '',
-      })
+      const volume = chart.addSeries(
+        mod.HistogramSeries,
+        { priceFormat: { type: 'volume' } },
+        VOLUME_PANE_INDEX,
+      )
       volume.priceScale().applyOptions({ scaleMargins: VOLUME_SCALE_MARGINS })
+
+      // PANE YUKSEKLIKLERI ORAN OLARAK. Sabit bir piksel degeri kucuk ekranda
+      // hacmi ezer, buyuk ekranda grafigin yarisini bos birakir.
+      const panes = chart.panes()
+      panes[0]?.setStretchFactor(PRICE_PANE_STRETCH)
+      panes[VOLUME_PANE_INDEX]?.setStretchFactor(VOLUME_PANE_STRETCH)
       volumeRef.current = volume
 
       /*
