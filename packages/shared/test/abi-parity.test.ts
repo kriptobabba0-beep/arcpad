@@ -191,11 +191,26 @@ function runCommands(workflow: string): string[] {
     const single = /^\s*(?:-\s+)?run:\s*(\S.*?)\s*$/.exec(line)
     if (single?.[1] !== undefined) {
       if (single[1] === '|' || single[1] === '>-' || single[1] === '|-') {
-        // Block scalar: take the indented lines that follow.
+        /*
+         * Block scalar: the body is the lines indented MORE than `run:` itself.
+         *
+         * IKINCI KOPYA. Ayni cikarici `web/test/releaseGate.test.ts` icinde de
+         * durur, ve 2026-08-18'de IKISI BIRDEN ayni kusurla kirildi: sinir
+         * "en az iki bosluk" diye yazilmisti, oysa YAML'de sonraki isin basligi
+         * (`  b:`) da iki bosluktan fazla girintilidir. Govde bu yuzden sonraki
+         * ise TASIYORDU ve yorumlar komut sayiliyordu.
+         *
+         * Kusur bugune kadar gorunmedi cunku `node.yml`de hic `run: |` YOKTU --
+         * bu dal olu koddu. Birini degistiren otekini de degistirmeli.
+         */
+        const runIndent = (/^(\s*)/.exec(line)?.[1] ?? '').length
         for (let j = i + 1; j < lines.length; j += 1) {
           const body = lines[j] ?? ''
           if (body.trim() === '') continue
-          if (!/^\s{2,}\S/.test(body)) break
+          const indent = (/^(\s*)/.exec(body)?.[1] ?? '').length
+          if (indent <= runIndent) break
+          // A comment is not a command, inside a block scalar either.
+          if (body.trim().startsWith('#')) continue
           commands.push(body.trim())
         }
         continue
