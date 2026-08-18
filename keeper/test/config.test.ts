@@ -596,3 +596,62 @@ describe('alarm lavabosu yolu: keeper ve tatbikat AYNI dosyayi secer', () => {
     expect(drillSinkPath({ ...base })).toBeUndefined()
   })
 })
+
+/**
+ * ============================================================================
+ *  IZIN LISTESI, ADRES DEFTERINE BAGLIDIR -- YOKSA SESSIZCE BAKIMSIZ KALIR
+ * ============================================================================
+ *
+ * OLCULDU (uretim, 2026-08-18): `arc-testnet.allowedGraduationTargets` BOS
+ * durmaya devam ediyordu, oysa zincirde bir hedef coktan atanmisti (bizim
+ * `arcpadLocker`imiz, governance ile). Sonuc: izleyici her poll'da mesru bir
+ * adres icin "NOT on the allowlist -- THE CHANGE HAS ALREADY LANDED" sayfasi
+ * uretti; `alerts.log`da on sekiz tane birikti ve hicbirine bakilmadi.
+ *
+ * Bos liste Faz 1d'de DOGRUYDU ("hicbir sey mesru degil"). Yanlis olan, faz
+ * degisince listenin guncellenmemesiydi -- ve `config.ts`in kendi yorumu bu
+ * riski zaten yaziyordu: "bir gun icinde rota o sayfayi susturmayi ogrenir ve
+ * kontrol -- HALA calisiyor gorunurken -- sifira duser."
+ *
+ * Bu test o bakimi ZORUNLU kilar: defterde bir `graduationTarget` varsa, izin
+ * listesinde de olmak ZORUNDADIR. Locker degisip liste guncellenmezse burasi
+ * kirilir; yani bir daha sessizce bakimsiz kalamaz.
+ */
+describe('izin listesi ile adres defteri AYRISAMAZ', () => {
+  const bookPath = join(REPO_ROOT, 'contracts/deploy/addresses.5042002.json')
+  const govPath = join(REPO_ROOT, 'contracts/deploy/expected-governance.json')
+
+  it('defterdeki graduationTarget, arc-testnet izin listesinde OLMALI', () => {
+    const book = JSON.parse(readFileSync(bookPath, 'utf8')) as Record<string, string>
+    const gov = JSON.parse(readFileSync(govPath, 'utf8')) as Record<
+      string,
+      { allowedGraduationTargets: string[] }
+    >
+    const target = book['graduationTarget']
+    expect(target, 'defterde graduationTarget yok').toBeDefined()
+
+    const allowed = gov['arc-testnet']?.allowedGraduationTargets ?? []
+    expect(
+      allowed.map((a) => a.toLowerCase()),
+      `zincirde atanmis hedef (${target}) izin listesinde degil -- izleyici her poll'da ` +
+        'mesru bir adres icin sayfa uretir ve gercek bir saldiri o gurultude kaybolur',
+    ).toContain((target as string).toLowerCase())
+  })
+
+  it('defterin graduationTarget ve arcpadLocker alanlari AYNI adresi gosterir', () => {
+    // Ayrisirlarsa izin listesine hangisinin yazilacagi belirsizlesir, ve
+    // yanlis olani yazmak kontrolu sessizce sahte yapar.
+    const book = JSON.parse(readFileSync(bookPath, 'utf8')) as Record<string, string>
+    expect(book['graduationTarget']?.toLowerCase()).toBe(book['arcpadLocker']?.toLowerCase())
+  })
+
+  it('AYIRT EDICI: bos bir izin listesi bu kontrolu GECEMEZ', () => {
+    // Anti-vakumluk. Ustteki iddia, liste bos oldugunda gercekten duser mi?
+    const allowed: string[] = []
+    expect(() =>
+      expect(allowed.map((a) => a.toLowerCase())).toContain(
+        '0xbbe8eb43380d3572cf0f97be5a9d6755dd3c79aa',
+      ),
+    ).toThrow()
+  })
+})
