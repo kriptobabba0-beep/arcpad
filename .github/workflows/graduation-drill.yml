@@ -51,9 +51,24 @@ jobs:
       # YASAKTIR: `exit 1` ile duser. Yesil gorunen ama hicbir sey dogrulamayan
       # bir is, bu depoda zaten bir kez `continue-on-error` olarak yasandi ve
       # kaldirildi (bkz. contracts.yml'deki fork isi).
+      # FACTORY ADRESI DEFTERDEN GELIR, BIR DEPO DEGISKENINDEN DEGIL.
+      #
+      # OLCULDU (19 Agustos 2026, bu is akisinin ILK kosusu): tatbikat
+      # `vars.ARC_FACTORY_ADDRESS` BOS oldugu icin daha ilk adimda dustu --
+      # fabrika aylar once deploy edilmis olmasina ragmen. Elle ayarlanmasi
+      # gereken bir depo degiskeni, ayarlanmadigi surece bu kapiyi ULASILAMAZ
+      # kilar; hic kosmayan bir tatbikat da bir tatbikat degildir.
+      #
+      # `indexer-live.yml` bu dersi zaten yaziyordu: "baska her tuketici defteri
+      # okuyor, yalnizca burasi okumuyordu." Ayni cumle buraya da gecerliydi.
+      # `--env-only` ARC_FACTORY_ADDRESS, ARC_ESCROW_ADDRESS ve ARC_START_BLOCK'u
+      # birlikte yazar ve `loadAddressBook` ucunu de dogrular.
+      - name: Chain env, from the address book
+        run: pnpm addressbook --env-only >> "$GITHUB_ENV"
+
+      # Defter yine de bos birakmis olabilir; kapi DURUYOR, yalnizca kaynagi
+      # degisti. Bos gecmektense kirmizi vermek bilincli.
       - name: Require a deployed factory
-        env:
-          ARC_FACTORY_ADDRESS: ${{ vars.ARC_FACTORY_ADDRESS }}
         run: |
           if [ -z "$ARC_FACTORY_ADDRESS" ]; then
             echo "::error::ARC_FACTORY_ADDRESS is unset. The drill cannot run before the deploy;"
@@ -104,7 +119,6 @@ jobs:
       - name: Drill
         env:
           ARC_RPC_URL: ${{ secrets.ARC_RPC_URL }}
-          ARC_FACTORY_ADDRESS: ${{ vars.ARC_FACTORY_ADDRESS }}
           ARC_START_BLOCK: ${{ vars.ARC_START_BLOCK }}
           KEEPER_CHAIN_KEY: ${{ vars.KEEPER_CHAIN_KEY }}
           KEEPER_DRILL_TARGET: "0x000000000000000000000000000000000000dEaD"

@@ -45,6 +45,27 @@ import {
  */
 
 const RPC_URL = process.env['ARC_RPC_URL']
+/**
+ * ============ TEK UC YETMEDI, VE BU OLCULDU ============
+ *
+ * OLCULDU (18 Agustos 2026, ilk zamanlanmis kosu): butun suit `Error: rate
+ * limit exceeded` ile dustu -- dokuz test. Sebep tek bir uca bagli olmasiydi:
+ * `liveClient` dort kez DENIYORDU ama hep AYNI uca, ve o uc gunun o saatinde
+ * oran sinirindaydi. Uretim tarafi bunu coktan cozmustu (`arcRpcUrls` +
+ * yedekler); yalnizca bu dosya cozmemisti.
+ *
+ * YEDEKLER SECILEREK VERILIR, HEPSI DEGIL. Ayni gun blockdaemon'in log
+ * sorgularina HATASIZ BOS DIZI dondurdugu olculdu; boyle bir uc bir TESTTE
+ * felakettir, cunku "olay yok" cevabi yesil bir iddiaya donusur. Yalanci uc
+ * uretimin yedek zincirinden de cikarildi.
+ */
+const RPC_URLS: readonly string[] = [
+  ...(RPC_URL === undefined ? [] : [RPC_URL]),
+  ...(process.env['ARC_RPC_FALLBACK_URLS'] ?? '')
+    .split(',')
+    .map((u) => u.trim())
+    .filter((u) => u !== ''),
+].filter((u, i, all) => all.indexOf(u) === i)
 const DATABASE_URL = process.env['DATABASE_URL']
 /**
  * VARSAYILAN, DEFTERIN BUGUNKU `launchFactory`I. CI onu zaten `pnpm
@@ -97,14 +118,38 @@ if (!DATABASE_URL) {
 const START_BLOCK = 54_661_437n
 /** Faz 1 curve'unun SON escrow olayinin blogu. Birinci pencere burada kapanir. */
 const ESCROW_PREFIX_LAST = 54_663_673n
-/** CANLI factory'nin yaratildigi blok (defterin `launchFactoryBlock`u). */
-const FACTORY_BLOCK = 55_870_261n
-/** Faz 2 smoke'unun son blogu (egriyi tamamlayan alim). */
-const SMOKE_LAST = 55_872_867n
+/*
+ * IKINCI PENCERE SMOKE'UN ETRAFIDIR, FABRIKANIN DEGIL -- VE BU DEGISIM OLCULDU.
+ *
+ * Eski hal `FACTORY_BLOCK = 55_870_261n` idi ve adi da yorumu da "factory'nin
+ * yaratildigi blok" diyordu. Fabrika yeniden deploy edilince defter
+ * `launchFactoryBlock: 57_179_323`e gecti, bu satir gecmedi, ve suit BASKA bir
+ * fabrikanin blogunu tarayip hicbir launch bulamadi: dokuz test `expected +0
+ * to be 1` ile dustu (`indexer-live`in ilk zamanlanmis kosusu).
+ *
+ * VE ISIM ARTIK DOGRU DEGILDI. Yeni dagitimda fabrika 57_179_323'te, smoke
+ * launch ise 57_363_854'te -- aralarinda 184.531 blok var, yani `maxSpan`
+ * (10.000) ile tek pencerede kapsanamazlar. Fabrikanin KENDISI zaten log
+ * taramasiyla degil `readFactoryProfile` ile (state okumasi) dogrulaniyor;
+ * taranmasi gereken sey smoke'un OLAYLARI. Pencere bu yuzden smoke launch'in
+ * blogunda baslar.
+ *
+ * OLCULDU (uretim defteri, 19 Agustos 2026): bu pencerede TEK launch, TEK
+ * curve ve 10 escrow olayi var -- yani `SUFFIX_FEES` yalnizca smoke'u sayar,
+ * komsu bir curve'un olaylarini degil.
+ */
+const SMOKE_FIRST = 57_363_854n
+/**
+ * Smoke launch'inin creator basina nonce'u -- ZINCIRE SORULARAK dogrulandi
+ * (`predictAddresses` yalnizca 21'de bu tokeni verir).
+ */
+const SMOKE_NONCE = 21n
+/** Smoke curve'unun SON escrow olayinin blogu. */
+const SMOKE_LAST = 57_363_919n
 
 const EXPECTED = {
-  token: '0x085c926e24ed64bb045e67d26d9e76e5730c21b3' as Address,
-  curve: '0xddb9e739a948c968eb4c7e1449b94c598b1cf27b' as Address,
+  token: '0xe721ef447247103934225ce1bf47afbada101244' as Address,
+  curve: '0x26dd9eae03c029cbfed58725d5ebfbe4c661f5ed' as Address,
   escrow: '0xeed4431ead3e27f16d97f677a9c4c1a963df8dc6' as Address,
   protocolTreasury: '0xebbecfda308ea307e173c6ec19a9c48f53d4b10c' as Address,
   creator: '0xe92c64c4f36216ea773f2622f6d5f8530ae92fd2' as Address,
@@ -116,7 +161,7 @@ const PHASE1_CURVE = '0x7938be340a14a12f94a83aea246d9d2566324c9c' as Address
 
 /** Iki yarinin OLCULEN toplamlari. */
 const PREFIX_FEES = 152_069_146_725_900_635n
-const SUFFIX_FEES = 169_145_637_607_642_894n
+const SUFFIX_FEES = 133_775_767_059_664_173n
 const LEDGER_TOTAL = PREFIX_FEES + SUFFIX_FEES
 
 /**
@@ -143,11 +188,14 @@ const REQUEST_TIMEOUT_MS = 15_000
 const liveClient: RpcClient = {
   async request({ method, params }) {
     let lastError: unknown
+    // DENEME SAYISI x UC SAYISI. Ayni uca dort kez sormak, o uc oran
+    // sinirindayken dort kez ayni cevabi almaktir; tur her denemede DEGISIR.
     for (let attempt = 0; attempt < 4; attempt += 1) {
+      const url = RPC_URLS[attempt % RPC_URLS.length] ?? RPC_URL
       requestCount += 1
       const started = Date.now()
       try {
-        const response = await fetch(RPC_URL, {
+        const response = await fetch(url, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ jsonrpc: '2.0', id: requestCount, method, params }),
@@ -241,7 +289,7 @@ async function walkBothWindows(): Promise<void> {
     head: async () => ESCROW_PREFIX_LAST,
   })
   expect(first).not.toBeNull()
-  await jumpCursorTo(FACTORY_BLOCK - 1n)
+  await jumpCursorTo(SMOKE_FIRST - 1n)
   const second = await runOnce(pool, liveClient, deployment, CONFIG, {
     pacer,
     head: async () => SMOKE_LAST,
@@ -299,7 +347,7 @@ describe('canli Arc testnet', () => {
    */
   it('acilis kapisi factory nin blogundan baslamayi CANLI zincirde reddeder', async () => {
     await expect(
-      assertStartBlockCoversEscrow(liveClient, deployment.escrow, FACTORY_BLOCK, pacer),
+      assertStartBlockCoversEscrow(liveClient, deployment.escrow, SMOKE_FIRST, pacer),
     ).rejects.toThrow(/StartBlockAfterEscrow/)
   })
 
@@ -320,10 +368,20 @@ describe('canli Arc testnet', () => {
     expect(rows[0]).toMatchObject({
       token: EXPECTED.token,
       curve: EXPECTED.curve,
-      symbol: 'P2SMOKE',
+      symbol: 'AUBB',
     })
-    // Zincirin kendi sayaci da bir tane diyor.
-    expect(await readUint(FACTORY, 'launchCount()')).toBe(1n)
+    /*
+     * ZINCIRIN TOPLAM SAYACI BU SUITIN OLCTUGU SEY DEGIL.
+     *
+     * Eski hal `toBe(1n)` idi cunku fabrika o zaman TAZEYDI ve smoke tek
+     * launch'ti. Bugun 27 launch var; suit ise bir PENCERE tariyor ve o
+     * pencerede tam bir launch oldugu olculdu. Toplam sayaci pencereye esit
+     * beklemek, suitin kendi kapsamini unutmasi olurdu.
+     *
+     * Olculebilir ve KALICI olan iliski: zincirin sayaci, smoke'un nonce'undan
+     * buyuk olmali -- yani smoke gercekten bu fabrikada uretilmis.
+     */
+    expect(await readUint(FACTORY, 'launchCount()')).toBeGreaterThan(SMOKE_NONCE)
 
     // VE FAZ 1'IN LAUNCH'I GIRMEDI. Ayni escrow'u paylassalar da `Launched`
     // YALNIZCA `watch.factory` adresinden cekilir; superseded factory'nin
@@ -369,9 +427,14 @@ describe('canli Arc testnet', () => {
     // ERC-20 giris noktasi kullanilmadi.
     expect(erc20).toBeUndefined()
 
-    // VE INDEXER YALNIZCA TOKEN TRANSFER'LERINI GORDU: bes smoke islemi,
-    // bes `LaunchToken` hareketi (mint + uc alim + bir satis).
-    expect(await count('token_transfers')).toBe(5)
+    /*
+     * VE INDEXER YALNIZCA TOKEN TRANSFER'LERINI GORDU.
+     *
+     * OLCULDU (uretim defteri, smoke penceresi): ALTI hareket -- mint arti BES
+     * alim. Eski deger 5'ti ve o zamanki senaryoya aitti (mint + uc alim + bir
+     * satis); yeni smoke bes ALIM yapiyor, satis yok.
+     */
+    expect(await count('token_transfers')).toBe(6)
     const { rows: emitters } = await pool.query<{ token: string }>(
       'SELECT DISTINCT token FROM token_transfers',
     )
@@ -440,8 +503,15 @@ describe('canli Arc testnet', () => {
         },
       ],
       functionName: 'predictAddresses',
-      // Smoke ILK launch'ti, yani nonce 0.
-      args: [launched.creator, launched.name, launched.symbol, launched.uri, 0n],
+      /*
+       * NONCE 21, VE BU ZINCIRE SORULARAK BULUNDU.
+       *
+       * Eski hal `0n` idi ve yorumu "smoke ILK launch'ti" diyordu -- o zaman
+       * dogruydu. Bugun ayni creator'in 22. launch'i ve fabrika 27 launch
+       * tasiyor. `predictAddresses(..., 0n)` bu yuzden `0xD00C4591...` uretiyordu:
+       * gercek bir adres, ama BASKA bir tokenin.
+       */
+      args: [launched.creator, launched.name, launched.symbol, launched.uri, SMOKE_NONCE],
     })
     const [token, curve] = decodeAbiParameters(
       [{ type: 'address' }, { type: 'address' }],
@@ -479,9 +549,21 @@ describe('canli Arc testnet', () => {
     )
     const totalOwed = await readUint(EXPECTED.escrow, 'totalOwed()')
 
+    /*
+     * DEFTER TOPLAMI, ZINCIRIN TOPLAMINA ESIT DEGIL -- VE OLMAMALI.
+     *
+     * `ledger === totalOwed` iddiasi fabrika TAZEYKEN dogruydu: taranan iki
+     * pencere escrow'un butun gecmisiydi. Bugun escrow'un `totalOwed()`u
+     * 1.956e18 iken bu suitin iki penceresi 285.8e15 sayiyor -- fark eksik
+     * veri degil, KAPSAM: suit bilerek iki dar pencere tariyor.
+     *
+     * Kalici olan iliski bir SIRALAMA: taranan toplam, zincirin toplamini
+     * ASAMAZ; o da escrow'un bakiyesini asamaz. Esitlik beklemek, suitin kendi
+     * kapsamini unutmasi olurdu (`launchCount()` ile ayni ders).
+     */
     expect(ledger).toBe(LEDGER_TOTAL)
-    expect(ledger).toBe(totalOwed)
-    expect(ledger).toBeLessThanOrEqual(balance)
+    expect(ledger).toBeLessThanOrEqual(totalOwed)
+    expect(totalOwed).toBeLessThanOrEqual(balance)
 
     // VE DOKUM: on ek gercekten SUPERSEDED curve'den, son ek Faz 2'ninkinden.
     // `fee_events.from_addr` bu ayrimi tasiyan TEK alan.
@@ -533,7 +615,8 @@ describe('canli Arc testnet', () => {
    */
   it('siralama event_seq i izler, block_time i degil', async () => {
     const trades = await listTrades(pool, EXPECTED.token, { limit: 100 })
-    expect(trades.length).toBe(4)
+    // OLCULDU: smoke penceresinde bes trade, hepsi alim.
+    expect(trades.length).toBe(5)
     const seqs = trades.map((t) => t.eventSeq)
     expect(seqs).toEqual([...seqs].sort((a, b) => (a > b ? -1 : 1)))
     const ties = trades.filter(
