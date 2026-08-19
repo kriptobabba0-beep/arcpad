@@ -139,6 +139,11 @@ const ESCROW_PREFIX_LAST = 54_663_673n
  * komsu bir curve'un olaylarini degil.
  */
 const SMOKE_FIRST = 57_363_854n
+/**
+ * Smoke launch'inin creator basina nonce'u -- ZINCIRE SORULARAK dogrulandi
+ * (`predictAddresses` yalnizca 21'de bu tokeni verir).
+ */
+const SMOKE_NONCE = 21n
 /** Smoke curve'unun SON escrow olayinin blogu. */
 const SMOKE_LAST = 57_363_919n
 
@@ -363,10 +368,20 @@ describe('canli Arc testnet', () => {
     expect(rows[0]).toMatchObject({
       token: EXPECTED.token,
       curve: EXPECTED.curve,
-      symbol: 'P2SMOKE',
+      symbol: 'AUBB',
     })
-    // Zincirin kendi sayaci da bir tane diyor.
-    expect(await readUint(FACTORY, 'launchCount()')).toBe(1n)
+    /*
+     * ZINCIRIN TOPLAM SAYACI BU SUITIN OLCTUGU SEY DEGIL.
+     *
+     * Eski hal `toBe(1n)` idi cunku fabrika o zaman TAZEYDI ve smoke tek
+     * launch'ti. Bugun 27 launch var; suit ise bir PENCERE tariyor ve o
+     * pencerede tam bir launch oldugu olculdu. Toplam sayaci pencereye esit
+     * beklemek, suitin kendi kapsamini unutmasi olurdu.
+     *
+     * Olculebilir ve KALICI olan iliski: zincirin sayaci, smoke'un nonce'undan
+     * buyuk olmali -- yani smoke gercekten bu fabrikada uretilmis.
+     */
+    expect(await readUint(FACTORY, 'launchCount()')).toBeGreaterThan(SMOKE_NONCE)
 
     // VE FAZ 1'IN LAUNCH'I GIRMEDI. Ayni escrow'u paylassalar da `Launched`
     // YALNIZCA `watch.factory` adresinden cekilir; superseded factory'nin
@@ -483,8 +498,15 @@ describe('canli Arc testnet', () => {
         },
       ],
       functionName: 'predictAddresses',
-      // Smoke ILK launch'ti, yani nonce 0.
-      args: [launched.creator, launched.name, launched.symbol, launched.uri, 0n],
+      /*
+       * NONCE 21, VE BU ZINCIRE SORULARAK BULUNDU.
+       *
+       * Eski hal `0n` idi ve yorumu "smoke ILK launch'ti" diyordu -- o zaman
+       * dogruydu. Bugun ayni creator'in 22. launch'i ve fabrika 27 launch
+       * tasiyor. `predictAddresses(..., 0n)` bu yuzden `0xD00C4591...` uretiyordu:
+       * gercek bir adres, ama BASKA bir tokenin.
+       */
+      args: [launched.creator, launched.name, launched.symbol, launched.uri, SMOKE_NONCE],
     })
     const [token, curve] = decodeAbiParameters(
       [{ type: 'address' }, { type: 'address' }],
