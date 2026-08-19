@@ -45,22 +45,30 @@ describe('canli suit ile adres defteri AYRIŞAMAZ', () => {
     return (m?.[1] ?? '').toLowerCase()
   }
 
-  it('FACTORY_BLOCK defterin `launchFactoryBlock`udur', () => {
+  it('smoke penceresi fabrikanin SONRASINDADIR', () => {
+    /*
+     * Eski hal `FACTORY_BLOCK == launchFactoryBlock` diye olcuyordu, ama yeni
+     * dagitimda ikisi 184.531 blok arayla: fabrika 57_179_323, smoke launch
+     * 57_363_854. `maxSpan` 10.000 oldugu icin tek pencere ikisini birden
+     * kapsayamaz, ve fabrikanin KENDISI zaten state okumasiyla dogrulaniyor.
+     *
+     * Olculebilir iliski su: smoke, fabrikadan SONRA olmak zorunda. Bir fabrika
+     * daha deploy edilirse defterin `launchFactoryBlock`u ilerler ve eski smoke
+     * penceresi onun ALTINDA kalir -- ayrisma yine burada patlar.
+     */
     expect(
-      constant('FACTORY_BLOCK'),
-      'suit BASKA bir fabrikanin blogunu tariyor -- hicbir launch bulamaz ve ' +
-        'butun iddialar 0 uzerinden duser',
-    ).toBe(book.launchFactoryBlock)
+      constant('SMOKE_FIRST'),
+      'smoke penceresi fabrikanin ONUNDE -- suit o fabrikanin hic launch`ini goremez',
+    ).toBeGreaterThan(book.launchFactoryBlock)
   })
 
   it('START_BLOCK defterin `startBlock`udur', () => {
     expect(constant('START_BLOCK')).toBe(book.startBlock)
   })
 
-  it('smoke penceresi launch`i KAPSAR', () => {
-    // `SMOKE_LAST` taramanin durdugu yer; fabrikadan once biterse smoke launch
-    // pencerenin DISINDA kalir ve suit yine 0 goruru.
-    expect(constant('SMOKE_LAST')).toBeGreaterThan(constant('FACTORY_BLOCK'))
+  it('smoke penceresi bir aralik CIZER', () => {
+    // `SMOKE_LAST` taramanin durdugu yer; basindan once biterse pencere bostur.
+    expect(constant('SMOKE_LAST')).toBeGreaterThan(constant('SMOKE_FIRST'))
   })
 
   it('EXPECTED.escrow defterin escrow`udur', () => {

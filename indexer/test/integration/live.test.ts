@@ -118,14 +118,33 @@ if (!DATABASE_URL) {
 const START_BLOCK = 54_661_437n
 /** Faz 1 curve'unun SON escrow olayinin blogu. Birinci pencere burada kapanir. */
 const ESCROW_PREFIX_LAST = 54_663_673n
-/** CANLI factory'nin yaratildigi blok (defterin `launchFactoryBlock`u). */
-const FACTORY_BLOCK = 55_870_261n
-/** Faz 2 smoke'unun son blogu (egriyi tamamlayan alim). */
-const SMOKE_LAST = 55_872_867n
+/*
+ * IKINCI PENCERE SMOKE'UN ETRAFIDIR, FABRIKANIN DEGIL -- VE BU DEGISIM OLCULDU.
+ *
+ * Eski hal `FACTORY_BLOCK = 55_870_261n` idi ve adi da yorumu da "factory'nin
+ * yaratildigi blok" diyordu. Fabrika yeniden deploy edilince defter
+ * `launchFactoryBlock: 57_179_323`e gecti, bu satir gecmedi, ve suit BASKA bir
+ * fabrikanin blogunu tarayip hicbir launch bulamadi: dokuz test `expected +0
+ * to be 1` ile dustu (`indexer-live`in ilk zamanlanmis kosusu).
+ *
+ * VE ISIM ARTIK DOGRU DEGILDI. Yeni dagitimda fabrika 57_179_323'te, smoke
+ * launch ise 57_363_854'te -- aralarinda 184.531 blok var, yani `maxSpan`
+ * (10.000) ile tek pencerede kapsanamazlar. Fabrikanin KENDISI zaten log
+ * taramasiyla degil `readFactoryProfile` ile (state okumasi) dogrulaniyor;
+ * taranmasi gereken sey smoke'un OLAYLARI. Pencere bu yuzden smoke launch'in
+ * blogunda baslar.
+ *
+ * OLCULDU (uretim defteri, 19 Agustos 2026): bu pencerede TEK launch, TEK
+ * curve ve 10 escrow olayi var -- yani `SUFFIX_FEES` yalnizca smoke'u sayar,
+ * komsu bir curve'un olaylarini degil.
+ */
+const SMOKE_FIRST = 57_363_854n
+/** Smoke curve'unun SON escrow olayinin blogu. */
+const SMOKE_LAST = 57_363_919n
 
 const EXPECTED = {
-  token: '0x085c926e24ed64bb045e67d26d9e76e5730c21b3' as Address,
-  curve: '0xddb9e739a948c968eb4c7e1449b94c598b1cf27b' as Address,
+  token: '0xe721ef447247103934225ce1bf47afbada101244' as Address,
+  curve: '0x26dd9eae03c029cbfed58725d5ebfbe4c661f5ed' as Address,
   escrow: '0xeed4431ead3e27f16d97f677a9c4c1a963df8dc6' as Address,
   protocolTreasury: '0xebbecfda308ea307e173c6ec19a9c48f53d4b10c' as Address,
   creator: '0xe92c64c4f36216ea773f2622f6d5f8530ae92fd2' as Address,
@@ -137,7 +156,7 @@ const PHASE1_CURVE = '0x7938be340a14a12f94a83aea246d9d2566324c9c' as Address
 
 /** Iki yarinin OLCULEN toplamlari. */
 const PREFIX_FEES = 152_069_146_725_900_635n
-const SUFFIX_FEES = 169_145_637_607_642_894n
+const SUFFIX_FEES = 133_775_767_059_664_173n
 const LEDGER_TOTAL = PREFIX_FEES + SUFFIX_FEES
 
 /**
@@ -265,7 +284,7 @@ async function walkBothWindows(): Promise<void> {
     head: async () => ESCROW_PREFIX_LAST,
   })
   expect(first).not.toBeNull()
-  await jumpCursorTo(FACTORY_BLOCK - 1n)
+  await jumpCursorTo(SMOKE_FIRST - 1n)
   const second = await runOnce(pool, liveClient, deployment, CONFIG, {
     pacer,
     head: async () => SMOKE_LAST,
@@ -323,7 +342,7 @@ describe('canli Arc testnet', () => {
    */
   it('acilis kapisi factory nin blogundan baslamayi CANLI zincirde reddeder', async () => {
     await expect(
-      assertStartBlockCoversEscrow(liveClient, deployment.escrow, FACTORY_BLOCK, pacer),
+      assertStartBlockCoversEscrow(liveClient, deployment.escrow, SMOKE_FIRST, pacer),
     ).rejects.toThrow(/StartBlockAfterEscrow/)
   })
 
