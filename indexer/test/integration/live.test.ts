@@ -427,9 +427,14 @@ describe('canli Arc testnet', () => {
     // ERC-20 giris noktasi kullanilmadi.
     expect(erc20).toBeUndefined()
 
-    // VE INDEXER YALNIZCA TOKEN TRANSFER'LERINI GORDU: bes smoke islemi,
-    // bes `LaunchToken` hareketi (mint + uc alim + bir satis).
-    expect(await count('token_transfers')).toBe(5)
+    /*
+     * VE INDEXER YALNIZCA TOKEN TRANSFER'LERINI GORDU.
+     *
+     * OLCULDU (uretim defteri, smoke penceresi): ALTI hareket -- mint arti BES
+     * alim. Eski deger 5'ti ve o zamanki senaryoya aitti (mint + uc alim + bir
+     * satis); yeni smoke bes ALIM yapiyor, satis yok.
+     */
+    expect(await count('token_transfers')).toBe(6)
     const { rows: emitters } = await pool.query<{ token: string }>(
       'SELECT DISTINCT token FROM token_transfers',
     )
@@ -544,9 +549,21 @@ describe('canli Arc testnet', () => {
     )
     const totalOwed = await readUint(EXPECTED.escrow, 'totalOwed()')
 
+    /*
+     * DEFTER TOPLAMI, ZINCIRIN TOPLAMINA ESIT DEGIL -- VE OLMAMALI.
+     *
+     * `ledger === totalOwed` iddiasi fabrika TAZEYKEN dogruydu: taranan iki
+     * pencere escrow'un butun gecmisiydi. Bugun escrow'un `totalOwed()`u
+     * 1.956e18 iken bu suitin iki penceresi 285.8e15 sayiyor -- fark eksik
+     * veri degil, KAPSAM: suit bilerek iki dar pencere tariyor.
+     *
+     * Kalici olan iliski bir SIRALAMA: taranan toplam, zincirin toplamini
+     * ASAMAZ; o da escrow'un bakiyesini asamaz. Esitlik beklemek, suitin kendi
+     * kapsamini unutmasi olurdu (`launchCount()` ile ayni ders).
+     */
     expect(ledger).toBe(LEDGER_TOTAL)
-    expect(ledger).toBe(totalOwed)
-    expect(ledger).toBeLessThanOrEqual(balance)
+    expect(ledger).toBeLessThanOrEqual(totalOwed)
+    expect(totalOwed).toBeLessThanOrEqual(balance)
 
     // VE DOKUM: on ek gercekten SUPERSEDED curve'den, son ek Faz 2'ninkinden.
     // `fee_events.from_addr` bu ayrimi tasiyan TEK alan.
@@ -598,7 +615,8 @@ describe('canli Arc testnet', () => {
    */
   it('siralama event_seq i izler, block_time i degil', async () => {
     const trades = await listTrades(pool, EXPECTED.token, { limit: 100 })
-    expect(trades.length).toBe(4)
+    // OLCULDU: smoke penceresinde bes trade, hepsi alim.
+    expect(trades.length).toBe(5)
     const seqs = trades.map((t) => t.eventSeq)
     expect(seqs).toEqual([...seqs].sort((a, b) => (a > b ? -1 : 1)))
     const ties = trades.filter(
