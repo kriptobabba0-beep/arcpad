@@ -45,6 +45,27 @@ import {
  */
 
 const RPC_URL = process.env['ARC_RPC_URL']
+/**
+ * ============ TEK UC YETMEDI, VE BU OLCULDU ============
+ *
+ * OLCULDU (18 Agustos 2026, ilk zamanlanmis kosu): butun suit `Error: rate
+ * limit exceeded` ile dustu -- dokuz test. Sebep tek bir uca bagli olmasiydi:
+ * `liveClient` dort kez DENIYORDU ama hep AYNI uca, ve o uc gunun o saatinde
+ * oran sinirindaydi. Uretim tarafi bunu coktan cozmustu (`arcRpcUrls` +
+ * yedekler); yalnizca bu dosya cozmemisti.
+ *
+ * YEDEKLER SECILEREK VERILIR, HEPSI DEGIL. Ayni gun blockdaemon'in log
+ * sorgularina HATASIZ BOS DIZI dondurdugu olculdu; boyle bir uc bir TESTTE
+ * felakettir, cunku "olay yok" cevabi yesil bir iddiaya donusur. Yalanci uc
+ * uretimin yedek zincirinden de cikarildi.
+ */
+const RPC_URLS: readonly string[] = [
+  ...(RPC_URL === undefined ? [] : [RPC_URL]),
+  ...(process.env['ARC_RPC_FALLBACK_URLS'] ?? '')
+    .split(',')
+    .map((u) => u.trim())
+    .filter((u) => u !== ''),
+].filter((u, i, all) => all.indexOf(u) === i)
 const DATABASE_URL = process.env['DATABASE_URL']
 /**
  * VARSAYILAN, DEFTERIN BUGUNKU `launchFactory`I. CI onu zaten `pnpm
@@ -143,11 +164,14 @@ const REQUEST_TIMEOUT_MS = 15_000
 const liveClient: RpcClient = {
   async request({ method, params }) {
     let lastError: unknown
+    // DENEME SAYISI x UC SAYISI. Ayni uca dort kez sormak, o uc oran
+    // sinirindayken dort kez ayni cevabi almaktir; tur her denemede DEGISIR.
     for (let attempt = 0; attempt < 4; attempt += 1) {
+      const url = RPC_URLS[attempt % RPC_URLS.length] ?? RPC_URL
       requestCount += 1
       const started = Date.now()
       try {
-        const response = await fetch(RPC_URL, {
+        const response = await fetch(url, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ jsonrpc: '2.0', id: requestCount, method, params }),

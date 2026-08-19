@@ -86,3 +86,15 @@ jobs:
         env:
           DATABASE_URL: postgres://arcpad:arcpad@localhost:5432/arcpad
           ARC_RPC_URL: ${{ secrets.ARC_RPC_URL || 'https://rpc.testnet.arc.network' }}
+          # YEDEK UCLAR, VE LISTE SECILMISTIR.
+          #
+          # OLCULDU (18 Agustos 2026, bu is akisinin ILK zamanlanmis kosusu):
+          # dokuz test birden `Error: rate limit exceeded` ile dustu. Tek uca
+          # bagliydi ve o uc gunun o saatinde oran sinirindaydi.
+          #
+          # `blockdaemon` BILEREK YOK: ayni gun log sorgularina HATASIZ BOS DIZI
+          # dondurdugu olculdu ve uretimin yedek zincirinden de cikarildi. Boyle
+          # bir uc bir testte felakettir -- "olay yok" cevabi yesil bir iddiaya
+          # donusur, ki bu is akisinin bulmak icin var oldugu seyin tersidir.
+          ARC_RPC_FALLBACK_URLS: >-
+            https://rpc.drpc.testnet.arc.network,https://rpc.quicknode.testnet.arc.network
